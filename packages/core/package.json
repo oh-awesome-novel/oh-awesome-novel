@@ -1,0 +1,14 @@
+{
+  "name": "@oh-awesome-novel/core",
+  "version": "0.0.1",
+  "description": "",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "scripts": {
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.2"
+  }
+}
