@@ -1,0 +1,12 @@
+{
+  "name": "oh-awesome-novel-workspace",
+  "version": "0.0.0",
+  "description": "AI小说Agent",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "directories": {
+  },
+  "scripts": {
+  }
+}
