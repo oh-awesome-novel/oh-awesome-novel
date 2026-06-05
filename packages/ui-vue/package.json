@@ -1,12 +1,12 @@
 {
-  "name": "@oh-awesome-novel/desktop-ui",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@oh-awesome-novel/ui-vue",
+  "version": "0.0.1",
+  "description": "",
+  "license": "MIT",
+  "author": "",
   "type": "module",
+  "main": "dist/index.mjs",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
   },
   "dependencies": {
     "vue": "^3.5.34",
