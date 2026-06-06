@@ -1,0 +1,12 @@
+characters:
+  heroine:
+    hp: injured
+    emotion: hatred
+    location: academy
+    flags:
+      - black_mark_visible
+  hero:
+    hp: normal
+    emotion: guilt
+    location: academy
+    flags: []

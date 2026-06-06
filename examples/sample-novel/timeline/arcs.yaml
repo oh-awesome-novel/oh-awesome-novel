@@ -1,0 +1,12 @@
+arcs:
+  - id: arc_001
+    name: 黑纹觉醒篇
+    volume: '0001'
+    startChapter: '0001/0001'
+    endChapter: '0001/0003'
+    description: 苏灵入学、发现黑纹、与林夜建立信任的经过。
+  - id: arc_002
+    name: 龙脊探险篇
+    volume: '0002'
+    startChapter: '0002/0001'
+    description: 离开学院，探索龙脊山脉遗迹。

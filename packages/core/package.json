@@ -1,7 +1,7 @@
 {
   "name": "@oh-awesome-novel/core",
   "version": "0.0.1",
-  "description": "",
+  "description": "Core library for oh-awesome-novel: workspace init, LLM provider config, and novel domain types.",
   "license": "MIT",
   "author": "",
   "type": "module",
@@ -12,10 +12,14 @@
     "src"
   ],
   "scripts": {
-    "build": "tsdown"
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "^24.13.0",
     "tsdown": "^0.22.2",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.8"
   }
 }

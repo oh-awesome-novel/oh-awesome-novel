@@ -1,0 +1,29 @@
+events:
+  - id: event_001
+    chapter: '0001/0001'
+    title: 苏灵入学考试
+    description: 苏灵在银座学院入学测试中展现七级银纹，暗中隐藏黑纹。
+    tags:
+      - enrollment
+      - academy
+  - id: event_002
+    chapter: '0001/0002'
+    title: 初遇林夜
+    description: 苏灵在学院走廊迷路，误入剑术训练室，首次遇到林夜。
+    tags:
+      - encounter
+      - relationship
+  - id: event_003
+    chapter: '0001/0003'
+    title: 黑纹觉醒
+    description: 苏灵在宿舍中尝试突破魔法上限，黑纹首次觉醒，引发爆炸。
+    tags:
+      - black_mark
+      - awakening
+  - id: event_004
+    chapter: '0001/0003'
+    title: 林夜揭示龙眼
+    description: 林夜在苏灵黑纹觉醒事件中揭示自己也是特殊纹路持有者。
+    tags:
+      - dragon_eye
+      - secret

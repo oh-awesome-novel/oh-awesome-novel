@@ -7,6 +7,9 @@
       "ES2022",
       "DOM"
     ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "erasableSyntaxOnly": true,
     "isolatedModules": true,

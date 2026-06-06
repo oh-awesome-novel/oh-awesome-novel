@@ -1,0 +1,19 @@
+active:
+  - id: black_mark
+    firstChapter: '0001/0003'
+    description: 苏灵右臂出现黑色纹路，使用魔法时纹路发光并侵蚀身体。
+    expectedResolution: '0002'
+    relatedCharacters:
+      - heroine
+  - id: dragon_eye
+    firstChapter: '0001/0002'
+    description: 林夜的右眼深处有龙眼封印，在苏灵黑纹觉醒时有反应。
+    expectedResolution: '0003'
+    relatedCharacters:
+      - hero
+  - id: empire_black_mark_project
+    firstChapter: '0001/0003'
+    description: 帝国十年前启动了「黑纹计划」，可能与苏灵有关。
+    expectedResolution: '0002'
+    relatedCharacters:
+      - heroine

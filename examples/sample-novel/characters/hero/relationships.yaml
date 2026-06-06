@@ -1,0 +1,13 @@
+relationships:
+  heroine:
+    type: romantic_tension
+    status: unresolved
+    notes: 林夜不愿承认对她的在意，但每次危险时本能保护她。
+  master_chen:
+    type: mentorship
+    status: ended
+    notes: 前任剑术导师，在林夜15岁时因保护他而牺牲。
+  empire_council:
+    type: opposition
+    status: active
+    notes: 帝国议会对龙眼持有者有特殊监控政策。
