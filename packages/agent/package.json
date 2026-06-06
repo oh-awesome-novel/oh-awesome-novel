@@ -1,0 +1,26 @@
+{
+  "name": "@oh-awesome-novel/agent",
+  "version": "0.0.1",
+  "description": "Novel agent prompt assembly and LLM bridge for oh-awesome-novel.",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/core": "^0.0.1",
+    "@oh-awesome-novel/runtime": "^0.0.1",
+    "ai": "^6.0.197"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.2",
+    "typescript": "~6.0.2"
+  }
+}
