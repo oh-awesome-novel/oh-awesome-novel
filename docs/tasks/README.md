@@ -25,21 +25,38 @@
 
 ## Completed Tasks
 
-- [0001 Documentation Foundation](0001-documentation-foundation.md)
-- [0002 Desktop Build Foundation](0002-desktop-build-foundation.md)
-- [0003 Lightweight Runtime](0003-lightweight-runtime.md)
-- [0004 Runtime Test Workspace](0004-runtime-test-workspace.md)
-- [0005 Strict TypeScript Configs](0005-strict-typescript-configs.md)
+- [0001 Documentation Foundation](0001.md)
+- [0002 Desktop Build Foundation](0002.md)
+- [0003 Lightweight Runtime](0003.md)
+- [0004 Runtime Test Workspace](0004.md)
+- [0005 Strict TypeScript Configs](0005.md)
 
 ## Planned Tasks
 
-- [0100 Filesystem Example Novel](0100-filesystem-example-novel.md)
-- [0200 Markdown YAML Engine](0200-markdown-yaml-engine.md)
-- [0300 SemanticPatch Apply Engine](0300-semantic-patch-apply-engine.md)
-- [0400 Tool Registry And Read Tools](0400-tool-registry-read-tools.md)
-- [0500 Write Intent And Human Approval](0500-write-intent-human-approval.md)
-- [0600 Minimal Copilot Interface](0600-minimal-copilot-interface.md)
-- [0700 Summary Workflow Extensions Polish](0700-summary-workflow-extensions-polish.md)
+- [0100 Workspace Initialization And Novel Body Layout](0100.md)
+- [0200 Markdown YAML Engine](0200.md)
+- [0300 Tool Registry And Read Tools](0300.md)
+- [0350 Agent LLM Bridge And Message Assembly](0350.md)
+- [0400 Restricted File Write Tool](0400.md)
+- [0450 Agent Session Persistence](0450.md)
+- [0500 Minimal Copilot Interface](0500.md)
+- [0600 Write Intent And Human Approval](0600.md)
+- [0700 Summary Workflow Extensions Polish](0700.md)
+- [0800 SemanticPatch Apply Engine](0800.md)
+- [0900 Project References](0900.md)
+
+## Package Call Route
+
+```text
+packages/core
+  -> workspace initialization, workspace config, filesystem reads, LLM provider config
+packages/agent
+  -> novel prompt assembly, message assembly, LLM bridge, Runtime turn input assembly
+packages/runtime
+  -> model adapter call, tool loop, tool log, pending actions, no provider-specific logic
+packages/tools
+  -> concrete read/write tools registered into Runtime
+```
 
 ## Global Rules
 
@@ -48,5 +65,9 @@ Every task must preserve these constraints:
 - Do not introduce LangChain, AutoGen, CrewAI, Semantic Kernel, or a heavy agent framework.
 - Keep Runtime as an Aider-style loop, not a planner or multi-agent platform.
 - Keep project data filesystem-first: Markdown, YAML, Object File Tree, and Git.
-- Write tools must produce visible `PendingAction` / diff output before any file write.
+- Production write tools must produce visible `PendingAction` / diff output before any file write.
+- The early restricted file write tool is only for validating the full agent loop and must hard reject every path outside the active workspace.
+- File write tools must not accept hidden file or hidden directory targets inside the workspace.
+- Internal crash-recovery shadow writes may use `workspace/.workspace`, but callers must not be able to target that path directly.
 - Prefer SemanticPatch and Apply Engine over full-file rewrites.
+- Project references under `examples/` are implemented last and are not the primary novel workspace.
