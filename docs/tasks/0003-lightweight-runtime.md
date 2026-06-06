@@ -1,0 +1,39 @@
+# 0003 Lightweight Runtime
+
+> Status: Completed
+> Milestone: M7 Aider-style Copilot Runtime
+> Completed in: `b51449e feat(runtime): add lightweight copilot runtime`
+
+## Goal
+
+实现项目自己的轻量 Copilot Runtime，而不是把外部 Agent 框架当核心抽象。
+
+## Delivered
+
+- `@oh-awesome-novel/runtime`
+- `RuntimeSession`
+- `runTurn(input)` 非流式 turn。
+- `streamTurn(input)` 事件流接口。
+- `doneMessages / curMessages / toolLog / pendingActions` session state。
+- 默认 `maxToolLoops = 8`。
+- `RuntimeModelAdapter` 抽象，测试和上层可传 fake model 或真实 model provider。
+- `RuntimeToolRegistry` seam。
+- `RuntimeTool` 元数据：`id / readOnly / risk / description / execute`。
+- write intent tool 只返回 `PendingAction`，runtime 只收集，不 apply、不写盘、不 commit。
+- 可观察事件：tool call start/finish、assistant finish、pending action、recoverable error。
+
+## Done Criteria
+
+- Runtime 可以执行 no-tool turn。
+- Runtime 可以执行 read tool loop。
+- Runtime 可以收集 write intent tool 的 PendingAction。
+- 未注册 tool 返回 recoverable `TOOL_NOT_FOUND`。
+- tool throw 转成 recoverable result。
+- max loop guard 生效。
+
+## Non Goals
+
+- 不做 CLI。
+- 不真实调用 LLM。
+- 不直接写文件。
+- 不引入 Planner、Multi-Agent Runtime 或 hidden retry engine。

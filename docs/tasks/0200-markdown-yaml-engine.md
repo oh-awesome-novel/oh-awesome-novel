@@ -1,0 +1,43 @@
+# 0200 Markdown YAML Engine
+
+> Status: Planned
+> Milestone: M3 Markdown / YAML Engine
+
+## Goal
+
+实现文件读写基础能力，但写操作先返回 draft，不直接写盘。
+
+## Deliverables
+
+- Markdown loader。
+- Frontmatter parser。
+- Heading section parser。
+- Section/block serializer。
+- YAML loader。
+- YAML path get/set/delete/append draft API。
+- 基础 schema validation seam。
+
+## Initial API
+
+```ts
+loadMarkdown(file)
+parseSections(markdown)
+replaceSection(file, section, content)
+appendSection(file, section, content)
+loadYaml(file)
+yamlGet(file, path)
+yamlSetDraft(file, path, value)
+```
+
+## Done Criteria
+
+- 能解析 `characters/heroine/personality.md`。
+- 能定位并替换 Markdown section。
+- 能更新 `state/characters.yaml` 的某个 path draft。
+- 更新前不直接写盘。
+
+## Constraints
+
+- 不散落 raw `fs.writeFile`。
+- 不全文重写小说章节。
+- parser 行为要可测试、可解释。
