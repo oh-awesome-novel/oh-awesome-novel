@@ -1,14 +1,28 @@
 {
   "name": "@oh-awesome-novel/forge-plugin-tsdown",
   "version": "0.0.1",
-  "description": "",
+  "description": "Electron Forge plugin that builds main and preload targets with tsdown.",
   "license": "MIT",
   "author": "",
   "type": "module",
   "main": "dist/index.cjs",
+  "types": "dist/index.d.cts",
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
+    "prebuild": "tsc -p tsconfig.json",
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@electron-forge/cli": "^7.6.1",
+    "@electron-forge/plugin-base": "^7.11.2",
+    "tsdown": "^0.22.2"
   },
   "devDependencies": {
-    "tsdown": "^0.22.2"
+    "@electron-forge/shared-types": "^7.11.2",
+    "@types/node": "^24.12.3",
+    "typescript": "~6.0.2"
   }
 }

@@ -8,7 +8,6 @@ if (started) {
 }
 
 const createWindow = () => {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
@@ -17,17 +16,25 @@ const createWindow = () => {
     },
   });
 
-  // and load the index.html of the app.
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  const rendererDevServerUrl = process.env.OAN_DESKTOP_UI_DEV_SERVER_URL;
+
+  if (rendererDevServerUrl) {
+    mainWindow.loadURL(rendererDevServerUrl);
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
+    mainWindow.loadFile(getRendererIndexPath());
   }
 
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools();
+  }
+};
+
+const getRendererIndexPath = () => {
+  if (app.isPackaged) {
+    return path.join(__dirname, '../renderer/index.html');
+  }
+
+  return path.resolve(app.getAppPath(), '../desktop-ui/dist/index.html');
 };
 
 // This method will be called when Electron has finished
