@@ -1,0 +1,55 @@
+# 0350 Agent LLM Bridge And Message Assembly
+
+> Status: Planned
+> Milestone: Agent Prompt And Message Assembly
+
+## Goal
+
+在 `packages/agent` 中处理小说工程相关的 prompt/message 组装，并把 core 管理的 LLM provider 配置接入 Runtime。
+
+Runtime 继续保持模型无关；不管最终接入 OpenAI、DeepSeek、OpenAI-compatible provider，Runtime 都只接收 `RuntimeModelAdapter`。
+
+## Call Route
+
+```text
+packages/core
+  -> 读取 workspace 文件、配置、状态、workspace list
+  -> 管理 LLM provider config
+  -> 输出结构化 workspace snapshot 和 provider config
+
+packages/agent
+  -> 读取 core snapshot
+  -> 根据 core provider config 创建 RuntimeModelAdapter
+  -> 拼装 constitution / workflow / skill / request / selected context
+  -> 生成 Runtime messages 和 context items
+
+packages/runtime
+  -> 接收 messages / context / tools / model adapter
+  -> 执行 Aider-style tool loop
+```
+
+## Deliverables
+
+- `packages/agent` package。
+- AI SDK based RuntimeModelAdapter bridge。
+- Agent prompt assembly 类型。
+- Agent message assembly 类型。
+- `createAiSdkRuntimeModelAdapter(input)`。
+- `assembleNovelAgentMessages(input)`。
+- `createNovelAgentSystemPrompt(input)`。
+- `createRuntimeTurnInput(input)`。
+
+## Done Criteria
+
+- Agent package 不读取文件系统。
+- Agent package 不执行 tools。
+- Agent package 可以调用 LLM，但只能通过 RuntimeModelAdapter bridge。
+- LLM provider 配置由 `packages/core` 管理。
+- Runtime 不依赖 Agent package。
+
+## Constraints
+
+- 不把 agent package 做成 multi-agent framework。
+- 不在 prompt 组装层隐藏 planner。
+- 不把业务写入逻辑放进 prompt。
+- 不在 runtime 中引入具体 LLM provider。

@@ -1,0 +1,47 @@
+# 0900 Project References
+
+> Status: Planned
+> Milestone: Final Reference Material Layer
+
+## Goal
+
+最后实现项目参考功能。`examples/` 用来存放项目参考材料，而不是实际小说正文 workspace。
+
+参考材料包括原始源文件，以及从源文件提炼和蒸馏出来的结构化创作参考。
+
+## Storage Scope
+
+```text
+examples/
+├── sources/
+├── distilled/
+│   ├── outlines/
+│   ├── writing-style/
+│   ├── worldbuilding/
+│   ├── characters/
+│   └── tropes/
+└── README.md
+```
+
+## Deliverables
+
+- Reference source file import。
+- Reference metadata。
+- Distilled story outline。
+- Distilled writing style guide。
+- Distilled worldbuilding notes。
+- Distilled character notes。
+- Reference-to-workspace context selector。
+
+## Done Criteria
+
+- `examples/` 不再被当作实际小说 workspace。
+- AI 可以读取 reference summary，而不是默认读取原始大文件。
+- 参考材料不会自动覆盖 workspace 中的事实源。
+- 用户可以选择是否把 reference 加入当前 agent context。
+
+## Constraints
+
+- 最后实现，不阻塞核心 agent loop、workspace、session、写入和 Apply Engine。
+- 不使用 reference 作为隐藏事实源。
+- 不把 reference source 原文默认塞进 prompt。

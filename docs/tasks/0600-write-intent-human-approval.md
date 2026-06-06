@@ -1,0 +1,41 @@
+# 0600 Write Intent And Human Approval
+
+> Status: Planned
+> Milestone: M6 Write Intent Tools And Human Approval
+
+## Goal
+
+在快速验证 agent loop 后，把正式写操作收敛到 PendingAction，由人类通过 diff 明确确认。
+
+正式写操作可以先把候选文件内容写入 `workspace/.workspace` shadow 路径，用于崩溃恢复；用户 Accept 前不能 materialize 到真实目标路径。
+
+## Deliverables
+
+- `character.updatePersonality`
+- `state.set`
+- `timeline.add`
+- `foreshadow.create`
+- `summary.generateChapter` 初版
+- PendingAction list。
+- Diff preview。
+- Accept / Reject flow。
+- shadow write recovery。
+- Git diff integration。
+
+## Done Criteria
+
+- 所有写工具只返回 PendingAction。
+- PendingAction 可以引用 `workspace/.workspace` 中的 shadow write。
+- Accept 后写文件。
+- Reject 不写文件。
+- Reject 后清理或标记废弃 shadow write。
+- 写入后 `git diff` 可见。
+- 受限文件写入 tool 不再作为正式写入路径。
+
+## Constraints
+
+- Runtime 不直接写文件。
+- Tool 不直接 commit。
+- 不允许静默修改小说工程。
+- 正式写入工具不能接受任何隐藏文件或隐藏目录作为目标路径。
+- 只有 session 管理模块可以写 `workspace/.oan/sessions`。

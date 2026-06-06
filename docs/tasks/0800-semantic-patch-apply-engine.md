@@ -1,0 +1,43 @@
+# 0800 SemanticPatch Apply Engine
+
+> Status: Planned
+> Milestone: Final Write Engine
+
+## Goal
+
+在完整 agent loop、workspace 初始化、tool registry、受限写入验证、人类确认流程都跑通后，最后实现 `SemanticPatch -> diff -> PendingAction`。
+
+目标是把早期简单文件写入替换为可审阅、可验证、适合长篇小说局部编辑的正式写入引擎。
+
+Apply Engine 可以先把 patch 后的候选内容写入 `workspace/.workspace` shadow 路径，再生成 diff 和 PendingAction。Accept 前不得覆盖真实文件。
+
+## Deliverables
+
+- SemanticPatch 类型。
+- ObjectPatch executor。
+- CollectionPatch executor。
+- NarrativePatch 初版。
+- Diff generator。
+- Patch validator。
+- PendingAction store。
+- shadow write manager。
+- 迁移路径：正式写工具不再直接写文件，而是输出 SemanticPatch / PendingAction。
+
+## Done Criteria
+
+- `state.set` 能生成 YAML diff。
+- `character.updatePersonality` 能生成 Markdown section diff。
+- NarrativePatch 能按 scene 或 chunk 修改章节。
+- 用户确认前不写盘。
+- 用户确认前只允许写入 `workspace/.workspace` shadow recovery 数据。
+- PendingAction 可被 UI 或 CLI 展示。
+- 崩溃后可以从 shadow write 恢复未处理 PendingAction。
+
+## Constraints
+
+- 不做通用 patch 引擎。
+- 优先覆盖小说固定领域。
+- 不绕过 Human Approval。
+- 不阻塞早期 agent loop 验证。
+- 不允许 patch 目标指向任何隐藏文件或隐藏目录。
+- 不允许用户 patch `.oan` 或 `.workspace`。

@@ -1,0 +1,45 @@
+# 0450 Agent Session Persistence
+
+> Status: Planned
+> Milestone: Agent Session Management
+
+## Goal
+
+实现 agent session 管理，把 session metadata、messages、tool log 和恢复信息落盘到 workspace 的 `.oan/` 目录下。
+
+## Storage Location
+
+```text
+workspace/
+└── .oan/
+    └── sessions/
+        └── <session-id>/
+            ├── session.yaml
+            ├── messages.jsonl
+            ├── tool-log.jsonl
+            └── recovery.yaml
+```
+
+## Deliverables
+
+- session id 生成。
+- session metadata store。
+- append-only messages persistence。
+- append-only tool log persistence。
+- pending shadow write references。
+- recover interrupted session API。
+
+## Done Criteria
+
+- 每个 agent turn 的 user / assistant / tool messages 都能落盘。
+- tool call start/finish 可落盘。
+- 崩溃后可以读取最近 session。
+- 崩溃后可以找到关联的 `workspace/.workspace` shadow write。
+- session 数据只写入 `workspace/.oan/sessions`。
+
+## Constraints
+
+- session persistence 不是小说事实源。
+- session persistence 不替代 Markdown/YAML/Object File Tree。
+- session persistence 不允许写入 workspace 外部。
+- 普通文件写入 tool 不能写 `.oan`；只有 session 管理模块可以写 `.oan/sessions`。
