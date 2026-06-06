@@ -6,12 +6,19 @@
   "author": "",
   "type": "module",
   "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
   "scripts": {
+    "build": "tsdown",
+    "test": "npm run test:run --workspace @oh-awesome-novel/test-tools",
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-tools"
   },
   "devDependencies": {
-    "tsdown": "^0.22.2"
+    "@types/node": "^24.13.1",
+    "tsdown": "^0.22.2",
+    "typescript": "~6.0.2"
   },
   "dependencies": {
-    "ai": "^6.0.197"
+    "ai": "^6.0.197",
+    "yaml": "^2.4.2"
   }
 }

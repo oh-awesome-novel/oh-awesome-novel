@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  InMemoryRuntimeToolRegistry,
   PriorityRuntimeContextBuilder,
   createRuntime,
 } from '@oh-awesome-novel/runtime';
 
-import { createFakeModel, createTool } from './helpers';
+import { createFakeModel, createStreamingFakeModel, createTool } from './helpers';
 
 describe('RuntimeSession', () => {
   it('completes a turn without tool calls', async () => {
@@ -21,7 +20,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry(),
+      tools: {},
     });
 
     const result = await runtime.runTurn({ message: 'Hello' });
@@ -37,7 +36,7 @@ describe('RuntimeSession', () => {
       ok: true as const,
       content: { name: 'heroine' },
     }));
-    const tool = createTool('character.get', execute);
+    const tools = createTool('character.get', execute);
     const model = createFakeModel([
       {
         toolCalls: [
@@ -58,7 +57,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry([tool]),
+      tools,
     });
 
     const result = await runtime.runTurn({ message: 'Read heroine' });
@@ -92,9 +91,8 @@ describe('RuntimeSession', () => {
       createdAt: '2026-06-06T00:00:00.000Z',
       status: 'pending' as const,
     };
-    const tool = createTool('state.set', async () => ({
-      ok: true,
-      content: { actionId: pendingAction.id },
+    const tools = createTool('state.set', async () => ({
+      actionId: pendingAction.id,
       pendingActions: [pendingAction],
     }));
     const model = createFakeModel([
@@ -117,7 +115,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry([tool]),
+      tools,
     });
 
     const result = await runtime.runTurn({ message: 'Mark heroine injured' });
@@ -149,7 +147,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry(),
+      tools: {},
     });
 
     const result = await runtime.runTurn({ message: 'Use missing tool' });
@@ -165,7 +163,7 @@ describe('RuntimeSession', () => {
   });
 
   it('turns tool exceptions into recoverable errors', async () => {
-    const tool = createTool('chapter.get', async () => {
+    const tools = createTool('chapter.get', async () => {
       throw new Error('Chapter not found');
     });
     const model = createFakeModel([
@@ -188,7 +186,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry([tool]),
+      tools,
     });
 
     const result = await runtime.runTurn({ message: 'Read missing chapter' });
@@ -206,10 +204,7 @@ describe('RuntimeSession', () => {
   });
 
   it('stops when max tool loops is reached', async () => {
-    const tool = createTool('state.get', async () => ({
-      ok: true,
-      content: { value: 'loop' },
-    }));
+    const tools = createTool('state.get', async () => ({ value: 'loop' }));
     const model = createFakeModel([
       {
         toolCalls: [{ id: 'call_1', name: 'state.get', args: {} }],
@@ -221,7 +216,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry([tool]),
+      tools,
       maxToolLoops: 2,
     });
 
@@ -243,9 +238,7 @@ describe('RuntimeSession', () => {
       createdAt: '2026-06-06T00:00:00.000Z',
       status: 'pending' as const,
     };
-    const tool = createTool('state.set', async () => ({
-      ok: true,
-      content: {},
+    const tools = createTool('state.set', async () => ({
       pendingActions: [pendingAction],
     }));
     const model = createFakeModel([
@@ -259,7 +252,7 @@ describe('RuntimeSession', () => {
 
     const runtime = createRuntime({
       model,
-      tools: new InMemoryRuntimeToolRegistry([tool]),
+      tools,
       onEvent: (event) => {
         events.push(event.type);
       },
@@ -275,32 +268,70 @@ describe('RuntimeSession', () => {
       'message_finish',
     ]);
   });
-});
 
-describe('InMemoryRuntimeToolRegistry', () => {
-  it('registers, resolves, lists, and filters tools by skill', () => {
-    const characterTool = createTool('character.get', async () => ({
-      ok: true,
-      content: {},
-    }));
-    const stateTool = createTool('state.set', async () => ({
-      ok: true,
-      content: {},
-    }));
+  it('streams assistant message deltas before finish', async () => {
+    const model = createStreamingFakeModel([
+      { type: 'text_delta', text: 'Hel' },
+      { type: 'text_delta', text: 'lo' },
+      {
+        type: 'finish',
+        response: {
+          message: {
+            role: 'assistant',
+            content: 'Hello',
+          },
+        },
+      },
+    ]);
+    const runtime = createRuntime({
+      model,
+      tools: {},
+    });
 
-    const registry = new InMemoryRuntimeToolRegistry([characterTool]);
-    registry.register(stateTool);
+    const events = [];
+    for await (const event of runtime.streamTurn({ message: 'Hi' })) {
+      events.push(event);
+    }
 
-    expect(registry.get('character.get')).toBe(characterTool);
-    expect(registry.list().map((tool) => tool.id)).toEqual([
-      'character.get',
-      'state.set',
+    expect(events.map((event) => event.type)).toEqual([
+      'message_start',
+      'message_delta',
+      'message_delta',
+      'message_finish',
     ]);
     expect(
-      registry
-        .listForSkill({ name: 'read', allowedTools: ['character.get'] })
-        .map((tool) => tool.id),
-    ).toEqual(['character.get']);
+      events
+        .filter((event) => event.type === 'message_delta')
+        .map((event) => event.text)
+        .join(''),
+    ).toBe('Hello');
+  });
+});
+
+describe('AI SDK ToolSet filtering', () => {
+  it('filters active tools by skill allowedTools', async () => {
+    const model = createFakeModel([
+      {
+        message: {
+          role: 'assistant',
+          content: 'Done.',
+        },
+      },
+    ]);
+    const runtime = createRuntime({
+      model,
+      tools: {
+        ...createTool('character.get', async () => ({})),
+        ...createTool('state.set', async () => ({})),
+      },
+    });
+
+    await runtime.runTurn({
+      message: 'Read only',
+      skill: { name: 'read', allowedTools: ['character.get'] },
+    });
+
+    expect(Object.keys(model.requests[0].tools)).toEqual(['character.get']);
   });
 });
 

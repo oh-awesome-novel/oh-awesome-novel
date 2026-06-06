@@ -5,7 +5,6 @@ export {
   createCopilotRuntime,
   createRuntime,
 } from './runtime';
-export { InMemoryRuntimeToolRegistry } from './tool-registry';
 export type {
   CopilotRuntimeOptions,
   PendingAction,
@@ -19,14 +18,12 @@ export type {
   RuntimeModelAdapter,
   RuntimeModelRequest,
   RuntimeModelResponse,
+  RuntimeModelStreamEvent,
   RuntimeRole,
   RuntimeSessionState,
   RuntimeSkill,
-  RuntimeTool,
   RuntimeToolCall,
-  RuntimeToolExecuteContext,
   RuntimeToolLogEntry,
-  RuntimeToolRegistry,
   RuntimeToolResult,
   RuntimeStopReason,
   RunTurnInput,

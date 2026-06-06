@@ -1,0 +1,19 @@
+{
+  "name": "@oh-awesome-novel/test-tools",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "pretest": "npm run build --workspace @oh-awesome-novel/tools",
+    "test": "vitest",
+    "pretest:run": "npm run build --workspace @oh-awesome-novel/tools",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/tools": "^0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.8"
+  }
+}

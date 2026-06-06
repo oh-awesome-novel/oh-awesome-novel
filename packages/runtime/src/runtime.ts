@@ -1,4 +1,5 @@
 import { PriorityRuntimeContextBuilder } from './context-builder';
+import type { ToolSet } from 'ai';
 
 import type {
   CopilotRuntimeOptions,
@@ -8,9 +9,9 @@ import type {
   RuntimeError,
   RuntimeEvent,
   RuntimeMessage,
+  RuntimeModelAdapter,
   RuntimeModelResponse,
   RuntimeSessionState,
-  RuntimeTool,
   RuntimeToolCall,
   RuntimeToolLogEntry,
   RuntimeToolResult,
@@ -76,14 +77,15 @@ export class RuntimeSession {
         return this.finish('aborted', assistantMessage);
       }
 
-      const response = await this.options.model.generate({
+      const tools = this.listActiveTools(input);
+      const response = await this.generateModelResponse({
         messages: this.contextBuilder.build({
           doneMessages: this.state.doneMessages,
           curMessages: this.state.curMessages,
           context: input.context,
           skill: input.skill,
         }),
-        tools: this.listActiveTools(input),
+        tools,
         abortSignal: input.abortSignal,
       });
 
@@ -96,33 +98,66 @@ export class RuntimeSession {
         return this.finish('completed', assistantMessage);
       }
 
-      await this.executeToolCalls(response);
+      await this.executeToolCalls(response, tools);
     }
 
     return this.finish('max_tool_loops', assistantMessage);
   }
 
   async *streamTurn(input: RunTurnInput): AsyncIterable<RuntimeEvent> {
+    const queue = new RuntimeEventQueue();
     this.streamEvents = [];
+    this.liveStreamQueue = queue;
+
+    const run = this.runTurn(input)
+      .then(() => queue.close())
+      .catch((error: unknown) => queue.fail(error));
 
     try {
-      await this.runTurn(input);
-
-      for (const event of this.streamEvents) {
+      for await (const event of queue) {
         yield event;
       }
+
+      await run;
     } finally {
       this.streamEvents = undefined;
+      this.liveStreamQueue = undefined;
     }
+  }
+
+  private liveStreamQueue?: RuntimeEventQueue;
+
+  private async generateModelResponse(
+    request: Parameters<RuntimeModelAdapter['generate']>[0],
+  ): Promise<RuntimeModelResponse> {
+    if (!this.options.model.stream) {
+      return this.options.model.generate(request);
+    }
+
+    let response: RuntimeModelResponse | undefined;
+
+    for await (const event of this.options.model.stream(request)) {
+      if (event.type === 'text_delta') {
+        await this.emit({
+          type: 'message_delta',
+          text: event.text,
+        });
+      } else {
+        response = event.response;
+      }
+    }
+
+    return response ?? {};
   }
 
   private async executeToolCalls(
     response: RuntimeModelResponse,
+    tools: ToolSet,
   ): Promise<void> {
     for (const toolCall of response.toolCalls ?? []) {
       await this.emit({ type: 'tool_call_start', toolCall });
 
-      const tool = this.options.tools.get(toolCall.name);
+      const tool = tools[toolCall.name];
       const result = tool
         ? await this.executeTool(tool, toolCall)
         : this.unknownToolResult(toolCall);
@@ -154,11 +189,33 @@ export class RuntimeSession {
   }
 
   private async executeTool(
-    tool: RuntimeTool,
+    tool: ToolSet[string],
     toolCall: RuntimeToolCall,
   ): Promise<RuntimeToolResult> {
     try {
-      return await tool.execute(toolCall.args, { toolCall });
+      const executable = tool as {
+        execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
+      };
+
+      if (!executable.execute) {
+        return {
+          ok: false,
+          error: {
+            code: 'TOOL_NOT_EXECUTABLE',
+            message: `Tool ${toolCall.name} does not define execute().`,
+            recoverable: true,
+          },
+        };
+      }
+
+      const content = await executable.execute(toolCall.args, { toolCall });
+      const pendingActions = extractPendingActions(content);
+
+      return {
+        ok: true,
+        content,
+        ...(pendingActions.length ? { pendingActions } : {}),
+      };
     } catch (error) {
       return {
         ok: false,
@@ -178,8 +235,18 @@ export class RuntimeSession {
     };
   }
 
-  private listActiveTools(input: RunTurnInput): RuntimeTool[] {
-    return this.options.tools.listForSkill?.(input.skill) ?? this.options.tools.list();
+  private listActiveTools(input: Pick<RunTurnInput, 'skill'>): ToolSet {
+    const tools = this.options.tools ?? {};
+
+    if (!input.skill?.allowedTools?.length) {
+      return tools;
+    }
+
+    const allowed = new Set(input.skill.allowedTools);
+
+    return Object.fromEntries(
+      Object.entries(tools).filter(([toolName]) => allowed.has(toolName)),
+    );
   }
 
   private async finish(
@@ -213,6 +280,7 @@ export class RuntimeSession {
 
   private async emit(event: RuntimeEvent): Promise<void> {
     this.streamEvents?.push(event);
+    this.liveStreamQueue?.push(event);
 
     if (event.type === 'error') {
       await this.options.onEvent?.(event);
@@ -221,6 +289,79 @@ export class RuntimeSession {
 
     await this.options.onEvent?.(event);
   }
+}
+
+class RuntimeEventQueue implements AsyncIterable<RuntimeEvent> {
+  private readonly events: RuntimeEvent[] = [];
+  private readonly waiters: Array<{
+    resolve(value: IteratorResult<RuntimeEvent>): void;
+    reject(error: unknown): void;
+  }> = [];
+  private closed = false;
+  private error: unknown;
+
+  push(event: RuntimeEvent): void {
+    const waiter = this.waiters.shift();
+
+    if (waiter) {
+      waiter.resolve({ value: event, done: false });
+      return;
+    }
+
+    this.events.push(event);
+  }
+
+  close(): void {
+    this.closed = true;
+
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.resolve({ value: undefined, done: true });
+    }
+  }
+
+  fail(error: unknown): void {
+    this.error = error;
+
+    for (const waiter of this.waiters.splice(0)) {
+      waiter.reject(error);
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<RuntimeEvent> {
+    return {
+      next: () => {
+        const event = this.events.shift();
+
+        if (event) {
+          return Promise.resolve({ value: event, done: false });
+        }
+
+        if (this.error) {
+          return Promise.reject(this.error);
+        }
+
+        if (this.closed) {
+          return Promise.resolve({ value: undefined, done: true });
+        }
+
+        return new Promise<IteratorResult<RuntimeEvent>>((resolve, reject) => {
+          this.waiters.push({ resolve, reject });
+        });
+      },
+    };
+  }
+}
+
+function extractPendingActions(content: unknown): PendingAction[] {
+  if (
+    typeof content === 'object' &&
+    content !== null &&
+    Array.isArray((content as { pendingActions?: unknown }).pendingActions)
+  ) {
+    return (content as { pendingActions: PendingAction[] }).pendingActions;
+  }
+
+  return [];
 }
 
 export class CopilotRuntime extends RuntimeSession {}

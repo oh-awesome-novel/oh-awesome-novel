@@ -1,3 +1,5 @@
+import type { ToolSet } from 'ai';
+
 export type RuntimeRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface RuntimeMessage {
@@ -46,31 +48,9 @@ export type RuntimeToolResult =
       pendingActions?: PendingAction[];
     };
 
-export interface RuntimeToolExecuteContext {
-  toolCall: RuntimeToolCall;
-}
-
-export interface RuntimeTool {
-  id: string;
-  description: string;
-  readOnly: boolean;
-  risk: 'low' | 'medium' | 'high';
-  allowedInSkills?: string[];
-  execute(
-    args: unknown,
-    context: RuntimeToolExecuteContext,
-  ): Promise<RuntimeToolResult>;
-}
-
-export interface RuntimeToolRegistry {
-  get(id: string): RuntimeTool | undefined;
-  list(): RuntimeTool[];
-  listForSkill?(skill: RuntimeSkill | undefined): RuntimeTool[];
-}
-
 export interface RuntimeModelRequest {
   messages: RuntimeMessage[];
-  tools: RuntimeTool[];
+  tools: ToolSet;
   abortSignal?: AbortSignal;
 }
 
@@ -79,8 +59,19 @@ export interface RuntimeModelResponse {
   toolCalls?: RuntimeToolCall[];
 }
 
+export type RuntimeModelStreamEvent =
+  | {
+      type: 'text_delta';
+      text: string;
+    }
+  | {
+      type: 'finish';
+      response: RuntimeModelResponse;
+    };
+
 export interface RuntimeModelAdapter {
   generate(request: RuntimeModelRequest): Promise<RuntimeModelResponse>;
+  stream?(request: RuntimeModelRequest): AsyncIterable<RuntimeModelStreamEvent>;
 }
 
 export interface RuntimeToolLogEntry {
@@ -134,6 +125,7 @@ export type RuntimeStopReason =
 
 export type RuntimeEvent =
   | { type: 'message_start'; messages: RuntimeMessage[] }
+  | { type: 'message_delta'; text: string }
   | { type: 'tool_call_start'; toolCall: RuntimeToolCall }
   | {
       type: 'tool_call_finish';
@@ -146,7 +138,7 @@ export type RuntimeEvent =
 
 export interface CopilotRuntimeOptions {
   model: RuntimeModelAdapter;
-  tools: RuntimeToolRegistry;
+  tools?: ToolSet;
   contextBuilder?: RuntimeContextBuilder;
   maxToolLoops?: number;
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
