@@ -20,6 +20,7 @@ const defaultMaxToolLoops = 8;
 
 export class RuntimeSession {
   private readonly contextBuilder;
+  private readonly options: CopilotRuntimeOptions;
   private streamEvents?: RuntimeEvent[];
   private readonly state: RuntimeSessionState = {
     doneMessages: [],
@@ -28,7 +29,8 @@ export class RuntimeSession {
     pendingActions: [],
   };
 
-  constructor(private readonly options: CopilotRuntimeOptions) {
+  constructor(options: CopilotRuntimeOptions) {
+    this.options = options;
     this.contextBuilder =
       options.contextBuilder ?? new PriorityRuntimeContextBuilder();
   }

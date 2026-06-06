@@ -7,28 +7,23 @@
       "ES2022",
       "DOM"
     ],
-    "types": [
-      "node",
-      "electron"
-    ],
     "strict": true,
     "erasableSyntaxOnly": true,
     "isolatedModules": true,
-    "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
     "sourceMap": true
   },
   "include": [
     "src/**/*.ts",
-    "forge.env.d.ts"
+    "tsdown.config.ts"
   ],
   "exclude": [
     "node_modules",
-    ".vite",
-    "out",
     "dist"
   ]
 }
