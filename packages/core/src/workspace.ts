@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
 // ---------------------------------------------------------------------------
@@ -9,6 +9,10 @@ import { homedir } from 'node:os';
 export interface WorkspaceInitOptions {
   /** Override the default global OAN config directory (`~/.oan/`). */
   globalConfigDir?: string;
+  /** Persist the initialized workspace to the user's workspace list. */
+  saveToWorkspaceList?: boolean;
+  /** Human-readable name used when saving to the workspace list. */
+  workspaceName?: string;
 }
 
 export interface WorkspaceConfig {
@@ -25,6 +29,13 @@ export interface WorkspaceEntry {
 
 export interface WorkspaceList {
   workspaces: WorkspaceEntry[];
+}
+
+export interface ChapterPathParts {
+  volumeDir: string;
+  chapterFile: string;
+  relativePath: string;
+  absolutePath: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,9 +109,13 @@ export async function loadWorkspaceList(
   const filePath = workspaceListPath(globalConfigDir);
   try {
     const raw = await readFile(filePath, 'utf-8');
-    return JSON.parse(raw) as WorkspaceList;
-  } catch {
-    return { workspaces: [] };
+    const parsed = JSON.parse(raw) as unknown;
+    return assertWorkspaceList(parsed, filePath);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { workspaces: [] };
+    }
+    throw err;
   }
 }
 
@@ -113,9 +128,32 @@ export async function saveWorkspaceList(
   globalConfigDir: string,
   workspaces: WorkspaceList,
 ): Promise<void> {
+  assertWorkspaceList(workspaces, 'workspace list');
   await mkdir(globalConfigDir, { recursive: true });
   const filePath = workspaceListPath(globalConfigDir);
   await writeFile(filePath, JSON.stringify(workspaces, null, 2), 'utf-8');
+}
+
+function assertWorkspaceList(value: unknown, source: string): WorkspaceList {
+  if (!isRecord(value) || !Array.isArray(value.workspaces)) {
+    throw new Error(`Invalid workspace list: ${source}`);
+  }
+
+  for (const workspace of value.workspaces) {
+    if (
+      !isRecord(workspace) ||
+      typeof workspace.name !== 'string' ||
+      typeof workspace.path !== 'string'
+    ) {
+      throw new Error(`Invalid workspace entry in: ${source}`);
+    }
+  }
+
+  return { workspaces: value.workspaces };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +174,47 @@ const WORKSPACE_SUBDIRS = [
 
 /** Directories created inside `.oan/`. */
 const OAN_SUBDIRS = ['constitution', 'prompts', 'skills', 'extensions'] as const;
+
+const NOVEL_BODY_NUMBER_WIDTH = 4;
+
+export function formatVolumeDirectoryName(volumeNumber: number): string {
+  return formatPositiveOrdinal(volumeNumber, 'volumeNumber');
+}
+
+export function formatChapterFileName(chapterNumber: number): string {
+  return `${formatNonNegativeOrdinal(chapterNumber, 'chapterNumber')}.md`;
+}
+
+export function resolveChapterFilePath(
+  rootDir: string,
+  volumeNumber: number,
+  chapterNumber: number,
+): ChapterPathParts {
+  const volumeDir = formatVolumeDirectoryName(volumeNumber);
+  const chapterFile = formatChapterFileName(chapterNumber);
+  const relativePath = join('chapters', volumeDir, chapterFile);
+
+  return {
+    volumeDir,
+    chapterFile,
+    relativePath,
+    absolutePath: join(resolve(rootDir), relativePath),
+  };
+}
+
+function formatPositiveOrdinal(value: number, fieldName: string): string {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${fieldName} must be a positive integer.`);
+  }
+  return value.toString().padStart(NOVEL_BODY_NUMBER_WIDTH, '0');
+}
+
+function formatNonNegativeOrdinal(value: number, fieldName: string): string {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer.`);
+  }
+  return value.toString().padStart(NOVEL_BODY_NUMBER_WIDTH, '0');
+}
 
 /**
  * Initialise a new novel workspace in `targetDir`.
@@ -159,7 +238,7 @@ export async function initWorkspace(
     );
   }
 
-  const rootDir = targetDir;
+  const rootDir = resolve(targetDir);
 
   // --- Content directories -----------------------------------------------
   for (const dir of WORKSPACE_SUBDIRS) {
@@ -193,6 +272,18 @@ steps:
 version: 1
 `;
   await writeFile(join(oanDir, 'config.yaml'), defaultConfig, 'utf-8');
+
+  if (options?.saveToWorkspaceList) {
+    const globalConfigDir = resolveGlobalOanConfigDir(options);
+    const list = await loadWorkspaceList(globalConfigDir);
+    const workspaceName = options.workspaceName ?? basename(rootDir);
+    const workspaces = [
+      ...list.workspaces.filter((workspace) => workspace.path !== rootDir),
+      { name: workspaceName, path: rootDir },
+    ];
+
+    await saveWorkspaceList(globalConfigDir, { workspaces });
+  }
 
   return { rootDir };
 }

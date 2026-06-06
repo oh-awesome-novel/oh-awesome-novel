@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import {
@@ -8,7 +8,10 @@ import {
   resolveGlobalOanConfigDir,
   loadWorkspaceList,
   saveWorkspaceList,
-} from '../workspace.js';
+  formatVolumeDirectoryName,
+  formatChapterFileName,
+  resolveChapterFilePath,
+} from '@oh-awesome-novel/core';
 
 describe('isEmptyDirectory', () => {
   let tempDir: string;
@@ -72,9 +75,8 @@ describe('initWorkspace', () => {
 
     const config = await initWorkspace(tempDir);
 
-    expect(config.rootDir).toBe(tempDir);
+    expect(config.rootDir).toBe(resolve(tempDir));
 
-    // Content directories
     const contentDirs = [
       'chapters',
       'characters',
@@ -89,13 +91,11 @@ describe('initWorkspace', () => {
       await expect(stat(join(tempDir, dir))).resolves.toBeDefined();
     }
 
-    // .oan subdirectories
     const oanDirs = ['constitution', 'prompts', 'skills', 'extensions'];
     for (const dir of oanDirs) {
       await expect(stat(join(tempDir, '.oan', dir))).resolves.toBeDefined();
     }
 
-    // workflow.yaml exists and has content
     const workflowContent = await readFile(
       join(tempDir, '.oan', 'workflow.yaml'),
       'utf-8',
@@ -103,7 +103,6 @@ describe('initWorkspace', () => {
     expect(workflowContent).toContain('name: lightnovel');
     expect(workflowContent).toContain('steps:');
 
-    // config.yaml exists
     const configContent = await readFile(
       join(tempDir, '.oan', 'config.yaml'),
       'utf-8',
@@ -127,6 +126,25 @@ describe('initWorkspace', () => {
     await expect(initWorkspace(tempDir)).rejects.toThrow(
       'directory is not empty',
     );
+  });
+
+  it('can save the initialized workspace to the global workspace list', async () => {
+    const globalConfigDir = await mkdtemp(join(tmpdir(), 'oan-global-'));
+
+    try {
+      const config = await initWorkspace(tempDir, {
+        globalConfigDir,
+        saveToWorkspaceList: true,
+        workspaceName: 'Draft Novel',
+      });
+
+      const list = await loadWorkspaceList(globalConfigDir);
+      expect(list.workspaces).toEqual([
+        { name: 'Draft Novel', path: config.rootDir },
+      ]);
+    } finally {
+      await rm(globalConfigDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -180,5 +198,50 @@ describe('Workspace list', () => {
 
     const loaded = await loadWorkspaceList(newDir);
     expect(loaded.workspaces).toEqual([]);
+  });
+
+  it('throws for invalid workspace list JSON', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(join(tempDir, 'workspace-list.json'), '{', 'utf-8');
+
+    await expect(loadWorkspaceList(tempDir)).rejects.toThrow();
+  });
+
+  it('throws for an invalid workspace list shape', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      join(tempDir, 'workspace-list.json'),
+      JSON.stringify({ workspaces: [{ name: 'Missing path' }] }),
+      'utf-8',
+    );
+
+    await expect(loadWorkspaceList(tempDir)).rejects.toThrow(
+      'Invalid workspace entry',
+    );
+  });
+});
+
+describe('novel body paths', () => {
+  it('formats stable volume and chapter names', () => {
+    expect(formatVolumeDirectoryName(1)).toBe('0001');
+    expect(formatChapterFileName(0)).toBe('0000.md');
+    expect(formatChapterFileName(12)).toBe('0012.md');
+  });
+
+  it('resolves stable chapter paths under chapters/', () => {
+    const parts = resolveChapterFilePath('/novel', 2, 1);
+
+    expect(parts).toEqual({
+      volumeDir: '0002',
+      chapterFile: '0001.md',
+      relativePath: join('chapters', '0002', '0001.md'),
+      absolutePath: join(resolve('/novel'), 'chapters', '0002', '0001.md'),
+    });
+  });
+
+  it('rejects invalid volume and chapter numbers', () => {
+    expect(() => formatVolumeDirectoryName(0)).toThrow('positive integer');
+    expect(() => formatChapterFileName(-1)).toThrow('non-negative integer');
+    expect(() => formatChapterFileName(1.5)).toThrow('non-negative integer');
   });
 });

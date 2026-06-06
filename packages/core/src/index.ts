@@ -5,6 +5,9 @@ export {
   resolveGlobalOanConfigDir,
   loadWorkspaceList,
   saveWorkspaceList,
+  formatVolumeDirectoryName,
+  formatChapterFileName,
+  resolveChapterFilePath,
 } from './workspace.js';
 
 export type {
@@ -12,6 +15,7 @@ export type {
   WorkspaceConfig,
   WorkspaceEntry,
   WorkspaceList,
+  ChapterPathParts,
 } from './workspace.js';
 
 // LLM Provider Configuration

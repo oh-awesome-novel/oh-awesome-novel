@@ -44,17 +44,20 @@ export const upsertLlmProviderConfig = (
   state: LlmProviderConfigState,
   provider: LlmProviderConfig,
 ): LlmProviderConfigState => {
-  const providers = state.providers.filter(
-    (item) => item.id !== provider.id,
+  const existingIndex = state.providers.findIndex(
+    (item) => item.id === provider.id,
   );
-  const nextProviders = [...providers, provider];
+  const nextProviders =
+    existingIndex === -1
+      ? [...state.providers, provider]
+      : state.providers.map((item, index) =>
+          index === existingIndex ? provider : item,
+        );
+  const defaultProviderId = provider.default
+    ? provider.id
+    : state.defaultProviderId ?? provider.id;
 
-  return {
-    providers: nextProviders,
-    defaultProviderId: provider.default
-      ? provider.id
-      : state.defaultProviderId ?? provider.id,
-  };
+  return withDefaultFlags(nextProviders, defaultProviderId);
 };
 
 export const removeLlmProviderConfig = (
@@ -69,10 +72,7 @@ export const removeLlmProviderConfig = (
       ? providers[0]?.id
       : state.defaultProviderId;
 
-  return {
-    providers,
-    defaultProviderId,
-  };
+  return withDefaultFlags(providers, defaultProviderId);
 };
 
 export const getLlmProviderConfig = (
@@ -100,10 +100,28 @@ export const setDefaultLlmProviderConfig = (
   }
 
   return {
-    ...state,
-    defaultProviderId: providerId,
+    ...withDefaultFlags(state.providers, providerId),
   };
 };
+
+function withDefaultFlags(
+  providers: LlmProviderConfig[],
+  defaultProviderId: string | undefined,
+): LlmProviderConfigState {
+  const validDefaultProviderId = providers.some(
+    (provider) => provider.id === defaultProviderId,
+  )
+    ? defaultProviderId
+    : providers[0]?.id;
+
+  return {
+    providers: providers.map((provider) => ({
+      ...provider,
+      default: provider.id === validDefaultProviderId,
+    })),
+    defaultProviderId: validDefaultProviderId,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Redaction

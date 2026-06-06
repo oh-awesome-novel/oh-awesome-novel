@@ -13,8 +13,8 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "npm run test:run --workspace @oh-awesome-novel/test-core",
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-core"
   },
   "devDependencies": {
     "@types/node": "^24.13.0",

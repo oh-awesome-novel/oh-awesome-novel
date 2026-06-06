@@ -7,11 +7,11 @@ import {
   getDefaultLlmProviderConfig,
   setDefaultLlmProviderConfig,
   redactLlmProviderConfig,
-} from '../llm-provider.js';
+} from '@oh-awesome-novel/core';
 import type {
   LlmProviderConfig,
   LlmProviderConfigState,
-} from '../llm-provider.js';
+} from '@oh-awesome-novel/core';
 
 describe('createEmptyLlmProviderConfigState', () => {
   it('returns an empty state', () => {
@@ -54,6 +54,10 @@ describe('upsertLlmProviderConfig', () => {
 
     expect(s2.providers).toHaveLength(2);
     expect(s2.defaultProviderId).toBe('openai-gpt4');
+    expect(s2.providers.map((provider) => provider.default)).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it('updates an existing provider by id', () => {
@@ -79,6 +83,25 @@ describe('upsertLlmProviderConfig', () => {
     });
 
     expect(s2.defaultProviderId).toBe('deepseek-chat');
+    expect(s2.providers).toMatchObject([
+      { id: 'openai-gpt4', default: false },
+      { id: 'deepseek-chat', default: true },
+    ]);
+  });
+
+  it('preserves provider order when updating an existing provider', () => {
+    const state = createEmptyLlmProviderConfigState();
+    const s1 = upsertLlmProviderConfig(state, openaiProvider);
+    const s2 = upsertLlmProviderConfig(s1, deepseekProvider);
+    const s3 = upsertLlmProviderConfig(s2, {
+      ...openaiProvider,
+      model: 'gpt-4.1',
+    });
+
+    expect(s3.providers.map((provider) => provider.id)).toEqual([
+      'openai-gpt4',
+      'deepseek-chat',
+    ]);
   });
 });
 
@@ -119,6 +142,7 @@ describe('removeLlmProviderConfig', () => {
 
     const s3 = removeLlmProviderConfig(s2, 'p1');
     expect(s3.defaultProviderId).toBe('p2');
+    expect(s3.providers[0].default).toBe(true);
   });
 
   it('handles removing the only provider', () => {
@@ -143,7 +167,10 @@ describe('getLlmProviderConfig', () => {
       model: 'gpt-4o',
     };
     const s1 = upsertLlmProviderConfig(state, provider);
-    expect(getLlmProviderConfig(s1, 'test-id')).toEqual(provider);
+    expect(getLlmProviderConfig(s1, 'test-id')).toEqual({
+      ...provider,
+      default: true,
+    });
   });
 
   it('returns undefined when not found', () => {
@@ -205,6 +232,10 @@ describe('setDefaultLlmProviderConfig', () => {
 
     const s3 = setDefaultLlmProviderConfig(s2, 'p2');
     expect(s3.defaultProviderId).toBe('p2');
+    expect(s3.providers).toMatchObject([
+      { id: 'p1', default: false },
+      { id: 'p2', default: true },
+    ]);
   });
 
   it('throws when setting a non-existent provider as default', () => {
@@ -231,7 +262,6 @@ describe('redactLlmProviderConfig', () => {
     const redacted = redactLlmProviderConfig(provider);
     expect(redacted.headers?.['X-API-Key']).toBe('[redacted]');
     expect(redacted.headers?.['Authorization']).toBe('[redacted]');
-    // apiKeyEnv is preserved (it's just an env var name)
     expect(redacted.apiKeyEnv).toBe('MY_API_KEY');
   });
 
