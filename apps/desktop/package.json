@@ -13,7 +13,7 @@
     "prepackage": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
     "package": "electron-forge package",
     "premake": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
-    "make": "electron-forge make",
+    "make": "electron-forge make --skip-package",
     "prepublish": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
     "publish": "electron-forge publish",
     "start": "electron ."

@@ -34,6 +34,7 @@ const config = {
         },
       ],
       renderer: {
+        dir: '../desktop-ui',
         dist: '../desktop-ui/dist',
       },
     }),

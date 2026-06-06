@@ -10,8 +10,10 @@ import type {
   ForgeMultiHookMap,
   ResolvedForgeConfig,
 } from '@electron-forge/shared-types';
+import type { ViteDevServer } from 'vite';
 
 type TsdownBuild = (config: Record<string, unknown>) => Promise<unknown>;
+type ViteModule = typeof import('vite');
 type ForgeTask = ForgeListrTask<any>;
 type ForgeTaskList = ReturnType<ForgeTask['newListr']>;
 
@@ -27,6 +29,8 @@ const nodeExternals = builtinModules.flatMap((moduleName) => [
   `node:${moduleName}`,
 ]);
 
+const defaultRendererDevServerEnv = 'OAN_DESKTOP_UI_DEV_SERVER_URL';
+
 export default class TsdownPlugin extends PluginBase<TsdownPluginConfig> {
   public name = 'tsdown';
 
@@ -34,6 +38,7 @@ export default class TsdownPlugin extends PluginBase<TsdownPluginConfig> {
   private baseDir!: string;
   private outDir!: string;
   private isProd = false;
+  private rendererDevServer?: ViteDevServer;
 
   init = (dir: string): void => {
     this.setDirectories(dir);
@@ -50,9 +55,46 @@ export default class TsdownPlugin extends PluginBase<TsdownPluginConfig> {
       preStart: [
         namedHookWithTaskFn<'preStart'>(async (task) => {
           await this.cleanBaseDir();
-          return this.build(task, 'development');
+          if (!task) {
+            await this.launchRendererDevServer();
+            await this.build(null, 'development');
+            return;
+          }
+
+          const tasks = [];
+
+          if (this.config.renderer) {
+            tasks.push({
+              title: 'Launching renderer Vite dev server',
+              task: async (_ctx: unknown, subtask: ForgeTask) => {
+                await this.launchRendererDevServer(subtask);
+                subtask.title = 'Launched renderer Vite dev server';
+              },
+            });
+          }
+
+          tasks.push({
+            title: 'Building Electron main and preload bundles',
+            task: async (_ctx: unknown, subtask: ForgeTask) => {
+              await this.build(subtask, 'development');
+            },
+          });
+
+          return task.newListr(tasks, {
+            concurrent: false,
+            exitOnError: true,
+            rendererOptions: {
+              collapseSubtasks: false,
+              persistentOutput: true,
+            },
+          } as Parameters<ForgeTask['newListr']>[1]);
         }, 'Preparing tsdown bundles'),
       ],
+      postStart: async (_forgeConfig, child) => {
+        child.on('exit', () => {
+          void this.closeRendererDevServer();
+        });
+      },
       prePackage: [
         namedHookWithTaskFn<'prePackage'>(async (task) => {
           this.isProd = true;
@@ -105,10 +147,7 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
     );
 
     if (this.config.renderer) {
-      const rendererDist = path.resolve(
-        this.projectDir,
-        this.config.renderer.dist,
-      );
+      const rendererDist = this.getRendererDistDir();
       const rendererOutDir = path.resolve(
         buildPath,
         this.config.renderer.outDir ?? '.vite/renderer',
@@ -118,6 +157,114 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
       await cp(rendererDist, rendererOutDir, { recursive: true });
     }
   };
+
+  public async launchRendererDevServer(task?: ForgeTask): Promise<void> {
+    if (!this.config.renderer) {
+      return;
+    }
+
+    if (this.rendererDevServer) {
+      this.setRendererDevServerOutput(task);
+      return;
+    }
+
+    const vite = await importVite();
+    const rendererRoot = this.getRendererProjectDir();
+    const rendererConfig = this.config.renderer;
+    const configFile = rendererConfig.configFile
+      ? path.resolve(rendererRoot, rendererConfig.configFile)
+      : undefined;
+
+    const server = await vite.createServer({
+      root: rendererRoot,
+      configFile,
+      clearScreen: false,
+      server: {
+        host: rendererConfig.host,
+        port: rendererConfig.port,
+      },
+    });
+
+    await server.listen();
+
+    this.rendererDevServer = server;
+    process.env[this.getRendererDevServerEnv()] =
+      this.getRendererDevServerUrl(server);
+    this.setRendererDevServerOutput(task);
+  }
+
+  public async closeRendererDevServer(): Promise<void> {
+    if (!this.rendererDevServer) {
+      return;
+    }
+
+    const server = this.rendererDevServer;
+    this.rendererDevServer = undefined;
+    await server.close();
+  }
+
+  private getRendererProjectDir(): string {
+    if (!this.config.renderer?.dir) {
+      throw new Error('"config.renderer.dir" must point to a Vite project root');
+    }
+
+    return path.resolve(this.projectDir, this.config.renderer.dir);
+  }
+
+  private getRendererDistDir(): string {
+    if (!this.config.renderer) {
+      throw new Error('"config.renderer" must be configured');
+    }
+
+    return path.resolve(
+      this.projectDir,
+      this.config.renderer.dist ??
+        path.join(this.config.renderer.dir, 'dist'),
+    );
+  }
+
+  private getRendererDevServerEnv(): string {
+    return (
+      this.config.renderer?.devServerEnv ?? defaultRendererDevServerEnv
+    );
+  }
+
+  private getRendererDevServerUrl(server: ViteDevServer): string {
+    const localUrl = server.resolvedUrls?.local[0];
+
+    if (!localUrl) {
+      throw new Error('Vite did not expose a local renderer dev server URL');
+    }
+
+    return localUrl;
+  }
+
+  private setRendererDevServerOutput(task?: ForgeTask): void {
+    if (!task || !this.rendererDevServer) {
+      return;
+    }
+
+    const urls = this.rendererDevServer.resolvedUrls;
+    const localUrls = urls?.local ?? [];
+    const networkUrls = urls?.network ?? [];
+    const lines = [
+      `Renderer root: ${path.relative(
+        this.projectDir,
+        this.getRendererProjectDir(),
+      )}`,
+      `${this.getRendererDevServerEnv()}=${process.env[this.getRendererDevServerEnv()]}`,
+    ];
+
+    if (localUrls.length > 0) {
+      lines.push('Local:', ...localUrls.map((url) => `  ${url}`));
+    }
+
+    if (networkUrls.length > 0) {
+      lines.push('Network:', ...networkUrls.map((url) => `  ${url}`));
+    }
+
+    task.output = lines.join('\n');
+  }
 
   private build = async (
     task: ForgeTask | null = null,
@@ -135,7 +282,16 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
       },
     }));
 
-    return task?.newListr(builds, {
+    if (!task) {
+      await Promise.all(
+        this.config.build.map((buildConfig) =>
+          this.buildTarget(buildConfig, mode),
+        ),
+      );
+      return;
+    }
+
+    return task.newListr(builds, {
       concurrent: this.config.concurrent ?? true,
       exitOnError: this.isProd,
     });
@@ -199,6 +355,15 @@ const importTsdown = async (): Promise<{ build: TsdownBuild }> => {
   ) as (specifier: string) => Promise<{ build: TsdownBuild }>;
 
   return importModule('tsdown');
+};
+
+const importVite = async (): Promise<ViteModule> => {
+  const importModule = new Function(
+    'specifier',
+    'return import(specifier)',
+  ) as (specifier: string) => Promise<ViteModule>;
+
+  return importModule('vite');
 };
 
 export { TsdownPlugin };

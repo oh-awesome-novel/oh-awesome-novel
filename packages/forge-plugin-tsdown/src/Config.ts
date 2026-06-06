@@ -27,9 +27,35 @@ export interface TsdownPluginBuildConfig {
 
 export interface TsdownPluginRendererConfig {
   /**
-   * Path to a Vite-built renderer dist directory.
+   * Path to the renderer Vite project root.
    */
-  dist: string;
+  dir: string;
+  /**
+   * Path to a Vite-built renderer dist directory.
+   *
+   * @defaultValue "<dir>/dist"
+   */
+  dist?: string;
+  /**
+   * Optional Vite config file path, relative to the renderer project root.
+   * When omitted, Vite resolves the project config normally.
+   */
+  configFile?: string;
+  /**
+   * Environment variable used by the Electron main process to load the
+   * renderer dev server.
+   *
+   * @defaultValue "OAN_DESKTOP_UI_DEV_SERVER_URL"
+   */
+  devServerEnv?: string;
+  /**
+   * Vite dev server host.
+   */
+  host?: string;
+  /**
+   * Vite dev server port.
+   */
+  port?: number;
   /**
    * Destination in the packaged app.
    *
