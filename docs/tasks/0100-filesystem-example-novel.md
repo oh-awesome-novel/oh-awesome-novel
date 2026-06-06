@@ -1,17 +1,23 @@
-# 0100 Filesystem Example Novel
+# 0100 Workspace Initialization And Novel Body Layout
 
 > Status: Planned
 > Milestone: M2 Filesystem Spec And Example Novel
 
 ## Goal
 
-把 `docs/FILESYSTEM_SPEC.md` 中的小说工程目录变成可验证样例。
+在 `packages/core` 中实现 workspace 初始化能力，并把 `docs/FILESYSTEM_SPEC.md` 中的小说工程目录变成可验证 workspace。
+
+Workspace 初始化必须发生在一个空目录中。项目运行时配置放在 workspace 内部的 `.oan/` 目录。
+
+workspace 根目录就是实际由 AI 和作者共同编写的小说工程。小说正文存放在 `chapters/`，不再额外套一层正文目录。`examples/` 用于后期项目参考功能。
 
 ## Deliverables
 
-- `examples/sample-novel/`
-- `.storyforge/workflow.yaml`
-- `.storyforge/constitution/`
+- `packages/core` workspace 初始化 API。
+- 空目录校验。
+- `.oan/workflow.yaml`
+- `.oan/constitution/`
+- `.oan/config.yaml`
 - `characters/`
 - `world/`
 - `chapters/`
@@ -20,12 +26,56 @@
 - `foreshadow/`
 - `summaries/`
 - `schemas/`
+- 正文卷/章稳定路径规则。
+- workspace list 配置：
+  - UI 选择文件夹初始化 workspace 时提供“是否保存到 workspace list”选项。
+  - workspace list 默认存到当前用户 `.oan/` 目录下的文件中。
+  - 全局 OAN 配置目录必须可修改。
+
+## Novel Body Layout
+
+小说正文按卷/章组织：
+
+```text
+workspace/
+└── chapters/
+    ├── 0001/
+    │   ├── 0000.md
+    │   ├── 0001.md
+    │   └── 0002.md
+    └── 0002/
+        ├── 0000.md
+        └── 0001.md
+```
+
+路径稳定性规则：
+
+- 卷文件夹名称只包含编号，例如 `0001/`。
+- 章节文件名称只包含编号，例如 `0001.md`。
+- 每卷的 `0000.md` 存放卷信息，内容标题使用 `0000-卷名`。
+- 章节从 `0001.md` 开始。
+- 章节名写在章节文件内部，例如标题或 frontmatter 使用 `0001-章节名`。
+- 修改卷名或章节名不能导致文件重命名。
+- 这样可以避免文件名频繁变化导致 git diff 噪声、rename 误判和历史丢失。
+
+## Core API Scope
+
+- `initWorkspace(targetDir, options)`。
+- `isEmptyDirectory(targetDir)`。
+- `resolveGlobalOanConfigDir(options)`。
+- `loadWorkspaceList(globalConfigDir)`。
+- `saveWorkspaceList(globalConfigDir, workspaces)`。
 
 ## Done Criteria
 
+- 只能在空目录初始化 workspace。
+- 初始化后存在 `.oan/` 运行时配置目录。
+- 默认全局配置目录为当前用户目录下的 `.oan/`。
+- 调用方可以覆盖全局 OAN 配置目录。
+- UI 后续可以选择是否把 workspace 写入 workspace list。
 - 样例包含 Character、World、Chapter、State、Timeline、Foreshadow、Summary、Constitution。
 - 基础 YAML 文件可以被 parser 验证。
-- 章节样例包含 frontmatter 和 scene headings。
+- 章节样例使用稳定编号路径，并包含 frontmatter 和 scene headings。
 - 样例能支撑 MVP vertical slice。
 
 ## Constraints
@@ -33,3 +83,6 @@
 - 不使用隐藏数据库。
 - 不把所有设定塞进一个大 Markdown。
 - 不提前引入 vector DB。
+- 不继续使用旧的项目运行时目录命名。
+- 不把小说正文 workspace 放在 `examples/` 下。
+- 不在 workspace 下额外套一层正文目录。
