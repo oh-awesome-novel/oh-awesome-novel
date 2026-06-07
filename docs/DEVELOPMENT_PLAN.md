@@ -241,17 +241,28 @@ Goal:
 
 先做最小可用交互，不追求完整 IDE。
 
-Options:
+Preferred Shape:
 
-- CLI
-- TUI
-- Web panel
+```text
+HTTP backend
+  -> SSE agent chat endpoint
+  -> Vercel AI UI stream compatibility
+  -> Vue frontend using @ai-sdk/vue
+  -> Electron main process composition
+```
 
-MVP 推荐 CLI / TUI。
+MVP 优先使用本地 HTTP backend，而不是单独实现 Electron-only UI stream。
+
+Electron main process 启动 backend，Vue renderer 通过 `@ai-sdk/vue` 连接 backend。这样 Web panel、Electron renderer、后续调试页面可以复用同一套 agent 接入协议。
 
 Deliverables:
 
 - Chat input。
+- Streaming assistant message。
+- HTTP SSE transport。
+- Vercel AI frontend compatibility layer。
+- Vue `@ai-sdk/vue` agent 对话闯卡。
+- Electron main process + Vue frontend + HTTP backend 组合。
 - Tool log。
 - Pending action list。
 - Diff preview。
@@ -260,6 +271,9 @@ Deliverables:
 Done Criteria:
 
 - 能跑完整 vertical slice。
+- 前端通过 HTTP SSE 获取 agent 流式消息。
+- Vue frontend 可以直接使用 `@ai-sdk/vue`。
+- Electron 启动后能组合 Vue frontend 和本地 HTTP backend。
 
 ## M9. Summary And Memory Layer
 
@@ -413,4 +427,3 @@ Keep runtime understandable.
 Never bypass Human Approval.
 Never rewrite entire files when SemanticPatch can express the change.
 ```
-

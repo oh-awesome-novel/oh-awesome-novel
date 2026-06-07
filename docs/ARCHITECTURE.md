@@ -70,8 +70,11 @@ Character  World   Chapter    State   Timeline  Foreshadow  Summary
 
 - `packages/core`：workspace 初始化、全局 OAN 配置、LLM provider config 纯函数。不调用 LLM，不执行 Agent loop。
 - `packages/tools`：Markdown / YAML Engine，以及基于 Vercel AI SDK `tool()` / `jsonSchema()` 的领域 read tools。对外产出 AI SDK `ToolSet`，不依赖 runtime。
-- `packages/agent`：组装小说 workspace snapshot、system prompt、Runtime messages/context；根据 core provider config 和外部 provider resolver 创建 AI SDK based `RuntimeModelAdapter`；创建 runtime 并注入 `ToolSet`。UI 优先使用流式入口。
+- `packages/agent`：组装小说 workspace snapshot、system prompt、Runtime messages/context；根据 core provider config 和外部 provider resolver 创建 AI SDK based `RuntimeModelAdapter`；创建 runtime 并注入 `ToolSet`。UI 优先使用流式入口，并提供 Vercel AI frontend compatibility adapter。
 - `packages/runtime`：只实现 Aider-style loop，接收 `RuntimeModelAdapter` 和 AI SDK `ToolSet`，执行 tool calls，记录 tool log / pending actions，输出 `RuntimeEvent` stream。不依赖 agent/tools，不引入具体 LLM provider。
+- HTTP backend：本地 transport / composition layer，提供 SSE agent chat endpoint，复用 `packages/agent` 的 Vercel AI UI stream 兼容层。
+- Vue frontend：通过 `@ai-sdk/vue` 连接 HTTP backend，不直接执行 tools 或访问 filesystem。
+- Electron main：启动和关闭本地 HTTP backend，并把 backend base URL 交给 Vue renderer。
 
 明确禁止：
 
@@ -80,6 +83,31 @@ Character  World   Chapter    State   Timeline  Foreshadow  Summary
 - 不在 `packages/agent` 重写 tool loop。
 - 不在 `packages/tools` 定义第二套 Tool 抽象来替代 AI SDK `ToolSet`。
 - 不用 AI SDK `ToolLoopAgent` 替代项目自己的 Aider-style runtime。
+- 不在 `packages/runtime` 引入 HTTP server、Electron、Vue 或 `@ai-sdk/vue`。
+- 不让 frontend 绕过 backend / agent 直接访问 tools、Apply Engine 或 filesystem。
+
+## Frontend And Desktop Composition
+
+最小 UI 接入采用 HTTP backend + SSE。
+
+```text
+Electron main process
+    ↓ starts
+Local HTTP backend on 127.0.0.1
+    ↓ exposes SSE
+Vue renderer / Web panel
+    ↓ uses
+@ai-sdk/vue
+```
+
+SSE 输出由 `packages/agent` 的 Vercel AI frontend compatibility adapter 从 `RuntimeEvent` stream 转换而来。
+
+这条链路的目的只是复用前端生态和调试入口，不改变核心 runtime：
+
+- Runtime 继续保持 Aider-style loop。
+- Agent 负责 prompt/message assembly、provider adapter、toolset injection 和 stream compatibility。
+- Backend 只做 HTTP/SSE transport。
+- Electron 只做本地进程组合和窗口承载。
 
 ### Novel Constitution
 

@@ -105,6 +105,7 @@ packages/agent
   - 创建并注入 packages/tools 提供的 ToolSet。
   - 创建 packages/runtime 的 RuntimeSession。
   - 对 UI 优先暴露 streamNovelAgentTurn()。
+  - 提供 RuntimeEvent stream 到 Vercel AI UI stream / SSE protocol 的兼容适配器。
   - 不直接读取文件系统；文件读取能力只存在于注入的 tools execute() 中。
 
 packages/runtime
@@ -124,6 +125,31 @@ packages/runtime
 - 不要在 `packages/agent` 中重写 tool loop。
 - 不要在 `packages/tools` 中定义第二套 Tool 抽象；默认使用 AI SDK `ToolSet`，除非后续确实需要扩展 metadata。
 - 不要用 AI SDK `ToolLoopAgent` 替代 `packages/runtime` 的 Aider-style loop。
+
+## Frontend Transport Boundary
+
+前端接入优先走 HTTP backend + SSE。
+
+```text
+@ai-sdk/vue
+    ↓
+HTTP backend SSE endpoint
+    ↓
+packages/agent Vercel AI frontend compatibility adapter
+    ↓
+packages/agent streamNovelAgentTurn()
+    ↓
+packages/runtime RuntimeEvent stream
+```
+
+边界规则：
+
+- `packages/runtime` 只认识 `RuntimeEvent`，不认识 HTTP、SSE、Vue、Electron 或 `@ai-sdk/vue`。
+- `packages/agent` 可以提供 Vercel AI UI stream 兼容层，但不能重写 tool loop。
+- HTTP backend 是 transport layer，只包装 request / response / SSE，不成为新的 runtime。
+- Vue frontend 使用 `@ai-sdk/vue` 连接 backend，不直接执行 tools，也不直接访问 filesystem。
+- Electron main process 负责启动和关闭本地 backend，并把 backend base URL 提供给 renderer。
+- Electron renderer 复用 Vue frontend 和 HTTP backend 协议，不实现第二套 Electron-only agent stream。
 
 ## Tool Types
 

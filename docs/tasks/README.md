@@ -40,6 +40,7 @@
 - [0400 Restricted File Write Tool](0400.md)
 - [0450 Agent Session Persistence](0450.md)
 - [0500 Minimal Copilot Interface](0500.md)
+- [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
 - [0600 Write Intent And Human Approval](0600.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
@@ -49,13 +50,21 @@
 
 ```text
 packages/core
-  -> workspace initialization, workspace config, filesystem reads, LLM provider config
-packages/agent
-  -> novel prompt assembly, message assembly, LLM bridge, Runtime turn input assembly
-packages/runtime
-  -> model adapter call, tool loop, tool log, pending actions, no provider-specific logic
+  -> workspace initialization, workspace config, LLM provider config pure functions
 packages/tools
-  -> concrete read/write tools registered into Runtime
+  -> Markdown / YAML Engine, concrete domain tools, AI SDK ToolSet
+packages/agent
+  -> novel prompt assembly, LLM bridge, ToolSet injection, Runtime session assembly,
+     RuntimeEvent stream to Vercel AI UI stream compatibility
+packages/runtime
+  -> Aider-style tool loop, tool log, pending actions, RuntimeEvent stream,
+     no provider-specific logic
+HTTP backend
+  -> local transport layer, SSE endpoints, uses packages/agent compatibility helpers
+Vue frontend
+  -> uses @ai-sdk/vue against the HTTP backend, no direct filesystem/tool execution
+Electron main
+  -> starts/stops local HTTP backend and provides backend base URL to Vue renderer
 ```
 
 ## Global Rules
