@@ -5,6 +5,7 @@ import type { ToolSet } from 'ai';
 
 import { loadMarkdown } from './markdown';
 import { loadYaml } from './yaml-engine';
+import { Dirent } from 'node:fs';
 
 export interface CreateReadToolsOptions {
   workspaceRoot: string;
@@ -297,15 +298,15 @@ async function readYamlIfExists(filePath: string): Promise<unknown | undefined> 
   try {
     return (await loadYaml(filePath)).data;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return undefined;
-    }
+    // if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    //   return undefined;
+    // }
     throw error;
   }
 }
 
 async function listDirectories(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
+  const entries: Dirent[] = await readdir(directory, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
     .map((entry) => entry.name)
