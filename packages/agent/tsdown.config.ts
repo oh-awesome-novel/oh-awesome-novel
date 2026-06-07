@@ -11,6 +11,6 @@ export default defineConfig({
   clean: true,
   platform: 'node',
   deps: {
-    neverBundle: [/^@oh-awesome-novel\//],
+    neverBundle: [/^@oh-awesome-novel\//, /^ai$/, /^yaml$/],
   },
 });

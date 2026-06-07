@@ -3,6 +3,7 @@ import { streamText } from 'ai';
 import type { LlmProviderConfig } from '@oh-awesome-novel/core';
 import { createReadTools } from '@oh-awesome-novel/tools';
 import { createRuntime } from '@oh-awesome-novel/runtime';
+import { createAgentSessionStore } from './session-store';
 import type {
   RunTurnResult,
   RunTurnInput,
@@ -17,6 +18,11 @@ import type {
   RuntimeSkill,
   RuntimeToolCall,
 } from '@oh-awesome-novel/runtime';
+import type {
+  AgentSessionMetadata,
+  AgentSessionMetadataInput,
+  AgentSessionStore,
+} from './session-store';
 import type {
   LanguageModel,
   ModelMessage,
@@ -52,6 +58,12 @@ export interface NovelAgentToolSetInput {
   tools?: ToolSet;
 }
 
+export interface NovelAgentSessionInput {
+  id?: string;
+  metadata?: AgentSessionMetadataInput;
+  store?: AgentSessionStore;
+}
+
 export type AiSdkProviderResolver = (
   providerConfig: LlmProviderConfig,
 ) => LanguageModel | Promise<LanguageModel>;
@@ -65,6 +77,7 @@ export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
   workspaceRoot: string;
   tools?: ToolSet;
   maxToolLoops?: number;
+  onEvent?: (event: RuntimeEvent) => void | Promise<void>;
 }
 
 export const createAiSdkModelAdapter = (
@@ -134,21 +147,100 @@ export const createNovelAgentRuntime = (
       tools: input.tools,
     }),
     maxToolLoops: input.maxToolLoops,
+    onEvent: input.onEvent,
   });
 
 export const runNovelAgentTurn = async (
-  input: NovelAgentRuntimeInput & NovelAgentMessageInput,
-): Promise<RunTurnResult> => {
-  const runtime = createNovelAgentRuntime(input);
-  return runtime.runTurn(createRuntimeTurnInput(input));
+  input: NovelAgentRuntimeInput & NovelAgentMessageInput & {
+    session?: NovelAgentSessionInput;
+  },
+): Promise<RunTurnResult & { session?: AgentSessionMetadata }> => {
+  const session = await prepareAgentSession(input);
+  const runtime = createNovelAgentRuntime({
+    ...input,
+    onEvent: composeRuntimeEventHandlers(input.onEvent, session?.onEvent),
+  });
+  const result = await runtime.runTurn(createRuntimeTurnInput(input));
+
+  return {
+    ...result,
+    ...(session ? { session: session.metadata } : {}),
+  };
 };
 
-export const streamNovelAgentTurn = (
-  input: NovelAgentRuntimeInput & NovelAgentMessageInput,
-): AsyncIterable<RuntimeEvent> => {
-  const runtime = createNovelAgentRuntime(input);
-  return runtime.streamTurn(createRuntimeTurnInput(input));
-};
+export async function* streamNovelAgentTurn(
+  input: NovelAgentRuntimeInput & NovelAgentMessageInput & {
+    session?: NovelAgentSessionInput;
+  },
+): AsyncIterable<RuntimeEvent> {
+  const session = await prepareAgentSession(input);
+  const runtime = createNovelAgentRuntime({
+    ...input,
+    onEvent: composeRuntimeEventHandlers(input.onEvent, session?.onEvent),
+  });
+
+  for await (const event of runtime.streamTurn(createRuntimeTurnInput(input))) {
+    yield event;
+  }
+}
+
+export {
+  createAgentSessionStore,
+} from './session-store';
+export type {
+  AgentSessionMetadata,
+  AgentSessionMetadataInput,
+  AgentSessionRecovery,
+  AgentSessionToolLogEntry,
+  AgentSessionStore,
+  AgentSessionStoreOptions,
+  RecoveredAgentSession,
+} from './session-store';
+
+async function prepareAgentSession(input: {
+  workspaceRoot: string;
+  request: string;
+  session?: NovelAgentSessionInput;
+}): Promise<
+  | {
+      metadata: AgentSessionMetadata;
+      onEvent: (event: RuntimeEvent) => Promise<void>;
+    }
+  | undefined
+> {
+  if (!input.session) {
+    return undefined;
+  }
+
+  const store = input.session.store ?? createAgentSessionStore({
+    workspaceRoot: input.workspaceRoot,
+  });
+  const metadata = input.session.id
+    ? await store.ensureSession(input.session.id, input.session.metadata)
+    : await store.createSession({
+        title: input.request,
+        ...input.session.metadata,
+      });
+
+  return {
+    metadata,
+    onEvent: (event) => store.recordRuntimeEvent(metadata.id, event),
+  };
+}
+
+function composeRuntimeEventHandlers(
+  first: ((event: RuntimeEvent) => void | Promise<void>) | undefined,
+  second: ((event: RuntimeEvent) => void | Promise<void>) | undefined,
+): ((event: RuntimeEvent) => Promise<void>) | undefined {
+  if (!first && !second) {
+    return undefined;
+  }
+
+  return async (event) => {
+    await first?.(event);
+    await second?.(event);
+  };
+}
 
 export const createNovelAgentSystemPrompt = (
   input: NovelAgentMessageInput,

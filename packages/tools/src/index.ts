@@ -27,3 +27,13 @@ export type {
 
 export { createReadTools } from './read-tools';
 export type { CreateReadToolsOptions } from './read-tools';
+
+export {
+  createRestrictedWriteTools,
+  createWorkspaceWriteFileTool,
+  writeRestrictedWorkspaceFile,
+} from './restricted-write-tool';
+export type {
+  CreateRestrictedWriteToolsOptions,
+  RestrictedWriteResult,
+} from './restricted-write-tool';
