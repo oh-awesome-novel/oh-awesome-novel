@@ -36,7 +36,7 @@ User Message
     ↓
 Build Context
     ↓
-generateText() / streamText()
+RuntimeModelAdapter.stream() / RuntimeModelAdapter.generate()
     ↓
 Tool Calls?
     ↓
@@ -60,23 +60,70 @@ maxToolLoops = 8
 只使用：
 
 - `tool()`
-- `generateText()`
 - `streamText()`
-- Zod schema
+- `jsonSchema()`
 
 示意：
 
 ```ts
 export const getCharacterTool = tool({
   description: "Read a character object file tree.",
-  parameters: z.object({
-    id: z.string(),
+  inputSchema: jsonSchema({
+    type: "object",
+    properties: {
+      id: { type: "string" },
+    },
+    required: ["id"],
   }),
   execute: async ({ id }) => {
     return characterService.get(id);
   },
 });
 ```
+
+## Package Boundaries
+
+当前包边界必须保持清晰。
+
+```text
+packages/core
+  - 管理 workspace 初始化和全局 OAN 配置。
+  - 维护 LLM provider config 的纯函数。
+  - 不调用 LLM。
+  - 不执行 Agent loop。
+
+packages/tools
+  - 实现 Markdown / YAML Engine。
+  - 使用 Vercel AI SDK `tool()` / `jsonSchema()` 定义 read tools。
+  - 对外产出 AI SDK `ToolSet`。
+  - 不依赖 packages/runtime。
+  - 不实现 Agent loop。
+
+packages/agent
+  - 根据 core 提供的 workspace snapshot 和 provider config 组装 prompt/messages。
+  - 根据 provider resolver 创建 AI SDK based RuntimeModelAdapter。
+  - 创建并注入 packages/tools 提供的 ToolSet。
+  - 创建 packages/runtime 的 RuntimeSession。
+  - 对 UI 优先暴露 streamNovelAgentTurn()。
+  - 不直接读取文件系统；文件读取能力只存在于注入的 tools execute() 中。
+
+packages/runtime
+  - 只实现 Aider-style tool loop。
+  - 接收 RuntimeModelAdapter 和 AI SDK ToolSet。
+  - 执行 tool calls，append tool result，维护 tool log / pending actions。
+  - 输出 RuntimeEvent stream，包含 message_delta / tool_call_start / tool_call_finish / pending_action。
+  - 不依赖 packages/agent。
+  - 不依赖 packages/tools。
+  - 不引入具体 LLM provider。
+```
+
+不要把这些边界重新混在一起：
+
+- 不要在 `packages/runtime` 中注册领域工具。
+- 不要在 `packages/runtime` 中引入 OpenAI / DeepSeek / provider resolver。
+- 不要在 `packages/agent` 中重写 tool loop。
+- 不要在 `packages/tools` 中定义第二套 Tool 抽象；默认使用 AI SDK `ToolSet`，除非后续确实需要扩展 metadata。
+- 不要用 AI SDK `ToolLoopAgent` 替代 `packages/runtime` 的 Aider-style loop。
 
 ## Tool Types
 
@@ -154,18 +201,15 @@ magicWrite
 
 ## Tool Metadata
 
-每个 Tool 应声明：
+当前默认不定义独立 `RuntimeTool` 或 `StoryTool`。
+
+Tool 使用 AI SDK `ToolSet` 表达：
 
 ```ts
-interface StoryToolMeta {
-  id: string;
-  domain: string;
-  readOnly: boolean;
-  allowedInSkills?: string[];
-  risk: "low" | "medium" | "high";
-  description: string;
-}
+type StoryReadTools = ToolSet;
 ```
+
+如果后续 UI 确实需要 `readOnly`、`risk`、`allowedInSkills` 等额外 metadata，应在 AI SDK `ToolSet` 外围增加薄 metadata map，而不是替换 `ToolSet` 本身。
 
 ## Tool Result
 
@@ -312,4 +356,3 @@ Accept
 Result:
 写入 state/characters.yaml 和 timeline/events.yaml
 ```
-

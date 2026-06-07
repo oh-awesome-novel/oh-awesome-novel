@@ -64,6 +64,23 @@ Character  World   Chapter    State   Timeline  Foreshadow  Summary
 
 ## Layer Responsibilities
 
+## Package Boundaries
+
+当前代码包边界如下：
+
+- `packages/core`：workspace 初始化、全局 OAN 配置、LLM provider config 纯函数。不调用 LLM，不执行 Agent loop。
+- `packages/tools`：Markdown / YAML Engine，以及基于 Vercel AI SDK `tool()` / `jsonSchema()` 的领域 read tools。对外产出 AI SDK `ToolSet`，不依赖 runtime。
+- `packages/agent`：组装小说 workspace snapshot、system prompt、Runtime messages/context；根据 core provider config 和外部 provider resolver 创建 AI SDK based `RuntimeModelAdapter`；创建 runtime 并注入 `ToolSet`。UI 优先使用流式入口。
+- `packages/runtime`：只实现 Aider-style loop，接收 `RuntimeModelAdapter` 和 AI SDK `ToolSet`，执行 tool calls，记录 tool log / pending actions，输出 `RuntimeEvent` stream。不依赖 agent/tools，不引入具体 LLM provider。
+
+明确禁止：
+
+- 不在 `packages/runtime` 注册领域工具。
+- 不在 `packages/runtime` 接入 OpenAI / DeepSeek / provider resolver。
+- 不在 `packages/agent` 重写 tool loop。
+- 不在 `packages/tools` 定义第二套 Tool 抽象来替代 AI SDK `ToolSet`。
+- 不用 AI SDK `ToolLoopAgent` 替代项目自己的 Aider-style runtime。
+
 ### Novel Constitution
 
 回答：
@@ -361,4 +378,3 @@ Constitution 不是隐藏审查规则，而是作者可见、可编辑、Git tra
 - Diff 生成使用系统 git、jsdiff，还是两者结合。
 - UI 第一版是 CLI、TUI，还是 Web Copilot Panel。
 - 是否需要真实接入 Morph 类模型，还是本地 Apply Engine 足够。
-

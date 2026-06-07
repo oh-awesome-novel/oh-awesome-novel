@@ -52,11 +52,13 @@ export interface NovelAgentToolSetInput {
   tools?: ToolSet;
 }
 
+export type AiSdkProviderResolver = (
+  providerConfig: LlmProviderConfig,
+) => LanguageModel | Promise<LanguageModel>;
+
 export interface AiSdkModelAdapterInput {
   providerConfig: LlmProviderConfig;
-  resolveModel(
-    providerConfig: LlmProviderConfig,
-  ): LanguageModel | Promise<LanguageModel>;
+  resolveModel: AiSdkProviderResolver;
 }
 
 export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
