@@ -1,2 +1,9 @@
-// See the Electron documentation for details on how to use preload scripts:
-// https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
+import { contextBridge } from 'electron';
+
+const backendBaseUrl = process.argv
+  .find((arg) => arg.startsWith('--oan-backend-base-url='))
+  ?.slice('--oan-backend-base-url='.length);
+
+contextBridge.exposeInMainWorld('ohAwesomeNovel', {
+  backendBaseUrl,
+});

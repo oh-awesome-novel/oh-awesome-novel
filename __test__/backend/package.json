@@ -1,0 +1,20 @@
+{
+  "name": "@oh-awesome-novel/test-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "pretest": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
+    "test": "vitest",
+    "pretest:run": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/backend": "^0.0.1",
+    "@oh-awesome-novel/runtime": "^0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.8"
+  }
+}

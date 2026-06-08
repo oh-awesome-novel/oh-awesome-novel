@@ -187,6 +187,11 @@ export async function* streamNovelAgentTurn(
 export {
   createAgentSessionStore,
 } from './session-store';
+export {
+  createNovelAgentValidationTools,
+  streamNovelAgentCheckpointTurn,
+} from './checkpoint-runner';
+export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
   AgentSessionMetadata,
   AgentSessionMetadataInput,
@@ -196,6 +201,11 @@ export type {
   AgentSessionStoreOptions,
   RecoveredAgentSession,
 } from './session-store';
+export type {
+  CheckpointLevel,
+  NovelAgentCheckpointInput,
+} from './checkpoint-runner';
+export type { RuntimeEventUiStreamOptions } from './ui-stream';
 
 async function prepareAgentSession(input: {
   workspaceRoot: string;

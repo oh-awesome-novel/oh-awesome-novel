@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+import AgentCheckpointView from './components/agent-checkpoint/AgentCheckpointView.vue';
 </script>
 
 <template>
-  <HelloWorld />
+  <AgentCheckpointView />
 </template>

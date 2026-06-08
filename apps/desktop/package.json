@@ -8,13 +8,13 @@
   "type": "commonjs",
   "main": ".vite/build/main.js",
   "scripts": {
-    "predev": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown",
+    "predev": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
     "dev": "electron-forge start",
-    "prepackage": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
+    "prepackage": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
     "package": "electron-forge package",
-    "premake": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
+    "premake": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
     "make": "electron-forge make --skip-package",
-    "prepublish": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/desktop-ui",
+    "prepublish": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
     "publish": "electron-forge publish",
     "start": "electron ."
   },
@@ -34,6 +34,7 @@
     "typescript": "~6.0.2"
   },
   "dependencies": {
+    "@oh-awesome-novel/backend": "^0.0.1",
     "electron-squirrel-startup": "^1.0.1"
   }
 }

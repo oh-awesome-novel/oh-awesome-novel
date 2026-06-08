@@ -1,0 +1,30 @@
+{
+  "name": "@oh-awesome-novel/backend",
+  "version": "0.0.1",
+  "description": "Local HTTP backend and SSE transport for oh-awesome-novel.",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "npm run test:run --workspace @oh-awesome-novel/test-backend",
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-backend"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/agent": "^0.0.1",
+    "@oh-awesome-novel/core": "^0.0.1",
+    "@oh-awesome-novel/runtime": "^0.0.1",
+    "ai": "^6.0.197"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.1",
+    "tsdown": "^0.22.2",
+    "typescript": "~6.0.2"
+  }
+}
