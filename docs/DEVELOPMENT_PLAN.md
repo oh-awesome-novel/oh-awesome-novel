@@ -268,12 +268,22 @@ Deliverables:
 - Diff preview。
 - Accept / Reject。
 
+Post-MVP UI Tasks:
+
+- Global workspace launcher, similar to a JetBrains / WebStorm project list.
+- Workspace entry LLM provider configuration gate.
+- NoteGen-inspired workspace shell: left file tree, center plain-text file viewer, right Copilot.
+- Workspace home state: no file selected, Copilot hidden, quick actions visible.
+- Workspace global search using MiniSearch over current workspace text files.
+- Git history and sync page, preferably by reusing a lightweight open-source Git UI.
+
 Done Criteria:
 
 - 能跑完整 vertical slice。
 - 前端通过 HTTP SSE 获取 agent 流式消息。
 - Vue frontend 可以直接使用 `@ai-sdk/vue`。
 - Electron 启动后能组合 Vue frontend 和本地 HTTP backend。
+- 后续 UI 任务仍不得让 frontend 绕过 backend / agent 直接写 filesystem。
 
 ## M9. Summary And Memory Layer
 
