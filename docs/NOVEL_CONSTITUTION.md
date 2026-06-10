@@ -220,11 +220,13 @@ Never write:
 Read tools may access Constitution freely:
 
 - `constitution.get`
+
+Future Constitution workflow tools may add:
+
 - `constitution.search`
-
-Write tools must only create proposals:
-
 - `constitution.proposeUpdate`
+
+Write tools must only create proposals. `constitution.proposeUpdate` is a proposed Constitution workflow tool, not part of the completed M6 write-intent scope.
 
 Proposal example:
 

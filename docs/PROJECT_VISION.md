@@ -237,4 +237,6 @@ MVP 可以先是 CLI / local dev harness。
 - Workflow Panel
 - Git History
 
-第一阶段不要急着做完整 UI。先把文件系统、SemanticPatch、Apply Engine、Tool Registry、人类确认链路做稳。
+第一阶段不要急着做完整 UI。先把文件系统、AI SDK ToolSet、Aider-style Runtime、write-intent、`.workspace` shadow write 和人类确认链路跑通。
+
+SemanticPatch + Apply Engine 仍是正式写入核心，但完整实现作为后续 `0800 SemanticPatch Apply Engine` 收敛任务，不要求早期 vertical slice 一开始就完成。

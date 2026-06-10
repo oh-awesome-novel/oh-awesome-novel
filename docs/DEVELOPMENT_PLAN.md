@@ -2,7 +2,13 @@
 
 ## Planning Principle
 
-先打稳文件系统、Apply Engine、Human Approval，再做完整 UI。
+先打稳文件系统、AI SDK ToolSet、Aider-style Runtime、write-intent、Human Approval 和 `.workspace` shadow write，再用 `0800 SemanticPatch Apply Engine` 收敛正式写入核心。
+
+Apply Engine 是最终写入架构，但完整实现不属于早期已完成 milestone。当前任务索引以 `0400 -> 0600 -> 0800` 为准：
+
+- `0400 Restricted File Write Tool`：只用于快速验证 agent loop。
+- `0600 Write Intent And Human Approval`：已完成 PendingAction / shadow write / Accept-Reject 过渡链路。
+- `0800 SemanticPatch Apply Engine`：后续正式实现，用 SemanticPatch executor 替换早期候选全文 / 简化写入路径。
 
 不要一开始做：
 
@@ -19,7 +25,7 @@ M0  Documentation Foundation
 M1  Project Scaffolding
 M2  Filesystem Spec And Example Novel
 M3  Markdown / YAML Engine
-M4  SemanticPatch Apply Engine
+M4  SemanticPatch Apply Engine Design Target
 M5  AI SDK ToolSet And Read Tools
 M6  Write Intent Tools And Human Approval
 M7  Aider-style Copilot Runtime
@@ -63,27 +69,42 @@ Deliverables:
 
 - TypeScript 项目。
 - 基础测试框架。
-- CLI dev harness。
 - 项目配置。
-- `src/` 模块目录。
+- npm workspace / monorepo 包结构。
+- Electron desktop app skeleton。
+- Vue renderer app skeleton。
+- 根目录 `__test__/*` 测试 workspace。
 
-Suggested Layout:
+Canonical Layout:
 
 ```text
-src/
-├── filesystem/
-├── apply-engine/
+packages/
+├── core/
 ├── tools/
-├── copilot/
-├── approval/
-├── git/
-└── cli/
+├── runtime/
+├── agent/
+├── backend/
+└── ui-vue/
+
+apps/
+├── desktop/
+└── desktop-ui/
+
+__test__/
+├── core/
+├── tools/
+├── runtime/
+├── agent/
+└── backend/
 ```
 
 Done Criteria:
 
 - 可以运行测试。
 - 可以读取一个小说项目目录。
+- 新增核心模块优先落在 `packages/*`，不要回到旧的单体 `src/` 布局。
+- App shell 和 renderer 落在 `apps/*`。
+- 测试按模块放在根目录 `__test__/*` workspace。
 
 ## M2. Filesystem Spec And Example Novel
 
@@ -136,27 +157,31 @@ Done Criteria:
 - 能更新 `state/characters.yaml` 的某个 path。
 - 更新前不直接写盘，只返回 draft。
 
-## M4. SemanticPatch Apply Engine
+## M4. SemanticPatch Apply Engine Design Target
 
 Goal:
 
-实现 `SemanticPatch -> diff -> PendingAction`。
+明确正式写入核心的目标形态：`SemanticPatch -> diff -> PendingAction`。
+
+注意：这一阶段描述的是架构目标，不表示完整 Apply Engine 已实现。完整代码实现由后续 `0800 SemanticPatch Apply Engine` 任务承接。
 
 Deliverables:
 
-- SemanticPatch 类型。
-- ObjectPatch executor。
-- CollectionPatch executor。
-- NarrativePatch 初版。
-- Diff generator。
-- Patch validator。
-- PendingAction store。
+- SemanticPatch 类型设计。
+- ObjectPatch executor 设计。
+- CollectionPatch executor 设计。
+- NarrativePatch 初版设计。
+- Diff generator 设计。
+- Patch validator 设计。
+- PendingAction store 设计。
+- 与 `0600 Write Intent And Human Approval` 的迁移边界。
 
 Done Criteria:
 
-- `state.set` 能生成 YAML diff。
-- `character.updatePersonality` 能生成 Markdown section diff。
-- 用户确认前不写盘。
+- Apply Engine 被确认为正式写入方向。
+- 早期 write-intent 工具可以先生成 PendingAction 和 shadow write。
+- `0800` 明确负责把现有正式写入工具迁移到 SemanticPatch executor。
+- 用户确认前不写真实目标文件。
 
 ## M5. AI SDK ToolSet And Read Tools
 
@@ -371,11 +396,13 @@ Done Criteria:
 2. 用户输入：女主在第 3 章重伤。
 3. Runtime 读取 character、chapter、state。
 4. Runtime 调用 state.set、timeline.add、foreshadow.create。
-5. Apply Engine 生成 diff。
+5. write-intent / PendingAction 预览链路生成 diff。
 6. 用户 Accept。
 7. 文件写入。
 8. git diff 显示修改。
 ```
+
+后续 `0800 SemanticPatch Apply Engine` 完成后，第 5 步应收敛为 Apply Engine 生成 diff。
 
 ## Risks
 

@@ -199,16 +199,29 @@ Tool Registry 统一暴露 AI 可调用能力。
 domain.action
 ```
 
-示例：
+已完成 read tools：
 
 - `character.get`
-- `character.updatePersonality`
 - `world.search`
-- `chapter.rewriteScene`
+- `chapter.get`
+- `state.get`
+- `timeline.list`
+- `foreshadow.list`
+- `summary.get`
+- `constitution.get`
+
+已完成 M6 write-intent tools：
+
+- `character.updatePersonality`
 - `state.set`
 - `timeline.add`
 - `foreshadow.create`
 - `summary.generateChapter`
+
+后续 proposed tools：
+
+- `chapter.rewriteScene`
+- `foreshadow.resolve`
 - `constitution.proposeUpdate`
 
 ### Domain Tools

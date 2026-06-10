@@ -178,14 +178,18 @@ packages/runtime RuntimeEvent stream
 - PendingAction
 - Diff preview
 
-示例：
+已完成 M6 write-intent tools：
 
 - `character.updatePersonality`
-- `chapter.rewriteScene`
 - `state.set`
 - `timeline.add`
 - `foreshadow.create`
 - `summary.generateChapter`
+
+后续 proposed write-intent tools：
+
+- `chapter.rewriteScene`
+- `foreshadow.resolve`
 - `constitution.proposeUpdate`
 
 ## Tool Naming
@@ -196,7 +200,7 @@ packages/runtime RuntimeEvent stream
 domain.action
 ```
 
-推荐：
+已完成 / 当前推荐：
 
 ```text
 character.get
@@ -205,14 +209,20 @@ character.updatePersonality
 world.getTopic
 world.search
 chapter.get
-chapter.rewriteScene
 state.get
 state.set
 timeline.add
 foreshadow.create
-foreshadow.resolve
 summary.generateChapter
 constitution.get
+workflow.get
+```
+
+后续 proposed:
+
+```text
+chapter.rewriteScene
+foreshadow.resolve
 constitution.proposeUpdate
 ```
 
@@ -316,12 +326,13 @@ Skill 限制可用工具。
 name: rewrite
 allowed_tools:
   - chapter.get
-  - chapter.rewriteScene
   - summary.get
 system: |
   Rewrite locally.
   Preserve voice.
 ```
+
+`chapter.rewriteScene` 属于后续 `0800 SemanticPatch Apply Engine` 之后的 proposed tool。当前 skill 示例不应把它作为已完成工具。
 
 Runtime 在创建 tool set 时按 Skill 过滤。
 
@@ -335,30 +346,36 @@ Constitution 不作为隐藏 policy。
 
 ## Minimal Implementation Modules
 
-建议源码结构：
+当前源码结构使用 monorepo 包边界，不使用旧的单体 `src/copilot` 布局：
 
 ```text
-src/
-└── copilot/
-    ├── runtime/
-    │   ├── runCopilot.ts
-    │   ├── buildContext.ts
-    │   └── modelClient.ts
-    ├── tools/
-    │   ├── registry.ts
-    │   ├── character.ts
-    │   ├── world.ts
-    │   ├── chapter.ts
-    │   ├── state.ts
-    │   ├── timeline.ts
-    │   ├── foreshadow.ts
-    │   ├── summary.ts
-    │   └── constitution.ts
-    └── types/
-        ├── tool.ts
-        ├── pendingAction.ts
-        └── semanticPatch.ts
+packages/core
+  -> workspace initialization, global OAN config, LLM provider config pure functions
+
+packages/tools
+  -> Markdown/YAML engines, AI SDK ToolSet factories, read tools, write-intent tools
+
+packages/runtime
+  -> Aider-style loop, RuntimeEvent stream, tool log, pending action collection
+
+packages/agent
+  -> prompt/message assembly, provider adapter composition, ToolSet injection,
+     RuntimeEvent to Vercel AI UI stream compatibility
+
+packages/backend
+  -> local HTTP transport, SSE endpoints
+
+apps/desktop
+  -> Electron main process
+
+apps/desktop-ui
+  -> Vue renderer using @ai-sdk/vue and backend HTTP/SSE
+
+__test__/*
+  -> module-scoped test workspaces
 ```
+
+旧文档中的 `src/copilot/runtime`、`src/copilot/tools`、`src/copilot/types` 只是早期草案，不作为后续实现位置。
 
 ## First Vertical Slice
 

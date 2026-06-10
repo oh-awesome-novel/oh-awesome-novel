@@ -138,22 +138,35 @@ Workflow 属于作者，不属于 AI。
 
 如 UI 后续需要 `readOnly`、`risk`、`allowedInSkills` 等信息，应在 AI SDK `ToolSet` 外围增加轻量 metadata map，而不是替换 `ToolSet`。
 
-初始工具：
+工具清单按阶段分层。不要把 future/proposed tools 当成 M5/M6 已完成范围。
+
+M5 completed read tools:
 
 - `character.get`
 - `character.list`
-- `character.updatePersonality`
 - `world.search`
 - `chapter.get`
-- `chapter.rewriteScene`
 - `state.get`
+- `timeline.list`
+- `foreshadow.list`
+- `summary.get`
+- `constitution.get`
+- `workflow.get`
+
+M6 completed write-intent tools:
+
+- `character.updatePersonality`
 - `state.set`
 - `timeline.add`
 - `foreshadow.create`
-- `foreshadow.resolve`
 - `summary.generateChapter`
-- `constitution.get`
+
+Post-M6 / proposed tools:
+
+- `chapter.rewriteScene`
+- `foreshadow.resolve`
 - `constitution.proposeUpdate`
+- `constitution.search`
 
 ### F7. Aider-style Copilot Runtime
 
@@ -250,13 +263,14 @@ Skill = Prompt Pack + Allowed Tool List。
 name: rewrite
 allowed_tools:
   - chapter.get
-  - chapter.rewriteScene
   - summary.get
 system: |
   Rewrite locally.
   Preserve character voice.
   Avoid AI clichés.
 ```
+
+`chapter.rewriteScene` 属于后续 Apply Engine-backed rewrite skill，不属于当前 M5/M6 completed tool scope。
 
 Skill 不包含业务逻辑。
 

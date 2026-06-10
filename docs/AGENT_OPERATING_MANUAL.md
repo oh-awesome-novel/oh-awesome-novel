@@ -152,17 +152,25 @@ Use:
 domain.action
 ```
 
-Examples:
+Completed / current examples:
 
 ```text
 character.get
 character.list
 character.updatePersonality
 world.search
-chapter.rewriteScene
+chapter.get
 state.set
 timeline.add
 summary.generateChapter
+```
+
+Post-M6 proposed examples:
+
+```text
+chapter.rewriteScene
+foreshadow.resolve
+constitution.proposeUpdate
 ```
 
 ## Skills
@@ -238,4 +246,3 @@ NovelBot
 ```
 
 with AI acting as a transparent writing copilot.
-
