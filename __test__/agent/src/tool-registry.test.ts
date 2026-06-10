@@ -63,6 +63,28 @@ describe('Novel agent tool assembly', () => {
       'workflow.get',
     ]);
   });
+
+  it('assembles M6 write intent tools into the default agent tool set', () => {
+    const tools = createNovelAgentToolSet({ workspaceRoot });
+
+    expect(Object.keys(tools)).toEqual([
+      'character.list',
+      'character.get',
+      'world.search',
+      'chapter.get',
+      'state.get',
+      'timeline.list',
+      'foreshadow.list',
+      'summary.get',
+      'constitution.get',
+      'workflow.get',
+      'character.updatePersonality',
+      'state.set',
+      'timeline.add',
+      'foreshadow.create',
+      'summary.generateChapter',
+    ]);
+  });
 });
 
 async function executeTool(

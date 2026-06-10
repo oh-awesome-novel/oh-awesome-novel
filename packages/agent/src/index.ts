@@ -1,7 +1,7 @@
 import { streamText } from 'ai';
 
 import type { LlmProviderConfig } from '@oh-awesome-novel/core';
-import { createReadTools } from '@oh-awesome-novel/tools';
+import { createReadTools, createWriteIntentTools } from '@oh-awesome-novel/tools';
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import { createAgentSessionStore } from './session-store';
 import type {
@@ -308,7 +308,10 @@ export const createRuntimeTurnInput = (
 
 export const createNovelAgentToolSet = (
   input: NovelAgentToolSetInput,
-): ToolSet => input.tools ?? createReadTools({ workspaceRoot: input.workspaceRoot });
+): ToolSet => input.tools ?? {
+  ...createReadTools({ workspaceRoot: input.workspaceRoot }),
+  ...createWriteIntentTools({ workspaceRoot: input.workspaceRoot }),
+};
 
 export const createNovelAgentReadTools = (workspaceRoot: string): ToolSet =>
   createReadTools({ workspaceRoot });

@@ -37,3 +37,24 @@ export type {
   CreateRestrictedWriteToolsOptions,
   RestrictedWriteResult,
 } from './restricted-write-tool';
+
+export {
+  acceptPendingAction,
+  createWriteIntentTools,
+  listPendingActions,
+  rejectPendingAction,
+} from './write-intent-tools';
+export type {
+  AcceptedPendingAction,
+  AcceptPendingActionInput,
+  CollectionPatch,
+  CreateWriteIntentToolsOptions,
+  NarrativePatch,
+  ObjectPatch,
+  RejectedPendingAction,
+  RejectPendingActionInput,
+  SemanticPatch,
+  ShadowWriteReference,
+  StoredWriteIntentAction,
+  WriteIntentPendingAction,
+} from './write-intent-tools';
