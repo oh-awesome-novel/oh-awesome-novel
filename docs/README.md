@@ -20,7 +20,7 @@
 - [ARCHITECTURE.md](ARCHITECTURE.md): 最终架构蓝图。
 - [FILESYSTEM_SPEC.md](FILESYSTEM_SPEC.md): 小说项目目录、对象文件树和文件格式。
 - [AGENT_RUNTIME_AND_TOOLS.md](AGENT_RUNTIME_AND_TOOLS.md): Tool Registry、Vercel AI SDK 接入和极简 Agent Loop。
-- [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 StoryForge Apply Engine 设计。
+- [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
 - [HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md): 写入确认、Git diff、commit 和回滚。
 - [NOVEL_CONSTITUTION.md](NOVEL_CONSTITUTION.md): 小说创作宪法规格。
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md): 分阶段开发计划。
@@ -50,7 +50,7 @@ ADR：
 3. `docs/APPLY_ENGINE.md`
 4. `docs/AGENT_OPERATING_MANUAL.md`
 
-不要再把早期对话里的旧方案当最终方案。最终方案已经从 “StoryForge 二开 + Repository Layer” 收敛为：
+不要再把早期对话里的旧方案当最终方案。StoryForge 只作为历史参考来源，不是当前产品名、组件名、运行时目录名或兼容目标。最终方案已经收敛为：
 
 ```text
 oh-awesome-novel

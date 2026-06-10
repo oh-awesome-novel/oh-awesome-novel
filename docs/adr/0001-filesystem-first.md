@@ -8,6 +8,8 @@ Accepted
 
 早期方案曾考虑 StoryForge 风格数据库模型，或者 Markdown Mirror。
 
+这里的 StoryForge 只作为历史背景，不是当前组件名、运行时目录名或兼容目标。
+
 对话后期明确收敛为：
 
 - Markdown / YAML 是事实源。
@@ -48,4 +50,3 @@ Accepted
 - SQLite
 - PostgreSQL
 - Vector database as source of truth
-

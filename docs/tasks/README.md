@@ -20,6 +20,7 @@
 ## Status Legend
 
 - `Completed`: 已完成并已有代码或文档落地。
+- `Needs Review`: 已有实现或文档落地，但新增 plan 暴露出需要对照代码复核、补测或补实现的差异。
 - `Planned`: 尚未完成，后续开发任务。
 - `Blocked`: 需要新的设计决策或外部条件。
 
@@ -30,14 +31,17 @@
 - [0003 Lightweight Runtime](0003.md)
 - [0004 Runtime Test Workspace](0004.md)
 - [0005 Strict TypeScript Configs](0005.md)
-- [0100 Workspace Initialization And Novel Body Layout](0100.md)
 - [0200 Markdown YAML Engine](0200.md)
-- [0300 AI SDK ToolSet And Read Tools](0300.md)
 - [0350 Agent LLM Bridge And Message Assembly](0350.md)
 - [0400 Restricted File Write Tool](0400.md)
 - [0450 Agent Session Persistence](0450.md)
 - [0500 Minimal Copilot Interface](0500.md)
 - [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
+
+## Needs Review Tasks
+
+- [0100 Workspace Initialization And Novel Body Layout](0100.md)
+- [0300 AI SDK ToolSet And Read Tools](0300.md)
 - [0600 Write Intent And Human Approval](0600.md)
 
 ## Planned Tasks

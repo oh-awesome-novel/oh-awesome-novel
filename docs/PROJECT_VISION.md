@@ -176,7 +176,9 @@ LLM
 
 - 代码专用 UI
 
-### StoryForge
+### StoryForge Reference
+
+StoryForge 只作为历史参考来源，不是当前产品名、组件名、运行时目录名或兼容目标。
 
 借鉴：
 
@@ -187,6 +189,7 @@ LLM
 不照搬：
 
 - 数据库优先的存储方式
+- StoryForge 运行时目录、数据库模型或兼容层
 
 ### NovelBot
 
