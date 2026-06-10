@@ -30,24 +30,25 @@
 - [0003 Lightweight Runtime](0003.md)
 - [0004 Runtime Test Workspace](0004.md)
 - [0005 Strict TypeScript Configs](0005.md)
-- [0400 Restricted File Write Tool](0400.md)
-- [0450 Agent Session Persistence](0450.md)
-- [0500 Minimal Copilot Interface](0500.md)
-- [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
-
-## Planned Tasks
-
 - [0100 Workspace Initialization And Novel Body Layout](0100.md)
 - [0200 Markdown YAML Engine](0200.md)
 - [0300 Tool Registry And Read Tools](0300.md)
 - [0350 Agent LLM Bridge And Message Assembly](0350.md)
+- [0400 Restricted File Write Tool](0400.md)
+- [0450 Agent Session Persistence](0450.md)
+- [0500 Minimal Copilot Interface](0500.md)
+- [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
+- [0600 Write Intent And Human Approval](0600.md)
+
+## Planned Tasks
+
 - [0530 Global Workspace Launcher](0530.md)
 - [0540 Workspace Entry LLM Provider Gate](0540.md)
 - [0550 NoteGen Inspired Workspace Shell](0550.md)
+- [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
-- [0600 Write Intent And Human Approval](0600.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
 - [0900 Project References](0900.md)

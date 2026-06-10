@@ -23,7 +23,7 @@ Novel Constitution 是每个小说项目的最高优先级创作文档。
 最终推荐拆分为目录：
 
 ```text
-.storyforge/constitution/
+.oan/constitution/
 ├── identity.md
 ├── philosophy.md
 ├── narrative.md
@@ -38,7 +38,7 @@ Novel Constitution 是每个小说项目的最高优先级创作文档。
 早期兼容：
 
 ```text
-.storyforge/CONSTITUTION.md
+.oan/CONSTITUTION.md
 ```
 
 但长期应迁移到目录形式，避免单文件过长。
@@ -232,7 +232,7 @@ Proposal example:
 Potential Constitution Update
 
 Target:
-.storyforge/constitution/forbidden.md
+.oan/constitution/forbidden.md
 
 Suggestion:
 Add rule: villains cannot be redeemed without irreversible cost.
@@ -280,4 +280,3 @@ Options:
 ```
 
 Copilot 不应直接拒绝，也不应隐藏执行。它应透明说明冲突。
-

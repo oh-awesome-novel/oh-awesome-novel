@@ -18,12 +18,16 @@
 
 ## Canonical Layout
 
+项目内部运行目录统一使用 `.oan/`。早期讨论中的 `.storyforge/` 不是有效 workspace 目录，不需要兼容层。
+
 ```text
 my-novel/
-├── .storyforge/
+├── .oan/
 │   ├── AGENTS.md
 │   ├── CODEX.md
 │   ├── workflow.yaml
+│   ├── indexes/
+│   │   └── chapters.yaml
 │   ├── constitution/
 │   │   ├── identity.md
 │   │   ├── philosophy.md
@@ -71,10 +75,11 @@ my-novel/
 │       └── modern.md
 │
 ├── chapters/
-│   └── volume-01/
-│       ├── 001.md
-│       ├── 002.md
-│       └── 003.md
+│   └── 0001/
+│       ├── 0000.md
+│       ├── 0001.md
+│       ├── 0002.md
+│       └── 0003.md
 │
 ├── state/
 │   ├── characters.yaml
@@ -91,11 +96,11 @@ my-novel/
 │
 ├── summaries/
 │   ├── chapter/
-│   │   └── volume-01/
-│   │       ├── 001.md
-│   │       └── 002.md
+│   │   └── 0001/
+│   │       ├── 0001.md
+│   │       └── 0002.md
 │   ├── volume/
-│   │   └── volume-01.md
+│   │   └── 0001.md
 │   └── global.md
 │
 ├── schemas/
@@ -164,7 +169,7 @@ aliases:
   - Alice
 tags:
   - main-character
-firstAppearance: volume-01/001
+firstAppearance: 0001/0001
 importance: main
 ```
 
@@ -229,11 +234,69 @@ world.updateTopic(topic="magic/rules")
 
 章节是 Narrative Domain。
 
+正文路径使用稳定编号：
+
+```text
+chapters/<volume-number>/<chapter-number>.md
+```
+
+规则：
+
+- 卷目录只使用 4 位编号，例如 `0001/`。
+- 每卷的 `0000.md` 存放卷信息 / 卷元数据，不是小说正文章节内容。
+- 正文章节从 `0001.md` 开始。
+- Chapter id 使用 `<volume-number>/<chapter-number>`，例如 `0001/0003`。
+- 修改卷名或章节名不得导致路径变化。
+
+## Derived Chapter Index
+
+章节目录索引是从 `chapters/` 扫描生成的派生文件，不是小说事实源。
+
+默认路径：
+
+```text
+.oan/indexes/chapters.yaml
+```
+
+索引文件至少记录：
+
+- 生成时的 Git commit hash。
+- 生成时间。
+- 扫描范围。
+- 卷 / 章节 id。
+- 卷 / 章节标题。
+- workspace-relative 文件路径。
+
+示例：
+
+```yaml
+kind: chapter-index
+version: 1
+generatedAt: 2026-06-10T00:00:00.000Z
+git:
+  head: 2f4c8a1b7c9d0e1f234567890abcdef123456789
+  dirty: false
+source:
+  root: chapters
+volumes:
+  - id: "0001"
+    title: 第一卷
+    metadataPath: chapters/0001/0000.md
+    chapters:
+      - id: "0001/0001"
+        title: 第一章
+        path: chapters/0001/0001.md
+```
+
+读取索引时必须比较当前 Git HEAD 和索引中的 `git.head`。如果 hash 不一致，UI 应提示章节索引可能过期，需要重新扫描。
+
+如果当前 workspace 没有 Git 仓库、无法读取 HEAD，或工作区 dirty，UI 必须明确展示索引状态，不能把索引伪装成已验证的最新结果。
+
 建议使用场景标题：
 
 ```markdown
 ---
-id: volume-01/003
+id: 0001/0003
 title: 黑色纹路
 status: draft
 ---
@@ -290,7 +353,7 @@ State 是随章节变化的动态变量。
 ```yaml
 events:
   - id: event_001
-    chapter: volume-01/003
+    chapter: 0001/0003
     title: 女主重伤
     description: 女主在战斗中被黑色纹路侵蚀。
     tags:
@@ -305,9 +368,9 @@ events:
 ```yaml
 active:
   - id: black_mark
-    firstChapter: volume-01/003
+    firstChapter: 0001/0003
     description: 女主手臂出现黑色纹路。
-    expectedResolution: volume-02
+    expectedResolution: 0002
     relatedCharacters:
       - heroine
 ```
@@ -317,16 +380,16 @@ active:
 ```yaml
 resolved:
   - id: dragon_eye
-    firstChapter: volume-01/001
-    resolvedChapter: volume-01/010
+    firstChapter: 0001/0001
+    resolvedChapter: 0001/0010
     description: 龙眼伏笔已揭示为古代契约。
 ```
 
 ## Summary Format
 
 ```text
-summaries/chapter/volume-01/001.md
-summaries/volume/volume-01.md
+summaries/chapter/0001/0001.md
+summaries/volume/0001.md
 summaries/global.md
 ```
 
@@ -337,7 +400,7 @@ summaries/global.md
 Constitution 拆成目录：
 
 ```text
-.storyforge/constitution/
+.oan/constitution/
 ├── identity.md
 ├── philosophy.md
 ├── narrative.md
@@ -372,4 +435,3 @@ constitution.md
 ```
 
 但这只应作为导入兼容层，不应作为长期目标。
-

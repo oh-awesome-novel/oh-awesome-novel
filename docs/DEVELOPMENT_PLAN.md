@@ -273,6 +273,7 @@ Post-MVP UI Tasks:
 - Global workspace launcher, similar to a JetBrains / WebStorm project list.
 - Workspace entry LLM provider configuration gate.
 - NoteGen-inspired workspace shell: left file tree, center plain-text file viewer, right Copilot.
+- Chapter navigation view: derive readable volume/chapter list from stable numbered chapter files.
 - Workspace home state: no file selected, Copilot hidden, quick actions visible.
 - Workspace global search using MiniSearch over current workspace text files.
 - Git history and sync page, preferably by reusing a lightweight open-source Git UI.
@@ -311,7 +312,7 @@ Goal:
 
 Deliverables:
 
-- `.storyforge/workflow.yaml` loader。
+- `.oan/workflow.yaml` loader。
 - Skill loader。
 - Allowed tool filter。
 - Prompt pack support。

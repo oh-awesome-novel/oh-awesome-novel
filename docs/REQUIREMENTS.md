@@ -39,7 +39,7 @@
 
 ```text
 my-novel/
-├── .storyforge/
+├── .oan/
 ├── characters/
 ├── world/
 ├── chapters/
@@ -50,7 +50,7 @@ my-novel/
 └── .git/
 ```
 
-命名保留 `.storyforge/` 是为了兼容讨论中的概念；应用项目名仍是 `oh-awesome-novel`。
+项目内部运行目录统一为 `.oan/`。早期讨论中的 `.storyforge/` 不是有效 workspace 目录，不需要兼容层。
 
 ### F2. Object File Tree
 
@@ -112,7 +112,7 @@ AI 只能建议修改，不能自动修改。
 
 ### F5. Workflow
 
-作者可以用 `.storyforge/workflow.yaml` 定义创作流程。
+作者可以用 `.oan/workflow.yaml` 定义创作流程。
 
 示例：
 
@@ -311,4 +311,3 @@ Tool calls、参数、结果预览、SemanticPatch、diff 都必须可见。
 - Event sourcing
 - CQRS
 - 向量数据库作为事实源
-

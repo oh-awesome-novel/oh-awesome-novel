@@ -25,7 +25,7 @@
 女主在第 12 章重伤，后续性格开始外冷内热。
 
 Copilot：
-读取 chapters/012.md
+读取 chapters/0001/0012.md
 读取 characters/heroine/personality.md
 读取 state/characters.yaml
 读取 timeline/events.yaml
@@ -238,4 +238,3 @@ MVP 可以先是 CLI / local dev harness。
 - Git History
 
 第一阶段不要急着做完整 UI。先把文件系统、SemanticPatch、Apply Engine、Tool Registry、人类确认链路做稳。
-

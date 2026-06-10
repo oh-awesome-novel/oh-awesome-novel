@@ -220,7 +220,7 @@ state/characters.yaml
 {
   "kind": "narrative",
   "domain": "chapter",
-  "file": "chapters/volume-01/003.md",
+  "file": "chapters/0001/0003.md",
   "operation": "replaceScene",
   "selector": {
     "scene": "Scene 2"
@@ -341,4 +341,3 @@ MorphApplyEngine
 但 MVP 不依赖外部 Morph API。
 
 先实现面向小说领域的 deterministic apply。
-
