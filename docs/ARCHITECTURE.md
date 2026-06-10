@@ -191,6 +191,8 @@ Runtime 保持极简。
 
 Tool Registry 统一暴露 AI 可调用能力。
 
+这里的 Tool Registry 是领域能力集合的概念名。实现统一使用 Vercel AI SDK `ToolSet`，不定义第二套 `StoryTool`、`RuntimeTool` 或 `ToolRegistry` 抽象来替代 `ToolSet`。
+
 命名规则：
 
 ```text

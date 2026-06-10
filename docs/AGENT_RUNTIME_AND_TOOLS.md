@@ -237,6 +237,8 @@ type StoryReadTools = ToolSet;
 
 如果后续 UI 确实需要 `readOnly`、`risk`、`allowedInSkills` 等额外 metadata，应在 AI SDK `ToolSet` 外围增加薄 metadata map，而不是替换 `ToolSet` 本身。
 
+因此旧文档中的 `defineStoryTool()`、独立 `ToolRegistry`、`RuntimeToolRegistry` 都不是当前实现目标。
+
 ## Tool Result
 
 Read Tool 返回结构化结果。

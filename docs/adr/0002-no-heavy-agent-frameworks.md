@@ -47,7 +47,7 @@ Tool Calling 使用 Vercel AI SDK 的最小能力：
 
 代价：
 
-- 需要自己实现 Tool Registry、Context Builder、Approval。
+- 需要自己维护本地 AI SDK `ToolSet` 组装、Context Builder、Approval。
 - 高级 agent 功能需要逐步手写。
 
 ## Explicitly Avoid
@@ -60,4 +60,3 @@ Tool Calling 使用 Vercel AI SDK 的最小能力：
 - AutoGen
 - CrewAI
 - Semantic Kernel
-

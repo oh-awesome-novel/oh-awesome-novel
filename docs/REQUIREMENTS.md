@@ -130,9 +130,13 @@ steps:
 
 Workflow 属于作者，不属于 AI。
 
-### F6. Tool Registry
+### F6. AI SDK ToolSet Registry
 
-系统应提供 Tool Registry，暴露领域操作。
+系统应提供领域工具集合，暴露 AI 可调用的小说操作。
+
+这里的 Tool Registry 是概念名：实现统一使用 Vercel AI SDK `ToolSet`。不要实现 `defineStoryTool()`、`StoryTool`、`RuntimeToolRegistry` 这类第二套工具抽象。
+
+如 UI 后续需要 `readOnly`、`risk`、`allowedInSkills` 等信息，应在 AI SDK `ToolSet` 外围增加轻量 metadata map，而不是替换 `ToolSet`。
 
 初始工具：
 

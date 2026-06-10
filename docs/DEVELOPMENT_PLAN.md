@@ -20,7 +20,7 @@ M1  Project Scaffolding
 M2  Filesystem Spec And Example Novel
 M3  Markdown / YAML Engine
 M4  SemanticPatch Apply Engine
-M5  Tool Registry And Read Tools
+M5  AI SDK ToolSet And Read Tools
 M6  Write Intent Tools And Human Approval
 M7  Aider-style Copilot Runtime
 M8  Minimal Copilot Interface
@@ -158,7 +158,7 @@ Done Criteria:
 - `character.updatePersonality` 能生成 Markdown section diff。
 - 用户确认前不写盘。
 
-## M5. Tool Registry And Read Tools
+## M5. AI SDK ToolSet And Read Tools
 
 Goal:
 
@@ -166,9 +166,10 @@ Goal:
 
 Deliverables:
 
-- `defineStoryTool()`
-- `ToolRegistry`
-- Tool metadata
+- AI SDK `ToolSet`
+- 基于 AI SDK `tool()` / `jsonSchema()` 的 read tools
+- `createReadTools()`
+- 如 UI 后续需要，增加 `ToolSet` 外围薄 metadata map
 - Read tools
 
 Initial Tools:
@@ -191,6 +192,7 @@ Done Criteria:
 - CLI 可以调用 read tools。
 - Tool result 结构化。
 - Tool call log 可记录。
+- 不实现 `defineStoryTool()`、`StoryTool` 或独立 `RuntimeToolRegistry`。
 
 ## M6. Write Intent Tools And Human Approval
 
