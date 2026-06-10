@@ -104,11 +104,13 @@ AI 可以：
 
 AI 不可以：
 
-- 静默写入文件
+- 静默写入真实目标文件
 - 绕过确认
 - 全自动重写项目
 - 隐藏修改内容
 - 直接拥有数据
+
+审批前允许系统内部写入 `workspace/.workspace` shadow recovery / PendingAction 数据，用于 diff preview 和崩溃恢复；这不等于把修改 materialize 到小说 workspace 正式内容路径。
 
 ### Human Is Always In Control
 

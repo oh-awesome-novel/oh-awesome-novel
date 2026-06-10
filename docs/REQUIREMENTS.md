@@ -208,7 +208,9 @@ Apply Engine 将意图转成 diff。
 
 所有写操作必须生成 Patch Preview。
 
-用户确认前不得写盘。
+用户确认前不得写真实目标文件，也不得 materialize 到小说 workspace 正式内容路径。
+
+系统内部可以在用户确认前写入 `workspace/.workspace` shadow recovery / PendingAction 数据，用于 diff preview、崩溃恢复和审批状态。调用方不能把 `.workspace` 当作可写目标路径传入。
 
 ### F10. Summary And Memory
 
