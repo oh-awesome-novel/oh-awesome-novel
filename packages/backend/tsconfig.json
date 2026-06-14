@@ -12,6 +12,9 @@
       ],
       "@oh-awesome-novel/runtime": [
         "../runtime/src/index.ts"
+      ],
+      "@oh-awesome-novel/tools": [
+        "../tools/src/index.ts"
       ]
     },
     "lib": [

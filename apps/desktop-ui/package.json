@@ -9,8 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.34",
-    "@ai-sdk/vue": "^3.0.197"
+    "@ai-sdk/vue": "^3.0.197",
+    "minisearch": "^7.2.0",
+    "vue": "^3.5.34"
   },
   "devDependencies": {
     "@types/node": "^24.12.3",

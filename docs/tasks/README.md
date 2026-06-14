@@ -39,6 +39,11 @@
 - [0450 Agent Session Persistence](0450.md)
 - [0500 Minimal Copilot Interface](0500.md)
 - [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
+- [0530 Global Workspace Launcher](0530.md)
+- [0540 Workspace Entry LLM Provider Gate](0540.md)
+- [0550 NoteGen Inspired Workspace Shell](0550.md)
+- [0555 Chapter Navigation View](0555.md)
+- [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 
 ## Needs Review Tasks
 
@@ -46,11 +51,6 @@
 
 ## Planned Tasks
 
-- [0530 Global Workspace Launcher](0530.md)
-- [0540 Workspace Entry LLM Provider Gate](0540.md)
-- [0550 NoteGen Inspired Workspace Shell](0550.md)
-- [0555 Chapter Navigation View](0555.md)
-- [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)

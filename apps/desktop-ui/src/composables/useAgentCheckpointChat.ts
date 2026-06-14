@@ -3,6 +3,8 @@ import { DefaultChatTransport } from 'ai';
 import type { UIMessage } from 'ai';
 import { computed, shallowRef } from 'vue';
 
+import { resolveBackendBaseUrl } from './useBackendBaseUrl';
+
 export interface PendingActionView {
   id: string;
   title: string;
@@ -77,13 +79,5 @@ function isPendingAction(value: unknown): value is PendingActionView {
     typeof (value as PendingActionView).description === 'string' &&
     typeof (value as PendingActionView).diff === 'string' &&
     typeof (value as PendingActionView).status === 'string'
-  );
-}
-
-function resolveBackendBaseUrl(): string {
-  return (
-    window.ohAwesomeNovel?.backendBaseUrl ??
-    import.meta.env.VITE_OAN_BACKEND_BASE_URL ??
-    'http://127.0.0.1:4517'
   );
 }

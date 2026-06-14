@@ -46,7 +46,7 @@ const getRendererIndexPath = () => {
 
 app.on('ready', async () => {
   backend = await startNovelHttpBackend({
-    workspaceRoot: resolveWorkspaceRoot(),
+    seedWorkspaceRoot: resolveWorkspaceRoot(),
   });
   createWindow();
 });

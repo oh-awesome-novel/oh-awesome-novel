@@ -29,6 +29,20 @@ export { createReadTools } from './read-tools';
 export type { CreateReadToolsOptions } from './read-tools';
 
 export {
+  buildChapterIndex,
+  readChapterIndexStatus,
+  writeChapterIndexFile,
+} from './chapter-index';
+export type {
+  ChapterIndex,
+  ChapterIndexChapter,
+  ChapterIndexStatus,
+  ChapterIndexStatusResult,
+  ChapterIndexVolume,
+  PersistedChapterIndex,
+} from './chapter-index';
+
+export {
   createRestrictedWriteTools,
   createWorkspaceWriteFileTool,
   writeRestrictedWorkspaceFile,
