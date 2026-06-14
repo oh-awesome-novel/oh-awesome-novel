@@ -364,9 +364,9 @@ function summaryGenerateChapterTool(options: CreateWriteIntentToolsOptions) {
       additionalProperties: false,
     }),
     async execute(args) {
-      const chapterId = expectStringArg(args, 'chapterId');
+      const chapterId = safeNarrativeChapterId(expectStringArg(args, 'chapterId'));
       const content = normalizeMarkdownFile(expectStringArg(args, 'content'));
-      const file = getOptionalStringArg(args, 'file') ?? `chapter/${safeRelativePath(chapterId)}.md`;
+      const file = getOptionalStringArg(args, 'file') ?? `chapter/${chapterId}.md`;
       const targetFile = safeRelativePath(join('summaries', safeRelativePath(file)));
       const absolutePath = await resolveWritableReadTarget(options.workspaceRoot, targetFile);
       const original = await readFileIfExists(absolutePath);
@@ -626,6 +626,25 @@ function safeRelativePath(value: string): string {
     normalized.split(sep).some((segment) => segment === '..' || segment.startsWith('.'))
   ) {
     throw new Error(`Invalid workspace relative path: ${value}`);
+  }
+
+  return normalized;
+}
+
+function safeNarrativeChapterId(value: string): string {
+  const normalized = safeRelativePath(value);
+  const parts = normalized.split(sep);
+
+  if (
+    parts.length !== 2 ||
+    !/^\d{4}$/.test(parts[0]) ||
+    !/^\d{4}$/.test(parts[1])
+  ) {
+    throw new Error(`Invalid chapter id: ${value}`);
+  }
+
+  if (parts[1] === '0000') {
+    throw new Error('Chapter id 0000 is reserved for volume metadata.');
   }
 
   return normalized;

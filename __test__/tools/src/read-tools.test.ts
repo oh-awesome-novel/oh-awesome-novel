@@ -73,6 +73,14 @@ describe('read tools', () => {
       executeTool(tools, 'workflow.get', {}),
     ).resolves.toMatchObject({ file: '.oan/workflow.yaml' });
   });
+
+  it('rejects volume metadata as a chapter.get target', async () => {
+    const tools = createReadTools({ workspaceRoot });
+
+    await expect(
+      executeTool(tools, 'chapter.get', { id: '0001/0000' }),
+    ).rejects.toThrow(/reserved for volume metadata/);
+  });
 });
 
 async function executeTool(

@@ -8,6 +8,8 @@ export {
   formatVolumeDirectoryName,
   formatChapterFileName,
   resolveChapterFilePath,
+  resolveVolumeMetadataFilePath,
+  resolveNarrativeChapterFilePath,
 } from './workspace.js';
 
 export type {

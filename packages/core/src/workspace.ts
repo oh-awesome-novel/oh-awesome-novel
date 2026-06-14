@@ -202,6 +202,25 @@ export function resolveChapterFilePath(
   };
 }
 
+export function resolveVolumeMetadataFilePath(
+  rootDir: string,
+  volumeNumber: number,
+): ChapterPathParts {
+  return resolveChapterFilePath(rootDir, volumeNumber, 0);
+}
+
+export function resolveNarrativeChapterFilePath(
+  rootDir: string,
+  volumeNumber: number,
+  chapterNumber: number,
+): ChapterPathParts {
+  if (chapterNumber === 0) {
+    throw new Error('chapterNumber 0 is reserved for volume metadata.');
+  }
+
+  return resolveChapterFilePath(rootDir, volumeNumber, chapterNumber);
+}
+
 function formatPositiveOrdinal(value: number, fieldName: string): string {
   if (!Number.isInteger(value) || value < 1) {
     throw new Error(`${fieldName} must be a positive integer.`);

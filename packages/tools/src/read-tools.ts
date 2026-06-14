@@ -110,11 +110,11 @@ function chapterGetTool(options: CreateReadToolsOptions) {
       id: { type: 'string' },
     }, ['id']),
     async execute(args) {
-      const id = expectStringArg(args, 'id');
+      const id = safeNarrativeChapterId(expectStringArg(args, 'id'));
       const filePath = resolveWorkspacePath(
         options.workspaceRoot,
         'chapters',
-        `${safeRelativePath(id)}.md`,
+        `${id}.md`,
       );
       const document = await loadMarkdown(filePath);
 
@@ -362,6 +362,25 @@ function safeRelativePath(value: string): string {
     normalized.split('/').some((segment) => segment.startsWith('.'))
   ) {
     throw new Error(`Invalid workspace relative path: ${value}`);
+  }
+
+  return normalized;
+}
+
+function safeNarrativeChapterId(value: string): string {
+  const normalized = safeRelativePath(value);
+  const parts = normalized.split('/');
+
+  if (
+    parts.length !== 2 ||
+    !/^\d{4}$/.test(parts[0]) ||
+    !/^\d{4}$/.test(parts[1])
+  ) {
+    throw new Error(`Invalid chapter id: ${value}`);
+  }
+
+  if (parts[1] === '0000') {
+    throw new Error('Chapter id 0000 is reserved for volume metadata.');
   }
 
   return normalized;

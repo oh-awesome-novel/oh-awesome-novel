@@ -141,11 +141,23 @@ describe('write intent tools and human approval', () => {
 
     await expect(
       executeTool(tools, 'summary.generateChapter', {
-        chapterId: '0001',
+        chapterId: '0001/0001',
         file: '../.hidden.md',
         content: 'blocked',
       }),
     ).rejects.toThrow(/Invalid workspace relative path/);
+  });
+
+  it('rejects generating a chapter summary for volume metadata 0000', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+
+    await expect(
+      executeTool(tools, 'summary.generateChapter', {
+        chapterId: '0001/0000',
+        content: 'not a chapter',
+      }),
+    ).rejects.toThrow(/reserved for volume metadata/);
   });
 
   it('rejects shadow writes when internal .workspace points outside', async () => {
@@ -184,7 +196,7 @@ async function createTempNovelWorkspace(): Promise<string> {
   await mkdir(join(root, 'state'), { recursive: true });
   await mkdir(join(root, 'timeline'), { recursive: true });
   await mkdir(join(root, 'foreshadow'), { recursive: true });
-  await mkdir(join(root, 'summaries/chapter'), { recursive: true });
+  await mkdir(join(root, 'summaries/chapter/0001'), { recursive: true });
   await writeFile(
     join(root, 'characters/heroine/personality.md'),
     `---
@@ -220,7 +232,11 @@ id: heroine
     'utf-8',
   );
   await writeFile(join(root, 'foreshadow/active.yaml'), 'active: []\n', 'utf-8');
-  await writeFile(join(root, 'summaries/chapter/0001.md'), '# Chapter 0001\n\n旧摘要。\n', 'utf-8');
+  await writeFile(
+    join(root, 'summaries/chapter/0001/0001.md'),
+    '# Chapter 0001\n\n旧摘要。\n',
+    'utf-8',
+  );
 
   return root;
 }

@@ -11,6 +11,8 @@ import {
   formatVolumeDirectoryName,
   formatChapterFileName,
   resolveChapterFilePath,
+  resolveVolumeMetadataFilePath,
+  resolveNarrativeChapterFilePath,
 } from '@oh-awesome-novel/core';
 
 describe('isEmptyDirectory', () => {
@@ -237,6 +239,18 @@ describe('novel body paths', () => {
       relativePath: join('chapters', '0002', '0001.md'),
       absolutePath: join(resolve('/novel'), 'chapters', '0002', '0001.md'),
     });
+  });
+
+  it('separates volume metadata paths from narrative chapter paths', () => {
+    expect(resolveVolumeMetadataFilePath('/novel', 1).relativePath).toBe(
+      join('chapters', '0001', '0000.md'),
+    );
+    expect(resolveNarrativeChapterFilePath('/novel', 1, 1).relativePath).toBe(
+      join('chapters', '0001', '0001.md'),
+    );
+    expect(() => resolveNarrativeChapterFilePath('/novel', 1, 0)).toThrow(
+      'reserved for volume metadata',
+    );
   });
 
   it('rejects invalid volume and chapter numbers', () => {
