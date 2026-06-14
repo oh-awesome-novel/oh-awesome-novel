@@ -7,7 +7,10 @@
   "author": "",
   "directories": {},
   "type": "commonjs",
-  "scripts": {},
+  "scripts": {
+    "desktop:build:deps": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend",
+    "desktop:build:package": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend @oh-awesome-novel/desktop-ui"
+  },
   "workspaces": [
     "apps/*",
     "packages/*",
@@ -15,10 +18,14 @@
   ],
   "allowScripts": {
     "electron@40.10.2": true,
-    "electron-winstaller@5.4.0": true,
-    "fsevents@2.3.3": true
+    "electron-winstaller@5.4.0": false,
+    "fsevents@2.3.3": false,
+    "nx@22.7.5": true
   },
   "dependencies": {
     "electron": "40.10.2"
+  },
+  "devDependencies": {
+    "nx": "^22.7.5"
   }
 }

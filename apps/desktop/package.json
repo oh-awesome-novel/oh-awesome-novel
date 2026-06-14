@@ -8,14 +8,10 @@
   "type": "commonjs",
   "main": ".vite/build/main.js",
   "scripts": {
-    "predev": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
-    "dev": "electron-forge start",
-    "prepackage": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
-    "package": "electron-forge package",
-    "premake": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
-    "make": "electron-forge make --skip-package",
-    "prepublish": "npm run build --workspace @oh-awesome-novel/forge-plugin-tsdown && npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/desktop-ui",
-    "publish": "electron-forge publish",
+    "dev": "npm --prefix ../.. run desktop:build:deps && electron-forge start",
+    "package": "npm --prefix ../.. run desktop:build:package && electron-forge package",
+    "make": "npm --prefix ../.. run desktop:build:package && electron-forge make --skip-package",
+    "publish": "npm --prefix ../.. run desktop:build:package && electron-forge publish",
     "start": "electron ."
   },
   "devDependencies": {

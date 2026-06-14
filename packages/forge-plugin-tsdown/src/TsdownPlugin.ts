@@ -55,39 +55,17 @@ export default class TsdownPlugin extends PluginBase<TsdownPluginConfig> {
       preStart: [
         namedHookWithTaskFn<'preStart'>(async (task) => {
           await this.cleanBaseDir();
-          if (!task) {
-            await this.launchRendererDevServer();
-            await this.build(null, 'development');
-            return;
+          if (task) {
+            task.output = 'Building Electron main and preload bundles';
           }
-
-          const tasks = [];
-
-          if (this.config.renderer) {
-            tasks.push({
-              title: 'Launching renderer Vite dev server',
-              task: async (_ctx: unknown, subtask: ForgeTask) => {
-                await this.launchRendererDevServer(subtask);
-                subtask.title = 'Launched renderer Vite dev server';
-              },
-            });
+          await this.build(null, 'development');
+          if (task) {
+            task.output = 'Launching renderer Vite dev server';
           }
-
-          tasks.push({
-            title: 'Building Electron main and preload bundles',
-            task: async (_ctx: unknown, subtask: ForgeTask) => {
-              await this.build(subtask, 'development');
-            },
-          });
-
-          return task.newListr(tasks, {
-            concurrent: false,
-            exitOnError: true,
-            rendererOptions: {
-              collapseSubtasks: false,
-              persistentOutput: true,
-            },
-          } as Parameters<ForgeTask['newListr']>[1]);
+          await this.launchRendererDevServer(task ?? undefined);
+          if (task) {
+            task.output = 'Prepared tsdown bundles';
+          }
         }, 'Preparing tsdown bundles'),
       ],
       postStart: async (_forgeConfig, child) => {
@@ -99,7 +77,13 @@ export default class TsdownPlugin extends PluginBase<TsdownPluginConfig> {
         namedHookWithTaskFn<'prePackage'>(async (task) => {
           this.isProd = true;
           await this.cleanBaseDir();
-          return this.build(task, 'production');
+          if (task) {
+            task.output = 'Building production Electron main and preload bundles';
+          }
+          await this.build(null, 'production');
+          if (task) {
+            task.output = 'Built production tsdown bundles';
+          }
         }, 'Building production tsdown bundles'),
       ],
       resolveForgeConfig: this.resolveForgeConfig,
