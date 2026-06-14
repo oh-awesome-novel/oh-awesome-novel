@@ -33,6 +33,7 @@
 - [0005 Strict TypeScript Configs](0005.md)
 - [0100 Workspace Initialization And Novel Body Layout](0100.md)
 - [0200 Markdown YAML Engine](0200.md)
+- [0300 AI SDK ToolSet And Read Tools](0300.md)
 - [0350 Agent LLM Bridge And Message Assembly](0350.md)
 - [0400 Restricted File Write Tool](0400.md)
 - [0450 Agent Session Persistence](0450.md)
@@ -41,7 +42,6 @@
 
 ## Needs Review Tasks
 
-- [0300 AI SDK ToolSet And Read Tools](0300.md)
 - [0600 Write Intent And Human Approval](0600.md)
 
 ## Planned Tasks

@@ -85,6 +85,15 @@ describe('Novel agent tool assembly', () => {
       'summary.generateChapter',
     ]);
   });
+
+  it('does not expose future tools in the default agent tool set', () => {
+    const tools = createNovelAgentToolSet({ workspaceRoot });
+
+    expect(tools).not.toHaveProperty('chapter.rewriteScene');
+    expect(tools).not.toHaveProperty('foreshadow.resolve');
+    expect(tools).not.toHaveProperty('constitution.proposeUpdate');
+    expect(tools).not.toHaveProperty('constitution.search');
+  });
 });
 
 async function executeTool(
