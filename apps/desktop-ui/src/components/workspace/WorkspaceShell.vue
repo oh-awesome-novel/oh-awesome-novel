@@ -19,11 +19,13 @@ import type {
 const props = defineProps<{
   workspace: WorkspaceSummary;
   providerConfigured: boolean;
+  theme: 'light' | 'dark';
 }>();
 
 const emit = defineEmits<{
   leaveWorkspace: [];
   configureProvider: [];
+  toggleTheme: [];
 }>();
 
 const api = useWorkspaceApi();
@@ -202,6 +204,18 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
       </div>
       <div class="toolbar-right">
         <span class="status-pill">{{ providerConfigured ? 'Provider ready' : 'Read-only' }}</span>
+        <button
+          class="theme-switch theme-switch-compact"
+          type="button"
+          role="switch"
+          :aria-checked="theme === 'dark'"
+          @click="emit('toggleTheme')"
+        >
+          <span class="theme-switch-track" aria-hidden="true">
+            <span class="theme-switch-thumb"></span>
+          </span>
+          <span>{{ theme === 'dark' ? 'Dark' : 'Light' }}</span>
+        </button>
         <button class="ghost-button" type="button" @click="emit('configureProvider')">Settings</button>
         <button class="ghost-button" type="button" @click="copilotVisible = !copilotVisible">
           Copilot

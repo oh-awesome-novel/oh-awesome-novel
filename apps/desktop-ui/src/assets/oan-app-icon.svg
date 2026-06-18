@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="oan-icon-title">
+  <title id="oan-icon-title">Oh Awesome Novel</title>
+  <g fill="none" stroke="#0f172a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M154 132 360 338" stroke-width="48"/>
+    <path d="M128 158 334 364" stroke-width="48"/>
+    <path d="M334 364 390 390 364 334" stroke-width="42"/>
+    <path d="M118 116 174 142 148 172" stroke-width="34"/>
+    <path d="M182 300H92V126h70" stroke-width="36"/>
+    <path d="M350 126h70v174" stroke-width="36"/>
+  </g>
+</svg>

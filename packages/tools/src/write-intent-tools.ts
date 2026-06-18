@@ -366,7 +366,10 @@ function summaryGenerateChapterTool(options: CreateWriteIntentToolsOptions) {
     async execute(args) {
       const chapterId = safeNarrativeChapterId(expectStringArg(args, 'chapterId'));
       const content = normalizeMarkdownFile(expectStringArg(args, 'content'));
-      const file = getOptionalStringArg(args, 'file') ?? `chapter/${chapterId}.md`;
+      const file = safeChapterSummaryFile(
+        getOptionalStringArg(args, 'file') ?? `chapter/${chapterId}.md`,
+        chapterId,
+      );
       const targetFile = safeRelativePath(join('summaries', safeRelativePath(file)));
       const absolutePath = await resolveWritableReadTarget(options.workspaceRoot, targetFile);
       const original = await readFileIfExists(absolutePath);
@@ -645,6 +648,25 @@ function safeNarrativeChapterId(value: string): string {
 
   if (parts[1] === '0000') {
     throw new Error('Chapter id 0000 is reserved for volume metadata.');
+  }
+
+  return normalized;
+}
+
+function safeChapterSummaryFile(value: string, chapterId: string): string {
+  const normalized = safeRelativePath(value);
+  const prefix = `chapter${sep}`;
+
+  if (!normalized.startsWith(prefix) || !normalized.endsWith('.md')) {
+    throw new Error(`Invalid chapter summary file: ${value}`);
+  }
+
+  const fileChapterId = safeNarrativeChapterId(
+    normalized.slice(prefix.length, -'.md'.length),
+  );
+
+  if (fileChapterId !== chapterId) {
+    throw new Error(`Chapter summary file must match chapter id ${chapterId}.`);
   }
 
   return normalized;

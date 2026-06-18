@@ -135,6 +135,28 @@ describe('write intent tools and human approval', () => {
     ]);
   });
 
+  it('uses the stable numbered chapter summary path by default', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+
+    const result = await executeTool(tools, 'summary.generateChapter', {
+      chapterId: '0001/0001',
+      content: '# Chapter 0001\n\n新摘要。',
+    });
+
+    const action = expectSinglePendingAction(result);
+    expect(action.touchedFiles).toEqual(['summaries/chapter/0001/0001.md']);
+    expect(action.shadowWrites[0]).toMatchObject({
+      targetFile: 'summaries/chapter/0001/0001.md',
+    });
+    await expect(
+      readFile(join(workspaceRoot, 'summaries/chapter/0001/0001.md'), 'utf-8'),
+    ).resolves.toContain('旧摘要');
+    await expect(
+      readFile(join(workspaceRoot, action.shadowWrites[0].shadowFile), 'utf-8'),
+    ).resolves.toContain('新摘要');
+  });
+
   it('blocks formal write tools from targeting hidden files or directories', async () => {
     const workspaceRoot = await createTempNovelWorkspace();
     const tools = createWriteIntentTools({ workspaceRoot });
@@ -158,6 +180,32 @@ describe('write intent tools and human approval', () => {
         content: 'not a chapter',
       }),
     ).rejects.toThrow(/reserved for volume metadata/);
+  });
+
+  it('rejects chapter summary file overrides that target volume metadata 0000', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+
+    await expect(
+      executeTool(tools, 'summary.generateChapter', {
+        chapterId: '0001/0001',
+        file: 'chapter/0001/0000.md',
+        content: 'not a chapter summary target',
+      }),
+    ).rejects.toThrow(/reserved for volume metadata/);
+  });
+
+  it('rejects chapter summary file overrides that do not match the chapter id', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+
+    await expect(
+      executeTool(tools, 'summary.generateChapter', {
+        chapterId: '0001/0001',
+        file: 'chapter/0001/0002.md',
+        content: 'wrong chapter summary target',
+      }),
+    ).rejects.toThrow(/must match chapter id 0001\/0001/);
   });
 
   it('rejects shadow writes when internal .workspace points outside', async () => {

@@ -20,6 +20,19 @@ export type {
   ChapterPathParts,
 } from './workspace.js';
 
+// Application Configuration
+export {
+  loadAppConfig,
+  saveAppConfig,
+  loadThemePreference,
+  saveThemePreference,
+} from './app-config.js';
+
+export type {
+  AppConfig,
+  ThemePreference,
+} from './app-config.js';
+
 // LLM Provider Configuration
 export {
   createEmptyLlmProviderConfigState,

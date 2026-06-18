@@ -44,10 +44,9 @@
 - [0550 NoteGen Inspired Workspace Shell](0550.md)
 - [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
+- [0600 Write Intent And Human Approval](0600.md)
 
 ## Needs Review Tasks
-
-- [0600 Write Intent And Human Approval](0600.md)
 
 ## Planned Tasks
 

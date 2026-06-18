@@ -1,4 +1,4 @@
-import { contextBridge } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 
 const backendBaseUrl = process.argv
   .find((arg) => arg.startsWith('--oan-backend-base-url='))
@@ -6,4 +6,14 @@ const backendBaseUrl = process.argv
 
 contextBridge.exposeInMainWorld('ohAwesomeNovel', {
   backendBaseUrl,
+  app: {
+    getVersion: () => ipcRenderer.invoke('oan:app:get-version'),
+  },
+  theme: {
+    get: () => ipcRenderer.invoke('oan:theme:get'),
+    set: (theme: 'light' | 'dark') => ipcRenderer.invoke('oan:theme:set', theme),
+  },
+  workspace: {
+    selectDirectory: () => ipcRenderer.invoke('oan:workspace:select-directory'),
+  },
 });
