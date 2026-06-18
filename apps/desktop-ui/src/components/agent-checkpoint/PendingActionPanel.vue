@@ -2,7 +2,10 @@
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 defineProps<{
-  actions: Array<PendingActionView & { decision?: 'accepted' | 'rejected' }>;
+  actions: Array<PendingActionView & {
+    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+    decisionError?: string;
+  }>;
 }>();
 
 const emit = defineEmits<{
@@ -25,12 +28,23 @@ const emit = defineEmits<{
           <span class="status-pill">{{ action.decision ?? action.status }}</span>
         </div>
         <p class="pending-description">{{ action.description }}</p>
+        <p v-if="action.decisionError" class="error-copy">{{ action.decisionError }}</p>
         <pre class="diff-preview">{{ action.diff }}</pre>
         <div class="pending-actions">
-          <button class="secondary-button" type="button" @click="emit('reject', action)">
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="Boolean(action.decision)"
+            @click="emit('reject', action)"
+          >
             Reject
           </button>
-          <button class="primary-button" type="button" @click="emit('accept', action)">
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="Boolean(action.decision)"
+            @click="emit('accept', action)"
+          >
             Accept
           </button>
         </div>

@@ -607,19 +607,11 @@
   .workspace-shell {
     @apply grid min-h-screen bg-white dark:bg-neutral-950;
     grid-template-rows: 48px minmax(0, 1fr);
-    grid-template-columns: 300px minmax(0, 1fr);
-  }
-
-  .workspace-shell-copilot-visible {
-    grid-template-columns: 300px minmax(0, 1fr) minmax(320px, 380px);
+    grid-template-columns: 280px minmax(420px, 1fr) minmax(360px, 44vw);
   }
 
   .workspace-shell-left-hidden {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .workspace-shell-left-hidden.workspace-shell-copilot-visible {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    grid-template-columns: minmax(420px, 1fr) minmax(360px, 44vw);
   }
 
   .workspace-toolbar {
@@ -635,8 +627,7 @@
     @apply overflow-hidden text-ellipsis whitespace-nowrap text-xs;
   }
 
-  .workspace-sidebar,
-  .copilot-panel {
+  .workspace-sidebar {
     @apply min-h-0 overflow-auto border-r border-gray-200 bg-gray-100 dark:border-neutral-800 dark:bg-neutral-900;
   }
 
@@ -645,12 +636,24 @@
   }
 
   .copilot-panel {
-    @apply grid gap-2.5 border-r-0 border-l bg-white p-3 dark:bg-neutral-900;
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 160px) auto auto;
+    @apply grid h-full min-h-0 gap-2.5 bg-white dark:bg-neutral-950;
+    grid-template-rows: auto auto minmax(0, 1.2fr) minmax(0, .7fr) auto auto auto;
   }
 
   .workspace-center {
-    @apply min-h-0 min-w-0 overflow-auto p-4.5;
+    @apply min-h-0 min-w-0 overflow-hidden border-r border-gray-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950;
+  }
+
+  .workspace-right {
+    @apply min-h-0 min-w-0 overflow-auto bg-white p-4 dark:bg-neutral-950;
+  }
+
+  .quick-command-strip {
+    @apply flex gap-2 overflow-x-auto border-b border-gray-200 pb-2 dark:border-neutral-800;
+  }
+
+  .quick-command-chip {
+    @apply h-9 shrink-0 rounded-md border border-gray-300 bg-white px-3 text-sm font-extrabold text-slate-700 shadow-sm hover:border-cyan-500 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-cyan-300 dark:hover:text-cyan-200;
   }
 
   .segmented-control {
@@ -804,9 +807,7 @@
 @media (max-width: 860px) {
   .launcher-shell,
   .workspace-shell,
-  .workspace-shell-copilot-visible,
-  .workspace-shell-left-hidden,
-  .workspace-shell-left-hidden.workspace-shell-copilot-visible {
+  .workspace-shell-left-hidden {
     grid-template-columns: 1fr;
   }
 
@@ -861,9 +862,12 @@
   }
 
   .workspace-sidebar,
-  .copilot-panel,
   .checkpoint-sidebar {
     @apply border-r-0 border-l-0 border-b;
+  }
+
+  .workspace-center {
+    @apply border-r-0 border-b;
   }
 
   .checkpoint-main {

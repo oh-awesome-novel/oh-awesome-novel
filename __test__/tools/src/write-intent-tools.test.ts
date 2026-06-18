@@ -127,12 +127,41 @@ describe('write intent tools and human approval', () => {
     const tools = createWriteIntentTools({ workspaceRoot: '/tmp/unused' });
 
     expect(Object.keys(tools)).toEqual([
+      'chapter.createDraft',
       'character.updatePersonality',
       'state.set',
       'timeline.add',
       'foreshadow.create',
       'summary.generateChapter',
     ]);
+  });
+
+  it('creates a chapter draft PendingAction and materializes it only on accept', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+
+    const result = await executeTool(tools, 'chapter.createDraft', {
+      chapterId: '0001/0001',
+      title: '第一章',
+      content: '她推开门，看见雨停在半空。',
+    });
+    const action = expectSinglePendingAction(result);
+
+    expect(action).toMatchObject({
+      title: 'Create chapter 0001/0001 draft',
+      touchedFiles: ['chapters/0001/0001.md'],
+      status: 'pending',
+    });
+    expect(action.diff).toContain('+# 第一章');
+    await expect(
+      readFile(join(workspaceRoot, 'chapters/0001/0001.md'), 'utf-8'),
+    ).rejects.toThrow();
+
+    await acceptPendingAction({ workspaceRoot, id: action.id });
+
+    await expect(
+      readFile(join(workspaceRoot, 'chapters/0001/0001.md'), 'utf-8'),
+    ).resolves.toContain('她推开门');
   });
 
   it('uses the stable numbered chapter summary path by default', async () => {
@@ -241,6 +270,7 @@ async function createTempNovelWorkspace(): Promise<string> {
   const root = await createTempRoot();
 
   await mkdir(join(root, 'characters/heroine'), { recursive: true });
+  await mkdir(join(root, 'chapters/0001'), { recursive: true });
   await mkdir(join(root, 'state'), { recursive: true });
   await mkdir(join(root, 'timeline'), { recursive: true });
   await mkdir(join(root, 'foreshadow'), { recursive: true });

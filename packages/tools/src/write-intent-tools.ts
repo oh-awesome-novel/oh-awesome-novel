@@ -107,7 +107,7 @@ export interface CollectionPatch {
 
 export interface NarrativePatch {
   kind: 'narrative';
-  domain: 'summary';
+  domain: 'summary' | 'chapter';
   file: string;
   operation: 'replaceFile';
   selector?: {
@@ -126,12 +126,65 @@ export function createWriteIntentTools(
   options: CreateWriteIntentToolsOptions,
 ): ToolSet {
   return {
+    'chapter.createDraft': chapterCreateDraftTool(options),
     'character.updatePersonality': characterUpdatePersonalityTool(options),
     'state.set': stateSetTool(options),
     'timeline.add': timelineAddTool(options),
     'foreshadow.create': foreshadowCreateTool(options),
     'summary.generateChapter': summaryGenerateChapterTool(options),
   };
+}
+
+function chapterCreateDraftTool(options: CreateWriteIntentToolsOptions) {
+  return tool({
+    description:
+      'Create a PendingAction to create or replace one narrative chapter Markdown file.',
+    inputSchema: jsonSchema({
+      type: 'object',
+      properties: {
+        chapterId: { type: 'string' },
+        title: { type: 'string' },
+        content: { type: 'string' },
+        file: { type: 'string' },
+        mode: { type: 'string', enum: ['create', 'replace'] },
+      },
+      required: ['chapterId', 'content'],
+      additionalProperties: false,
+    }),
+    async execute(args) {
+      const chapterId = safeNarrativeChapterId(expectStringArg(args, 'chapterId'));
+      const title = getOptionalStringArg(args, 'title')?.trim();
+      const content = normalizeMarkdownFile(expectStringArg(args, 'content'));
+      const file = getOptionalStringArg(args, 'file') ?? `${chapterId}.md`;
+      const targetFile = safeChapterDraftFile(file, chapterId);
+      const absolutePath = await resolveWritableReadTarget(options.workspaceRoot, targetFile);
+      const original = await readFileIfExists(absolutePath);
+      const draft = title && !content.startsWith('# ')
+        ? normalizeMarkdownFile(`# ${title}\n\n${content}`)
+        : content;
+      const patch: NarrativePatch = {
+        kind: 'narrative',
+        domain: 'chapter',
+        file: targetFile,
+        operation: 'replaceFile',
+        selector: { chapterId },
+        value: draft,
+      };
+
+      return pendingActionResult(
+        await createPendingAction(options.workspaceRoot, {
+          title: `Create chapter ${chapterId} draft`,
+          description: `Replace ${targetFile} with a proposed chapter draft.`,
+          patches: [patch],
+          candidates: [{
+            targetFile,
+            original,
+            draft,
+          }],
+        }),
+      );
+    },
+  });
 }
 
 export async function listPendingActions(input: {
@@ -670,6 +723,28 @@ function safeChapterSummaryFile(value: string, chapterId: string): string {
   }
 
   return normalized;
+}
+
+function safeChapterDraftFile(value: string, chapterId: string): string {
+  const normalized = safeRelativePath(value);
+
+  if (!normalized.endsWith('.md')) {
+    throw new Error(`Invalid chapter draft file: ${value}`);
+  }
+
+  const expectedFile = join('chapters', `${chapterId}.md`);
+  const normalizedWithRoot = normalized.startsWith(`chapters${sep}`)
+    ? normalized
+    : join('chapters', normalized);
+  const fileChapterId = safeNarrativeChapterId(
+    normalizedWithRoot.slice(`chapters${sep}`.length, -'.md'.length),
+  );
+
+  if (fileChapterId !== chapterId || normalizedWithRoot !== expectedFile) {
+    throw new Error(`Chapter draft file must match chapter id ${chapterId}.`);
+  }
+
+  return normalizedWithRoot;
 }
 
 function safeSegment(value: string): string {

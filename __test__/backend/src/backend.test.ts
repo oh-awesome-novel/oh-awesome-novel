@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
+import { createWriteIntentTools } from '@oh-awesome-novel/tools';
+import type { ToolSet } from 'ai';
 
 const tempRoots: string[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -132,6 +134,45 @@ describe('novel HTTP backend', () => {
       });
   });
 
+  it('lists and accepts persisted PendingActions through workspace approval endpoints', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const tools = createWriteIntentTools({ workspaceRoot });
+    const result = await executeTool(tools, 'summary.generateChapter', {
+      chapterId: '0001/0001',
+      content: '# 第一章\n\n审批接口生成的新摘要。\n',
+    });
+    const action = expectSinglePendingAction(result);
+
+    await expect(fetchJson<{ pendingActions: Array<{ id: string }> }>(
+      `${backend.url}/api/workspace/pending-actions`,
+    ))
+      .resolves
+      .toMatchObject({
+        pendingActions: [expect.objectContaining({ id: action.id })],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/workspace/pending-actions/${action.id}/accept`, {
+      method: 'POST',
+    }))
+      .resolves
+      .toMatchObject({
+        id: action.id,
+        status: 'accepted',
+        appliedFiles: ['summaries/chapter/0001/0001.md'],
+      });
+
+    await expect(fetchJson<{ pendingActions: unknown[] }>(
+      `${backend.url}/api/workspace/pending-actions`,
+    ))
+      .resolves
+      .toMatchObject({ pendingActions: [] });
+    await expect(
+      readFile(join(workspaceRoot, 'summaries/chapter/0001/0001.md'), 'utf-8'),
+    ).resolves.toContain('新摘要');
+  });
+
   it('stores provider config outside the novel workspace runtime', async () => {
     const workspaceRoot = await createTempWorkspace();
     const globalConfigDir = await createTempWorkspace();
@@ -196,6 +237,7 @@ async function createOanWorkspace(): Promise<string> {
   await mkdir(join(root, '.oan'), { recursive: true });
   await mkdir(join(root, 'chapters/0001'), { recursive: true });
   await mkdir(join(root, 'characters'), { recursive: true });
+  await mkdir(join(root, 'summaries/chapter/0001'), { recursive: true });
   await writeFile(
     join(root, '.oan/config.yaml'),
     'version: 1\nnovelName: backend-sample\n',
@@ -208,6 +250,7 @@ async function createOanWorkspace(): Promise<string> {
   );
   await writeFile(join(root, 'chapters/0001/0000.md'), '# 第一卷\n', 'utf-8');
   await writeFile(join(root, 'chapters/0001/0001.md'), '# 第一章\n\n正文。\n', 'utf-8');
+  await writeFile(join(root, 'summaries/chapter/0001/0001.md'), '# 第一章\n\n旧摘要。\n', 'utf-8');
 
   return root;
 }
@@ -227,6 +270,30 @@ async function fetchJson<T = unknown>(
   }
 
   return data;
+}
+
+async function executeTool(
+  tools: ToolSet,
+  name: string,
+  args: unknown,
+): Promise<unknown> {
+  const executable = tools[name] as {
+    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
+  };
+
+  if (!executable?.execute) {
+    throw new Error(`Tool ${name} is not executable.`);
+  }
+
+  return executable.execute(args, {});
+}
+
+function expectSinglePendingAction(result: unknown): { id: string } {
+  expect(result).toMatchObject({
+    pendingActions: [expect.any(Object)],
+  });
+
+  return (result as { pendingActions: Array<{ id: string }> }).pendingActions[0];
 }
 
 async function* scriptedRuntimeEvents(): AsyncIterable<RuntimeEvent> {

@@ -78,6 +78,7 @@ describe('Novel agent tool assembly', () => {
       'summary.get',
       'constitution.get',
       'workflow.get',
+      'chapter.createDraft',
       'character.updatePersonality',
       'state.set',
       'timeline.add',

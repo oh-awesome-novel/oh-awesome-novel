@@ -49,3 +49,17 @@ export type {
   LlmProviderConfig,
   LlmProviderConfigState,
 } from './llm-provider.js';
+
+// Novel Copilot Skill
+export {
+  NOVEL_COPILOT_ALLOWED_TOOLS,
+  NOVEL_COPILOT_QUICK_COMMANDS,
+  createDefaultNovelCopilotSkill,
+  loadNovelCopilotSkill,
+} from './novel-copilot-skill.js';
+
+export type {
+  LoadNovelCopilotSkillOptions,
+  NovelCopilotQuickCommand,
+  NovelCopilotSkill,
+} from './novel-copilot-skill.js';

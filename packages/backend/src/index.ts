@@ -11,6 +11,8 @@ import type { LanguageModel, ToolSet, UIMessage } from 'ai';
 
 import {
   createEmptyLlmProviderConfigState,
+  getDefaultLlmProviderConfig,
+  loadNovelCopilotSkill,
   loadWorkspaceList,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
@@ -19,7 +21,6 @@ import {
 } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
 import {
-  createNovelAgentValidationTools,
   runtimeEventsToUiMessageStream,
   streamNovelAgentCheckpointTurn,
   streamNovelAgentTurn,
@@ -28,9 +29,11 @@ import type { AiSdkProviderResolver } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
   buildChapterIndex,
+  acceptPendingAction,
   listPendingActions,
   loadYaml,
   readChapterIndexStatus,
+  rejectPendingAction,
   writeChapterIndexFile,
 } from '@oh-awesome-novel/tools';
 
@@ -221,6 +224,26 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/workspace/pending-actions') {
+    await handleListPendingActions(options, state, response);
+    return;
+  }
+
+  const pendingActionDecisionMatch = url.pathname.match(
+    /^\/api\/workspace\/pending-actions\/([^/]+)\/(accept|reject)$/,
+  );
+
+  if (request.method === 'POST' && pendingActionDecisionMatch) {
+    await handlePendingActionDecision(
+      options,
+      state,
+      decodeURIComponent(pendingActionDecisionMatch[1] ?? ''),
+      pendingActionDecisionMatch[2] as 'accept' | 'reject',
+      response,
+    );
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/workspace/chapters') {
     await handleWorkspaceChapters(options, state, response);
     return;
@@ -245,6 +268,7 @@ async function handleAgentChat(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
+  await ensureProviderConfigLoaded(options, state);
   const body = await readJsonBody(request);
   const messages = Array.isArray(body.messages) ? (body.messages as UIMessage[]) : [];
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
@@ -254,7 +278,7 @@ async function handleAgentChat(
     return;
   }
 
-  const runtimeEvents = createRuntimeEventStream(options, {
+  const runtimeEvents = await createRuntimeEventStream(options, state, {
     request: requestText,
     workspaceRoot: requireActiveWorkspaceRoot(options, state),
     messages,
@@ -536,6 +560,32 @@ async function handleWorkspaceStatus(
   });
 }
 
+async function handleListPendingActions(
+  options: NovelBackendOptions,
+  state: BackendState,
+  response: ServerResponse,
+): Promise<void> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const pendingActions = await listPendingActions({ workspaceRoot });
+
+  writeJson(response, 200, { pendingActions });
+}
+
+async function handlePendingActionDecision(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  decision: 'accept' | 'reject',
+  response: ServerResponse,
+): Promise<void> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const result = decision === 'accept'
+    ? await acceptPendingAction({ workspaceRoot, id })
+    : await rejectPendingAction({ workspaceRoot, id });
+
+  writeJson(response, 200, result);
+}
+
 async function handleWorkspaceChapterRescan(
   options: NovelBackendOptions,
   state: BackendState,
@@ -548,26 +598,31 @@ async function handleWorkspaceChapterRescan(
   writeJson(response, 200, { index, status });
 }
 
-function createRuntimeEventStream(
+async function createRuntimeEventStream(
   options: NovelBackendOptions,
+  state: BackendState,
   input: NovelBackendAgentInput,
-): AsyncIterable<RuntimeEvent> {
+): Promise<AsyncIterable<RuntimeEvent>> {
   if (options.runAgent) {
     return options.runAgent(input);
   }
 
-  if (options.mode === 'model') {
-    if (!options.providerConfig || !options.resolveModel) {
-      throw new Error('Model mode requires providerConfig and resolveModel.');
+  const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+  const shouldUseModel = options.mode === 'model' || Boolean(providerConfig);
+
+  if (shouldUseModel) {
+    if (!providerConfig || !options.resolveModel) {
+      throw new Error('Model mode requires provider config and a model resolver.');
     }
 
     return streamNovelAgentTurn({
-      providerConfig: options.providerConfig,
+      providerConfig,
       resolveModel: options.resolveModel,
       workspaceRoot: input.workspaceRoot,
-      workspace: { workspaceRoot: input.workspaceRoot },
+      workspace: await loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
       request: input.request,
-      tools: options.tools ?? createNovelAgentValidationTools(input.workspaceRoot),
+      skill: await loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
+      tools: options.tools,
       session: { metadata: { title: input.request } },
     });
   }
@@ -577,6 +632,105 @@ function createRuntimeEventStream(
     request: input.request,
     tools: options.tools,
   });
+}
+
+async function loadNovelAgentWorkspaceSnapshot(workspaceRoot: string): Promise<{
+  workspaceRoot: string;
+  constitution?: string;
+  workflow?: string;
+  summaries?: string[];
+  state?: string;
+  timeline?: string;
+  foreshadow?: string;
+}> {
+  const [
+    constitution,
+    workflow,
+    summaries,
+    stateFiles,
+    timelineFiles,
+    foreshadowFiles,
+  ] = await Promise.all([
+    readMarkdownDirectoryAsContext(join(workspaceRoot, '.oan', 'constitution')),
+    readTextFileIfExists(join(workspaceRoot, '.oan', 'workflow.yaml')),
+    readContextFiles(join(workspaceRoot, 'summaries'), ['.md']),
+    readContextFiles(join(workspaceRoot, 'state'), ['.yaml', '.yml']),
+    readContextFiles(join(workspaceRoot, 'timeline'), ['.yaml', '.yml', '.md']),
+    readContextFiles(join(workspaceRoot, 'foreshadow'), ['.yaml', '.yml', '.md']),
+  ]);
+
+  return {
+    workspaceRoot,
+    constitution,
+    workflow,
+    summaries,
+    state: stateFiles?.join('\n\n'),
+    timeline: timelineFiles?.join('\n\n'),
+    foreshadow: foreshadowFiles?.join('\n\n'),
+  };
+}
+
+async function readMarkdownDirectoryAsContext(directory: string): Promise<string | undefined> {
+  const files = await readContextFiles(directory, ['.md']);
+  return files?.join('\n\n');
+}
+
+async function readContextFiles(
+  directory: string,
+  extensions: string[],
+): Promise<string[] | undefined> {
+  const files = await listContextFiles(directory, extensions);
+  const selectedFiles = files.slice(0, 12);
+  const contents = await Promise.all(
+    selectedFiles.map(async (filePath) => {
+      const content = await readTextFileIfExists(filePath);
+      return content ? `# ${relative(directory, filePath)}\n\n${content}` : undefined;
+    }),
+  );
+  const compact = contents.filter((content): content is string => Boolean(content));
+
+  return compact.length ? compact : undefined;
+}
+
+async function listContextFiles(directory: string, extensions: string[]): Promise<string[]> {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files = await Promise.all(
+      entries.flatMap(async (entry) => {
+        const filePath = join(directory, entry.name);
+
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          return listContextFiles(filePath, extensions);
+        }
+
+        if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
+          return [filePath];
+        }
+
+        return [];
+      }),
+    );
+
+    return files.flat().sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function readTextFileIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+
+    throw error;
+  }
 }
 
 async function loadLauncherWorkspaces(options: NovelBackendOptions): Promise<LauncherWorkspaceEntry[]> {

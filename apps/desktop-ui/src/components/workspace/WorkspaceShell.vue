@@ -30,7 +30,6 @@ const emit = defineEmits<{
 
 const api = useWorkspaceApi();
 const leftVisible = shallowRef(true);
-const copilotVisible = shallowRef(false);
 const searchOpen = shallowRef(false);
 const searchQuery = shallowRef('');
 const sidebarTab = shallowRef<'files' | 'chapters'>('files');
@@ -50,7 +49,6 @@ const queuedPrompt = shallowRef('');
 
 const shellClass = computed(() => ({
   'workspace-shell-left-hidden': !leftVisible.value,
-  'workspace-shell-copilot-visible': copilotVisible.value,
 }));
 const fileSearchResults = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -157,15 +155,12 @@ function openChapterNavigation() {
 }
 
 function openCopilot(prompt?: string) {
-  copilotVisible.value = true;
-
   if (prompt) {
     queuedPrompt.value = prompt;
   }
 }
 
 function openPendingActions() {
-  copilotVisible.value = true;
   void loadWorkspaceStatus();
 }
 
@@ -183,6 +178,15 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
   return nodes.flatMap((node) => [
     node,
     ...flattenFileNodes(node.children ?? []),
+  ]);
+}
+
+async function refreshAfterPendingAction() {
+  await Promise.all([
+    loadWorkspaceStatus(),
+    loadTree(),
+    loadChapters(),
+    activeFilePath.value ? openFile(activeFilePath.value) : Promise.resolve(),
   ]);
 }
 </script>
@@ -217,9 +221,6 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
           <span>{{ theme === 'dark' ? 'Dark' : 'Light' }}</span>
         </button>
         <button class="ghost-button" type="button" @click="emit('configureProvider')">Settings</button>
-        <button class="ghost-button" type="button" @click="copilotVisible = !copilotVisible">
-          Copilot
-        </button>
         <button class="ghost-button" type="button" @click="emit('leaveWorkspace')">Launcher</button>
       </div>
     </header>
@@ -264,7 +265,17 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
       />
     </aside>
 
-    <section class="workspace-center" aria-label="Workspace content">
+    <section class="workspace-center" aria-label="Agent Copilot workspace">
+      <CopilotPanel
+        :provider-configured="providerConfigured"
+        :queued-prompt="queuedPrompt"
+        @prompt-consumed="clearQueuedPrompt"
+        @configure-provider="emit('configureProvider')"
+        @pending-action-resolved="refreshAfterPendingAction"
+      />
+    </section>
+
+    <section class="workspace-right" aria-label="Workspace file content">
       <FileViewer
         v-if="activeFilePath"
         :path="activeFilePath"
@@ -285,14 +296,6 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
         @leave-workspace="emit('leaveWorkspace')"
       />
     </section>
-
-    <CopilotPanel
-      v-if="copilotVisible"
-      :provider-configured="providerConfigured"
-      :queued-prompt="queuedPrompt"
-      @prompt-consumed="clearQueuedPrompt"
-      @configure-provider="emit('configureProvider')"
-    />
 
     <div v-if="searchOpen" class="search-overlay" role="dialog" aria-label="Workspace search">
       <div class="search-panel">

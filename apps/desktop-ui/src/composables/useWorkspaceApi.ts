@@ -74,6 +74,33 @@ export interface WorkspaceStatus {
   };
 }
 
+export interface PendingAction {
+  id: string;
+  title: string;
+  description: string;
+  patches: unknown[];
+  touchedFiles: string[];
+  diff: string;
+  createdAt: string;
+  status: 'pending';
+  shadowWrites?: Array<{
+    targetFile: string;
+    shadowFile: string;
+  }>;
+}
+
+export interface AcceptedPendingAction {
+  id: string;
+  status: 'accepted';
+  appliedFiles: string[];
+  gitDiff: string;
+}
+
+export interface RejectedPendingAction {
+  id: string;
+  status: 'rejected';
+}
+
 export function useWorkspaceApi() {
   const backendBaseUrl = resolveBackendBaseUrl();
 
@@ -125,6 +152,23 @@ export function useWorkspaceApi() {
       ),
     getWorkspaceStatus: () =>
       requestJson<WorkspaceStatus>(backendBaseUrl, '/api/workspace/status'),
+    listPendingActions: () =>
+      requestJson<{ pendingActions: PendingAction[] }>(
+        backendBaseUrl,
+        '/api/workspace/pending-actions',
+      ),
+    acceptPendingAction: (id: string) =>
+      requestJson<AcceptedPendingAction>(
+        backendBaseUrl,
+        `/api/workspace/pending-actions/${encodeURIComponent(id)}/accept`,
+        { method: 'POST' },
+      ),
+    rejectPendingAction: (id: string) =>
+      requestJson<RejectedPendingAction>(
+        backendBaseUrl,
+        `/api/workspace/pending-actions/${encodeURIComponent(id)}/reject`,
+        { method: 'POST' },
+      ),
     getChapters: () =>
       requestJson<{ index: ChapterIndex; status: ChapterIndexStatus }>(
         backendBaseUrl,
