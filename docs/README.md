@@ -23,6 +23,7 @@
 - [AGENT_RUNTIME_AND_TOOLS.md](AGENT_RUNTIME_AND_TOOLS.md): Tool Registry、Vercel AI SDK 接入和极简 Agent Loop。
 - [NOVEL_AGENT_COPILOT_SPEC.md](NOVEL_AGENT_COPILOT_SPEC.md): Novel Agent Copilot workflow、快捷指令、审批链路和桌面 UI 规格。
 - [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
+- [PLAY_MODE_SPEC.md](PLAY_MODE_SPEC.md): Play Mode / Roleplay Sandbox 的模式边界、session 文件布局和 adoption 边界。
 - [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
 - [HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md): 写入确认、Git diff、commit 和回滚。
 - [NOVEL_CONSTITUTION.md](NOVEL_CONSTITUTION.md): 小说创作宪法规格。

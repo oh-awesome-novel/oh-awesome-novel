@@ -51,6 +51,7 @@
 - [1030 Review And Settlement Workflow](1030.md)
 - [1040 Session Artifacts And Author Reports](1040.md)
 - [1050 Projections And Project Health](1050.md)
+- [1060 Play Mode And Tavern Character Import](1060.md)
 
 ## Needs Review Tasks
 
@@ -61,7 +62,6 @@
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
 - [0900 Project References](0900.md)
-- [1060 Play Mode And Tavern Character Import](1060.md)
 
 ## Package Call Route
 

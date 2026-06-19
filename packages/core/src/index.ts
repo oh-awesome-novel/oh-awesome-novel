@@ -210,3 +210,43 @@ export type {
   ProjectHealthSeverity,
   ReadProjectHealthOptions,
 } from './project-health.js';
+
+// Play Mode And Tavern-Compatible Import
+export {
+  PLAY_SESSION_FILES,
+  addPlayAdoptionCandidate,
+  addPlayObservation,
+  addPlayTranscriptTurn,
+  createPlayAdoptionCandidate,
+  createPlaySessionDraft,
+  formatPlayWorldRefereePrompt,
+  resolvePlaySessionPath,
+  writePlaySessionFiles,
+} from './play-session.js';
+export {
+  auditTavernCardSafety,
+  createOanTavernImportPreview,
+  extractTavernCardJsonFromPng,
+  normalizeTavernCard,
+  parseTavernCardInput,
+} from './tavern-card.js';
+export type {
+  CreatePlaySessionInput,
+  PlayActivatedSource,
+  PlayAdoptionCandidate,
+  PlayAdoptionTarget,
+  PlayObservation,
+  PlaySession,
+  PlaySessionFile,
+  PlaySourceTrust,
+  PlayTranscriptTurn,
+} from './play-session.js';
+export type {
+  CreateOanTavernImportPreviewOptions,
+  NormalizedTavernCard,
+  OanTavernImportPreview,
+  TavernCardSpec,
+  TavernDepthPrompt,
+  TavernImportMode,
+  TavernImportSafetyAudit,
+} from './tavern-card.js';

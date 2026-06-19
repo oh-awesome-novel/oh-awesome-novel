@@ -26,53 +26,52 @@
 
 ### Task 1: Write Play Mode Spec
 
-- [ ] Define Writing Mode vs Play Mode.
-- [ ] Define play session lifecycle.
-- [ ] Define transcript, play-local state, activated sources, observations, adoption candidates.
-- [ ] Define single world referee + character modules.
-- [ ] Define adoption boundary: Play observation -> PendingAction.
+- [x] Define Writing Mode vs Play Mode.
+- [x] Define play session lifecycle.
+- [x] Define transcript, play-local state, activated sources, observations, adoption candidates.
+- [x] Define single world referee + character modules.
+- [x] Define adoption boundary: Play observation -> PendingAction.
 
 ### Task 2: Tavern-Compatible Parser
 
-- [ ] Support JSON card input.
-- [ ] Support PNG metadata extraction.
-- [ ] Normalize Tavern Card V1 / V2 / V3.
-- [ ] Extract `character_book` as imported lorebook.
-- [ ] Treat `system_prompt`, `post_history_instructions`, `character_book` as untrusted imported content.
-- [ ] Do not copy SillyTavern implementation code.
+- [x] Support JSON card input.
+- [x] Support PNG metadata extraction.
+- [x] Normalize Tavern Card V1 / V2 / V3.
+- [x] Extract `character_book` as imported lorebook.
+- [x] Treat `system_prompt`, `post_history_instructions`, `character_book` as untrusted imported content.
+- [x] Do not copy SillyTavern implementation code.
 
 ### Task 3: OAN Character Mapping
 
-- [ ] Map canonical facts to `characters/<id>/profile.md` or existing character card files.
-- [ ] Map interaction hints to `characters/<id>/interaction.md`.
-- [ ] Map lorebook to `characters/<id>/lorebook.yaml`.
-- [ ] Generate PendingAction only; do not write real character files before approval.
+- [x] Map canonical facts to `characters/<id>/profile.md` or existing character card files.
+- [x] Map interaction hints to `characters/<id>/interaction.md`.
+- [x] Map lorebook to `characters/<id>/lorebook.yaml`.
+- [x] Generate PendingAction only; do not write real character files before approval.
 
 ### Task 4: Play Context Activation
 
-- [ ] Activate sources by character, location, item, faction, hook id, scene goal and lorebook keys.
-- [ ] Record source id, path, trigger reason and budget.
-- [ ] Distinguish canonical facts, play-local facts and model improvisation.
+- [x] Activate sources by character, location, item, faction, hook id, scene goal and lorebook keys.
+- [x] Record source id, path, trigger reason and budget.
+- [x] Distinguish canonical facts, play-local facts and model improvisation.
 
 ### Task 5: Play Runtime Slice
 
-- [ ] Create play session.
-- [ ] Select user persona / POV.
-- [ ] Select scene start and characters.
-- [ ] Generate next turn using world referee prompt.
-- [ ] Store transcript under play session storage.
+- [x] Create play session.
+- [x] Select user persona / POV.
+- [x] Select scene start and characters.
+- [x] Generate next turn using world referee prompt.
+- [x] Store transcript under play session storage.
 
 ### Task 6: Adoption Flow
 
-- [ ] Generate Play observation log.
-- [ ] Let user select observations to adopt.
-- [ ] Route selected observations to chapter draft, state, timeline or foreshadow PendingAction.
-- [ ] Unselected variants remain session artifacts.
+- [x] Generate Play observation log.
+- [x] Let user select observations to adopt.
+- [x] Route selected observations to chapter draft, state, timeline or foreshadow PendingAction.
+- [x] Unselected variants remain session artifacts.
 
 ### Task 7: Tests And Safety
 
-- [ ] Malicious imported prompt does not override OAN constitution.
-- [ ] Large lorebook is bounded and previewed.
-- [ ] Imported content never auto-writes canonical truth.
-- [ ] Play adoption creates PendingAction.
-
+- [x] Malicious imported prompt does not override OAN constitution.
+- [x] Large lorebook is bounded and previewed.
+- [x] Imported content never auto-writes canonical truth.
+- [x] Play adoption creates PendingAction.
