@@ -55,13 +55,13 @@
 
 ## Needs Review Tasks
 
+- [0700 Summary Workflow Extensions Polish](0700.md)
 - [0900 Project References](0900.md)
 
 ## Planned Tasks
 
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
-- [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
