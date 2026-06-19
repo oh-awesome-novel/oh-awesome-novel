@@ -6,7 +6,9 @@
 
 **Architecture:** AI-generated changes remain proposals stored under `.workspace` until Human Approval. `acceptPendingAction()` is the approval boundary: it materializes touched files, then either auto-commits touched files when `git.autoCommitOnAccept` is enabled or returns visible dirty state when it is disabled. Quick commit is a user-triggered Git operation exposed through backend/UI, not an AI action.
 
-**Tech Stack:** TypeScript, Node.js `child_process.execFile`, existing `packages/core`, `packages/tools`, `packages/backend`, Vue desktop UI, Vitest workspaces.
+**Git binary phase:** This implementation plan targets Phase A from `docs/tasks/0580.md`: assume the user's machine has a global `git` command and call it from backend/tools with `child_process.execFile`. Do not block this plan on bundled Git binary packaging. Phase B will later replace the binary source with an Electron-bundled Git executable without changing the PendingAction approval semantics.
+
+**Tech Stack:** TypeScript, Node.js `child_process.execFile`, global `git` command for Phase A, existing `packages/core`, `packages/tools`, `packages/backend`, Vue desktop UI, Vitest workspaces.
 
 ---
 
@@ -18,7 +20,9 @@
 - Modify: `__test__/core/src/workspace.test.ts`
   - Cover default config and explicit disabled config.
 - Create: `packages/tools/src/git-integration.ts`
-  - Small helper for `git diff`, `git status`, `git add`, `git commit`, and deterministic PendingAction commit messages.
+  - Small Phase A helper around global `git` via `child_process.execFile`.
+  - Covers `git diff`, `git status`, `git add`, `git commit`, and deterministic PendingAction commit messages.
+  - Must not accept arbitrary shell strings, arbitrary Git subcommands, or frontend-provided executable paths.
 - Modify: `packages/tools/src/write-intent-tools.ts`
   - Add `autoCommitOnAccept` option to `acceptPendingAction()`.
   - Return structured commit result: `committed`, `skipped`, or `failed`.
@@ -39,6 +43,8 @@
 Do not modify `packages/runtime`: Runtime only collects PendingActions and never commits.
 
 Do not let Vue frontend execute Git directly. It must call backend endpoints.
+
+Do not add bundled Git binary packaging in this plan. That remains a later Phase B task under `0580 Git History And Sync Page`.
 
 ---
 
@@ -805,4 +811,4 @@ no output
 - Spec coverage: Covers AI shadow-write boundary, default auto commit, configurable opt-out, quick commit button, touched-files-only auto commit, manual quick commit, commit failure dirty state, and backend/frontend boundary.
 - Placeholder scan: No TBD/TODO placeholders remain.
 - Type consistency: `WorkspaceConfig.git.autoCommitOnAccept`, `AcceptPendingActionInput.autoCommitOnAccept`, and `GitCommitResult` are used consistently.
-- Scope check: This plan does not implement full Git history UI, auto sync, bundled Git binary, or external editor launch; those remain broader parts of `0580 Git History And Sync Page`.
+- Scope check: This plan does not implement full Git history UI, auto sync, bundled Git binary, or external editor launch; those remain broader parts of `0580 Git History And Sync Page`. The Git command source is intentionally Phase A global `git`.

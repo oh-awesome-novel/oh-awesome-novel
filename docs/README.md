@@ -22,6 +22,7 @@
 - [FILESYSTEM_SPEC.md](FILESYSTEM_SPEC.md): 小说项目目录、对象文件树和文件格式。
 - [AGENT_RUNTIME_AND_TOOLS.md](AGENT_RUNTIME_AND_TOOLS.md): Tool Registry、Vercel AI SDK 接入和极简 Agent Loop。
 - [NOVEL_AGENT_COPILOT_SPEC.md](NOVEL_AGENT_COPILOT_SPEC.md): Novel Agent Copilot workflow、快捷指令、审批链路和桌面 UI 规格。
+- [WORKSPACE_FRONTEND_LAYOUT_PLAN.md](WORKSPACE_FRONTEND_LAYOUT_PLAN.md): Codex-like 工作台前端布局计划，包含左右栏隐藏、右侧审阅区和消息流升级。
 - [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
 - [PLAY_MODE_SPEC.md](PLAY_MODE_SPEC.md): Play Mode / Roleplay Sandbox 的模式边界、session 文件布局和 adoption 边界。
 - [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
