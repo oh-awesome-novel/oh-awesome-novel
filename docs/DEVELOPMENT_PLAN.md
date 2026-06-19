@@ -349,6 +349,20 @@ Done Criteria:
 - 不同 Skill 可限制工具。
 - Workflow 不变成隐藏 planner。
 
+Detailed vNext split:
+
+`docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md` 把参考项目吸收后的 agent 写作指引拆成后续可执行任务：
+
+- `1000` Agent Writing Guide vNext Spec And Skill Contracts。
+- `1010` Context Package And Source Discipline。
+- `1020` Planning Commands And Prewrite Calibration。
+- `1030` Review And Settlement Workflow。
+- `1040` Session Artifacts And Author Reports。
+- `1050` Projections And Project Health。
+- `1060` Play Mode And Tavern Character Import。
+
+这些任务必须继续遵守：单 agent Aider-style runtime、filesystem-first、PendingAction / Human Approval、reference 只作为可追溯写作参考。
+
 ## M11. Extension System
 
 Goal:

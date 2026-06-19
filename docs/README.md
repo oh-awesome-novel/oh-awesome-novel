@@ -22,12 +22,13 @@
 - [FILESYSTEM_SPEC.md](FILESYSTEM_SPEC.md): 小说项目目录、对象文件树和文件格式。
 - [AGENT_RUNTIME_AND_TOOLS.md](AGENT_RUNTIME_AND_TOOLS.md): Tool Registry、Vercel AI SDK 接入和极简 Agent Loop。
 - [NOVEL_AGENT_COPILOT_SPEC.md](NOVEL_AGENT_COPILOT_SPEC.md): Novel Agent Copilot workflow、快捷指令、审批链路和桌面 UI 规格。
+- [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
 - [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
 - [HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md): 写入确认、Git diff、commit 和回滚。
 - [NOVEL_CONSTITUTION.md](NOVEL_CONSTITUTION.md): 小说创作宪法规格。
 - [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md): InkOS 参考项目的功能、特色和优点归纳。
 - [INKOS_REFERENCE_LESSONS.md](INKOS_REFERENCE_LESSONS.md): InkOS 对 OAN 可借鉴和不宜照搬的设计点。
-- [OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md](OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md): OAN 当前 agent 写作指引状态，以及 InkOS 来源的可吸收升级点。
+- [OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md](OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md): OAN 当前 agent 写作指引状态，以及多个参考项目来源的可吸收升级点。
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md): 分阶段开发计划。
 - [tasks/README.md](tasks/README.md): 从开发计划拆出的可执行任务文档。
 - [AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md): 给 Codex / Claude Code / Aider 等开发 Agent 的长期操作手册草案。
