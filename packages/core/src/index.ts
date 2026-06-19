@@ -250,3 +250,26 @@ export type {
   TavernImportMode,
   TavernImportSafetyAudit,
 } from './tavern-card.js';
+
+// Reference Work Import And Deconstruction
+export {
+  importReferenceWork,
+  listReferenceWorks,
+  selectReferenceContext,
+  setReferenceEnabled,
+} from './reference-work.js';
+export type {
+  ReferenceAllowedUsage,
+  ReferenceChapterBoundary,
+  ReferenceContextSelection,
+  ReferenceContextSelectionInput,
+  ReferenceImportInput,
+  ReferenceImportResult,
+  ReferenceMetadata,
+  ReferenceProgress,
+  ReferenceProgressStage,
+  ReferenceRights,
+  ReferenceSourceManifest,
+  ReferenceSourceType,
+  ReferenceWorkSummary,
+} from './reference-work.js';

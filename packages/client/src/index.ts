@@ -131,6 +131,111 @@ export interface WorkspaceStatus {
   git: GitWorkspaceStatus;
 }
 
+export type ReferenceSourceType =
+  | 'novel'
+  | 'chapterSample'
+  | 'styleSample'
+  | 'settingBible'
+  | 'notes';
+
+export type ReferenceRights =
+  | 'owned'
+  | 'publicDomain'
+  | 'licensed'
+  | 'excerpt'
+  | 'unknown';
+
+export type ReferenceAllowedUsage =
+  | 'analysisOnly'
+  | 'styleInspiration'
+  | 'structureReference'
+  | 'noDirectQuotation';
+
+export interface ReferenceImportInput {
+  title: string;
+  sourcePath?: string;
+  sourceText?: string;
+  originalFileName?: string;
+  sourceType?: ReferenceSourceType;
+  rights?: ReferenceRights;
+  allowedUsage?: ReferenceAllowedUsage[];
+  enabled?: boolean;
+  notes?: string;
+}
+
+export interface ReferenceProgress {
+  currentStage: string;
+  completedStages: string[];
+  failedStages: Array<{
+    stage: string;
+    message: string;
+    failedAt: string;
+  }>;
+  resumable: boolean;
+  updatedAt: string;
+}
+
+export interface ReferenceWorkSummary {
+  id: string;
+  title: string;
+  sourceType: ReferenceSourceType;
+  rights: ReferenceRights;
+  allowedUsage: ReferenceAllowedUsage[];
+  enabled: boolean;
+  importedAt: string;
+  checksumSha256: string;
+  bundlePath: string;
+  summaryPath: string;
+  distilledPaths: string[];
+  chapterCount: number;
+  progress: ReferenceProgress;
+}
+
+export interface ReferenceSourceManifest {
+  originalFile: string;
+  originalFileName: string;
+  sourcePath?: string;
+  checksumSha256: string;
+  importedAt: string;
+  byteLength: number;
+  charLength: number;
+  lineCount: number;
+  detectedStructure: {
+    chapterCount: number;
+    confidence: 'high' | 'medium' | 'low';
+    chapters: Array<{
+      id: string;
+      title: string;
+      lineStart: number;
+      lineEnd: number;
+      wordCount: number;
+    }>;
+  };
+}
+
+export interface ReferenceImportResult {
+  reference: ReferenceWorkSummary;
+  manifest: ReferenceSourceManifest;
+  createdFiles: string[];
+}
+
+export interface ReferenceContextSelection {
+  tokenBudget: number;
+  included: Array<{
+    id: string;
+    title: string;
+    path: string;
+    reason: string;
+    estimatedTokens: number;
+    content: string;
+  }>;
+  omitted: Array<{
+    id: string;
+    title: string;
+    reason: string;
+  }>;
+}
+
 export interface GitCommandError {
   code:
     | 'git_unavailable'
@@ -289,6 +394,13 @@ export interface OanClient {
   getWorkspaceTree(): Promise<{ tree: FileTreeNode[] }>;
   getWorkspaceFile(path: string): Promise<{ path: string; content: string }>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
+  listReferences(): Promise<{ references: ReferenceWorkSummary[] }>;
+  importReference(input: ReferenceImportInput): Promise<ReferenceImportResult>;
+  setReferenceEnabled(id: string, enabled: boolean): Promise<{ reference: ReferenceWorkSummary }>;
+  selectReferenceContext(input?: {
+    tokenBudget?: number;
+    maxReferences?: number;
+  }): Promise<{ selection: ReferenceContextSelection }>;
   getGitStatus(): Promise<GitWorkspaceStatus>;
   getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
   getGitCommit(hash: string): Promise<GitCommitDetail>;
@@ -410,6 +522,26 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/api/workspace/file?path=${encodeURIComponent(path)}`,
       ),
     getWorkspaceStatus: () => requestJson<WorkspaceStatus>('/api/workspace/status'),
+    listReferences: () =>
+      requestJson<{ references: ReferenceWorkSummary[] }>('/api/workspace/references'),
+    importReference: (input) =>
+      requestJson<ReferenceImportResult>('/api/workspace/references/import', {
+        method: 'POST',
+        body: input,
+      }),
+    setReferenceEnabled: (id, enabled) =>
+      requestJson<{ reference: ReferenceWorkSummary }>(
+        `/api/workspace/references/${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          body: { enabled },
+        },
+      ),
+    selectReferenceContext: (input = {}) =>
+      requestJson<{ selection: ReferenceContextSelection }>('/api/workspace/references/context', {
+        method: 'POST',
+        body: input,
+      }),
     getGitStatus: () => requestJson<GitWorkspaceStatus>('/api/git/status'),
     getGitLog: (maxCount = 30) =>
       requestJson<{ commits: GitCommitSummary[]; error?: GitCommandError }>(

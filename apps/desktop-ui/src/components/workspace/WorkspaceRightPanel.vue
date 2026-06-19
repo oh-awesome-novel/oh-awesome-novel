@@ -4,6 +4,7 @@ import DiffReviewTab from './DiffReviewTab.vue';
 import FileViewer from './FileViewer.vue';
 import GitReviewTab from './GitReviewTab.vue';
 import ProjectHealthTab from './ProjectHealthTab.vue';
+import ReferenceImportTab from './ReferenceImportTab.vue';
 import WorkspacePanelTabs from './WorkspacePanelTabs.vue';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 import type { WorkspaceRightTab } from '../../composables/useWorkspaceLayoutState';
@@ -75,6 +76,7 @@ const emit = defineEmits<{
       :status="workspaceStatus"
       :health="projectHealth"
     />
-    <GitReviewTab v-else />
+    <GitReviewTab v-else-if="activeTab === 'git'" />
+    <ReferenceImportTab v-else />
   </section>
 </template>

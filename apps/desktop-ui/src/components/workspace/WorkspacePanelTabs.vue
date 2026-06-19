@@ -16,6 +16,7 @@ const tabs: Array<{ id: WorkspaceRightTab; label: string }> = [
   { id: 'approval', label: 'Approval' },
   { id: 'health', label: 'Health' },
   { id: 'git', label: 'Git' },
+  { id: 'references', label: 'Refs' },
 ];
 </script>
 

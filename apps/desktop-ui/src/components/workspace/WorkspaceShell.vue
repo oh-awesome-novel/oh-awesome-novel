@@ -370,6 +370,7 @@ async function refreshAfterPendingAction() {
         <button class="ghost-button" type="button" @click="searchOpen = true">Search</button>
         <button class="ghost-button" type="button" @click="openPendingActions">Pending</button>
         <button class="ghost-button" type="button" @click="layout.openRightPanel('git')">Git</button>
+        <button class="ghost-button" type="button" @click="layout.openRightPanel('references')">Refs</button>
       </div>
       <div class="toolbar-title">
         <strong>{{ props.workspace.name }}</strong>

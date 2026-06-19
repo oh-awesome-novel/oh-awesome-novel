@@ -17,9 +17,11 @@ import {
   createEmptyLlmProviderConfigState,
   getDefaultLlmProviderConfig,
   initWorkspace,
+  importReferenceWork,
   loadWorkspaceConfig,
   loadNovelCopilotSkill,
   loadWorkspaceList,
+  listReferenceWorks,
   normalizeLlmProviderConfig,
   readProjectHealth,
   removeLlmProviderConfig,
@@ -27,11 +29,18 @@ import {
   resolveGlobalOanConfigDir,
   saveWorkspaceOnboarding,
   saveWorkspaceList,
+  selectReferenceContext,
   setDefaultLlmProviderConfig,
+  setReferenceEnabled,
   upsertLlmProviderConfig,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
+import type {
+  ReferenceAllowedUsage,
+  ReferenceRights,
+  ReferenceSourceType,
+} from '@oh-awesome-novel/core';
 import {
   runtimeEventsToUiMessageStream,
   streamNovelAgentCheckpointTurn,
@@ -160,6 +169,14 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.get('/api/workspace/references', (context) =>
+    handleListReferenceWorks(options, state, context));
+  app.post('/api/workspace/references/import', (context) =>
+    handleImportReferenceWork(options, state, context));
+  app.patch('/api/workspace/references/:id', (context) =>
+    handleUpdateReferenceWork(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/references/context', (context) =>
+    handleSelectReferenceContext(options, state, context));
   app.get('/api/git/status', (context) => handleGitStatus(options, state, context));
   app.get('/api/git/log', (context) => handleGitLog(options, state, context));
   app.get('/api/git/show/:hash', (context) =>
@@ -692,6 +709,112 @@ async function handleWorkspaceStatus(
     pendingActionCount: pendingActions.length,
     git: gitStatus,
   });
+}
+
+async function handleListReferenceWorks(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  return jsonResponse(context, 200, { references: await listReferenceWorks(workspaceRoot) });
+}
+
+async function handleImportReferenceWork(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const title = getOptionalString(body, 'title')?.trim();
+  const sourcePath = getOptionalString(body, 'sourcePath')?.trim();
+  const sourceText = getOptionalString(body, 'sourceText');
+  const sourceType = readReferenceSourceType(body, 'sourceType');
+  const rights = readReferenceRights(body, 'rights');
+  const allowedUsage = readReferenceAllowedUsageArray(body, 'allowedUsage');
+
+  if (!title) {
+    return jsonResponse(context, 400, { error: 'Reference title is required.' });
+  }
+
+  if (!sourcePath && !sourceText?.trim()) {
+    return jsonResponse(context, 400, { error: 'Reference sourcePath or sourceText is required.' });
+  }
+
+  if (getOptionalString(body, 'sourceType') && !sourceType) {
+    return jsonResponse(context, 400, { error: 'Reference sourceType is invalid.' });
+  }
+
+  if (getOptionalString(body, 'rights') && !rights) {
+    return jsonResponse(context, 400, { error: 'Reference rights is invalid.' });
+  }
+
+  if (Array.isArray(body.allowedUsage) && allowedUsage.length !== body.allowedUsage.length) {
+    return jsonResponse(context, 400, { error: 'Reference allowedUsage contains invalid values.' });
+  }
+
+  try {
+    const result = await importReferenceWork({
+      workspaceRoot,
+      title,
+      sourcePath,
+      sourceText,
+      originalFileName: getOptionalString(body, 'originalFileName'),
+      sourceType,
+      rights,
+      allowedUsage: allowedUsage.length ? allowedUsage : undefined,
+      enabled: body.enabled === false ? false : true,
+      notes: getOptionalString(body, 'notes'),
+    });
+
+    return jsonResponse(context, 200, result);
+  } catch (error) {
+    return jsonResponse(context, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleUpdateReferenceWork(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+
+  if (typeof body.enabled !== 'boolean') {
+    return jsonResponse(context, 400, { error: 'Reference enabled must be a boolean.' });
+  }
+
+  try {
+    const reference = await setReferenceEnabled(workspaceRoot, id, body.enabled);
+    return jsonResponse(context, 200, { reference });
+  } catch (error) {
+    return jsonResponse(context, 404, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleSelectReferenceContext(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const tokenBudget = getOptionalNumber(body, 'tokenBudget');
+  const maxReferences = getOptionalNumber(body, 'maxReferences');
+  const selection = await selectReferenceContext({
+    workspaceRoot,
+    tokenBudget,
+    maxReferences,
+  });
+
+  return jsonResponse(context, 200, { selection });
 }
 
 async function handleGitStatus(
@@ -1773,6 +1896,47 @@ function readStringArray(value: Record<string, unknown>, key: string): string[] 
   }
 
   return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function readReferenceSourceType(
+  value: Record<string, unknown>,
+  key: string,
+): ReferenceSourceType | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && isReferenceSourceType(raw) ? raw : undefined;
+}
+
+function readReferenceRights(
+  value: Record<string, unknown>,
+  key: string,
+): ReferenceRights | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && isReferenceRights(raw) ? raw : undefined;
+}
+
+function readReferenceAllowedUsageArray(
+  value: Record<string, unknown>,
+  key: string,
+): ReferenceAllowedUsage[] {
+  return readStringArray(value, key)
+    .filter((item): item is ReferenceAllowedUsage => isReferenceAllowedUsage(item));
+}
+
+function isReferenceSourceType(value: string): value is ReferenceSourceType {
+  return ['novel', 'chapterSample', 'styleSample', 'settingBible', 'notes'].includes(value);
+}
+
+function isReferenceRights(value: string): value is ReferenceRights {
+  return ['owned', 'publicDomain', 'licensed', 'excerpt', 'unknown'].includes(value);
+}
+
+function isReferenceAllowedUsage(value: string): value is ReferenceAllowedUsage {
+  return [
+    'analysisOnly',
+    'styleInspiration',
+    'structureReference',
+    'noDirectQuotation',
+  ].includes(value);
 }
 
 function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] {

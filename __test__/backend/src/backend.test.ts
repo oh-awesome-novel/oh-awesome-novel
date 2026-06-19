@@ -148,6 +148,99 @@ describe('novel HTTP backend', () => {
       });
   });
 
+  it('imports reference works and selects only enabled distilled context', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+
+    const imported = await fetchJson<{
+      reference: {
+        id: string;
+        title: string;
+        bundlePath: string;
+        summaryPath: string;
+        chapterCount: number;
+      };
+      manifest: { detectedStructure: { chapterCount: number } };
+      createdFiles: string[];
+    }>(`${backend.url}/api/workspace/references/import`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Backend Reference',
+        sourceText: '第一章 开端\n一句样本文字。\n第二章 推进\n另一句样本文字。',
+        sourceType: 'novel',
+        rights: 'owned',
+        allowedUsage: ['analysisOnly', 'styleInspiration', 'noDirectQuotation'],
+      }),
+    });
+
+    expect(imported.reference).toMatchObject({
+      title: 'Backend Reference',
+      chapterCount: 2,
+    });
+    expect(imported.createdFiles).toContain(`${imported.reference.bundlePath}/context/reference-summary.md`);
+
+    await expect(fetchJson(`${backend.url}/api/workspace/references`))
+      .resolves
+      .toMatchObject({
+        references: [
+          expect.objectContaining({
+            id: imported.reference.id,
+            enabled: true,
+          }),
+        ],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/workspace/references/context`, {
+      method: 'POST',
+      body: JSON.stringify({ tokenBudget: 2000 }),
+    }))
+      .resolves
+      .toMatchObject({
+        selection: {
+          included: [
+            expect.objectContaining({
+              id: imported.reference.id,
+              path: imported.reference.summaryPath,
+            }),
+          ],
+        },
+      });
+
+    await expect(fetchJson(`${backend.url}/api/workspace/references/${imported.reference.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: false }),
+    }))
+      .resolves
+      .toMatchObject({
+        reference: {
+          id: imported.reference.id,
+          enabled: false,
+        },
+      });
+
+    await expect(fetchJson(`${backend.url}/api/workspace/references/context`, {
+      method: 'POST',
+      body: JSON.stringify({ tokenBudget: 2000 }),
+    }))
+      .resolves
+      .toMatchObject({
+        selection: {
+          included: [],
+          omitted: [
+            expect.objectContaining({
+              id: imported.reference.id,
+              reason: 'disabled',
+            }),
+          ],
+        },
+      });
+
+    await expect(readFile(join(workspaceRoot, imported.reference.summaryPath), 'utf-8'))
+      .resolves
+      .toContain('Original source is retained');
+  });
+
   it('creates a workspace and stores onboarding answers', async () => {
     const targetRoot = await createTempWorkspace();
     const globalConfigDir = await createTempWorkspace();
