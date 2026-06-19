@@ -2,7 +2,7 @@
 
 Status: Reference Notes
 
-本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge 中可吸收的写作 workflow 经验。
+本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern 中可吸收的写作 workflow / Play 经验。
 
 后续还会继续阅读其他参考项目。因此本文档刻意保留来源标注，避免把不同项目的启发混在一起，也避免把“候选改进”误认为 OAN 已实现能力。
 
@@ -14,6 +14,7 @@ Status: Reference Notes
 - `[OAN-constraint]`：来自 OAN 的架构边界或产品原则。
 - `[InkOS-reference]`：来自 `reference-only/inkos` 的参考项目观察。
 - `[StoryForge-reference]`：来自 `reference-only/storyforge` 的参考项目观察。
+- `[SillyTavern-reference]`：来自 `reference-only/SillyTavern` 的参考项目观察。
 - `[OAN-adaptation]`：基于参考项目启发，但已经按 OAN 边界重新改写。
 - `[Future-reference]`：预留给后续其他参考项目。
 
@@ -122,6 +123,7 @@ OAN 当前指引已经有正确方向，但还偏粗。[OAN-current]
 - 伏笔推进、提及、回收、延后还没有区分得足够细。
 - 审稿维度还没有稳定化为可复用 checklist。
 - 状态、时间线、伏笔目前是事实源，但还缺少面向作者阅读的派生 projection 规范。
+- 还缺少独立 Play / Roleplay Sandbox 产品面，让用户在阅读和写作之外沉浸式进入小说世界。[SillyTavern-reference][OAN-adaptation]
 
 ## InkOS Learnings
 
@@ -375,9 +377,113 @@ OAN 可吸收为：
 - 每次 agent 写作生成 run log，记录 capability id、guide version、context package id、read file list、proposed patch list、accepted/rejected、token usage。
 - 长章节生成、导入、审稿等长任务可以有 resumable session；状态写入 workspace shadow / pending 区，不只留在内存。
 
+## SillyTavern Learnings
+
+以下内容来自 SillyTavern 参考项目观察，尚不是 OAN 当前行为，除非另有标注。[SillyTavern-reference]
+
+### Independent Play Mode
+
+SillyTavern 的核心价值不只是“写作前试跑场景”，而是让用户通过角色扮演进入一个小说世界。[SillyTavern-reference]
+
+OAN 应把 Roleplay Sandbox / Scene Rehearsal 规划成独立 Play 功能，而不是仅作为 `/写下一章` 前的隐藏草稿工具。[OAN-adaptation]
+
+Play Mode 的定位：
+
+- 用户可以在阅读和写作之外，以第一人称、旁观者、指定角色或自定义 persona 进入小说世界。
+- Play runtime 读取角色卡、世界规则、当前状态、时间线局部、active hooks 和用户选择的起点。
+- Play transcript 对当前 Play session 有连续性，但默认不进入小说 canonical truth。
+- Play 中产生的角色反应、对白、事件和状态变化，可以生成 observation log，作为写作 agent 的草稿或参考。
+- 只有用户确认后，Play observation 才能转成章节草稿、状态、时间线或伏笔的 PendingAction。
+
+这意味着 OAN 未来可以有两个并列产品面：
+
+- Writing Mode：围绕章节、结算、状态、时间线、伏笔和 Git diff。
+- Play Mode：围绕沉浸体验、角色互动、世界探索、分支试跑和 Play session continuity。
+
+### Multi-Character Roleplay Runtime
+
+对角色扮演效果来说，默认不应使用重型多 Agent runtime。[SillyTavern-reference][OAN-adaptation]
+
+更合适的基础形态是：
+
+```text
+一个 Play runtime / 世界裁判
+    +
+多角色 voice/state modules
+    +
+发言调度策略
+    +
+Play-local transcript / state
+```
+
+原因：
+
+- 单一世界裁判更容易保持叙事节奏、场景边界和世界规则一致。
+- 角色模块可以提供角色声音、秘密、关系和短期动机，但不需要每个角色都是独立自主 agent。
+- 发言调度可以覆盖 manual / natural / pooled / outline order 等 RP 场景需求。
+- 重型多 Agent runtime 容易带来延迟、成本、上下文重复、角色互相抢戏、设定漂移和结算困难。
+
+多 Agent 可以作为高级能力保留给少数场景：
+
+- NPC 或阵营有隐藏目标。
+- 需要模拟离屏事件。
+- 用户明确想看角色或阵营自主博弈。
+- Play session 内需要独立计划，但仍不能直接改真实小说事实源。
+
+### Play Context And Dynamic Lore Activation
+
+SillyTavern 的 WorldInfo / lorebook 说明：沉浸式 Play 不能每轮把全部世界观塞进 prompt，需要按场景动态激活相关材料。[SillyTavern-reference]
+
+OAN 可吸收为 Play 版 context activation：[OAN-adaptation]
+
+- 角色名、地点、物品、势力、术语、伏笔 id、当前场景目标都可以触发相关 source。
+- 每次 Play turn 记录被激活的 source id、文件路径、触发原因和预算。
+- 被激活材料只作为上下文，不自动写事实源。
+- Play observation log 需要区分“正文已确认事实”“Play session 内事实”“只是模型即兴内容”。
+
+### Character Interaction Surface
+
+SillyTavern 的角色卡字段适合启发 OAN 的角色互动面。[SillyTavern-reference]
+
+OAN 可在角色卡中区分 canonical facts 和 interaction hints：[OAN-adaptation]
+
+- canonical facts：身份、经历、关系、状态、能力、秘密等正式事实。
+- interaction hints：voice examples、scene entry、alternate greetings、interaction notes、depth prompt、character lorebook。
+
+interaction hints 主要用于 Play、对白生成和场景试跑；只有用户确认后，才可转成 canonical character updates。
+
+### Import Tavern-compatible Character Card
+
+OAN 应支持导入 Tavern-compatible 角色卡，作为 Play Mode 和角色卡生态接入能力。[SillyTavern-reference][OAN-adaptation]
+
+独立规范见：`docs/IMPORT_TAVERN_COMPATIBLE_CHARACTER_CARD.md`。
+
+导入原则：
+
+- 功能名使用 `Import Tavern-compatible Character Card`，不声称是 SillyTavern 官方导入器。
+- 独立实现 PNG / JSON 解析，不复制 SillyTavern AGPL 代码。
+- 支持本地 PNG / JSON、Tavern Card V1 / V2 / V3 normalization、内嵌 `character_book` 预览。
+- 导入后接入 OAN 自己的 `characters/<id>/` Object File Tree。
+- Canonical facts 和 interaction hints 分离。
+- `system_prompt`、`post_history_instructions`、`character_book` 默认视为 untrusted imported content。
+- 导入只能生成 PendingAction；用户确认前不得写真实角色卡文件。
+
+OAN 角色卡可吸收 SillyTavern 的互动字段：
+
+- `first_mes` -> `interaction.md#Scene Entry`
+- `alternate_greetings` -> `interaction.md#Alternate Greetings`
+- `mes_example` -> `interaction.md#Voice Examples`
+- `scenario` -> `interaction.md#Scene Setup`
+- `system_prompt` / `post_history_instructions` -> `interaction.md#Prompt Overrides`
+- `extensions.depth_prompt` -> `interaction.md#Depth Prompts`
+- `extensions.talkativeness` -> Play 多角色发言调度参数
+- `character_book` -> `characters/<id>/lorebook.yaml`
+
+这些字段能显著增强 Play 和对白生成，但不应自动覆盖 OAN 的 constitution、world、state、timeline 或 canonical character facts。
+
 ## Proposed OAN Agent Writing Loop vNext
 
-以下是综合 OAN 当前边界与 InkOS、StoryForge 启发后的候选升级方向，不代表已实现。[OAN-adaptation][InkOS-reference][StoryForge-reference]
+以下是综合 OAN 当前边界与 InkOS、StoryForge、SillyTavern 启发后的候选升级方向，不代表已实现。[OAN-adaptation][InkOS-reference][StoryForge-reference][SillyTavern-reference]
 
 ### 1. Intake
 
@@ -389,6 +495,7 @@ OAN 可吸收为：
 - 审稿：只读和报告，除非用户要求改写。
 - 整理/结算：读取已采纳正文，生成 observation log 和 PendingAction bundle。
 - 改状态/伏笔/角色：先读对应事实源，再生成 PendingAction。
+- 进入 Play：切换到独立 Play Mode，读取 Play 起点、角色、世界规则和当前状态；Play 结果默认只进入 Play session，不直接改事实源。
 
 ### 2. Observe
 
