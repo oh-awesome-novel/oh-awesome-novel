@@ -4,6 +4,10 @@ Status: Draft Spec
 
 Source: `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
 
+Supplemental runtime gap spec:
+
+- `docs/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md`
+
 ## Goal
 
 把参考笔记中的 agent 写作指引升级方向，转成 OAN 可实现、可测试、可分阶段交付的产品与工程规格。
@@ -289,4 +293,3 @@ Play Mode 是独立产品面，不只是写作前草稿。
 | Projection | Derived Markdown views can be rebuilt and do not become truth |
 | Play | Play sessions remain separate from canonical truth until user accepts adoption |
 | Human Approval | No task bypasses PendingAction / diff / Human Approval |
-
