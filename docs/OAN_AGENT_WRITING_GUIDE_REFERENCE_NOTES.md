@@ -2,7 +2,7 @@
 
 Status: Reference Notes
 
-本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern 和若干写作 skill 项目中可吸收的写作 workflow / Play 经验。
+本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern、Webnovel Writer 和若干写作 skill 项目中可吸收的写作 workflow / Play 经验。
 
 后续还会继续阅读其他参考项目。因此本文档刻意保留来源标注，避免把不同项目的启发混在一起，也避免把“候选改进”误认为 OAN 已实现能力。
 
@@ -15,6 +15,7 @@ Status: Reference Notes
 - `[InkOS-reference]`：来自 `reference-only/inkos` 的参考项目观察。
 - `[StoryForge-reference]`：来自 `reference-only/storyforge` 的参考项目观察。
 - `[SillyTavern-reference]`：来自 `reference-only/SillyTavern` 的参考项目观察。
+- `[WebnovelWriter-reference]`：来自 `reference-only/webnovel-writer` 的参考项目观察。
 - `[AwesomeNovelSkill-reference]`：来自 `reference-only/awesome-novel-skill` 当前版本的参考项目观察。
 - `[AwesomeNovelSkill-v3-reference]`：来自 `awesome-novel-skill` v3.x 单 agent harness 历史版本的参考观察。
 - `[NovelWriterSkills-reference]`：来自 `reference-only/novel-writer-skills` 的参考项目观察。
@@ -120,6 +121,7 @@ OAN 当前指引已经有正确方向，但还偏粗。[OAN-current]
 主要缺口：
 
 - `/规划下一章` 还没有稳定的“本章契约”格式。
+- 还缺少 `/规划大纲`、`/规划下一卷` 这类卷级 / 大纲级规划入口；复杂 gate、章节节点和节奏结构更适合放在这些入口，而不是默认压到每个普通单章。[WebnovelWriter-reference][OAN-adaptation]
 - `/写下一章` 还没有要求 agent 在正文前输出写前校准表。
 - 上下文选择还没有显式产出 `context-package`、`rule-stack`、`trace`。
 - 上下文来源还没有轻量 source id、读取理由、预算层级和 omission 记录。
@@ -505,6 +507,7 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 - `SOLO Mode` / 快速推进模式只能影响确认频率和交互节奏，不能跳过 PendingAction、diff、Human Approval 和 evidence-only settlement。[AwesomeNovelSkill-v3-reference][OAN-constraint]
 - `reference deconstruction` / 拆文 / 对标 是 task 0900 的参考材料层，不是当前小说 workspace 的事实源，也不应默认每章运行。[OhStoryClaudeCode-reference][OAN-adaptation]
 - 固定多 agent 架构只作为参考项目实现观察，不进入 OAN 默认 runtime；OAN 默认仍是 Aider-style 单 agent tool loop，可选 specialist skill 按需启用。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference][OAN-constraint]
+- Webnovel Writer 的 `prewrite / precommit / postcommit`、完整写作任务书、`CBN / CPNs / CEN` 不应作为 OAN 普通单章默认负担；更适合在 `/规划大纲`、`/规划下一卷`、卷首 / 卷末 / 关键转折章中启用。普通 `/规划下一章` 与 `/写下一章` 保持轻量校准。[WebnovelWriter-reference][OAN-adaptation]
 
 ### State-Driven Single Agent Harness
 
@@ -524,26 +527,47 @@ OAN 可吸收：
 
 写作 skill 项目给“本章契约”补充了更具体的字段。[AwesomeNovelSkill-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
 
-OAN `/规划下一章` 可在已有 InkOS chapter-intent 基础上补充：
+OAN `/规划下一章` 可在已有 InkOS chapter-intent 基础上补充轻量字段：
 
 - chapter id / title candidate。
 - 本章读者情绪目标。
 - POV。
-- 冲突阶梯。
-- 信息差变化。
-- 场景序列或 8-12 个 key beats。
-- 角色出场与状态前置。
-- 伏笔操作：新增、推进、提及、回收、延后。
+- 核心冲突或场景方向。
+- 关键出场角色与状态前置。
+- 涉及的伏笔操作：新增、推进、提及、回收、延后。
 - 章尾必须发生的改变。
 - 禁止事项。
 
-这些字段不要求一开始全部成为正式 schema；可以先作为 `chapter-intent` 的结构化输出，再根据实际写作体验固化。[OAN-adaptation]
+更完整的字段应放到卷级或大纲级规划中，而不是默认每章必填：
+
+- 冲突阶梯。
+- 信息差变化。
+- 场景序列或 8-12 个 key beats。
+- 卷级角色成长段落与关系推进安排。
+- 伏笔债清单与回收窗口。
+- 关键章分布和卷末交付目标。
+- `CBN / CPNs / CEN` 或类似结构化节点。
+
+这些字段不要求一开始全部成为正式 schema；普通单章先保持短契约，复杂规范优先用于 `/规划大纲`、`/规划下一卷`、关键章规划，再根据实际写作体验固化。[WebnovelWriter-reference][OAN-adaptation]
+
+### Planning Granularity
+
+Webnovel Writer 的强 gate 和结构化节点提醒 OAN 需要区分规划粒度。[WebnovelWriter-reference]
+
+建议新增或细化 quick commands：
+
+- `/规划大纲`：面向全书或大阶段，适合使用读者承诺、主线 / 暗线、长期伏笔、角色成长段、卷级高潮等复杂规范。
+- `/规划下一卷`：面向卷级推进，适合使用卷级 gate、时间线、关键章节点、伏笔债、读者期待和 CBN / CPNs / CEN 风格的拆章方法。
+- `/规划下一章`：面向普通单章，默认只生成轻量本章契约；仅在用户要求“详细规划”或该章是关键章时启用结构化节点。
+- `/写下一章`：只做短写前校准，避免把 planning 阶段的重规范重复压到 drafting 阶段。
+
+这能把复杂规范留给真正需要结构控制的层级，同时保持日常写作低摩擦。[OAN-adaptation]
 
 ### Pre-Write Calibration
 
 `novel-writer-skills` 的 `/write` 强制读取顺序和写前 checklist 很适合 OAN 的 `/写下一章`。[NovelWriterSkills-reference]
 
-OAN `/写下一章` 的写前校准表可合并这些来源：
+OAN `/写下一章` 的写前校准表应默认保持短小，只合并这些必要来源：
 
 - 已读取上下文：source id、文件路径、工具结果、读取理由。
 - 本章契约复述：目标、冲突、情绪、POV、章尾变化。
@@ -552,7 +576,7 @@ OAN `/写下一章` 的写前校准表可合并这些来源：
 - 风险检查：OOC、信息越界、世界规则冲突、战力或资源异常、AI 味高危点。
 - 写入方式：正文只能通过 `chapter.createDraft` 创建 PendingAction。
 
-这与 InkOS `PRE_WRITE_CHECK` 和 StoryForge chapter context recipe 是同一个方向，应统一实现，而不是分成多个检查表。[InkOS-reference][StoryForge-reference][NovelWriterSkills-reference][OhStoryClaudeCode-reference][OAN-adaptation]
+这与 InkOS `PRE_WRITE_CHECK` 和 StoryForge chapter context recipe 是同一个方向，应统一实现，而不是分成多个检查表。但它不应变成每章完整 planning gate；复杂检查应交给 `/规划大纲`、`/规划下一卷` 或关键章详细规划。[InkOS-reference][StoryForge-reference][NovelWriterSkills-reference][OhStoryClaudeCode-reference][WebnovelWriter-reference][OAN-adaptation]
 
 ### Minimal Memory Package
 
@@ -761,6 +785,8 @@ OAN 可吸收为 task 0900 的方向：
 | `/写下一章` 前置 `PRE_WRITE_CHECK` / 写前校准表 | Modify | InkOS writer pre-write check + StoryForge chapter recipe + NovelWriterSkills write checklist + OhStoryClaudeCode daily workflow | Accepted direction; not implemented |
 | 写前默认读档策略：核心必读 + 条件补读 | Modify | StoryForge chapter context recipe + NovelWriterSkills read order + OhStoryClaudeCode status filter | Accepted direction; not implemented |
 | 状态驱动单 agent harness | Add | AwesomeNovelSkill v3 SOLO / state-driven loop + OhAwesomeNovelSkill lightweight single-agent workflow | Accepted direction; not implemented |
+| `/规划大纲` / `/规划下一卷` 卷级规划入口 | Add | Webnovel Writer plan workflow + OAN user feedback | Accepted direction; not implemented |
+| 复杂 gate 与结构化节点默认用于卷级 / 大纲级，普通单章轻量化 | Modify | Webnovel Writer write-gate / CBN-CPNs-CEN + OAN user feedback | Accepted direction; not implemented |
 | `/整理本章` 先 observation log 后 PendingAction bundle | Modify | InkOS Observer / settlement pattern + StoryForge settlement objects + AwesomeNovelSkill updater archive + OhAwesomeNovelSkill archive memory update | Accepted direction; not implemented |
 | 状态变化以 diff 表达：old/new/evidence/confidence | Modify | StoryForge state diff + OAN Apply Engine | Accepted direction; not implemented |
 | 伏笔 mention / advance / resolve / defer 分级 | Modify | InkOS hookOps discipline + AwesomeNovelSkill / OhStoryClaudeCode hooks update | Accepted direction; not implemented |
@@ -785,6 +811,7 @@ OAN 可吸收为 task 0900 的方向：
 
 - 自主多 agent runtime。
 - 固定多 agent 写作流水线作为 OAN 默认路径。
+- 每章默认强制完整 `prewrite / precommit / postcommit` gate、完整写作任务书或 `CBN / CPNs / CEN` 节点。
 - 后台 daemon 自动写作。
 - 直接写真实小说文件或直接写数据库作为最终持久化路径。
 - SQLite / memory.db / IndexedDB 作为小说事实源。
