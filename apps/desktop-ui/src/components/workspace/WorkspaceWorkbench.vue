@@ -73,6 +73,7 @@ const emit = defineEmits<{
   rejectPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
+  pendingActionCreated: [];
   selectRightTab: [tab: WorkspaceRightTab];
   closeRight: [];
 }>();
@@ -167,6 +168,7 @@ const emit = defineEmits<{
       @reject-pending-action="emit('rejectPendingAction', $event)"
       @review-pending-action="emit('reviewPendingAction', $event)"
       @open-pending-action-diff="emit('openPendingActionDiff', $event)"
+      @pending-action-created="emit('pendingActionCreated')"
     />
   </div>
 </template>

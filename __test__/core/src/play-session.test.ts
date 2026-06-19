@@ -10,6 +10,8 @@ import {
   createPlayAdoptionCandidate,
   createPlaySessionDraft,
   formatPlayWorldRefereePrompt,
+  listPlaySessions,
+  readPlaySessionFiles,
   resolvePlaySessionPath,
   writePlaySessionFiles,
 } from '@oh-awesome-novel/core';
@@ -91,6 +93,7 @@ describe('Play session filesystem slice', () => {
         join('.workspace', 'play-sessions', 'play-write', 'adoption-candidates.yaml'),
         join('.workspace', 'play-sessions', 'play-write', 'observations.yaml'),
         join('.workspace', 'play-sessions', 'play-write', 'play-local-state.yaml'),
+        join('.workspace', 'play-sessions', 'play-write', 'session.yaml'),
         join('.workspace', 'play-sessions', 'play-write', 'transcript.md'),
       ].sort());
       await expect(readFile(paths.find((path) => path.endsWith('transcript.md')) ?? '', 'utf-8'))
@@ -99,6 +102,22 @@ describe('Play session filesystem slice', () => {
       await expect(readFile(paths.find((path) => path.endsWith('adoption-candidates.yaml')) ?? '', 'utf-8'))
         .resolves
         .toContain('requiresPendingAction: true');
+      await expect(readPlaySessionFiles(workspaceRoot, 'play-write'))
+        .resolves
+        .toMatchObject({
+          id: 'play-write',
+          transcript: [
+            expect.objectContaining({ speaker: 'heroine' }),
+          ],
+          adoptionCandidates: [
+            expect.objectContaining({ id: 'adopt-1' }),
+          ],
+        });
+      await expect(listPlaySessions(workspaceRoot))
+        .resolves
+        .toEqual([
+          expect.objectContaining({ id: 'play-write' }),
+        ]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

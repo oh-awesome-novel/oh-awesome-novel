@@ -42,6 +42,19 @@ describe('agent context package', () => {
           semanticBoundary: 'excluded',
         },
       ],
+      trace: [
+        {
+          id: 'trace-constitution',
+          type: 'workspaceSnapshot',
+          sourceId: 'constitution',
+          reason: 'loaded from workspace snapshot',
+          budgetLayer: 'L0',
+          semanticBoundary: 'protected',
+          outcome: 'selected',
+          createdAt: '2026-06-19T00:00:00.000Z',
+          path: '.oan/constitution/style.md',
+        },
+      ],
       minimalMemory: {
         characters: ['heroine', 'heroine', 'hero'],
         hooks: ['black_mark'],
@@ -57,6 +70,11 @@ describe('agent context package', () => {
     expect(contextPackage.omitted[0]).toMatchObject({
       semanticBoundary: 'excluded',
       reason: 'not causally relevant to this chapter',
+    });
+    expect(contextPackage.trace[0]).toMatchObject({
+      type: 'workspaceSnapshot',
+      outcome: 'selected',
+      reason: 'loaded from workspace snapshot',
     });
     expect(contextPackage.minimalMemory).toMatchObject({
       characters: ['heroine', 'hero'],
@@ -74,6 +92,24 @@ describe('agent context package', () => {
             reason: ' ',
             budgetLayer: 'L0',
             semanticBoundary: 'protected',
+          },
+        ],
+      }),
+    ).toThrow('requires a reason');
+  });
+
+  it('requires explicit trace reasons', () => {
+    expect(() =>
+      createContextPackageDraft({
+        capability: 'novel.review_chapter',
+        trace: [
+          {
+            id: 'trace-empty',
+            type: 'toolCall',
+            toolName: 'chapter.get',
+            reason: ' ',
+            outcome: 'failed',
+            createdAt: '2026-06-19T00:00:00.000Z',
           },
         ],
       }),
@@ -118,6 +154,19 @@ describe('agent context package', () => {
           semanticBoundary: 'compressible',
         },
       ],
+      trace: [
+        {
+          id: 'trace-timeline',
+          type: 'toolCall',
+          sourceId: 'timeline',
+          toolName: 'timeline.list',
+          reason: 'read timeline for settlement alignment',
+          budgetLayer: 'L2',
+          semanticBoundary: 'compressible',
+          outcome: 'read',
+          createdAt: '2026-06-19T00:00:00.000Z',
+        },
+      ],
     });
 
     const summary = formatContextPackageSummary(contextPackage);
@@ -125,6 +174,8 @@ describe('agent context package', () => {
     expect(summary).toContain('Context Package: ctx-summary');
     expect(summary).toContain('timeline [L2/compressible]');
     expect(summary).toContain('Omitted sources:');
+    expect(summary).toContain('Trace:');
+    expect(summary).toContain('toolCall/read timeline');
   });
 
   it('writes context package artifacts only under .workspace sessions', async () => {

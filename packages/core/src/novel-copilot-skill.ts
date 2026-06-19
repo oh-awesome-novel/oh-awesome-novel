@@ -177,7 +177,7 @@ export const NOVEL_COPILOT_CAPABILITIES: NovelCopilotCapability[] = [
     id: 'novel.play_scene',
     label: 'Play Scene',
     mode: 'play',
-    status: 'planned',
+    status: 'available',
     description: 'Run a roleplay sandbox session separate from canonical truth.',
   },
   {

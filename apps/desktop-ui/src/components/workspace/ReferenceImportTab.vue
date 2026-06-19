@@ -113,19 +113,26 @@ async function toggleReference(reference: ReferenceWorkSummary) {
     <section class="reference-context-panel" aria-label="Reference context selection">
       <div class="panel-heading">
         <h3 class="panel-title">Context Selector</h3>
-        <span class="status-pill">{{ selection?.tokenBudget ?? 1500 }} tokens</span>
+        <span class="status-pill">{{ selection?.originalSourceRead ? 'source read' : 'distilled only' }}</span>
+      </div>
+      <p class="empty-copy">{{ selection?.tokenBudget ?? 1500 }} tokens · no-copy guardrail active</p>
+      <div v-if="selection?.noCopyWarnings.length" class="reference-context-list">
+        <div v-for="warning in selection.noCopyWarnings" :key="warning" class="reference-context-row">
+          <strong>No-copy</strong>
+          <span>{{ warning }}</span>
+        </div>
       </div>
       <div v-if="selection?.included.length" class="reference-context-list">
         <div v-for="item in selection.included" :key="item.id" class="reference-context-row">
           <strong>{{ item.title }}</strong>
-          <span>{{ item.path }} · {{ item.reason }}</span>
+          <span>{{ item.path }} · {{ item.budgetLayer }}/{{ item.semanticBoundary }} · {{ item.reason }}</span>
         </div>
       </div>
       <p v-else class="empty-copy">No reference context selected.</p>
       <div v-if="selection?.omitted.length" class="reference-context-list">
         <div v-for="item in selection.omitted" :key="`${item.id}:${item.reason}`" class="reference-context-row">
           <strong>{{ item.title }}</strong>
-          <span>Omitted: {{ item.reason }}</span>
+          <span>Omitted {{ item.budgetLayer }}: {{ item.reason }}</span>
         </div>
       </div>
     </section>

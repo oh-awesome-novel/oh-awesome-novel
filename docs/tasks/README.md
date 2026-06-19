@@ -52,6 +52,10 @@
 - [1040 Session Artifacts And Author Reports](1040.md)
 - [1050 Projections And Project Health](1050.md)
 - [1060 Play Mode And Tavern Character Import](1060.md)
+- [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
+- [1080 Reference Context Selector And Loading Map](1080.md)
+- [1090 Play Mode UI And Adoption Workflow](1090.md)
+- [1100 Project Health Guardrails And Projection Refresh](1100.md)
 
 ## Needs Review Tasks
 
@@ -63,10 +67,7 @@
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
-- [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
-- [1080 Reference Context Selector And Loading Map](1080.md)
-- [1090 Play Mode UI And Adoption Workflow](1090.md)
-- [1100 Project Health Guardrails And Projection Refresh](1100.md)
+- [1110 Agent Usage And Context Stats](1110.md)
 
 ## Package Call Route
 

@@ -338,6 +338,106 @@ describe('novel HTTP backend', () => {
     ).resolves.toContain('新摘要');
   });
 
+  it('rebuilds projections through an explicit workspace endpoint', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+
+    await expect(fetchJson(`${backend.url}/api/workspace/projections/rebuild`, {
+      method: 'POST',
+    }))
+      .resolves
+      .toMatchObject({
+        projections: expect.arrayContaining([
+          expect.objectContaining({ path: '.oan/indexes/state.md' }),
+          expect.objectContaining({ path: '.oan/indexes/context-snapshot.md' }),
+        ]),
+        warnings: [expect.stringContaining('not canonical truth')],
+      });
+    await expect(readFile(join(workspaceRoot, '.oan/indexes/state.md'), 'utf-8'))
+      .resolves
+      .toContain('Generated projection');
+  });
+
+  it('creates Play sessions and converts adoption candidates into PendingActions', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+
+    const created = await fetchJson<{
+      session: { id: string; title: string; transcript: unknown[] };
+      files: string[];
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: '雨夜试跑',
+        sceneStart: '码头雨夜',
+        characters: ['heroine'],
+      }),
+    });
+
+    expect(created.session).toMatchObject({
+      title: '雨夜试跑',
+      transcript: [],
+    });
+    expect(created.files).toContain(
+      join(workspaceRoot, '.workspace/play-sessions', created.session.id, 'session.yaml'),
+    );
+
+    await expect(fetchJson(`${backend.url}/api/workspace/play-sessions/${created.session.id}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({
+        speaker: 'heroine',
+        content: '她在雨里停住。',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        session: {
+          transcript: [
+            expect.objectContaining({ speaker: 'heroine' }),
+          ],
+        },
+      });
+
+    const candidateResult = await fetchJson<{
+      candidate: { id: string };
+    }>(`${backend.url}/api/workspace/play-sessions/${created.session.id}/adoption-candidates`, {
+      method: 'POST',
+      body: JSON.stringify({
+        target: 'chapterDraft',
+        summary: '转成下一章草稿',
+        evidence: 'Play transcript turn',
+        payload: {
+          chapterId: '0001/0002',
+          content: '# 第二章\n\n她在雨里停住。\n',
+        },
+      }),
+    });
+
+    await expect(fetchJson(`${backend.url}/api/workspace/play-sessions/${created.session.id}/adoption-candidates/${candidateResult.candidate.id}/pending-action`, {
+      method: 'POST',
+    }))
+      .resolves
+      .toMatchObject({
+        pendingActionResult: {
+          pendingActions: [
+            expect.objectContaining({
+              touchedFiles: ['chapters/0001/0002.md'],
+            }),
+          ],
+        },
+        refresh: {
+          workspaceStatus: {
+            pendingActionCount: 1,
+          },
+        },
+      });
+    await expect(readFile(join(workspaceRoot, 'chapters/0001/0002.md'), 'utf-8'))
+      .rejects
+      .toThrow();
+  });
+
   it('exposes Git status and quick commit endpoints', async () => {
     const workspaceRoot = await createOanWorkspace();
     await initGitRepo(workspaceRoot);

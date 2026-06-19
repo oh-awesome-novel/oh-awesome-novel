@@ -232,8 +232,9 @@ async function acceptPendingAction(action: PendingActionView) {
   decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
 
   try {
-    await api.acceptPendingAction(action.id);
+    const result = await api.acceptPendingAction(action.id);
     decisions.value = { ...decisions.value, [action.id]: 'accepted' };
+    applyDecisionRefresh(result.refresh);
     await refreshAfterPendingAction();
   } catch (error) {
     const nextDecisions = { ...decisions.value };
@@ -251,8 +252,9 @@ async function rejectPendingAction(action: PendingActionView) {
   decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
 
   try {
-    await api.rejectPendingAction(action.id);
+    const result = await api.rejectPendingAction(action.id);
     decisions.value = { ...decisions.value, [action.id]: 'rejected' };
+    applyDecisionRefresh(result.refresh);
     await refreshAfterPendingAction();
   } catch (error) {
     const nextDecisions = { ...decisions.value };
@@ -348,13 +350,37 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
 
 async function refreshAfterPendingAction() {
   await Promise.all([
-    loadWorkspaceStatus(),
-    loadProjectHealth(),
     loadTree(),
     loadChapters(),
     loadPendingActions(),
     activeFilePath.value ? openFile(activeFilePath.value) : Promise.resolve(),
   ]);
+
+  if (!workspaceStatus.value || !projectHealth.value) {
+    await Promise.all([
+      loadWorkspaceStatus(),
+      loadProjectHealth(),
+    ]);
+  }
+}
+
+async function refreshPendingActionSurface() {
+  await Promise.all([
+    loadWorkspaceStatus(),
+    loadProjectHealth(),
+    loadPendingActions(),
+  ]);
+}
+
+function applyDecisionRefresh(
+  refresh: Awaited<ReturnType<typeof api.acceptPendingAction>>['refresh'] | undefined,
+) {
+  if (!refresh) {
+    return;
+  }
+
+  workspaceStatus.value = refresh.workspaceStatus;
+  projectHealth.value = refresh.projectHealth;
 }
 </script>
 
@@ -371,6 +397,7 @@ async function refreshAfterPendingAction() {
         <button class="ghost-button" type="button" @click="openPendingActions">Pending</button>
         <button class="ghost-button" type="button" @click="layout.openRightPanel('git')">Git</button>
         <button class="ghost-button" type="button" @click="layout.openRightPanel('references')">Refs</button>
+        <button class="ghost-button" type="button" @click="layout.openRightPanel('play')">Play</button>
       </div>
       <div class="toolbar-title">
         <strong>{{ props.workspace.name }}</strong>
@@ -452,6 +479,7 @@ async function refreshAfterPendingAction() {
       @reject-pending-action="rejectPendingAction"
       @review-pending-action="reviewPendingAction"
       @open-pending-action-diff="openPendingActionDiff"
+      @pending-action-created="refreshPendingActionSurface"
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
     />

@@ -3,6 +3,7 @@ import ApprovalTab from './ApprovalTab.vue';
 import DiffReviewTab from './DiffReviewTab.vue';
 import FileViewer from './FileViewer.vue';
 import GitReviewTab from './GitReviewTab.vue';
+import PlayModeTab from './PlayModeTab.vue';
 import ProjectHealthTab from './ProjectHealthTab.vue';
 import ReferenceImportTab from './ReferenceImportTab.vue';
 import WorkspacePanelTabs from './WorkspacePanelTabs.vue';
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   rejectPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
+  pendingActionCreated: [];
 }>();
 </script>
 
@@ -77,6 +79,7 @@ const emit = defineEmits<{
       :health="projectHealth"
     />
     <GitReviewTab v-else-if="activeTab === 'git'" />
-    <ReferenceImportTab v-else />
+    <ReferenceImportTab v-else-if="activeTab === 'references'" />
+    <PlayModeTab v-else @pending-action-created="emit('pendingActionCreated')" />
   </section>
 </template>

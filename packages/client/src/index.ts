@@ -221,11 +221,15 @@ export interface ReferenceImportResult {
 
 export interface ReferenceContextSelection {
   tokenBudget: number;
+  originalSourceRead: boolean;
+  noCopyWarnings: string[];
   included: Array<{
     id: string;
     title: string;
     path: string;
     reason: string;
+    budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
+    semanticBoundary: 'protected' | 'compressible' | 'excluded';
     estimatedTokens: number;
     content: string;
   }>;
@@ -233,7 +237,56 @@ export interface ReferenceContextSelection {
     id: string;
     title: string;
     reason: string;
+    budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
   }>;
+}
+
+export type PlaySourceTrust = 'canonical' | 'interactionHint' | 'playLocal' | 'modelImprovisation';
+export type PlayAdoptionTarget = 'chapterDraft' | 'state' | 'timeline' | 'foreshadow';
+
+export interface PlayActivatedSource {
+  sourceId: string;
+  path?: string;
+  reason: string;
+  budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
+  semanticBoundary: 'protected' | 'compressible' | 'excluded';
+  trust: PlaySourceTrust;
+}
+
+export interface PlayTranscriptTurn {
+  speaker: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface PlayObservation {
+  id: string;
+  summary: string;
+  evidence: string;
+  canonical: false;
+}
+
+export interface PlayAdoptionCandidate {
+  id: string;
+  target: PlayAdoptionTarget;
+  summary: string;
+  evidence: string;
+  payload?: Record<string, unknown>;
+  requiresPendingAction: true;
+}
+
+export interface PlaySession {
+  id: string;
+  title: string;
+  createdAt: string;
+  userPersona?: string;
+  sceneStart: string;
+  characters: string[];
+  transcript: PlayTranscriptTurn[];
+  playLocalState: Record<string, unknown>;
+  activatedSources: PlayActivatedSource[];
+  observations: PlayObservation[];
+  adoptionCandidates: PlayAdoptionCandidate[];
 }
 
 export interface GitCommandError {
@@ -316,6 +369,19 @@ export interface ProjectHealth {
   issues: ProjectHealthIssue[];
 }
 
+export interface WorkspaceDecisionRefresh {
+  workspaceStatus: WorkspaceStatus;
+  projectHealth: ProjectHealth;
+}
+
+export interface ProjectionRebuildResult {
+  projections: Array<{
+    target: string;
+    path: string;
+  }>;
+  warnings: string[];
+}
+
 export interface WorkspaceOnboardingInput {
   novelName?: string;
   inspiration?: string;
@@ -346,11 +412,13 @@ export interface AcceptedPendingAction {
   gitDiff: string;
   gitCommit: GitCommitResult;
   dirtyStatus: string;
+  refresh?: WorkspaceDecisionRefresh;
 }
 
 export interface RejectedPendingAction {
   id: string;
   status: 'rejected';
+  refresh?: WorkspaceDecisionRefresh;
 }
 
 export interface OanClient {
@@ -413,6 +481,43 @@ export interface OanClient {
     error?: string;
   }>;
   getProjectHealth(): Promise<{ health: ProjectHealth }>;
+  rebuildProjections(): Promise<ProjectionRebuildResult>;
+  listPlaySessions(): Promise<{ sessions: PlaySession[] }>;
+  createPlaySession(input: {
+    id?: string;
+    title: string;
+    sceneStart: string;
+    userPersona?: string;
+    characters?: string[];
+    activatedSources?: PlayActivatedSource[];
+  }): Promise<{ session: PlaySession; files: string[] }>;
+  getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  appendPlayTranscript(id: string, turn: {
+    speaker: string;
+    content: string;
+    createdAt?: string;
+  }): Promise<{ session: PlaySession }>;
+  addPlayObservation(id: string, observation: {
+    id?: string;
+    summary: string;
+    evidence: string;
+  }): Promise<{ session: PlaySession }>;
+  addPlayAdoptionCandidate(id: string, candidate: {
+    id?: string;
+    target: PlayAdoptionTarget;
+    summary: string;
+    evidence: string;
+    payload?: Record<string, unknown>;
+  }): Promise<{ session: PlaySession; candidate: PlayAdoptionCandidate }>;
+  createPlayAdoptionPendingAction(
+    id: string,
+    candidateId: string,
+    payload?: Record<string, unknown>,
+  ): Promise<{
+    candidate: PlayAdoptionCandidate;
+    pendingActionResult: unknown;
+    refresh: WorkspaceDecisionRefresh;
+  }>;
   saveWorkspaceOnboarding(input: WorkspaceOnboardingInput): Promise<{
     workspace: WorkspaceSummary;
     config: unknown;
@@ -572,6 +677,57 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       ),
     getProjectHealth: () =>
       requestJson<{ health: ProjectHealth }>('/api/workspace/project-health'),
+    rebuildProjections: () =>
+      requestJson<ProjectionRebuildResult>('/api/workspace/projections/rebuild', {
+        method: 'POST',
+      }),
+    listPlaySessions: () =>
+      requestJson<{ sessions: PlaySession[] }>('/api/workspace/play-sessions'),
+    createPlaySession: (input) =>
+      requestJson<{ session: PlaySession; files: string[] }>('/api/workspace/play-sessions', {
+        method: 'POST',
+        body: input,
+      }),
+    getPlaySession: (id) =>
+      requestJson<{ session: PlaySession }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
+      ),
+    appendPlayTranscript: (id, turn) =>
+      requestJson<{ session: PlaySession }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/transcript`,
+        {
+          method: 'POST',
+          body: turn,
+        },
+      ),
+    addPlayObservation: (id, observation) =>
+      requestJson<{ session: PlaySession }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/observations`,
+        {
+          method: 'POST',
+          body: observation,
+        },
+      ),
+    addPlayAdoptionCandidate: (id, candidate) =>
+      requestJson<{ session: PlaySession; candidate: PlayAdoptionCandidate }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/adoption-candidates`,
+        {
+          method: 'POST',
+          body: candidate,
+        },
+      ),
+    createPlayAdoptionPendingAction: (id, candidateId, payload) =>
+      requestJson<{
+        candidate: PlayAdoptionCandidate;
+        pendingActionResult: unknown;
+        refresh: WorkspaceDecisionRefresh;
+      }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/adoption-candidates/${encodeURIComponent(candidateId)}/pending-action`,
+        {
+          method: 'POST',
+          body: payload ? { payload } : {},
+        },
+      ),
     saveWorkspaceOnboarding: (input) =>
       requestJson<{ workspace: WorkspaceSummary; config: unknown }>('/api/workspace/onboarding', {
         method: 'POST',

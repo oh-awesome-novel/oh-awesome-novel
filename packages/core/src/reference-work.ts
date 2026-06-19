@@ -3,6 +3,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
 
+import type {
+  ContextBudgetLayer,
+  ContextSourceRef,
+  SemanticBoundary,
+} from './agent-context-package.js';
+import type { NovelCopilotCapabilityId } from './novel-copilot-skill.js';
+
 export type ReferenceSourceType =
   | 'novel'
   | 'chapterSample'
@@ -115,17 +122,24 @@ export interface ReferenceImportResult {
 
 export interface ReferenceContextSelectionInput {
   workspaceRoot: string;
+  capability?: NovelCopilotCapabilityId;
+  goal?: string;
+  explicitReferenceIds?: string[];
   tokenBudget?: number;
   maxReferences?: number;
 }
 
 export interface ReferenceContextSelection {
   tokenBudget: number;
+  originalSourceRead: boolean;
+  noCopyWarnings: string[];
   included: Array<{
     id: string;
     title: string;
     path: string;
     reason: string;
+    budgetLayer: ContextBudgetLayer;
+    semanticBoundary: SemanticBoundary;
     estimatedTokens: number;
     content: string;
   }>;
@@ -133,6 +147,7 @@ export interface ReferenceContextSelection {
     id: string;
     title: string;
     reason: string;
+    budgetLayer: ContextBudgetLayer;
   }>;
 }
 
@@ -154,6 +169,11 @@ const DISTILLED_FILES = [
   'scene-techniques.md',
   'character-techniques.md',
   'do-not-copy.md',
+];
+const REFERENCE_NO_COPY_WARNINGS = [
+  'Reference context is analysis-only inspiration; do not copy prose, scenes, character identities, or protected expression.',
+  'Use differentiation: preserve OAN canon, transform techniques, and avoid importing reference facts as truth.',
+  'Original source content is not read by default in writing context selection.',
 ];
 
 export async function importReferenceWork(
@@ -296,6 +316,7 @@ export async function selectReferenceContext(
   const workspaceRoot = resolve(input.workspaceRoot);
   const tokenBudget = input.tokenBudget ?? 1_500;
   const maxReferences = input.maxReferences ?? 3;
+  const explicitReferenceIds = new Set(input.explicitReferenceIds ?? []);
   const references = await listReferenceWorks(workspaceRoot);
   const included: ReferenceContextSelection['included'] = [];
   const omitted: ReferenceContextSelection['omitted'] = [];
@@ -303,12 +324,32 @@ export async function selectReferenceContext(
 
   for (const reference of references) {
     if (!reference.enabled) {
-      omitted.push({ id: reference.id, title: reference.title, reason: 'disabled' });
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: 'disabled',
+        budgetLayer: 'L3',
+      });
+      continue;
+    }
+
+    if (explicitReferenceIds.size > 0 && !explicitReferenceIds.has(reference.id)) {
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: 'not explicitly requested for this turn',
+        budgetLayer: 'L3',
+      });
       continue;
     }
 
     if (included.length >= maxReferences) {
-      omitted.push({ id: reference.id, title: reference.title, reason: 'max reference count reached' });
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: 'max reference count reached',
+        budgetLayer: 'L3',
+      });
       continue;
     }
 
@@ -317,13 +358,23 @@ export async function selectReferenceContext(
     try {
       content = await readFile(summaryPath, 'utf-8');
     } catch {
-      omitted.push({ id: reference.id, title: reference.title, reason: 'missing context summary' });
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: 'missing context summary',
+        budgetLayer: 'L3',
+      });
       continue;
     }
 
     const estimatedTokens = estimateTokens(content);
     if (usedTokens + estimatedTokens > tokenBudget && included.length > 0) {
-      omitted.push({ id: reference.id, title: reference.title, reason: 'token budget exceeded' });
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: 'token budget exceeded',
+        budgetLayer: 'L3',
+      });
       continue;
     }
 
@@ -331,7 +382,9 @@ export async function selectReferenceContext(
       id: reference.id,
       title: reference.title,
       path: reference.summaryPath,
-      reason: 'enabled reference summary selected; original source not read',
+      reason: formatReferenceSelectionReason(input, reference),
+      budgetLayer: referenceBudgetLayer(input.capability),
+      semanticBoundary: 'compressible',
       estimatedTokens,
       content,
     });
@@ -340,8 +393,66 @@ export async function selectReferenceContext(
 
   return {
     tokenBudget,
+    originalSourceRead: false,
+    noCopyWarnings: [...REFERENCE_NO_COPY_WARNINGS],
     included,
     omitted,
+  };
+}
+
+export function formatReferenceContextSelectionMarkdown(
+  selection: ReferenceContextSelection,
+): string {
+  return [
+    '## Reference Context Selection',
+    '',
+    `Original source read: ${selection.originalSourceRead ? 'yes' : 'no'}`,
+    `Token budget: ${selection.tokenBudget}`,
+    '',
+    '### No-Copy Warnings',
+    selection.noCopyWarnings.map((warning) => `- ${warning}`).join('\n'),
+    '',
+    '### Included Distilled Entries',
+    selection.included.length
+      ? selection.included.map((entry) => [
+          `#### ${entry.title}`,
+          '',
+          `- path: ${entry.path}`,
+          `- reason: ${entry.reason}`,
+          `- budget: ${entry.budgetLayer}/${entry.semanticBoundary}`,
+          '',
+          entry.content.trim(),
+        ].join('\n')).join('\n\n')
+      : '- none',
+    '',
+    '### Omitted References',
+    selection.omitted.length
+      ? selection.omitted.map((entry) =>
+          `- ${entry.title} [${entry.budgetLayer}]: ${entry.reason}`,
+        ).join('\n')
+      : '- none',
+  ].join('\n');
+}
+
+export function referenceSelectionToContextSources(
+  selection: ReferenceContextSelection,
+): { selected: ContextSourceRef[]; omitted: ContextSourceRef[] } {
+  return {
+    selected: selection.included.map((entry) => ({
+      sourceId: 'referenceDistilled',
+      reason: entry.reason,
+      budgetLayer: entry.budgetLayer,
+      semanticBoundary: entry.semanticBoundary,
+      path: entry.path,
+      title: entry.title,
+    })),
+    omitted: selection.omitted.map((entry) => ({
+      sourceId: 'referenceDistilled',
+      reason: entry.reason,
+      budgetLayer: entry.budgetLayer,
+      semanticBoundary: 'excluded',
+      title: entry.title,
+    })),
   };
 }
 
@@ -848,6 +959,33 @@ function countWords(value: string): number {
 
 function estimateTokens(value: string): number {
   return Math.ceil(value.length / 4);
+}
+
+function formatReferenceSelectionReason(
+  input: ReferenceContextSelectionInput,
+  reference: ReferenceWorkSummary,
+): string {
+  const capability = input.capability ? ` for ${input.capability}` : '';
+  const goal = input.goal?.trim() ? ` (${input.goal.trim()})` : '';
+  return `enabled distilled reference summary "${reference.title}" selected${capability}${goal}; original source not read`;
+}
+
+function referenceBudgetLayer(
+  capability: NovelCopilotCapabilityId | undefined,
+): ContextBudgetLayer {
+  if (
+    capability === 'novel.review_chapter'
+    || capability === 'novel.revise_chapter'
+    || capability === 'novel.de_ai'
+  ) {
+    return 'L2';
+  }
+
+  if (capability === 'novel.deconstruct_reference') {
+    return 'L1';
+  }
+
+  return 'L2';
 }
 
 function normalizeOptionalString(value?: string): string | undefined {

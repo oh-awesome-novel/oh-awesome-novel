@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -18,12 +19,19 @@ import {
   getDefaultLlmProviderConfig,
   initWorkspace,
   importReferenceWork,
+  createPlayAdoptionCandidate,
+  createPlaySessionDraft,
+  formatPlayWorldRefereePrompt,
+  formatProjectHealthMarkdown,
+  formatReferenceContextSelectionMarkdown,
   loadWorkspaceConfig,
   loadNovelCopilotSkill,
   loadWorkspaceList,
+  listPlaySessions,
   listReferenceWorks,
   normalizeLlmProviderConfig,
   readProjectHealth,
+  readPlaySessionFiles,
   removeLlmProviderConfig,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
@@ -33,15 +41,26 @@ import {
   setDefaultLlmProviderConfig,
   setReferenceEnabled,
   upsertLlmProviderConfig,
+  writePlaySessionFiles,
+  writeWorkspaceProjections,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
 import type {
+  PlayActivatedSource,
+  PlayAdoptionCandidate,
+  PlayAdoptionTarget,
+  PlayObservation,
+  PlaySession,
+  PlayTranscriptTurn,
+  ProjectHealth,
   ReferenceAllowedUsage,
   ReferenceRights,
   ReferenceSourceType,
 } from '@oh-awesome-novel/core';
 import {
+  inferNovelAgentCapability,
+  runNovelAgentTurn,
   runtimeEventsToUiMessageStream,
   streamNovelAgentCheckpointTurn,
   streamNovelAgentTurn,
@@ -52,6 +71,7 @@ import {
   buildChapterIndex,
   acceptPendingAction,
   commitFiles,
+  createWriteIntentTools,
   gitDiff,
   listPendingActions,
   listGitCommits,
@@ -188,6 +208,30 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleOpenExternalEditor(options, state, context));
   app.get('/api/workspace/project-health', (context) =>
     handleWorkspaceProjectHealth(options, state, context));
+  app.post('/api/workspace/projections/rebuild', (context) =>
+    handleWorkspaceProjectionRebuild(options, state, context));
+  app.get('/api/workspace/play-sessions', (context) =>
+    handleListPlaySessions(options, state, context));
+  app.post('/api/workspace/play-sessions', (context) =>
+    handleCreatePlaySession(options, state, context));
+  app.get('/api/workspace/play-sessions/:id', (context) =>
+    handleReadPlaySession(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/transcript', (context) =>
+    handleAppendPlayTranscript(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/observations', (context) =>
+    handleAddPlayObservation(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/adoption-candidates', (context) =>
+    handleAddPlayAdoptionCandidate(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/world-referee-turn', (context) =>
+    handlePlayWorldRefereeTurn(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/adoption-candidates/:candidateId/pending-action', (context) =>
+    handleCreatePlayAdoptionPendingAction(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context.req.param('candidateId') ?? '',
+      context,
+    ));
   app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
   app.get('/api/workspace/pending-actions', (context) => handleListPendingActions(options, state, context));
   app.post('/api/workspace/pending-actions/:id/:decision', (context) => {
@@ -967,6 +1011,268 @@ async function handleWorkspaceProjectHealth(
   return jsonResponse(context, 200, { health });
 }
 
+async function handleWorkspaceProjectionRebuild(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+
+  try {
+    const documents = await writeWorkspaceProjections(workspaceRoot);
+    return jsonResponse(context, 200, {
+      projections: documents.map((document) => ({
+        target: document.target,
+        path: document.path,
+      })),
+      warnings: [
+        'Projection files are generated read-models under .oan/indexes and are not canonical truth.',
+      ],
+    });
+  } catch (error) {
+    return jsonResponse(context, 409, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleListPlaySessions(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  return jsonResponse(context, 200, { sessions: await listPlaySessions(workspaceRoot) });
+}
+
+async function handleCreatePlaySession(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const title = getOptionalString(body, 'title')?.trim();
+  const sceneStart = getOptionalString(body, 'sceneStart')?.trim();
+
+  if (!title || !sceneStart) {
+    return jsonResponse(context, 400, { error: 'Play session title and sceneStart are required.' });
+  }
+
+  try {
+    const session = createPlaySessionDraft({
+      id: getOptionalString(body, 'id')?.trim() || createPlaySessionId(),
+      title,
+      userPersona: getOptionalString(body, 'userPersona')?.trim(),
+      sceneStart,
+      characters: readStringArray(body, 'characters'),
+      activatedSources: readPlayActivatedSources(body),
+    });
+    const files = await writePlaySessionFiles(workspaceRoot, session);
+    return jsonResponse(context, 200, { session, files });
+  } catch (error) {
+    return jsonResponse(context, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleReadPlaySession(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+
+  try {
+    return jsonResponse(context, 200, {
+      session: await readPlaySessionFiles(workspaceRoot, id),
+    });
+  } catch (error) {
+    return jsonResponse(context, 404, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleAppendPlayTranscript(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const turn = readPlayTranscriptTurn(body);
+
+  if (!turn) {
+    return jsonResponse(context, 400, { error: 'speaker and content are required.' });
+  }
+
+  const session = await readPlaySessionFiles(workspaceRoot, id);
+  const next: PlaySession = {
+    ...session,
+    transcript: [...session.transcript, turn],
+  };
+  await writePlaySessionFiles(workspaceRoot, next);
+
+  return jsonResponse(context, 200, { session: next });
+}
+
+async function handleAddPlayObservation(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const observation = readPlayObservation(body);
+
+  if (!observation) {
+    return jsonResponse(context, 400, { error: 'observation summary and evidence are required.' });
+  }
+
+  const session = await readPlaySessionFiles(workspaceRoot, id);
+  const next: PlaySession = {
+    ...session,
+    observations: [...session.observations, observation],
+  };
+  await writePlaySessionFiles(workspaceRoot, next);
+
+  return jsonResponse(context, 200, { session: next });
+}
+
+async function handleAddPlayAdoptionCandidate(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const candidate = readPlayAdoptionCandidate(body);
+
+  if (!candidate) {
+    return jsonResponse(context, 400, {
+      error: 'adoption target, summary, and evidence are required.',
+    });
+  }
+
+  const session = await readPlaySessionFiles(workspaceRoot, id);
+  const next: PlaySession = {
+    ...session,
+    adoptionCandidates: [...session.adoptionCandidates, candidate],
+  };
+  await writePlaySessionFiles(workspaceRoot, next);
+
+  return jsonResponse(context, 200, { session: next, candidate });
+}
+
+async function handlePlayWorldRefereeTurn(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  await ensureProviderConfigLoaded(options, state);
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+
+  if (!providerConfig || !options.resolveModel) {
+    return jsonResponse(context, 409, {
+      error: 'World referee turn requires model mode with provider config.',
+    });
+  }
+
+  const body = await readJsonBody(context);
+  const userText = getOptionalString(body, 'userText')?.trim();
+  let session = await readPlaySessionFiles(workspaceRoot, id);
+
+  if (userText) {
+    session = {
+      ...session,
+      transcript: [
+        ...session.transcript,
+        {
+          speaker: 'user',
+          content: userText,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+  }
+
+  const result = await runNovelAgentTurn({
+    providerConfig,
+    resolveModel: options.resolveModel,
+    workspaceRoot,
+    workspace: await loadNovelAgentWorkspaceSnapshot(workspaceRoot),
+    request: [
+      formatPlayWorldRefereePrompt(session),
+      '',
+      userText ? `User turn: ${userText}` : 'Continue the Play scene by one world referee turn.',
+    ].join('\n'),
+    skill: await loadNovelCopilotSkill({ workspaceRoot }),
+    tools: options.tools,
+    session: { metadata: { title: `Play ${session.id}` } },
+  });
+  const refereeText = result.assistantMessage?.content?.trim();
+  const next = refereeText
+    ? {
+        ...session,
+        transcript: [
+          ...session.transcript,
+          {
+            speaker: 'world-referee',
+            content: refereeText,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      }
+    : session;
+  await writePlaySessionFiles(workspaceRoot, next);
+
+  return jsonResponse(context, 200, { session: next, result });
+}
+
+async function handleCreatePlayAdoptionPendingAction(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  candidateId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const session = await readPlaySessionFiles(workspaceRoot, id);
+  const candidate = session.adoptionCandidates.find((item) => item.id === candidateId);
+
+  if (!candidate) {
+    return jsonResponse(context, 404, { error: `Adoption candidate not found: ${candidateId}` });
+  }
+
+  const payload = isRecord(body.payload) ? body.payload : candidate.payload;
+  const toolRequest = createPlayAdoptionToolRequest(candidate.target, payload);
+
+  if ('error' in toolRequest) {
+    return jsonResponse(context, 400, { error: toolRequest.error });
+  }
+
+  const result = await executeWriteIntentTool(
+    createWriteIntentTools({ workspaceRoot }),
+    toolRequest.toolName,
+    toolRequest.args,
+  );
+
+  return jsonResponse(context, 200, {
+    candidate,
+    pendingActionResult: result,
+    refresh: await buildPostDecisionRefresh(workspaceRoot),
+  });
+}
+
 async function handleSaveWorkspaceOnboarding(
   options: NovelBackendOptions,
   state: BackendState,
@@ -1030,7 +1336,10 @@ async function handlePendingActionDecision(
       })
     : await rejectPendingAction({ workspaceRoot, id });
 
-  return jsonResponse(context, 200, result);
+  return jsonResponse(context, 200, {
+    ...result,
+    refresh: await buildPostDecisionRefresh(workspaceRoot),
+  });
 }
 
 async function handleWorkspaceChapterRescan(
@@ -1062,14 +1371,54 @@ async function createRuntimeEventStream(
       throw new Error('Model mode requires provider config and a model resolver.');
     }
 
+    const [workspace, skill] = await Promise.all([
+      loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
+      loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
+    ]);
+    const capability = inferNovelAgentCapability(input.request, skill.quickCommands);
+    const pendingActions = await listPendingActions({ workspaceRoot: input.workspaceRoot });
+    const [projectHealth, referenceSelection] = await Promise.all([
+      readProjectHealth(input.workspaceRoot, {
+        pendingActionCount: pendingActions.length,
+      }),
+      selectReferenceContext({
+        workspaceRoot: input.workspaceRoot,
+        capability,
+        goal: input.request,
+        tokenBudget: 1_500,
+        maxReferences: 3,
+      }),
+    ]);
+    const selectedContext = [
+      ...(projectHealth.issues.length
+        ? [{
+            kind: 'selected' as const,
+            title: 'Project Health Guardrails',
+            content: formatProjectHealthMarkdown(projectHealth),
+          }]
+        : []),
+      ...(
+        referenceSelection.included.length || referenceSelection.omitted.length
+          ? [{
+              kind: 'selected' as const,
+              title: 'Reference Context Selection',
+              content: formatReferenceContextSelectionMarkdown(referenceSelection),
+            }]
+          : []
+      ),
+    ];
+
     return streamNovelAgentTurn({
       providerConfig,
       resolveModel: options.resolveModel,
       workspaceRoot: input.workspaceRoot,
-      workspace: await loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
+      workspace,
       request: input.request,
-      skill: await loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
+      skill,
       tools: options.tools,
+      referenceSelection,
+      projectHealth,
+      selectedContext,
       session: { metadata: { title: input.request } },
     });
   }
@@ -1840,6 +2189,256 @@ function isInternalWorkspacePath(path: string): boolean {
 
     return part === '.oan' && parts[index + 1] === 'sessions';
   });
+}
+
+async function buildPostDecisionRefresh(workspaceRoot: string): Promise<{
+  workspaceStatus: {
+    pendingActionCount: number;
+    git: Awaited<ReturnType<typeof readGitStatus>>;
+  };
+  projectHealth: ProjectHealth;
+}> {
+  const pendingActions = await listPendingActions({ workspaceRoot });
+  const [gitStatus, projectHealth] = await Promise.all([
+    readGitStatus(workspaceRoot),
+    readProjectHealth(workspaceRoot, {
+      pendingActionCount: pendingActions.length,
+    }),
+  ]);
+
+  return {
+    workspaceStatus: {
+      pendingActionCount: pendingActions.length,
+      git: gitStatus,
+    },
+    projectHealth,
+  };
+}
+
+function createPlaySessionId(): string {
+  return `play-${randomUUID()}`;
+}
+
+function readPlayActivatedSources(value: Record<string, unknown>): PlayActivatedSource[] {
+  const raw = value.activatedSources;
+
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((item): PlayActivatedSource | undefined => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+
+      const sourceId = getOptionalString(item, 'sourceId')?.trim();
+      const reason = getOptionalString(item, 'reason')?.trim();
+
+      if (!sourceId || !reason) {
+        return undefined;
+      }
+
+      return {
+        sourceId,
+        path: getOptionalString(item, 'path')?.trim(),
+        reason,
+        budgetLayer: readBudgetLayer(item, 'budgetLayer') ?? 'L2',
+        semanticBoundary: readSemanticBoundary(item, 'semanticBoundary') ?? 'compressible',
+        trust: readPlaySourceTrust(item, 'trust') ?? 'playLocal',
+      };
+    })
+    .filter((item): item is PlayActivatedSource => Boolean(item));
+}
+
+function readPlayTranscriptTurn(value: Record<string, unknown>): PlayTranscriptTurn | undefined {
+  const speaker = getOptionalString(value, 'speaker')?.trim();
+  const content = getOptionalString(value, 'content')?.trim();
+
+  if (!speaker || !content) {
+    return undefined;
+  }
+
+  return {
+    speaker,
+    content,
+    createdAt: getOptionalString(value, 'createdAt') ?? new Date().toISOString(),
+  };
+}
+
+function readPlayObservation(value: Record<string, unknown>): PlayObservation | undefined {
+  const summary = getOptionalString(value, 'summary')?.trim();
+  const evidence = getOptionalString(value, 'evidence')?.trim();
+
+  if (!summary || !evidence) {
+    return undefined;
+  }
+
+  return {
+    id: getOptionalString(value, 'id')?.trim() || `obs-${randomUUID()}`,
+    summary,
+    evidence,
+    canonical: false,
+  };
+}
+
+function readPlayAdoptionCandidate(
+  value: Record<string, unknown>,
+): PlayAdoptionCandidate | undefined {
+  const target = readPlayAdoptionTarget(value, 'target');
+  const summary = getOptionalString(value, 'summary')?.trim();
+  const evidence = getOptionalString(value, 'evidence')?.trim();
+
+  if (!target || !summary || !evidence) {
+    return undefined;
+  }
+
+  return createPlayAdoptionCandidate({
+    id: getOptionalString(value, 'id')?.trim() || `adopt-${randomUUID()}`,
+    target,
+    summary,
+    evidence,
+    ...(isRecord(value.payload) ? { payload: value.payload } : {}),
+  });
+}
+
+function createPlayAdoptionToolRequest(
+  target: PlayAdoptionTarget,
+  payload: Record<string, unknown> | undefined,
+):
+  | { toolName: string; args: Record<string, unknown> }
+  | { error: string } {
+  if (!payload) {
+    return { error: 'Adoption payload is required before creating a PendingAction.' };
+  }
+
+  if (target === 'chapterDraft') {
+    const chapterId = getOptionalString(payload, 'chapterId')?.trim();
+    const content = getOptionalString(payload, 'content')?.trim();
+
+    if (!chapterId || !content) {
+      return { error: 'chapterDraft adoption requires chapterId and content.' };
+    }
+
+    return {
+      toolName: 'chapter.createDraft',
+      args: omitUndefined({
+        chapterId,
+        content,
+        title: getOptionalString(payload, 'title')?.trim(),
+        file: getOptionalString(payload, 'file')?.trim(),
+        mode: getOptionalString(payload, 'mode')?.trim(),
+      }),
+    };
+  }
+
+  if (target === 'state') {
+    const file = getOptionalString(payload, 'file')?.trim();
+    const path = getOptionalString(payload, 'path')?.trim();
+
+    if (!file || !path || !Object.prototype.hasOwnProperty.call(payload, 'value')) {
+      return { error: 'state adoption requires file, path, and value.' };
+    }
+
+    return {
+      toolName: 'state.set',
+      args: {
+        file,
+        path,
+        value: payload.value,
+      },
+    };
+  }
+
+  if (target === 'timeline') {
+    if (!Object.prototype.hasOwnProperty.call(payload, 'event')) {
+      return { error: 'timeline adoption requires event.' };
+    }
+
+    return {
+      toolName: 'timeline.add',
+      args: omitUndefined({
+        event: payload.event,
+        file: getOptionalString(payload, 'file')?.trim(),
+        path: getOptionalString(payload, 'path')?.trim(),
+      }),
+    };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(payload, 'item')) {
+    return { error: 'foreshadow adoption requires item.' };
+  }
+
+  return {
+    toolName: 'foreshadow.create',
+    args: omitUndefined({
+      item: payload.item,
+      file: getOptionalString(payload, 'file')?.trim(),
+      path: getOptionalString(payload, 'path')?.trim(),
+    }),
+  };
+}
+
+async function executeWriteIntentTool(
+  tools: ToolSet,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const executable = tools[name] as {
+    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
+  };
+
+  if (!executable?.execute) {
+    throw new Error(`Write-intent tool is not available: ${name}`);
+  }
+
+  return executable.execute(args, {});
+}
+
+function readBudgetLayer(
+  value: Record<string, unknown>,
+  key: string,
+): PlayActivatedSource['budgetLayer'] | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && ['L0', 'L1', 'L2', 'L3'].includes(raw)
+    ? raw as PlayActivatedSource['budgetLayer']
+    : undefined;
+}
+
+function readSemanticBoundary(
+  value: Record<string, unknown>,
+  key: string,
+): PlayActivatedSource['semanticBoundary'] | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && ['protected', 'compressible', 'excluded'].includes(raw)
+    ? raw as PlayActivatedSource['semanticBoundary']
+    : undefined;
+}
+
+function readPlaySourceTrust(
+  value: Record<string, unknown>,
+  key: string,
+): PlayActivatedSource['trust'] | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && ['canonical', 'interactionHint', 'playLocal', 'modelImprovisation'].includes(raw)
+    ? raw as PlayActivatedSource['trust']
+    : undefined;
+}
+
+function readPlayAdoptionTarget(
+  value: Record<string, unknown>,
+  key: string,
+): PlayAdoptionTarget | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && ['chapterDraft', 'state', 'timeline', 'foreshadow'].includes(raw)
+    ? raw as PlayAdoptionTarget
+    : undefined;
+}
+
+function omitUndefined(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
 }
 
 function readStringProperty(value: unknown, keys: string[]): string | undefined {

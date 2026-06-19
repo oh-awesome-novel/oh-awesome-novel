@@ -1,6 +1,6 @@
 import { computed, onMounted, shallowRef, watch } from 'vue';
 
-export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references';
+export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references' | 'play';
 
 interface PersistedWorkspaceLayoutState {
   leftPinned?: boolean;

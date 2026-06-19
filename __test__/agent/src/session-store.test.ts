@@ -139,6 +139,81 @@ describe('agent session persistence', () => {
     expect(toolLog).toContain('"name":"workspace.writeFile"');
     expect(recovery).toContain('.workspace/shadow-writes/call_1/chapters/0001.md');
   });
+
+  it('writes session artifacts for PendingAction-producing turns', async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const tools: ToolSet = {
+      'chapter.createDraft': {
+        description: 'Create a chapter PendingAction.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+        execute: vi.fn(() => ({
+          pendingActions: [
+            {
+              id: 'pa_test',
+              title: 'Create chapter draft',
+              description: 'Draft from test.',
+              patches: [],
+              touchedFiles: ['chapters/0001/0002.md'],
+              diff: 'diff --git a/chapters/0001/0002.md b/chapters/0001/0002.md',
+              createdAt: '2026-06-19T00:00:00.000Z',
+              status: 'pending',
+            },
+          ],
+        })),
+      },
+    } as ToolSet;
+
+    streamText
+      .mockReturnValueOnce({
+        textStream: toAsyncIterable(['准备草稿']),
+        toolCalls: Promise.resolve([
+          {
+            toolCallId: 'call_1',
+            toolName: 'chapter.createDraft',
+            input: { chapterId: '0001/0002', content: '# 第二章\n\n正文' },
+          },
+        ]),
+      })
+      .mockReturnValueOnce({
+        textStream: toAsyncIterable(['已创建 PendingAction']),
+        toolCalls: Promise.resolve([]),
+      });
+
+    const result = await runNovelAgentTurn({
+      providerConfig: {
+        id: 'mock-provider',
+        kind: 'custom',
+        model: 'mock-model',
+      },
+      resolveModel: vi.fn(() => ({ provider: 'mock', modelId: 'mock-model' })),
+      workspaceRoot,
+      workspace: {
+        workspaceRoot,
+        constitution: '禁止机械降神。',
+        workflow: 'steps:\n  - chapter',
+      },
+      request: '/写下一章',
+      tools,
+      session: { metadata: { title: 'artifact turn' } },
+    });
+
+    const sessionId = result.session?.id ?? '';
+    await expect(
+      readFile(join(workspaceRoot, '.workspace/sessions', sessionId, 'run.yaml'), 'utf-8'),
+    ).resolves.toContain('capability: novel.write_chapter');
+    await expect(
+      readFile(join(workspaceRoot, '.workspace/sessions', sessionId, 'context-package.yaml'), 'utf-8'),
+    ).resolves.toContain('toolName: chapter.createDraft');
+    await expect(
+      readFile(join(workspaceRoot, '.workspace/sessions', sessionId, 'proposed-patches.yaml'), 'utf-8'),
+    ).resolves.toContain('pa_test');
+    await expect(
+      readFile(join(workspaceRoot, '.workspace/sessions', sessionId, 'outputs.yaml'), 'utf-8'),
+    ).resolves.toContain('Author Report');
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

@@ -1,12 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, shallowRef } from 'vue';
 
-import type { ProjectHealth, WorkspaceStatus } from '../../composables/useWorkspaceApi';
+import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
+import type {
+  ProjectionRebuildResult,
+  ProjectHealth,
+  WorkspaceStatus,
+} from '../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   status?: WorkspaceStatus;
   health?: ProjectHealth;
 }>();
+
+const api = useWorkspaceApi();
+const rebuilding = shallowRef(false);
+const rebuildError = shallowRef('');
+const rebuildResult = shallowRef<ProjectionRebuildResult>();
 
 const gitLabel = computed(() => {
   if (!props.status) {
@@ -21,12 +31,33 @@ const gitLabel = computed(() => {
 });
 
 const issues = computed(() => props.health?.issues ?? []);
+
+async function rebuildProjections() {
+  rebuilding.value = true;
+  rebuildError.value = '';
+
+  try {
+    rebuildResult.value = await api.rebuildProjections();
+  } catch (error) {
+    rebuildError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    rebuilding.value = false;
+  }
+}
 </script>
 
 <template>
   <section class="right-tab-panel" aria-label="Workspace health">
     <div class="panel-heading">
       <h2 class="panel-title">Workspace Health</h2>
+      <button
+        class="ghost-button tight-button"
+        type="button"
+        :disabled="rebuilding"
+        @click="rebuildProjections"
+      >
+        Rebuild Projections
+      </button>
     </div>
     <div class="home-health-panel">
       <div class="status-block">
@@ -53,5 +84,12 @@ const issues = computed(() => props.health?.issues ?? []);
       </div>
     </div>
     <p v-else class="empty-copy">No health issues.</p>
+    <p v-if="rebuildError" class="error-copy">{{ rebuildError }}</p>
+    <div v-if="rebuildResult" class="health-issue-list">
+      <div v-for="projection in rebuildResult.projections" :key="projection.path" class="health-issue-row">
+        <strong>{{ projection.target }}</strong>
+        <span>{{ projection.path }}</span>
+      </div>
+    </div>
   </section>
 </template>

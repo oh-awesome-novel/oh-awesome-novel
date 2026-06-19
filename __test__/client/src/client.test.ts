@@ -20,6 +20,15 @@ describe('createOanClient', () => {
 
     await client.listWorkspaces();
     await client.importWorkspace('/novels/demo');
+    await client.rebuildProjections();
+    await client.createPlaySession({
+      title: 'Play',
+      sceneStart: 'Scene',
+    });
+    await client.createPlayAdoptionPendingAction('play-1', 'adopt-1', {
+      chapterId: '0001/0002',
+      content: '正文',
+    });
 
     expect(calls[0]).toMatchObject({
       url: 'http://backend.test/api/workspaces',
@@ -31,6 +40,18 @@ describe('createOanClient', () => {
     });
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
       path: '/novels/demo',
+    });
+    expect(calls[2]).toMatchObject({
+      url: 'http://backend.test/api/workspace/projections/rebuild',
+      init: { method: 'POST' },
+    });
+    expect(calls[3]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions',
+      init: { method: 'POST' },
+    });
+    expect(calls[4]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/adoption-candidates/adopt-1/pending-action',
+      init: { method: 'POST' },
     });
   });
 

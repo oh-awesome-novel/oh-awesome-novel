@@ -57,12 +57,12 @@ describe('novel copilot skill contract', () => {
     ).toBe(true);
   });
 
-  it('exposes planned capability metadata without turning it into tools', () => {
+  it('exposes product capability metadata without turning it into tools', () => {
     expect(NOVEL_COPILOT_CAPABILITIES).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'novel.play_scene',
-          status: 'planned',
+          status: 'available',
           mode: 'play',
         }),
         expect.objectContaining({

@@ -95,6 +95,9 @@ export type {
   ContextPackage,
   ContextSourceId,
   ContextSourceRef,
+  ContextTraceEntry,
+  ContextTraceOutcome,
+  ContextTraceType,
   CreateContextPackageDraftInput,
   MinimalMemory,
   MinimalMemoryInput,
@@ -220,6 +223,8 @@ export {
   createPlayAdoptionCandidate,
   createPlaySessionDraft,
   formatPlayWorldRefereePrompt,
+  listPlaySessions,
+  readPlaySessionFiles,
   resolvePlaySessionPath,
   writePlaySessionFiles,
 } from './play-session.js';
@@ -253,8 +258,10 @@ export type {
 
 // Reference Work Import And Deconstruction
 export {
+  formatReferenceContextSelectionMarkdown,
   importReferenceWork,
   listReferenceWorks,
+  referenceSelectionToContextSources,
   selectReferenceContext,
   setReferenceEnabled,
 } from './reference-work.js';

@@ -29,6 +29,7 @@ export interface SessionRunMetadata {
   updatedAt: string;
   inputSources: SessionInputSource[];
   touchedFiles: string[];
+  resumeBoundary?: SessionResumeBoundary;
 }
 
 export interface SessionOutputArtifact {

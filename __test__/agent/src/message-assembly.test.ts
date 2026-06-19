@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assembleNovelAgentMessages,
+  createBaselineNovelAgentContextPackage,
   createNovelAgentSystemPrompt,
   createRuntimeTurnInput,
+  inferNovelAgentCapability,
 } from '@oh-awesome-novel/agent';
 
 const baseInput = {
@@ -93,6 +95,18 @@ describe('Novel agent message assembly', () => {
             semanticBoundary: 'excluded',
           },
         ],
+        trace: [
+          {
+            id: 'trace-1',
+            type: 'workspaceSnapshot',
+            sourceId: 'constitution',
+            reason: 'loaded from workspace snapshot',
+            budgetLayer: 'L0',
+            semanticBoundary: 'protected',
+            outcome: 'selected',
+            createdAt: '2026-06-19T00:00:00.000Z',
+          },
+        ],
         minimalMemory: {
           characters: ['heroine'],
           hooks: [],
@@ -124,5 +138,23 @@ describe('Novel agent message assembly', () => {
     });
     expect(turnInput.context?.map((item) => item.kind)).toContain('state');
     expect(turnInput).not.toHaveProperty('tools');
+  });
+
+  it('infers writing capability and builds a baseline context package', () => {
+    expect(inferNovelAgentCapability('/写下一章 请继续')).toBe('novel.write_chapter');
+
+    const contextPackage = createBaselineNovelAgentContextPackage({
+      request: '/写下一章 请继续',
+      workspace: baseInput.workspace,
+      createdAt: '2026-06-19T00:00:00.000Z',
+    });
+
+    expect(contextPackage).toMatchObject({
+      capability: 'novel.write_chapter',
+    });
+    expect(contextPackage?.selected.map((source) => source.sourceId))
+      .toContain('constitution');
+    expect(contextPackage?.trace.map((trace) => trace.outcome))
+      .toContain('selected');
   });
 });

@@ -1,10 +1,11 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 import type { ContextBudgetLayer, SemanticBoundary } from './agent-context-package.js';
 
 export const PLAY_SESSION_FILES = [
+  'session.yaml',
   'transcript.md',
   'play-local-state.yaml',
   'activated-sources.yaml',
@@ -49,6 +50,7 @@ export interface PlayAdoptionCandidate {
   target: PlayAdoptionTarget;
   summary: string;
   evidence: string;
+  payload?: Record<string, unknown>;
   requiresPendingAction: true;
 }
 
@@ -130,6 +132,7 @@ export const writePlaySessionFiles = async (
   session: PlaySession,
 ): Promise<string[]> => {
   const files: Array<[PlaySessionFile, string]> = [
+    ['session.yaml', stringify(formatSessionMetadata(session))],
     ['transcript.md', formatTranscript(session)],
     ['play-local-state.yaml', stringify(session.playLocalState)],
     ['activated-sources.yaml', stringify({ activatedSources: session.activatedSources })],
@@ -146,6 +149,84 @@ export const writePlaySessionFiles = async (
       return filePath;
     }),
   );
+};
+
+export const readPlaySessionFiles = async (
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<PlaySession> => {
+  const metadata = await readPlayYaml<{
+    id: string;
+    title: string;
+    createdAt: string;
+    userPersona?: string;
+    sceneStart: string;
+    characters?: string[];
+    transcript?: PlayTranscriptTurn[];
+  }>(workspaceRoot, sessionId, 'session.yaml');
+  const playLocalState = await readPlayYaml<Record<string, unknown>>(
+    workspaceRoot,
+    sessionId,
+    'play-local-state.yaml',
+    {},
+  );
+  const activatedSources = await readPlayYaml<{ activatedSources?: PlayActivatedSource[] }>(
+    workspaceRoot,
+    sessionId,
+    'activated-sources.yaml',
+    {},
+  );
+  const observations = await readPlayYaml<{ observations?: PlayObservation[] }>(
+    workspaceRoot,
+    sessionId,
+    'observations.yaml',
+    {},
+  );
+  const adoptionCandidates = await readPlayYaml<{ adoptionCandidates?: PlayAdoptionCandidate[] }>(
+    workspaceRoot,
+    sessionId,
+    'adoption-candidates.yaml',
+    {},
+  );
+
+  return {
+    id: assertSafePlaySessionId(metadata.id),
+    title: metadata.title,
+    createdAt: metadata.createdAt,
+    userPersona: metadata.userPersona,
+    sceneStart: metadata.sceneStart,
+    characters: metadata.characters ?? [],
+    transcript: metadata.transcript ?? [],
+    playLocalState,
+    activatedSources: (activatedSources.activatedSources ?? []).map(assertActivatedSource),
+    observations: observations.observations ?? [],
+    adoptionCandidates: adoptionCandidates.adoptionCandidates ?? [],
+  };
+};
+
+export const listPlaySessions = async (
+  workspaceRoot: string,
+): Promise<PlaySession[]> => {
+  const sessionsRoot = resolvePlaySessionsRoot(workspaceRoot);
+
+  try {
+    const entries = await readdir(sessionsRoot, { withFileTypes: true });
+    const sessions = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => readPlaySessionFiles(workspaceRoot, entry.name)),
+    );
+
+    return sessions.toSorted((left, right) =>
+      right.createdAt.localeCompare(left.createdAt),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+
+    throw error;
+  }
 };
 
 export const formatPlayWorldRefereePrompt = (session: PlaySession): string => [
@@ -213,6 +294,53 @@ function formatTranscript(session: PlaySession): string {
       '',
     ].join('\n')),
   ].join('\n');
+}
+
+function formatSessionMetadata(session: PlaySession): Record<string, unknown> {
+  return {
+    id: session.id,
+    title: session.title,
+    createdAt: session.createdAt,
+    userPersona: session.userPersona,
+    sceneStart: session.sceneStart,
+    characters: session.characters,
+    transcript: session.transcript,
+  };
+}
+
+async function readPlayYaml<T>(
+  workspaceRoot: string,
+  sessionId: string,
+  file: PlaySessionFile,
+  fallback?: T,
+): Promise<T> {
+  try {
+    const filePath = resolvePlaySessionPath(workspaceRoot, sessionId, file);
+    const parsed = parse(await readFile(filePath, 'utf-8')) as T | undefined;
+    return parsed ?? (fallback as T);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && fallback !== undefined) {
+      return fallback;
+    }
+
+    throw error;
+  }
+}
+
+function resolvePlaySessionsRoot(workspaceRoot: string): string {
+  const workspace = resolve(workspaceRoot);
+  const root = resolve(workspace, '.workspace', 'play-sessions');
+  const rootRelativePath = relative(workspace, root);
+
+  if (
+    rootRelativePath.startsWith('..') ||
+    rootRelativePath === '' ||
+    rootRelativePath.includes(`..${sep}`)
+  ) {
+    throw new Error('Play sessions root must stay inside workspace.');
+  }
+
+  return root;
 }
 
 function assertActivatedSource(source: PlayActivatedSource): PlayActivatedSource {

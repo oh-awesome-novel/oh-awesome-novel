@@ -34,6 +34,34 @@ export interface ContextSourceRef {
   title?: string;
 }
 
+export type ContextTraceType =
+  | 'workspaceSnapshot'
+  | 'toolCall'
+  | 'userSelectedContext'
+  | 'omittedSource'
+  | 'compression';
+
+export type ContextTraceOutcome =
+  | 'selected'
+  | 'omitted'
+  | 'compressed'
+  | 'read'
+  | 'pendingAction'
+  | 'failed';
+
+export interface ContextTraceEntry {
+  id: string;
+  type: ContextTraceType;
+  reason: string;
+  outcome: ContextTraceOutcome;
+  createdAt: string;
+  sourceId?: ContextSourceId | string;
+  toolName?: string;
+  path?: string;
+  budgetLayer?: ContextBudgetLayer;
+  semanticBoundary?: SemanticBoundary;
+}
+
 export interface MinimalMemory {
   characters: string[];
   hooks: string[];
@@ -55,6 +83,7 @@ export interface ContextPackage {
   createdAt: string;
   selected: ContextSourceRef[];
   omitted: ContextSourceRef[];
+  trace: ContextTraceEntry[];
   minimalMemory: MinimalMemory;
   ruleStack: RuleStackEntry[];
 }
@@ -73,6 +102,7 @@ export interface CreateContextPackageDraftInput {
   createdAt?: string;
   selected?: ContextSourceRef[];
   omitted?: ContextSourceRef[];
+  trace?: ContextTraceEntry[];
   minimalMemory?: MinimalMemoryInput;
   ruleStack?: RuleStackEntry[];
 }
@@ -93,6 +123,7 @@ export const createContextPackageDraft = (
     createdAt,
     selected: input.selected?.map(assertContextSourceRef) ?? [],
     omitted: input.omitted?.map(assertContextSourceRef) ?? [],
+    trace: input.trace?.map(assertContextTraceEntry) ?? [],
     minimalMemory: deriveMinimalMemory(input.minimalMemory),
     ruleStack: [...(input.ruleStack ?? [])],
   };
@@ -107,6 +138,7 @@ export const addSelectedSource = (
   assertContextPackage({
     ...contextPackage,
     selected: [...contextPackage.selected, assertContextSourceRef(source)],
+    trace: contextPackage.trace ?? [],
   });
 
 export const addOmittedSource = (
@@ -116,6 +148,7 @@ export const addOmittedSource = (
   assertContextPackage({
     ...contextPackage,
     omitted: [...contextPackage.omitted, assertContextSourceRef(source)],
+    trace: contextPackage.trace ?? [],
   });
 
 export const deriveMinimalMemory = (
@@ -137,6 +170,9 @@ export const formatContextPackageSummary = (
   const omitted = contextPackage.omitted.length
     ? contextPackage.omitted.map(formatSourceRef).join('\n')
     : '- none';
+  const trace = contextPackage.trace?.length
+    ? contextPackage.trace.map(formatTraceEntry).join('\n')
+    : '- none';
 
   return [
     `Context Package: ${contextPackage.id}`,
@@ -147,6 +183,9 @@ export const formatContextPackageSummary = (
     '',
     'Omitted sources:',
     omitted,
+    '',
+    'Trace:',
+    trace,
     '',
     'Minimal memory:',
     `- characters: ${formatInlineList(contextPackage.minimalMemory.characters)}`,
@@ -202,6 +241,10 @@ function assertContextPackage(contextPackage: ContextPackage): ContextPackage {
     assertContextSourceRef(source);
   }
 
+  for (const trace of contextPackage.trace ?? []) {
+    assertContextTraceEntry(trace);
+  }
+
   return contextPackage;
 }
 
@@ -213,6 +256,22 @@ function assertContextSourceRef(source: ContextSourceRef): ContextSourceRef {
   return {
     ...source,
     reason: source.reason.trim(),
+  };
+}
+
+function assertContextTraceEntry(trace: ContextTraceEntry): ContextTraceEntry {
+  if (!trace.id.trim()) {
+    throw new Error('Context trace entry requires an id.');
+  }
+
+  if (!trace.reason.trim()) {
+    throw new Error(`Context trace ${trace.id} requires a reason.`);
+  }
+
+  return {
+    ...trace,
+    id: trace.id.trim(),
+    reason: trace.reason.trim(),
   };
 }
 
@@ -237,6 +296,17 @@ function dedupeCompact(values: string[] | undefined): string[] {
 function formatSourceRef(source: ContextSourceRef): string {
   const path = source.path ? ` path=${source.path}` : '';
   return `- ${source.sourceId} [${source.budgetLayer}/${source.semanticBoundary}]${path}: ${source.reason}`;
+}
+
+function formatTraceEntry(trace: ContextTraceEntry): string {
+  const source = trace.sourceId ? ` ${trace.sourceId}` : '';
+  const tool = trace.toolName ? ` tool=${trace.toolName}` : '';
+  const path = trace.path ? ` path=${trace.path}` : '';
+  const boundary = trace.budgetLayer && trace.semanticBoundary
+    ? ` [${trace.budgetLayer}/${trace.semanticBoundary}]`
+    : '';
+
+  return `- ${trace.type}/${trace.outcome}${source}${boundary}${tool}${path}: ${trace.reason}`;
 }
 
 function formatInlineList(values: string[]): string {

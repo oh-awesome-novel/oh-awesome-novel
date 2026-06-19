@@ -5,8 +5,10 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import {
+  formatReferenceContextSelectionMarkdown,
   importReferenceWork,
   listReferenceWorks,
+  referenceSelectionToContextSources,
   selectReferenceContext,
   setReferenceEnabled,
 } from '@oh-awesome-novel/core';
@@ -81,14 +83,37 @@ describe('reference work import', () => {
     expect(references).toHaveLength(2);
     expect(references.find((item) => item.id === second.reference.id)?.enabled).toBe(false);
 
-    const selection = await selectReferenceContext({ workspaceRoot, tokenBudget: 2_000 });
+    const selection = await selectReferenceContext({
+      workspaceRoot,
+      capability: 'novel.write_chapter',
+      goal: 'continue rain-city pacing',
+      tokenBudget: 2_000,
+    });
     expect(selection.included.map((item) => item.id)).toEqual([first.reference.id]);
     expect(selection.included[0]?.reason).toContain('original source not read');
+    expect(selection.originalSourceRead).toBe(false);
+    expect(selection.noCopyWarnings.join('\n')).toContain('do not copy');
+    expect(selection.included[0]).toMatchObject({
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+    });
     expect(selection.omitted).toContainEqual({
       id: second.reference.id,
       title: 'Disabled Reference',
       reason: 'disabled',
+      budgetLayer: 'L3',
     });
+
+    const contextSources = referenceSelectionToContextSources(selection);
+    expect(contextSources.selected[0]).toMatchObject({
+      sourceId: 'referenceDistilled',
+      path: first.reference.summaryPath,
+    });
+    expect(contextSources.omitted[0]).toMatchObject({
+      sourceId: 'referenceDistilled',
+      semanticBoundary: 'excluded',
+    });
+    expect(formatReferenceContextSelectionMarkdown(selection)).toContain('Original source read: no');
   });
 
   it('imports a local source path and records checksum metadata', async () => {
