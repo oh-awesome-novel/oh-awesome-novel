@@ -128,11 +128,69 @@ export interface ChapterIndexStatus {
 
 export interface WorkspaceStatus {
   pendingActionCount: number;
-  git: {
-    status: 'clean' | 'dirty' | 'unknown';
-    dirty: boolean | null;
-  };
+  git: GitWorkspaceStatus;
 }
+
+export interface GitCommandError {
+  code:
+    | 'git_unavailable'
+    | 'not_git_repository'
+    | 'identity_missing'
+    | 'remote_missing'
+    | 'auth_failed'
+    | 'conflict'
+    | 'invalid_input'
+    | 'git_failed';
+  message: string;
+  stderr?: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  indexStatus: string;
+  worktreeStatus: string;
+  raw: string;
+}
+
+export interface GitWorkspaceStatus {
+  available: boolean;
+  source: 'global';
+  version?: string;
+  repository: boolean;
+  branch?: string;
+  head?: string;
+  status: 'clean' | 'dirty' | 'unknown';
+  dirty: boolean | null;
+  files: GitFileStatus[];
+  error?: GitCommandError;
+}
+
+export interface GitCommitSummary {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName?: string;
+  authorEmail?: string;
+  authoredAt?: string;
+}
+
+export interface GitCommitDetail extends GitCommitSummary {
+  body: string;
+  files: Array<{
+    path: string;
+    status: string;
+  }>;
+  diff: string;
+}
+
+export type GitCommitResult =
+  | { status: 'committed'; hash: string; message: string }
+  | { status: 'skipped'; reason: 'auto_commit_disabled'; message: string }
+  | { status: 'failed'; message: string; error: GitCommandError };
+
+export type GitSyncResult =
+  | { status: 'synced'; fetch: string; pull: string; push: string }
+  | { status: 'failed'; step: 'fetch' | 'pull' | 'push'; error: GitCommandError };
 
 export interface ProjectHealthIssue {
   id: string;
@@ -181,6 +239,8 @@ export interface AcceptedPendingAction {
   status: 'accepted';
   appliedFiles: string[];
   gitDiff: string;
+  gitCommit: GitCommitResult;
+  dirtyStatus: string;
 }
 
 export interface RejectedPendingAction {
@@ -229,6 +289,17 @@ export interface OanClient {
   getWorkspaceTree(): Promise<{ tree: FileTreeNode[] }>;
   getWorkspaceFile(path: string): Promise<{ path: string; content: string }>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
+  getGitStatus(): Promise<GitWorkspaceStatus>;
+  getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
+  getGitCommit(hash: string): Promise<GitCommitDetail>;
+  getGitDiff(files?: string[]): Promise<{ diff: string }>;
+  quickCommit(input: { files?: string[]; message: string }): Promise<GitCommitResult>;
+  syncGit(): Promise<GitSyncResult>;
+  openExternalEditor(editor: 'vscode' | 'zed' | 'webstorm'): Promise<{
+    opened: boolean;
+    editor: string;
+    error?: string;
+  }>;
   getProjectHealth(): Promise<{ health: ProjectHealth }>;
   saveWorkspaceOnboarding(input: WorkspaceOnboardingInput): Promise<{
     workspace: WorkspaceSummary;
@@ -339,6 +410,34 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/api/workspace/file?path=${encodeURIComponent(path)}`,
       ),
     getWorkspaceStatus: () => requestJson<WorkspaceStatus>('/api/workspace/status'),
+    getGitStatus: () => requestJson<GitWorkspaceStatus>('/api/git/status'),
+    getGitLog: (maxCount = 30) =>
+      requestJson<{ commits: GitCommitSummary[]; error?: GitCommandError }>(
+        `/api/git/log?maxCount=${encodeURIComponent(String(maxCount))}`,
+      ),
+    getGitCommit: (hash) =>
+      requestJson<GitCommitDetail>(`/api/git/show/${encodeURIComponent(hash)}`),
+    getGitDiff: (files = []) =>
+      requestJson<{ diff: string }>(
+        `/api/git/diff${files.length ? `?${files.map((file) => `file=${encodeURIComponent(file)}`).join('&')}` : ''}`,
+      ),
+    quickCommit: (input) =>
+      requestJson<GitCommitResult>('/api/git/commit', {
+        method: 'POST',
+        body: input,
+      }),
+    syncGit: () =>
+      requestJson<GitSyncResult>('/api/git/sync', {
+        method: 'POST',
+      }),
+    openExternalEditor: (editor) =>
+      requestJson<{ opened: boolean; editor: string; error?: string }>(
+        '/api/external-editor/open',
+        {
+          method: 'POST',
+          body: { editor },
+        },
+      ),
     getProjectHealth: () =>
       requestJson<{ health: ProjectHealth }>('/api/workspace/project-health'),
     saveWorkspaceOnboarding: (input) =>

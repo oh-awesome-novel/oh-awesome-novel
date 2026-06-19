@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
@@ -12,6 +14,7 @@ import type { ToolSet } from 'ai';
 
 const tempRoots: string[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   for (const server of servers.splice(0)) {
@@ -240,6 +243,35 @@ describe('novel HTTP backend', () => {
     await expect(
       readFile(join(workspaceRoot, 'summaries/chapter/0001/0001.md'), 'utf-8'),
     ).resolves.toContain('新摘要');
+  });
+
+  it('exposes Git status and quick commit endpoints', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    await initGitRepo(workspaceRoot);
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    await writeFile(join(workspaceRoot, 'chapters/0001/0001.md'), '# 第一章\n\n更新后的正文。\n', 'utf-8');
+
+    await expect(fetchJson(`${backend.url}/api/git/status`))
+      .resolves
+      .toMatchObject({
+        repository: true,
+        status: 'dirty',
+        files: [expect.objectContaining({ path: 'chapters/0001/0001.md' })],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/git/commit`, {
+      method: 'POST',
+      body: JSON.stringify({
+        files: ['chapters/0001/0001.md'],
+        message: 'chore(novel): quick commit test',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        status: 'committed',
+        message: 'chore(novel): quick commit test',
+      });
   });
 
   it('stores multiple provider configs outside the novel workspace runtime', async () => {
@@ -514,6 +546,14 @@ async function createOanWorkspace(): Promise<string> {
   await writeFile(join(root, 'summaries/chapter/0001/0001.md'), '# 第一章\n\n旧摘要。\n', 'utf-8');
 
   return root;
+}
+
+async function initGitRepo(workspaceRoot: string): Promise<void> {
+  await execFileAsync('git', ['init'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['add', '.'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspaceRoot });
 }
 
 async function startModelListServer(): Promise<{ url: string; close(): Promise<void> }> {

@@ -8,6 +8,7 @@ export interface PendingActionView {
   id: string;
   title: string;
   description: string;
+  touchedFiles?: string[];
   diff: string;
   status: string;
 }

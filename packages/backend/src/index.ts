@@ -17,6 +17,7 @@ import {
   createEmptyLlmProviderConfigState,
   getDefaultLlmProviderConfig,
   initWorkspace,
+  loadWorkspaceConfig,
   loadNovelCopilotSkill,
   loadWorkspaceList,
   normalizeLlmProviderConfig,
@@ -41,10 +42,16 @@ import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
   buildChapterIndex,
   acceptPendingAction,
+  commitFiles,
+  gitDiff,
   listPendingActions,
+  listGitCommits,
   loadYaml,
+  readGitStatus,
   readChapterIndexStatus,
   rejectPendingAction,
+  showGitCommit,
+  syncGit,
   writeChapterIndexFile,
 } from '@oh-awesome-novel/tools';
 
@@ -153,6 +160,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.get('/api/git/status', (context) => handleGitStatus(options, state, context));
+  app.get('/api/git/log', (context) => handleGitLog(options, state, context));
+  app.get('/api/git/show/:hash', (context) =>
+    handleGitShow(options, state, context.req.param('hash') ?? '', context));
+  app.get('/api/git/diff', (context) => handleGitDiff(options, state, context));
+  app.post('/api/git/commit', (context) => handleGitCommit(options, state, context));
+  app.post('/api/git/sync', (context) => handleGitSync(options, state, context));
+  app.post('/api/external-editor/open', (context) =>
+    handleOpenExternalEditor(options, state, context));
   app.get('/api/workspace/project-health', (context) =>
     handleWorkspaceProjectHealth(options, state, context));
   app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
@@ -669,13 +685,149 @@ async function handleWorkspaceStatus(
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const [pendingActions, gitStatus] = await Promise.all([
     listPendingActions({ workspaceRoot }),
-    readGitWorkspaceStatus(workspaceRoot),
+    readGitStatus(workspaceRoot),
   ]);
 
   return jsonResponse(context, 200, {
     pendingActionCount: pendingActions.length,
     git: gitStatus,
   });
+}
+
+async function handleGitStatus(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  return jsonResponse(context, 200, await readGitStatus(workspaceRoot));
+}
+
+async function handleGitLog(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const maxCount = Number(context.req.query('maxCount') ?? 30);
+  const result = await listGitCommits(workspaceRoot, {
+    maxCount: Number.isFinite(maxCount) ? maxCount : 30,
+  });
+
+  return jsonResponse(context, result.error ? 409 : 200, result);
+}
+
+async function handleGitShow(
+  options: NovelBackendOptions,
+  state: BackendState,
+  hash: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const result = await showGitCommit(workspaceRoot, hash);
+
+  return jsonResponse(context, 'error' in result ? 409 : 200, result);
+}
+
+async function handleGitDiff(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const files = context.req.queries('file') ?? [];
+
+  try {
+    return jsonResponse(context, 200, {
+      diff: await gitDiff(workspaceRoot, files),
+    });
+  } catch (error) {
+    return jsonResponse(context, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleGitCommit(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const message = getOptionalString(body, 'message')?.trim();
+
+  if (!message) {
+    return jsonResponse(context, 400, { error: 'Commit message is required.' });
+  }
+
+  const status = await readGitStatus(workspaceRoot);
+  if (!status.repository || status.status === 'unknown') {
+    return jsonResponse(context, 409, {
+      status: 'failed',
+      message,
+      error: status.error ?? {
+        code: 'not_git_repository',
+        message: 'Workspace is not a Git repository.',
+      },
+    });
+  }
+
+  const dirtyFiles = status.files.map((file) => file.path);
+  const requestedFiles = readStringArray(body, 'files');
+  const files = requestedFiles.length ? requestedFiles : dirtyFiles;
+  const invalidFiles = files.filter((file) => !dirtyFiles.includes(file));
+
+  if (invalidFiles.length > 0) {
+    return jsonResponse(context, 400, {
+      error: `Commit files must come from current dirty status: ${invalidFiles.join(', ')}`,
+    });
+  }
+
+  const result = await commitFiles({
+    workspaceRoot,
+    files,
+    message,
+  });
+
+  return jsonResponse(context, result.status === 'committed' ? 200 : 409, result);
+}
+
+async function handleGitSync(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const result = await syncGit(workspaceRoot);
+
+  return jsonResponse(context, result.status === 'synced' ? 200 : 409, result);
+}
+
+async function handleOpenExternalEditor(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = await realpath(requireActiveWorkspaceRoot(options, state));
+  const body = await readJsonBody(context);
+  const editor = getOptionalString(body, 'editor');
+  const command = editor ? externalEditorCommand(editor) : undefined;
+
+  if (!command) {
+    return jsonResponse(context, 400, { error: 'External editor is not supported.' });
+  }
+
+  try {
+    await execFileAsync(command.executable, [...command.args, workspaceRoot]);
+    return jsonResponse(context, 200, { opened: true, editor });
+  } catch (error) {
+    return jsonResponse(context, 409, {
+      opened: false,
+      editor,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function handleWorkspaceProjectHealth(
@@ -746,8 +898,13 @@ async function handlePendingActionDecision(
   context: NovelBackendContext,
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const gitConfig = await readWorkspaceGitConfig(workspaceRoot);
   const result = decision === 'accept'
-    ? await acceptPendingAction({ workspaceRoot, id })
+    ? await acceptPendingAction({
+        workspaceRoot,
+        id,
+        autoCommitOnAccept: gitConfig.autoCommitOnAccept,
+      })
     : await rejectPendingAction({ workspaceRoot, id });
 
   return jsonResponse(context, 200, result);
@@ -1455,29 +1612,34 @@ async function buildFileTree(workspaceRoot: string, directory: string): Promise<
   });
 }
 
-async function readGitWorkspaceStatus(workspaceRoot: string): Promise<{
-  status: 'clean' | 'dirty' | 'unknown';
-  dirty: boolean | null;
+async function readWorkspaceGitConfig(workspaceRoot: string): Promise<{
+  autoCommitOnAccept: boolean;
 }> {
   try {
-    const { stdout } = await execFileAsync('git', [
-      '-C',
-      workspaceRoot,
-      'status',
-      '--porcelain',
-    ]);
-    const dirty = stdout.trim().length > 0;
+    const config = await loadWorkspaceConfig(workspaceRoot);
+    const git = isRecord(config.git) ? config.git : {};
 
     return {
-      status: dirty ? 'dirty' : 'clean',
-      dirty,
+      autoCommitOnAccept: typeof git.autoCommitOnAccept === 'boolean'
+        ? git.autoCommitOnAccept
+        : true,
     };
   } catch {
-    return {
-      status: 'unknown',
-      dirty: null,
-    };
+    return { autoCommitOnAccept: true };
   }
+}
+
+function externalEditorCommand(editor: string): {
+  executable: string;
+  args: string[];
+} | undefined {
+  const commands: Record<string, { executable: string; args: string[] }> = {
+    vscode: { executable: 'code', args: [] },
+    zed: { executable: 'zed', args: [] },
+    webstorm: { executable: 'webstorm', args: [] },
+  };
+
+  return commands[editor];
 }
 
 function resolveWorkspaceFile(workspaceRoot: string, path: string): string {
@@ -1601,6 +1763,16 @@ function getOptionalString(value: Record<string, unknown>, key: string): string 
 
 function getOptionalNumber(value: Record<string, unknown>, key: string): number | undefined {
   return typeof value[key] === 'number' && Number.isFinite(value[key]) ? value[key] : undefined;
+}
+
+function readStringArray(value: Record<string, unknown>, key: string): string[] {
+  const raw = value[key];
+
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
 }
 
 function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] {

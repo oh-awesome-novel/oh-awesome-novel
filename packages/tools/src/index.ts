@@ -72,3 +72,23 @@ export type {
   StoredWriteIntentAction,
   WriteIntentPendingAction,
 } from './write-intent-tools';
+
+export {
+  commitFiles,
+  createPendingActionCommitMessage,
+  gitDiff,
+  gitStatusShort,
+  listGitCommits,
+  readGitStatus,
+  showGitCommit,
+  syncGit,
+} from './git-integration';
+export type {
+  GitCommandError,
+  GitCommitDetail,
+  GitCommitResult,
+  GitCommitSummary,
+  GitFileStatus,
+  GitSyncResult,
+  GitWorkspaceStatus,
+} from './git-integration';

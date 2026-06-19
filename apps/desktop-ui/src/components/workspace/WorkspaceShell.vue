@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef, watch } from 'vue';
 
-import ChapterNavigationView from './ChapterNavigationView.vue';
-import CopilotPanel from './CopilotPanel.vue';
-import FileTreePanel from './FileTreePanel.vue';
-import FileViewer from './FileViewer.vue';
-import WorkspaceHome from './WorkspaceHome.vue';
-import WorkspaceOnboardingGuide from './WorkspaceOnboardingGuide.vue';
+import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
+import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
+import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 import type {
   ChapterIndex,
   ChapterIndexChapter,
   ChapterIndexStatus,
   FileTreeNode,
+  PendingAction,
   ProjectHealth,
   WorkspaceOnboardingInput,
   WorkspaceStatus,
@@ -38,10 +36,9 @@ interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
 }
 
 const api = useWorkspaceApi();
-const leftVisible = shallowRef(true);
 const searchOpen = shallowRef(false);
 const searchQuery = shallowRef('');
-const sidebarTab = shallowRef<'files' | 'chapters'>('files');
+const layout = useWorkspaceLayoutState(props.workspace.path);
 const activeFilePath = shallowRef('');
 const fileContent = shallowRef('');
 const fileLoading = shallowRef(false);
@@ -55,14 +52,18 @@ const projectHealth = shallowRef<ProjectHealth>();
 const chaptersLoading = shallowRef(false);
 const chaptersError = shallowRef('');
 const workspaceStatus = shallowRef<WorkspaceStatus>();
+const workspacePendingActions = shallowRef<PendingAction[]>([]);
+const pendingActionsLoading = shallowRef(false);
+const pendingActionsError = shallowRef('');
+const selectedPendingActionId = shallowRef('');
+const decisionErrors = shallowRef<Record<string, string>>({});
+const decisions = shallowRef<Record<string, 'accepting' | 'rejecting' | 'accepted' | 'rejected'>>({});
 const queuedPrompt = shallowRef('');
 const guideVisible = shallowRef(props.startGuide);
 const guideSaving = shallowRef(false);
 const guideError = shallowRef('');
+const editorError = shallowRef('');
 
-const shellClass = computed(() => ({
-  'workspace-shell-left-hidden': !leftVisible.value,
-}));
 const fileSearchResults = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
   const files = flattenFileNodes(tree.value).filter((node) => node.type === 'file');
@@ -75,12 +76,23 @@ const fileSearchResults = computed(() => {
     .filter((node) => node.path.toLowerCase().includes(query) || node.name.toLowerCase().includes(query))
     .slice(0, 20);
 });
+const decoratedPendingActions = computed(() =>
+  workspacePendingActions.value.map((action) => ({
+    ...action,
+    decision: decisions.value[action.id],
+    decisionError: decisionErrors.value[action.id],
+  })),
+);
+const selectedPendingAction = computed(() =>
+  decoratedPendingActions.value.find((action) => action.id === selectedPendingActionId.value),
+);
 
 onMounted(() => {
   void loadTree();
   void loadChapters();
   void loadWorkspaceStatus();
   void loadProjectHealth();
+  void loadPendingActions();
 });
 
 watch(
@@ -144,10 +156,27 @@ async function loadWorkspaceStatus() {
     workspaceStatus.value = {
       pendingActionCount: 0,
       git: {
+        available: false,
+        source: 'global',
+        repository: false,
         status: 'unknown',
         dirty: null,
+        files: [],
       },
     };
+  }
+}
+
+async function loadPendingActions() {
+  pendingActionsLoading.value = true;
+  pendingActionsError.value = '';
+
+  try {
+    workspacePendingActions.value = (await api.listPendingActions()).pendingActions;
+  } catch (error) {
+    pendingActionsError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    pendingActionsLoading.value = false;
   }
 }
 
@@ -162,6 +191,7 @@ async function loadProjectHealth() {
 async function openFile(path: string) {
   searchOpen.value = false;
   activeFilePath.value = path;
+  layout.openRightPanel('file');
   fileLoading.value = true;
   fileError.value = '';
   fileContent.value = '';
@@ -176,13 +206,13 @@ async function openFile(path: string) {
 }
 
 function openChapter(chapter: ChapterIndexChapter) {
-  sidebarTab.value = 'chapters';
+  layout.sidebarTab.value = 'chapters';
   void openFile(chapter.path);
 }
 
 function openChapterNavigation() {
-  sidebarTab.value = 'chapters';
-  leftVisible.value = true;
+  layout.sidebarTab.value = 'chapters';
+  layout.leftPinned.value = true;
 }
 
 function openCopilot(prompt?: string) {
@@ -192,7 +222,67 @@ function openCopilot(prompt?: string) {
 }
 
 function openPendingActions() {
+  layout.openRightPanel('approval');
   void loadWorkspaceStatus();
+  void loadPendingActions();
+}
+
+async function acceptPendingAction(action: PendingActionView) {
+  decisions.value = { ...decisions.value, [action.id]: 'accepting' };
+  decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
+
+  try {
+    await api.acceptPendingAction(action.id);
+    decisions.value = { ...decisions.value, [action.id]: 'accepted' };
+    await refreshAfterPendingAction();
+  } catch (error) {
+    const nextDecisions = { ...decisions.value };
+    delete nextDecisions[action.id];
+    decisions.value = nextDecisions;
+    decisionErrors.value = {
+      ...decisionErrors.value,
+      [action.id]: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function rejectPendingAction(action: PendingActionView) {
+  decisions.value = { ...decisions.value, [action.id]: 'rejecting' };
+  decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
+
+  try {
+    await api.rejectPendingAction(action.id);
+    decisions.value = { ...decisions.value, [action.id]: 'rejected' };
+    await refreshAfterPendingAction();
+  } catch (error) {
+    const nextDecisions = { ...decisions.value };
+    delete nextDecisions[action.id];
+    decisions.value = nextDecisions;
+    decisionErrors.value = {
+      ...decisionErrors.value,
+      [action.id]: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function reviewPendingAction(action?: PendingActionView) {
+  selectedPendingActionId.value = action?.id ?? decoratedPendingActions.value[0]?.id ?? '';
+  layout.openRightPanel('approval');
+}
+
+function openPendingActionDiff(action: PendingActionView) {
+  selectedPendingActionId.value = action.id;
+  layout.openRightPanel('diff');
+}
+
+async function openExternalEditor(editor: 'vscode' | 'zed' | 'webstorm') {
+  editorError.value = '';
+
+  try {
+    await api.openExternalEditor(editor);
+  } catch (error) {
+    editorError.value = error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function skipOnboarding() {
@@ -246,6 +336,7 @@ function showHome() {
   activeFilePath.value = '';
   fileContent.value = '';
   fileError.value = '';
+  layout.openRightPanel('health');
 }
 
 function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
@@ -261,28 +352,43 @@ async function refreshAfterPendingAction() {
     loadProjectHealth(),
     loadTree(),
     loadChapters(),
+    loadPendingActions(),
     activeFilePath.value ? openFile(activeFilePath.value) : Promise.resolve(),
   ]);
 }
 </script>
 
 <template>
-  <main class="workspace-shell" :class="shellClass">
+  <main class="workspace-shell">
     <header class="workspace-toolbar">
       <div class="toolbar-left">
-        <button class="icon-button" type="button" aria-label="切换文件栏" @click="leftVisible = !leftVisible">
+        <button class="icon-button" type="button" aria-label="切换文件栏" @click="layout.toggleLeftPinned">
           ☰
         </button>
         <button class="ghost-button" type="button" @click="showHome">Home</button>
         <button class="ghost-button" type="button" @click="openChapterNavigation">Chapters</button>
         <button class="ghost-button" type="button" @click="searchOpen = true">Search</button>
+        <button class="ghost-button" type="button" @click="openPendingActions">Pending</button>
+        <button class="ghost-button" type="button" @click="layout.openRightPanel('git')">Git</button>
       </div>
       <div class="toolbar-title">
         <strong>{{ props.workspace.name }}</strong>
         <span>{{ props.workspace.path }}</span>
+        <small v-if="editorError" class="toolbar-error">{{ editorError }}</small>
       </div>
       <div class="toolbar-right">
         <span class="status-pill">{{ providerConfigured ? 'Provider ready' : 'Read-only' }}</span>
+        <button class="ghost-button" type="button" @click="openExternalEditor('vscode')">VS Code</button>
+        <button class="ghost-button" type="button" @click="openExternalEditor('zed')">Zed</button>
+        <button class="ghost-button" type="button" @click="openExternalEditor('webstorm')">WebStorm</button>
+        <button
+          class="icon-button"
+          type="button"
+          aria-label="切换审阅栏"
+          @click="layout.toggleRightPanel()"
+        >
+          ⇤
+        </button>
         <button
           class="theme-switch theme-switch-compact"
           type="button"
@@ -300,89 +406,54 @@ async function refreshAfterPendingAction() {
       </div>
     </header>
 
-    <aside v-if="leftVisible" class="workspace-sidebar" aria-label="Workspace navigation">
-      <div class="segmented-control">
-        <button
-          class="segment-button"
-          :class="{ 'segment-button-active': sidebarTab === 'files' }"
-          type="button"
-          @click="sidebarTab = 'files'"
-        >
-          Files
-        </button>
-        <button
-          class="segment-button"
-          :class="{ 'segment-button-active': sidebarTab === 'chapters' }"
-          type="button"
-          @click="sidebarTab = 'chapters'"
-        >
-          Chapters
-        </button>
-      </div>
-
-      <FileTreePanel
-        v-if="sidebarTab === 'files'"
-        :tree="tree"
-        :active-path="activeFilePath"
-        :loading="treeLoading"
-        :error="treeError"
-        @open-file="openFile"
-      />
-      <ChapterNavigationView
-        v-else
-        :index="chapterIndex"
-        :status="chapterStatus"
-        :active-path="activeFilePath"
-        :loading="chaptersLoading"
-        :error="chaptersError"
-        @open-chapter="openChapter"
-        @rescan="rescanChapters"
-      />
-    </aside>
-
-    <section class="workspace-center" aria-label="Agent Copilot workspace">
-      <WorkspaceOnboardingGuide
-        v-if="guideVisible"
-        :workspace="workspace"
-        :provider-configured="providerConfigured"
-        :saving="guideSaving"
-        :error="guideError"
-        @skip="skipOnboarding"
-        @finish="completeOnboarding"
-        @configure-provider="emit('configureProvider')"
-      />
-      <CopilotPanel
-        v-else
-        :provider-configured="providerConfigured"
-        :queued-prompt="queuedPrompt"
-        @prompt-consumed="clearQueuedPrompt"
-        @configure-provider="emit('configureProvider')"
-        @pending-action-resolved="refreshAfterPendingAction"
-      />
-    </section>
-
-    <section class="workspace-right" aria-label="Workspace file content">
-      <FileViewer
-        v-if="activeFilePath"
-        :path="activeFilePath"
-        :content="fileContent"
-        :loading="fileLoading"
-        :error="fileError"
-      />
-      <WorkspaceHome
-        v-else
-        :workspace="workspace"
-        :provider-configured="providerConfigured"
-        :status="workspaceStatus"
-        :health="projectHealth"
-        @generate-next-chapter="openCopilot('请基于当前大纲和章节状态，提出下一章生成方案，并先说明会创建哪些 PendingAction。')"
-        @open-chapters="openChapterNavigation"
-        @open-copilot="openCopilot()"
-        @open-pending="openPendingActions"
-        @configure-provider="emit('configureProvider')"
-        @leave-workspace="emit('leaveWorkspace')"
-      />
-    </section>
+    <WorkspaceWorkbench
+      :workspace="workspace"
+      :provider-configured="providerConfigured"
+      :left-pinned="layout.leftPinned.value"
+      :left-overlay-open="layout.leftOverlayOpen.value"
+      :sidebar-tab="layout.sidebarTab.value"
+      :workbench-class="layout.workbenchClass.value"
+      :workbench-style="layout.workbenchStyle.value"
+      :tree="tree"
+      :tree-loading="treeLoading"
+      :tree-error="treeError"
+      :chapter-index="chapterIndex"
+      :chapter-status="chapterStatus"
+      :chapters-loading="chaptersLoading"
+      :chapters-error="chaptersError"
+      :active-file-path="activeFilePath"
+      :file-content="fileContent"
+      :file-loading="fileLoading"
+      :file-error="fileError"
+      :guide-visible="guideVisible"
+      :guide-saving="guideSaving"
+      :guide-error="guideError"
+      :queued-prompt="queuedPrompt"
+      :right-shown="layout.rightShown.value"
+      :right-tab="layout.rightTab.value"
+      :pending-actions="decoratedPendingActions"
+      :selected-pending-action="selectedPendingAction"
+      :pending-actions-loading="pendingActionsLoading"
+      :pending-actions-error="pendingActionsError"
+      :workspace-status="workspaceStatus"
+      :project-health="projectHealth"
+      @update-left-overlay-open="layout.leftOverlayOpen.value = $event"
+      @update-sidebar-tab="layout.sidebarTab.value = $event"
+      @pin-left="layout.leftPinned.value = true"
+      @open-file="openFile"
+      @open-chapter="openChapter"
+      @rescan-chapters="rescanChapters"
+      @skip-onboarding="skipOnboarding"
+      @finish-onboarding="completeOnboarding"
+      @configure-provider="emit('configureProvider')"
+      @prompt-consumed="clearQueuedPrompt"
+      @accept-pending-action="acceptPendingAction"
+      @reject-pending-action="rejectPendingAction"
+      @review-pending-action="reviewPendingAction"
+      @open-pending-action-diff="openPendingActionDiff"
+      @select-right-tab="layout.openRightPanel($event)"
+      @close-right="layout.rightShown.value = false"
+    />
 
     <div v-if="searchOpen" class="search-overlay" role="dialog" aria-label="Workspace search">
       <div class="search-panel">

@@ -63,7 +63,7 @@ describe('write intent tools and human approval', () => {
     await expect(listPendingActions({ workspaceRoot })).resolves.toHaveLength(1);
   });
 
-  it('accepts a PendingAction, writes the real file, and returns git diff', async () => {
+  it('accepts a PendingAction, writes the real file, and auto-commits touched files by default', async () => {
     const workspaceRoot = await createTempNovelWorkspace();
     await initGitRepo(workspaceRoot);
     const tools = createWriteIntentTools({ workspaceRoot });
@@ -83,12 +83,45 @@ describe('write intent tools and human approval', () => {
       id: action.id,
       status: 'accepted',
       appliedFiles: ['characters/heroine/personality.md'],
+      gitCommit: {
+        status: 'committed',
+        message: expect.stringContaining('chore(novel): apply pending action'),
+      },
     });
-    expect(accepted.gitDiff).toContain('更加冷淡克制');
+    expect(accepted.gitDiff).toBe('');
+    expect(accepted.dirtyStatus).toBe('');
     await expect(
       readFile(join(workspaceRoot, 'characters/heroine/personality.md'), 'utf-8'),
     ).resolves.toContain('更加冷淡克制');
     await expect(listPendingActions({ workspaceRoot })).resolves.toEqual([]);
+    await expect(git(workspaceRoot, ['show', '--name-only', '--format=', 'HEAD']))
+      .resolves
+      .toContain('characters/heroine/personality.md');
+  });
+
+  it('can accept a PendingAction without auto-committing', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    await initGitRepo(workspaceRoot);
+    const tools = createWriteIntentTools({ workspaceRoot });
+    const result = await executeTool(tools, 'state.set', {
+      file: 'characters.yaml',
+      path: 'characters.heroine.hp',
+      value: 'recovering',
+    });
+    const action = expectSinglePendingAction(result);
+
+    const accepted = await acceptPendingAction({
+      workspaceRoot,
+      id: action.id,
+      autoCommitOnAccept: false,
+    });
+
+    expect(accepted.gitCommit).toMatchObject({
+      status: 'skipped',
+      reason: 'auto_commit_disabled',
+    });
+    expect(accepted.gitDiff).toContain('hp: recovering');
+    expect(accepted.dirtyStatus).toContain('state/characters.yaml');
   });
 
   it('rejects a PendingAction without writing the target and marks the shadow write rejected', async () => {
@@ -331,6 +364,11 @@ async function initGitRepo(workspaceRoot: string): Promise<void> {
   await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: workspaceRoot });
   await execFileAsync('git', ['add', '.'], { cwd: workspaceRoot });
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspaceRoot });
+}
+
+async function git(workspaceRoot: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd: workspaceRoot });
+  return stdout;
 }
 
 async function executeTool(

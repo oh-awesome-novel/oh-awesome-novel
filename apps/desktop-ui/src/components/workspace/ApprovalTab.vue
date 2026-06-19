@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import PendingActionCard from './PendingActionCard.vue';
+import PendingActionCard from '../agent-checkpoint/PendingActionCard.vue';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 defineProps<{
   actions: Array<PendingActionView & {
+    touchedFiles?: string[];
     decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
     decisionError?: string;
   }>;
+  loading: boolean;
+  error: string;
 }>();
 
 const emit = defineEmits<{
@@ -18,13 +21,14 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="panel pending-panel">
+  <section class="right-tab-panel" aria-label="PendingAction approval">
     <div class="panel-heading">
-      <h2 class="panel-title">Pending Actions</h2>
+      <h2 class="panel-title">Approval</h2>
       <span class="count-pill">{{ actions.length }}</span>
     </div>
-
-    <div v-if="actions.length" class="pending-list">
+    <p v-if="loading" class="empty-copy">正在同步 PendingAction…</p>
+    <p v-else-if="error" class="error-copy">{{ error }}</p>
+    <div v-else-if="actions.length" class="pending-list">
       <PendingActionCard
         v-for="action in actions"
         :key="action.id"
@@ -35,7 +39,6 @@ const emit = defineEmits<{
         @open-diff="emit('openDiff', $event)"
       />
     </div>
-
-    <p v-else class="empty-copy">No pending actions yet.</p>
-  </div>
+    <p v-else class="empty-copy">No pending actions.</p>
+  </section>
 </template>

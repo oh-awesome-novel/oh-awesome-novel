@@ -8,7 +8,6 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   basename,
@@ -20,14 +19,18 @@ import {
   resolve,
   sep,
 } from 'node:path';
-import { promisify } from 'node:util';
 import { jsonSchema, tool } from 'ai';
 import type { ToolSet } from 'ai';
 
+import {
+  commitFiles,
+  createPendingActionCommitMessage,
+  gitDiff,
+  gitStatusShort,
+} from './git-integration';
+import type { GitCommitResult } from './git-integration';
 import { replaceSection } from './markdown';
 import { yamlAppendDraft, yamlSetDraft } from './yaml-engine';
-
-const execFileAsync = promisify(execFile);
 
 export interface CreateWriteIntentToolsOptions {
   workspaceRoot: string;
@@ -60,6 +63,7 @@ export interface StoredWriteIntentAction
 export interface AcceptPendingActionInput {
   workspaceRoot: string;
   id: string;
+  autoCommitOnAccept?: boolean;
 }
 
 export interface RejectPendingActionInput {
@@ -76,6 +80,8 @@ export interface AcceptedPendingAction extends PendingActionDecision {
   status: 'accepted';
   appliedFiles: string[];
   gitDiff: string;
+  gitCommit: GitCommitResult;
+  dirtyStatus: string;
 }
 
 export interface RejectedPendingAction extends PendingActionDecision {
@@ -218,6 +224,7 @@ export async function acceptPendingAction(
 ): Promise<AcceptedPendingAction> {
   const workspaceRealpath = await realpath(input.workspaceRoot);
   const action = await readStoredAction(workspaceRealpath, input.id);
+  const autoCommitOnAccept = input.autoCommitOnAccept ?? true;
 
   if (action.status !== 'pending') {
     throw new Error(`PendingAction ${input.id} is already ${action.status}.`);
@@ -239,12 +246,30 @@ export async function acceptPendingAction(
     acceptedAt: new Date().toISOString(),
   };
   await archiveStoredAction(workspaceRealpath, acceptedAction, 'accepted-actions');
+  const message = createPendingActionCommitMessage({
+    pendingActionId: action.id,
+    title: action.title,
+  });
+  const gitDiffBeforeCommit = await gitDiff(workspaceRealpath, action.touchedFiles);
+  const gitCommit: GitCommitResult = autoCommitOnAccept
+    ? await commitFiles({
+        workspaceRoot: workspaceRealpath,
+        files: action.touchedFiles,
+        message,
+      })
+    : {
+        status: 'skipped',
+        reason: 'auto_commit_disabled',
+        message,
+      };
 
   return {
     id: action.id,
     status: 'accepted',
     appliedFiles: action.touchedFiles,
-    gitDiff: await gitDiff(workspaceRealpath, action.touchedFiles),
+    gitDiff: gitCommit.status === 'committed' ? '' : gitDiffBeforeCommit,
+    gitCommit,
+    dirtyStatus: await gitStatusShort(workspaceRealpath, action.touchedFiles),
   };
 }
 
@@ -868,23 +893,6 @@ function createUnifiedDiff(file: string, original: string, draft: string): strin
   return `${lines.join('\n')}\n`;
 }
 
-async function gitDiff(workspaceRealpath: string, files: string[]): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['-C', workspaceRealpath, 'diff', '--', ...files],
-      { encoding: 'utf-8' },
-    );
-    return stdout;
-  } catch (error) {
-    if (isExecError(error)) {
-      return error.stdout || error.stderr || '';
-    }
-
-    throw error;
-  }
-}
-
 async function readFileIfExists(filePath: string): Promise<string> {
   try {
     return await readFile(filePath, 'utf-8');
@@ -960,8 +968,4 @@ function isNotFoundError(error: unknown): boolean {
     error !== null &&
     (error as { code?: unknown }).code === 'ENOENT'
   );
-}
-
-function isExecError(error: unknown): error is { stdout?: string; stderr?: string } {
-  return typeof error === 'object' && error !== null;
 }

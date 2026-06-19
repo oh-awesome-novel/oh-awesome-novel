@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, shallowRef, watch } from 'vue';
+import { computed, reactive, watch } from 'vue';
 
+import AgentTimeline from '../agent-checkpoint/AgentTimeline.vue';
 import ChatComposer from '../agent-checkpoint/ChatComposer.vue';
-import ChatTranscript from '../agent-checkpoint/ChatTranscript.vue';
+import CompactApprovalTray from '../agent-checkpoint/CompactApprovalTray.vue';
 import PendingActionPanel from '../agent-checkpoint/PendingActionPanel.vue';
-import ToolActivityList from '../agent-checkpoint/ToolActivityList.vue';
-import { useWorkspaceApi, type PendingAction } from '../../composables/useWorkspaceApi';
+import { useAgentTimeline } from '../../composables/useAgentTimeline';
+import type { PendingAction } from '../../composables/useWorkspaceApi';
 import {
   useAgentCheckpointChat,
   type PendingActionView,
@@ -14,15 +15,21 @@ import {
 const props = defineProps<{
   providerConfigured: boolean;
   queuedPrompt: string;
+  pendingActions: PendingAction[];
+  pendingActionsLoading: boolean;
+  pendingActionsError: string;
+  rightPanelShown: boolean;
 }>();
 
 const emit = defineEmits<{
   promptConsumed: [];
   configureProvider: [];
-  pendingActionResolved: [];
+  acceptPendingAction: [action: PendingActionView];
+  rejectPendingAction: [action: PendingActionView];
+  reviewPendingAction: [action: PendingActionView];
+  openPendingActionDiff: [action: PendingActionView];
 }>();
 
-const api = useWorkspaceApi();
 const {
   chat,
   input,
@@ -31,12 +38,10 @@ const {
   sendCurrentInput,
   stop,
 } = useAgentCheckpointChat();
+const { items: timelineItems } = useAgentTimeline(messages);
 
 type PendingDecision = 'accepting' | 'rejecting' | 'accepted' | 'rejected';
 
-const workspacePendingActions = shallowRef<PendingAction[]>([]);
-const pendingActionsLoading = shallowRef(false);
-const pendingActionsError = shallowRef('');
 const decisions = reactive<Record<string, PendingDecision>>({});
 const decisionErrors = reactive<Record<string, string>>({});
 const quickCommands = [
@@ -52,16 +57,12 @@ const quickCommands = [
   { id: 'chapter.deAi', label: '去AI味', prompt: '/去AI味' },
 ];
 const decoratedPendingActions = computed(() =>
-  mergePendingActions(workspacePendingActions.value, pendingActions.value).map((action) => ({
+  mergePendingActions(props.pendingActions, pendingActions.value).map((action) => ({
     ...action,
     decision: decisions[action.id],
     decisionError: decisionErrors[action.id],
   })),
 );
-
-onMounted(() => {
-  void loadPendingActions();
-});
 
 watch(
   () => props.queuedPrompt,
@@ -75,51 +76,31 @@ watch(
   },
 );
 
+watch(
+  () => props.pendingActions.map((action) => action.id).join('|'),
+  () => {
+    for (const id of Object.keys(decisions)) {
+      if (!props.pendingActions.some((action) => action.id === id)) {
+        delete decisions[id];
+      }
+    }
+  },
+);
+
 function useQuickCommand(prompt: string) {
   input.value = prompt;
 }
 
-async function loadPendingActions() {
-  pendingActionsLoading.value = true;
-  pendingActionsError.value = '';
-
-  try {
-    workspacePendingActions.value = (await api.listPendingActions()).pendingActions;
-  } catch (error) {
-    pendingActionsError.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    pendingActionsLoading.value = false;
-  }
-}
-
-async function acceptPendingAction(action: PendingActionView) {
+function acceptPendingAction(action: PendingActionView) {
   decisions[action.id] = 'accepting';
   decisionErrors[action.id] = '';
-
-  try {
-    await api.acceptPendingAction(action.id);
-    decisions[action.id] = 'accepted';
-    await loadPendingActions();
-    emit('pendingActionResolved');
-  } catch (error) {
-    delete decisions[action.id];
-    decisionErrors[action.id] = error instanceof Error ? error.message : String(error);
-  }
+  emit('acceptPendingAction', action);
 }
 
-async function rejectPendingAction(action: PendingActionView) {
+function rejectPendingAction(action: PendingActionView) {
   decisions[action.id] = 'rejecting';
   decisionErrors[action.id] = '';
-
-  try {
-    await api.rejectPendingAction(action.id);
-    decisions[action.id] = 'rejected';
-    await loadPendingActions();
-    emit('pendingActionResolved');
-  } catch (error) {
-    delete decisions[action.id];
-    decisionErrors[action.id] = error instanceof Error ? error.message : String(error);
-  }
+  emit('rejectPendingAction', action);
 }
 
 function mergePendingActions(
@@ -136,6 +117,7 @@ function mergePendingActions(
     actions.set(action.id, {
       ...actions.get(action.id),
       ...action,
+      touchedFiles: action.touchedFiles ?? actions.get(action.id)?.touchedFiles,
     });
   }
 
@@ -182,14 +164,29 @@ function mergePendingActions(
     </div>
 
     <template v-else>
-      <ChatTranscript :messages="messages" />
-      <ToolActivityList :messages="messages" />
-      <p v-if="pendingActionsLoading" class="empty-copy">正在同步 PendingAction…</p>
-      <p v-if="pendingActionsError" class="error-copy">{{ pendingActionsError }}</p>
-      <PendingActionPanel
+      <AgentTimeline :items="timelineItems" />
+      <CompactApprovalTray
+        v-if="!rightPanelShown"
         :actions="decoratedPendingActions"
         @accept="acceptPendingAction"
         @reject="rejectPendingAction"
+        @review="emit('reviewPendingAction', $event)"
+      />
+      <div v-else-if="decoratedPendingActions.length > 0" class="copilot-review-hint">
+        <span>{{ decoratedPendingActions.length }} PendingAction</span>
+        <button class="ghost-button tight-button" type="button" @click="emit('reviewPendingAction', decoratedPendingActions[0])">
+          Open review
+        </button>
+      </div>
+      <p v-if="pendingActionsLoading" class="empty-copy">正在同步 PendingAction…</p>
+      <p v-if="pendingActionsError" class="error-copy">{{ pendingActionsError }}</p>
+      <PendingActionPanel
+        v-if="!rightPanelShown && decoratedPendingActions.length > 0"
+        :actions="decoratedPendingActions"
+        @accept="acceptPendingAction"
+        @reject="rejectPendingAction"
+        @review="emit('reviewPendingAction', $event)"
+        @open-diff="emit('openPendingActionDiff', $event)"
       />
       <ChatComposer
         v-model="input"
