@@ -160,3 +160,31 @@ export type {
   SettlementStateChange,
   SettlementTimelineEvent,
 } from './writing-settlement.js';
+
+// Session Artifacts
+export {
+  SESSION_ARTIFACT_FILES,
+  checkSessionResumeBoundary,
+  createSessionResumeBoundary,
+  formatAuthorReportMarkdown,
+  resolveSessionArtifactPath,
+  writeAgentSessionArtifact,
+  writeSessionOutputs,
+  writeSessionProposedPatches,
+  writeSessionRunMetadata,
+  writeSessionUnresolved,
+} from './session-artifacts.js';
+
+export type {
+  AgentSessionArtifact,
+  AuthorReport,
+  SessionArtifactFile,
+  SessionInputSource,
+  SessionOutputArtifact,
+  SessionProposedPatch,
+  SessionResumeBoundary,
+  SessionResumeCheck,
+  SessionResumeFileSnapshot,
+  SessionRunMetadata,
+  SessionRunStatus,
+} from './session-artifacts.js';
