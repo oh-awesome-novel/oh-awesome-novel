@@ -123,3 +123,40 @@ export type {
   PreWriteRiskScan,
   VolumePlanningPacket,
 } from './writing-planning.js';
+
+// Writing Review
+export {
+  DE_AI_PROTECTION_RULES,
+  REVIEW_DIMENSIONS,
+  formatDeAiProtectionRulesMarkdown,
+  formatReviewReportMarkdown,
+} from './writing-review.js';
+
+export type {
+  ReviewCategory,
+  ReviewDimensionResult,
+  ReviewDimensionStatus,
+  ReviewFinding,
+  ReviewSeverity,
+} from './writing-review.js';
+
+// Writing Settlement
+export {
+  SETTLEMENT_HOOK_OPERATIONS,
+  formatObservationLogMarkdown,
+  formatSettlementBundleMarkdown,
+} from './writing-settlement.js';
+
+export type {
+  EvidenceConfidence,
+  ObservationCategory,
+  ObservationEntry,
+  ObservationLog,
+  SettlementBundle,
+  SettlementCharacterUpdate,
+  SettlementForeshadowChange,
+  SettlementHookOperation,
+  SettlementPatchProposal,
+  SettlementStateChange,
+  SettlementTimelineEvent,
+} from './writing-settlement.js';

@@ -24,44 +24,43 @@
 
 ### Task 1: Review Schema
 
-- [ ] Define `ReviewFinding`.
-- [ ] Define `ReviewDimensionResult`.
-- [ ] Define categories: continuity, character, world, plot, hook, pacing, style, evidence.
-- [ ] Add formatter that groups findings by severity.
+- [x] Define `ReviewFinding`.
+- [x] Define `ReviewDimensionResult`.
+- [x] Define categories: continuity, character, world, plot, hook, pacing, style, evidence.
+- [x] Add formatter that groups findings by severity.
 
 ### Task 2: Review Command Contract
 
-- [ ] `/审稿` prompt defaults to report-only.
-- [ ] Require evidence, location, suggested fix, needs user decision.
-- [ ] Require dimension pass for dimensions with no issues.
-- [ ] Only use `chapter.createDraft` when user asks for revised draft.
+- [x] `/审稿` prompt defaults to report-only.
+- [x] Require evidence, location, suggested fix, needs user decision.
+- [x] Require dimension pass for dimensions with no issues.
+- [x] Only use `chapter.createDraft` when user asks for revised draft.
 
 ### Task 3: De-AI Protection
 
-- [ ] Add `/去AI味` rule block:
+- [x] Add `/去AI味` rule block:
   - only expression changes
   - no plot fact changes
   - no deletion of hooks, character traits, key information, necessary turns
   - preserve style constitution
-- [ ] Add tests checking prompt contains protections.
+- [x] Add tests checking prompt contains protections.
 
 ### Task 4: Observation Log
 
-- [ ] Define `ObservationLog`.
-- [ ] Include characters, location, item/resource/injury/power/status, relationship, emotion arc, information boundary, time, scene state, foreshadow, world facts.
-- [ ] Add evidence and confidence fields.
+- [x] Define `ObservationLog`.
+- [x] Include characters, location, item/resource/injury/power/status, relationship, emotion arc, information boundary, time, scene state, foreshadow, world facts.
+- [x] Add evidence and confidence fields.
 
 ### Task 5: Settlement Bundle
 
-- [ ] Define `SettlementBundle`.
-- [ ] Include fulfillment, ambiguities, observations, patches, summary, state changes, timeline events, foreshadow changes, character updates, next handoff.
-- [ ] Add hook operation taxonomy: create, mention, advance, resolve, defer.
-- [ ] Ensure unresolved ambiguity defaults to report/session artifact, not truth files.
+- [x] Define `SettlementBundle`.
+- [x] Include fulfillment, ambiguities, observations, patches, summary, state changes, timeline events, foreshadow changes, character updates, next handoff.
+- [x] Add hook operation taxonomy: create, mention, advance, resolve, defer.
+- [x] Ensure unresolved ambiguity defaults to report/session artifact, not truth files.
 
 ### Task 6: Prompt And Tests
 
-- [ ] Update `/整理本章` prompt to require observation log before PendingAction bundle.
-- [ ] Test review does not imply settlement.
-- [ ] Test settlement formatter separates observations and patches.
-- [ ] Test evidence-only wording exists in skill prompt.
-
+- [x] Update `/整理本章` prompt to require observation log before PendingAction bundle.
+- [x] Test review does not imply settlement.
+- [x] Test settlement formatter separates observations and patches.
+- [x] Test evidence-only wording exists in skill prompt.

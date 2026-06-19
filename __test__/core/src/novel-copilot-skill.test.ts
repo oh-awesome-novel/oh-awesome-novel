@@ -132,6 +132,19 @@ describe('novel copilot skill contract', () => {
     expect(skill.system).toContain('A review report is not settlement.');
   });
 
+  it('protects plot facts when reducing AI-like prose', () => {
+    const skill = createDefaultNovelCopilotSkill();
+    const deAiCommand = skill.quickCommands.find(
+      (command) => command.id === 'chapter.deAi',
+    );
+
+    expect(deAiCommand?.prompt).toContain('不改变剧情事实');
+    expect(skill.system).toContain('/去AI味 is expression-level revision');
+    expect(skill.system).toContain('Do not change plot facts');
+    expect(skill.system).toContain('Do not change plot facts, chronology');
+    expect(skill.system).toContain('hooks, character traits, key information');
+  });
+
   it('returns fresh command and capability arrays for each default skill', () => {
     const first = createDefaultNovelCopilotSkill();
     const second = createDefaultNovelCopilotSkill();

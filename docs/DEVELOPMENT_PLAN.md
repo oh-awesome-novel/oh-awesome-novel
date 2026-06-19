@@ -356,7 +356,7 @@ Detailed vNext split:
 - `1000` Agent Writing Guide vNext Spec And Skill Contracts。（Completed）
 - `1010` Context Package And Source Discipline。（Completed）
 - `1020` Planning Commands And Prewrite Calibration。（Completed）
-- `1030` Review And Settlement Workflow。
+- `1030` Review And Settlement Workflow。（Completed）
 - `1040` Session Artifacts And Author Reports。
 - `1050` Projections And Project Health。
 - `1060` Play Mode And Tavern Character Import。
