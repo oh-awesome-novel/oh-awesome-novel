@@ -24,37 +24,36 @@ Do not modify `packages/runtime`.
 
 ### Task 1: Align Specs
 
-- [ ] Update `docs/NOVEL_AGENT_COPILOT_SPEC.md` to reference `OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`.
-- [ ] Clarify `/审稿` is report-only unless user asks for rewrite or settlement.
-- [ ] Add `/规划大纲` and `/规划下一卷` command contracts.
-- [ ] Add vNext concepts: capability id, context package, chapter contract, pre-write check, review finding, settlement bundle.
+- [x] Update `docs/NOVEL_AGENT_COPILOT_SPEC.md` to reference `OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`.
+- [x] Clarify `/审稿` is report-only unless user asks for rewrite or settlement.
+- [x] Add `/规划大纲` and `/规划下一卷` command contracts.
+- [x] Add vNext concepts: capability id, context package, chapter contract, pre-write check, review finding, settlement bundle.
 
 ### Task 2: Add Capability Metadata
 
-- [ ] Add `NovelCopilotCapabilityId` union in `packages/core/src/novel-copilot-skill.ts`.
-- [ ] Extend quick command metadata with `capabilityId`.
-- [ ] Add non-command capability metadata for `novel.play_scene`, `novel.import_tavern_character`, and `novel.deconstruct_reference` as planned capabilities.
-- [ ] Export capability types from `packages/core/src/index.ts`.
+- [x] Add `NovelCopilotCapabilityId` union in `packages/core/src/novel-copilot-skill.ts`.
+- [x] Extend quick command metadata with `capabilityId`.
+- [x] Add non-command capability metadata for `novel.play_scene`, `novel.import_tavern_character`, and `novel.deconstruct_reference` as planned capabilities.
+- [x] Export capability types from `packages/core/src/index.ts`.
 
 ### Task 3: Update Quick Commands
 
-- [ ] Add `/规划大纲`.
-- [ ] Add `/规划下一卷`.
-- [ ] Update `/规划下一章` prompt to output light chapter contract.
-- [ ] Update `/写下一章` prompt to require short `PRE_WRITE_CHECK`.
-- [ ] Update `/审稿` prompt to forbid implicit settlement.
-- [ ] Update `/整理本章` prompt to require observation log before PendingAction bundle.
+- [x] Add `/规划大纲`.
+- [x] Add `/规划下一卷`.
+- [x] Update `/规划下一章` prompt to output light chapter contract.
+- [x] Update `/写下一章` prompt to require short `PRE_WRITE_CHECK`.
+- [x] Update `/审稿` prompt to forbid implicit settlement.
+- [x] Update `/整理本章` prompt to require observation log before PendingAction bundle.
 
 ### Task 4: Add Tests
 
-- [ ] Assert quick command registry contains all existing commands plus `/规划大纲` and `/规划下一卷`.
-- [ ] Assert `/审稿` prompt contains report-only wording.
-- [ ] Assert `/写下一章` prompt mentions `PRE_WRITE_CHECK`.
-- [ ] Assert default allowed tools did not add non-existent tools.
+- [x] Assert quick command registry contains all existing commands plus `/规划大纲` and `/规划下一卷`.
+- [x] Assert `/审稿` prompt contains report-only wording.
+- [x] Assert `/写下一章` prompt mentions `PRE_WRITE_CHECK`.
+- [x] Assert default allowed tools did not add non-existent tools.
 
 ### Task 5: Run Verification
 
-- [ ] Run `npm run test:run --workspace @oh-awesome-novel/test-core`.
-- [ ] Run agent tests if prompt assembly snapshots exist.
-- [ ] Manually inspect generated prompt for no hidden multi-agent or direct-write language.
-
+- [x] Run `npm run test:run --workspace @oh-awesome-novel/test-core`.
+- [x] Run agent tests if prompt assembly snapshots exist.
+- [x] Manually inspect generated prompt for no hidden multi-agent or direct-write language.

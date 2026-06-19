@@ -2,6 +2,9 @@
 
 Status: Draft Spec
 
+Related vNext implementation spec:
+`docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
+
 ## Goal
 
 Define the first complete Novel Agent Copilot workflow for `oh-awesome-novel`.
@@ -50,15 +53,18 @@ Remaining runtime concern:
   builder.
 - Read tools and restricted write-intent tools can be assembled into a ToolSet.
 
-Missing pieces:
+Remaining pieces:
 
-- No built-in `novel-copilot` skill with writing workflow rules.
-- No quick command registry.
-- No automatic workspace snapshot loading before agent turns.
-- The current prompt does not require chapter-end settlement: summary, state,
-  timeline, and foreshadow proposals.
-- The write tool set lacks a narrative chapter draft/rewrite PendingAction
-  such as `chapter.createDraft`.
+- The built-in `novel-copilot` skill exists, but vNext behavior must be kept
+  aligned with `OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`.
+- Quick command metadata now carries capability ids, but UI discovery can still
+  be improved later.
+- Workspace snapshots are loaded in model mode, but context-package source
+  discipline is a follow-up task.
+- Chapter settlement exists as a skill contract, but observation log,
+  settlement bundle, and session artifact materialization are follow-up tasks.
+- The write tool set includes write-intent tools and must continue to keep all
+  real writes behind PendingAction approval.
 
 ### Backend And Desktop
 
@@ -118,6 +124,8 @@ The skill must define:
 - `displayName`: `Novel Copilot`
 - `system`: the workflow and behavior instructions injected as skill context.
 - `allowedTools`: read tools plus write-intent tools.
+- `capabilities`: stable capability metadata used by prompts, session
+  artifacts, and future UI surfaces.
 - `quickCommands`: command contracts described below.
 
 The app must treat the built-in and workspace skill as data loaded through
@@ -128,8 +136,12 @@ The app must treat the built-in and workspace skill as data loaded through
 Every Copilot turn follows these phases:
 
 ```text
-observe -> plan -> draft/propose -> verify -> settle
+observe -> plan -> draft/propose -> verify
 ```
+
+`settle` is a conditional gate. It runs only when the user explicitly asks to
+整理本章, adopt accepted chapter work, or apply review findings into canonical
+state.
 
 #### observe
 
@@ -190,7 +202,7 @@ Before finishing a turn, the Copilot checks whether its proposals are complete:
 
 #### settle
 
-When a chapter draft is completed, reviewed, or explicitly "整理本章", the
+When a chapter draft is accepted or the user explicitly asks to "整理本章", the
 Copilot must propose the chapter settlement bundle:
 
 - chapter summary through `summary.generateChapter`.
@@ -201,6 +213,10 @@ Copilot must propose the chapter settlement bundle:
 
 Settlement can be partial only when the Copilot states what could not be
 determined from the available text.
+
+`/审稿` is not a settlement trigger by default. It produces a report unless the
+user explicitly asks for rewrite, settlement, state update, or applying review
+findings.
 
 ### Writing Rules
 
@@ -224,15 +240,38 @@ The Copilot must:
 - after accepted chapter work, guide the user toward settlement if it has not
   been done.
 
+## vNext Concepts
+
+The skill contract uses these concepts as prompt and metadata contracts. Their
+storage and UI materialization are split into later tasks.
+
+- Capability id: stable id such as `novel.plan_chapter`,
+  `novel.write_chapter`, `novel.review_chapter`, or `novel.settle_chapter`.
+- Context package: explanation of selected and omitted sources for a writing,
+  review, settlement, reference, or Play action. It is not a source of truth.
+- Chapter contract: `/规划下一章` output used by `/写下一章`; it stays light for
+  ordinary chapters and does not force volume-level structure.
+- `PRE_WRITE_CHECK`: short calibration table before `/写下一章` calls
+  `chapter.createDraft`.
+- Review finding: structured report item with severity, category, location,
+  evidence, issue, suggested fix, user-decision flag, and blocking flag.
+- Observation log: evidence-only notes extracted from a completed chapter before
+  settlement.
+- Settlement bundle: proposed summary, state, timeline, foreshadow, character
+  card updates, handoff, and unresolved ambiguity.
+- Play and reference use: separate sandbox/reference modes; their outputs are
+  non-canonical until adopted through PendingActions.
+
 ## Quick Command Contract
 
 Quick commands are UI-visible command chips and slash commands. Each command has
-a stable id, a Chinese label, a trigger prompt, required context, allowed tools,
-and completion criteria.
+a stable id, capability id, Chinese label, trigger prompt, required context,
+allowed tools, and completion criteria.
 
 ### `/生成角色卡`
 
 - id: `character.generateCard`
+- capability id: `novel.generate_character_card`
 - label: `生成角色卡`
 - trigger: create or update a character card from user-provided traits or story
   context.
@@ -250,9 +289,56 @@ and completion criteria.
   - otherwise returns a structured character-card draft and states that the
     create-card write tool is still required.
 
+### `/规划大纲`
+
+- id: `outline.plan`
+- capability id: `novel.plan_outline`
+- label: `规划大纲`
+- trigger: produce a project, arc, or current-story outline from the existing
+  workflow and facts.
+- required context:
+  - `workflow.get`
+  - `constitution.get`
+  - recent `summary.get`
+  - `state.get`
+  - `timeline.list`
+  - `foreshadow.list`
+- allowed tools:
+  - read tools only by default.
+  - write-intent tools only when the user asks to persist the plan.
+- completion:
+  - returns an outline draft with assumptions and open questions.
+  - does not canonicalize new facts unless the user asks to save them.
+
+### `/规划下一卷`
+
+- id: `volume.planNext`
+- capability id: `novel.plan_volume`
+- label: `规划下一卷`
+- trigger: plan the next volume with heavier structure than ordinary
+  single-chapter planning.
+- required context:
+  - `workflow.get`
+  - `constitution.get`
+  - existing outline or volume notes when available.
+  - recent `summary.get`
+  - `state.get`
+  - `timeline.list`
+  - `foreshadow.list`
+- allowed tools:
+  - read tools only by default.
+  - write-intent tools only when the user asks to persist the volume plan.
+- completion:
+  - returns conflict ladder, information-gap changes, key beats, volume-level
+    character arcs, foreshadow debt, payoff windows, and optional
+    `CBN / CPNs / CEN`.
+  - keeps those heavy fields at volume/key-chapter level rather than forcing
+    them into ordinary chapter drafting.
+
 ### `/规划下一章`
 
 - id: `chapter.planNext`
+- capability id: `novel.plan_chapter`
 - label: `规划下一章`
 - trigger: produce the next chapter plan from current workflow, summaries, state,
   timeline, and foreshadow.
@@ -268,12 +354,14 @@ and completion criteria.
   - read tools only by default.
   - write-intent tools only when the user asks to persist the plan.
 - completion:
-  - returns chapter goal, scene sequence, required character reads, hooks to
-    advance, ending change, and expected settlement files.
+  - returns a light chapter contract: chapter id/title candidate, current task,
+    POV, core conflict or scene direction, key cast and starting states, hooks
+    to add/advance/mention/resolve/defer, ending change, and forbidden moves.
 
 ### `/写下一章`
 
 - id: `chapter.writeNext`
+- capability id: `novel.write_chapter`
 - label: `写下一章`
 - trigger: draft the next narrative chapter.
 - required context:
@@ -285,6 +373,7 @@ and completion criteria.
   - `chapter.createDraft`.
   - optional settlement tools when the user also asks to finish/settle.
 - completion:
+  - outputs a short `PRE_WRITE_CHECK` before drafting.
   - creates a chapter draft PendingAction.
   - does not write the chapter file directly.
   - names follow-up settlement actions needed after acceptance.
@@ -292,6 +381,7 @@ and completion criteria.
 ### `/整理本章`
 
 - id: `chapter.settle`
+- capability id: `novel.settle_chapter`
 - label: `整理本章`
 - trigger: read a completed chapter and produce summary/state/timeline/foreshadow
   proposals.
@@ -309,13 +399,15 @@ and completion criteria.
   - `timeline.add`
   - `foreshadow.create`
 - completion:
-  - returns a settlement report.
+  - returns an evidence-only observation log before settlement.
+  - returns a settlement bundle.
   - creates one or more PendingActions.
   - clearly marks any unresolved ambiguity.
 
 ### `/审稿`
 
 - id: `chapter.review`
+- capability id: `novel.review_chapter`
 - label: `审稿`
 - trigger: review a chapter for continuity, character behavior, pacing, hooks,
   and AI-like prose.
@@ -330,13 +422,15 @@ and completion criteria.
   - read tools.
   - `chapter.createDraft` only when the user asks for a revised draft.
 - completion:
-  - returns findings grouped by severity.
-  - does not rewrite unless requested.
-  - proposed rewrites are PendingActions.
+  - returns review findings grouped by severity and dimension pass results.
+  - does not rewrite, settle, or update state unless requested.
+  - proposed rewrites or settlement actions are PendingActions only after the
+    user explicitly asks for them.
 
 ### `/更新状态`
 
 - id: `state.update`
+- capability id: `novel.update_state`
 - label: `更新状态`
 - trigger: update state from user notes, selected text, or a chapter.
 - required context:
@@ -353,6 +447,7 @@ and completion criteria.
 ### `/补伏笔`
 
 - id: `foreshadow.plan`
+- capability id: `novel.plan_foreshadow`
 - label: `补伏笔`
 - trigger: propose new hooks or strengthen existing ones.
 - required context:
@@ -371,6 +466,7 @@ and completion criteria.
 ### `/去AI味`
 
 - id: `chapter.deAi`
+- capability id: `novel.de_ai`
 - label: `去AI味`
 - trigger: revise selected prose or a chapter to reduce generic AI phrasing.
 - required context:

@@ -60,6 +60,8 @@ export type {
 // Novel Copilot Skill
 export {
   NOVEL_COPILOT_ALLOWED_TOOLS,
+  NOVEL_COPILOT_CAPABILITIES,
+  NOVEL_COPILOT_CAPABILITY_IDS,
   NOVEL_COPILOT_QUICK_COMMANDS,
   createDefaultNovelCopilotSkill,
   loadNovelCopilotSkill,
@@ -67,6 +69,11 @@ export {
 
 export type {
   LoadNovelCopilotSkillOptions,
+  NovelCopilotCapability,
+  NovelCopilotCapabilityId,
+  NovelCopilotCapabilityMode,
+  NovelCopilotCapabilityStatus,
+  NovelCopilotQuickCommandId,
   NovelCopilotQuickCommand,
   NovelCopilotSkill,
 } from './novel-copilot-skill.js';

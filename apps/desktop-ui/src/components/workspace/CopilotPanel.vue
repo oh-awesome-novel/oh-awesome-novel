@@ -40,6 +40,8 @@ const pendingActionsError = shallowRef('');
 const decisions = reactive<Record<string, PendingDecision>>({});
 const decisionErrors = reactive<Record<string, string>>({});
 const quickCommands = [
+  { id: 'outline.plan', label: '规划大纲', prompt: '/规划大纲' },
+  { id: 'volume.planNext', label: '规划下一卷', prompt: '/规划下一卷' },
   { id: 'chapter.planNext', label: '规划下一章', prompt: '/规划下一章' },
   { id: 'chapter.writeNext', label: '写下一章', prompt: '/写下一章' },
   { id: 'chapter.settle', label: '整理本章', prompt: '/整理本章' },

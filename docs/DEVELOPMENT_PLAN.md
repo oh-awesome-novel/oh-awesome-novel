@@ -353,7 +353,7 @@ Detailed vNext split:
 
 `docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md` 把参考项目吸收后的 agent 写作指引拆成后续可执行任务：
 
-- `1000` Agent Writing Guide vNext Spec And Skill Contracts。
+- `1000` Agent Writing Guide vNext Spec And Skill Contracts。（Completed）
 - `1010` Context Package And Source Discipline。
 - `1020` Planning Commands And Prewrite Calibration。
 - `1030` Review And Settlement Workflow。
