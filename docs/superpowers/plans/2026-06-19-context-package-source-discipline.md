@@ -22,40 +22,39 @@
 
 ### Task 1: Define Types
 
-- [ ] Add `ContextBudgetLayer = 'L0' | 'L1' | 'L2' | 'L3'`.
-- [ ] Add `SemanticBoundary = 'protected' | 'compressible' | 'excluded'`.
-- [ ] Add `ContextSourceRef`.
-- [ ] Add `MinimalMemory`.
-- [ ] Add `RuleStackEntry`.
-- [ ] Add `ContextPackage`.
+- [x] Add `ContextBudgetLayer = 'L0' | 'L1' | 'L2' | 'L3'`.
+- [x] Add `SemanticBoundary = 'protected' | 'compressible' | 'excluded'`.
+- [x] Add `ContextSourceRef`.
+- [x] Add `MinimalMemory`.
+- [x] Add `RuleStackEntry`.
+- [x] Add `ContextPackage`.
 
 ### Task 2: Define Lightweight Source IDs
 
-- [ ] Add constants for `workflow`, `constitution`, `chapterContract`, `previousChapterEnding`, `latestState`, `characters`, `worldRules`, `foreshadowLedger`, `timeline`, `styleGuide`, `referenceDistilled`, `playTranscript`.
-- [ ] Keep constants as metadata only; do not create dynamic source readers.
+- [x] Add constants for `workflow`, `constitution`, `chapterContract`, `previousChapterEnding`, `latestState`, `characters`, `worldRules`, `foreshadowLedger`, `timeline`, `styleGuide`, `referenceDistilled`, `playTranscript`.
+- [x] Keep constants as metadata only; do not create dynamic source readers.
 
 ### Task 3: Build Context Package Helpers
 
-- [ ] Add `createContextPackageDraft(input)`.
-- [ ] Add `addSelectedSource()` and `addOmittedSource()` helpers.
-- [ ] Add `deriveMinimalMemory()` placeholder that accepts already-read facts and returns a filtered summary.
-- [ ] Add validation that omitted sources have a reason.
+- [x] Add `createContextPackageDraft(input)`.
+- [x] Add `addSelectedSource()` and `addOmittedSource()` helpers.
+- [x] Add `deriveMinimalMemory()` placeholder that accepts already-read facts and returns a filtered summary.
+- [x] Add validation that omitted sources have a reason.
 
 ### Task 4: Session Artifact Persistence
 
-- [ ] Reuse or define `.workspace/sessions/<session-id>/` path helpers.
-- [ ] Add `writeContextPackageArtifact()` for long tasks.
-- [ ] Ensure writes stay under `.workspace`, not truth files.
+- [x] Reuse or define `.workspace/sessions/<session-id>/` path helpers.
+- [x] Add `writeContextPackageArtifact()` for long tasks.
+- [x] Ensure writes stay under `.workspace`, not truth files.
 
 ### Task 5: Agent Integration
 
-- [ ] Include context package summary in model-visible context for writing commands.
-- [ ] Ensure final responses can mention selected / omitted sources succinctly.
-- [ ] Do not require every casual chat to create an artifact.
+- [x] Include context package summary in model-visible context for writing commands.
+- [x] Ensure final responses can mention selected / omitted sources succinctly.
+- [x] Do not require every casual chat to create an artifact.
 
 ### Task 6: Tests
 
-- [ ] Unit test L0/L1 cannot be silently omitted without reason.
-- [ ] Unit test minimal-memory is nested under context package.
-- [ ] Unit test artifact path rejects traversal and hidden target override.
-
+- [x] Unit test L0/L1 cannot be silently omitted without reason.
+- [x] Unit test minimal-memory is nested under context package.
+- [x] Unit test artifact path rejects traversal and hidden target override.

@@ -46,6 +46,7 @@
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0600 Write Intent And Human Approval](0600.md)
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
+- [1010 Context Package And Source Discipline](1010.md)
 
 ## Needs Review Tasks
 
@@ -56,7 +57,6 @@
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
 - [0900 Project References](0900.md)
-- [1010 Context Package And Source Discipline](1010.md)
 - [1020 Planning Commands And Prewrite Calibration](1020.md)
 - [1030 Review And Settlement Workflow](1030.md)
 - [1040 Session Artifacts And Author Reports](1040.md)

@@ -70,6 +70,52 @@ describe('Novel agent message assembly', () => {
     expect(assembly.skill?.name).toBe('review');
   });
 
+  it('injects context package summaries as selected model context', () => {
+    const assembly = assembleNovelAgentMessages({
+      ...baseInput,
+      contextPackage: {
+        id: 'ctx-1',
+        capability: 'novel.write_chapter',
+        createdAt: '2026-06-19T00:00:00.000Z',
+        selected: [
+          {
+            sourceId: 'constitution',
+            reason: 'protect story rules',
+            budgetLayer: 'L0',
+            semanticBoundary: 'protected',
+          },
+        ],
+        omitted: [
+          {
+            sourceId: 'playTranscript',
+            reason: 'not adopted as truth',
+            budgetLayer: 'L3',
+            semanticBoundary: 'excluded',
+          },
+        ],
+        minimalMemory: {
+          characters: ['heroine'],
+          hooks: [],
+          worldRules: [],
+          recentFacts: [],
+          styleNotes: [],
+        },
+        ruleStack: [],
+      },
+    });
+
+    const contextPackageItem = assembly.context.find(
+      (item) => item.title === 'Context Package Summary',
+    );
+
+    expect(contextPackageItem).toMatchObject({
+      kind: 'selected',
+    });
+    expect(contextPackageItem?.content).toContain('Context Package: ctx-1');
+    expect(contextPackageItem?.content).toContain('constitution [L0/protected]');
+    expect(contextPackageItem?.content).toContain('playTranscript [L3/excluded]');
+  });
+
   it('creates Runtime turn input without tools or filesystem access', () => {
     const turnInput = createRuntimeTurnInput(baseInput);
 

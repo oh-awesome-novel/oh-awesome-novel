@@ -1,6 +1,7 @@
 import { streamText } from 'ai';
 
-import type { LlmProviderConfig } from '@oh-awesome-novel/core';
+import { formatContextPackageSummary } from '@oh-awesome-novel/core';
+import type { ContextPackage, LlmProviderConfig } from '@oh-awesome-novel/core';
 import { createReadTools, createWriteIntentTools } from '@oh-awesome-novel/tools';
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import { createAgentSessionStore } from './session-store';
@@ -43,6 +44,7 @@ export interface NovelAgentMessageInput {
   request: string;
   workspace: NovelAgentWorkspaceSnapshot;
   skill?: RuntimeSkill;
+  contextPackage?: ContextPackage;
   selectedContext?: RuntimeContextItem[];
   priorMessages?: RuntimeMessage[];
 }
@@ -381,6 +383,14 @@ const createNovelAgentContext = (
   pushContext(context, 'state', 'State', input.workspace.state);
   pushContext(context, 'timeline', 'Timeline', input.workspace.timeline);
   pushContext(context, 'foreshadow', 'Foreshadow', input.workspace.foreshadow);
+  pushContext(
+    context,
+    'selected',
+    'Context Package Summary',
+    input.contextPackage
+      ? formatContextPackageSummary(input.contextPackage)
+      : undefined,
+  );
   context.push(...(input.selectedContext ?? []));
 
   return context;

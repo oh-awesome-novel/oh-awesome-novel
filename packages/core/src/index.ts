@@ -77,3 +77,28 @@ export type {
   NovelCopilotQuickCommand,
   NovelCopilotSkill,
 } from './novel-copilot-skill.js';
+
+// Agent Context Package
+export {
+  CONTEXT_SOURCE_IDS,
+  addOmittedSource,
+  addSelectedSource,
+  createContextPackageDraft,
+  deriveMinimalMemory,
+  formatContextPackageSummary,
+  resolveContextPackageArtifactPath,
+  writeContextPackageArtifact,
+} from './agent-context-package.js';
+
+export type {
+  ContextBudgetLayer,
+  ContextPackage,
+  ContextSourceId,
+  ContextSourceRef,
+  CreateContextPackageDraftInput,
+  MinimalMemory,
+  MinimalMemoryInput,
+  RuleStackEntry,
+  SemanticBoundary,
+  WriteContextPackageArtifactInput,
+} from './agent-context-package.js';
