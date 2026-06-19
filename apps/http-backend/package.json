@@ -8,9 +8,9 @@
   "type": "module",
   "main": "dist/index.mjs",
   "scripts": {
-    "prebuild": "npm run build --workspace @oh-awesome-novel/backend",
+    "prebuild": "nx run @oh-awesome-novel/backend:build",
     "build": "tsdown",
-    "dev": "npm run build && node dist/index.mjs",
+    "dev": "nx run @oh-awesome-novel/backend:build && tsdown && node dist/index.mjs",
     "start": "node dist/index.mjs"
   },
   "dependencies": {
