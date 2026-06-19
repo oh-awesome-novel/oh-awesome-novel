@@ -1,7 +1,7 @@
 # Webnovel Writer 可吸收点候选清单
 
-> 状态：候选参考笔记。  
-> 约束：本文不会自动修改 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。所有“可吸收点”都标记为来自 Webnovel Writer，等待用户确认后，才能合并进 OAN 的 agent 写作指引参考笔记。  
+> 状态：已合并到 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。  
+> 用途：本文保留 Webnovel Writer 的详细候选分析与证据来源；主参考笔记只吸收已按 OAN 边界改写后的方向。  
 > 基准：`reference-only/webnovel-writer` 本地当前 HEAD `a7a102a`，插件版本 `6.2.0`。  
 > 许可证提醒：Webnovel Writer 使用 GPL-3.0。OAN 只能吸收产品模式、抽象流程、工程纪律和 schema 思路，不应复制实现代码、prompt 文本、模板或默认资料。
 
@@ -366,9 +366,9 @@ Webnovel Writer 的写章最后会备份。OAN 的写入接受后可按配置 au
 - OAN 可在 PendingAction accept 后触发 quick commit / auto commit。
 - 不在 agent 起草或审稿阶段自动提交。
 
-## 建议后续写入 OAN Notes 的候选条目
+## 已写入 OAN Notes 的条目
 
-如果用户确认，建议把以下条目合并进 `OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`：
+以下方向已按 OAN 边界合并进 `OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`：
 
 - Source Tags 增加 `[WebnovelWriter-reference]`。
 - Current Gaps 增加：缺少 `/规划大纲`、`/规划下一卷` 这类卷级 / 大纲级规划入口；单章写作不宜默认套用完整 gate。
