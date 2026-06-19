@@ -110,6 +110,25 @@ export interface WorkspaceStatus {
   };
 }
 
+export interface ProjectHealthIssue {
+  id: string;
+  severity: 'info' | 'warning' | 'error';
+  title: string;
+  detail: string;
+  path?: string;
+}
+
+export interface ProjectHealth {
+  generatedAt: string;
+  missingCharacterCards: string[];
+  chaptersWithoutSummaries: string[];
+  activeHookCount: number;
+  latestStateStale: boolean;
+  timelineGapCount: number;
+  pendingActionCount: number;
+  issues: ProjectHealthIssue[];
+}
+
 export interface WorkspaceOnboardingInput {
   novelName?: string;
   inspiration?: string;
@@ -236,6 +255,8 @@ export function useWorkspaceApi() {
       ),
     getWorkspaceStatus: () =>
       requestJson<WorkspaceStatus>(backendBaseUrl, '/api/workspace/status'),
+    getProjectHealth: () =>
+      requestJson<{ health: ProjectHealth }>(backendBaseUrl, '/api/workspace/project-health'),
     saveWorkspaceOnboarding: (input: WorkspaceOnboardingInput) =>
       requestJson<{ workspace: WorkspaceSummary; config: unknown }>(
         backendBaseUrl,

@@ -120,6 +120,15 @@ describe('novel HTTP backend', () => {
           dirty: null,
         },
       });
+    await expect(fetchJson(`${backend.url}/api/workspace/project-health`))
+      .resolves
+      .toMatchObject({
+        health: {
+          pendingActionCount: 0,
+          activeHookCount: 0,
+          issues: expect.any(Array),
+        },
+      });
     await expect(fetchJson(`${backend.url}/api/workspace/chapters/rescan`, { method: 'POST' }))
       .resolves
       .toMatchObject({

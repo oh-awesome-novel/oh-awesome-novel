@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import type { WorkspaceStatus, WorkspaceSummary } from '../../composables/useWorkspaceApi';
+import type {
+  ProjectHealth,
+  WorkspaceStatus,
+  WorkspaceSummary,
+} from '../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   workspace: WorkspaceSummary;
   providerConfigured: boolean;
   status?: WorkspaceStatus;
+  health?: ProjectHealth;
 }>();
 
 const emit = defineEmits<{
@@ -34,6 +39,18 @@ const gitStatusLabel = computed(() => {
 
   return props.status.git.dirty ? 'dirty' : 'clean';
 });
+
+const healthStatusLabel = computed(() => {
+  if (!props.health) {
+    return '检查中';
+  }
+
+  return props.health.issues.length === 0
+    ? '无提示'
+    : `${props.health.issues.length} 条提示`;
+});
+
+const healthIssues = computed(() => props.health?.issues.slice(0, 3) ?? []);
 </script>
 
 <template>
@@ -59,6 +76,40 @@ const gitStatusLabel = computed(() => {
       <div class="status-block">
         <span>Copilot</span>
         <strong>{{ providerConfigured ? '可打开' : '只读模式' }}</strong>
+      </div>
+      <div class="status-block">
+        <span>Project health</span>
+        <strong>{{ healthStatusLabel }}</strong>
+      </div>
+    </div>
+
+    <div v-if="health" class="home-health-panel" aria-label="Project health summary">
+      <div class="status-block">
+        <span>Active hooks</span>
+        <strong>{{ health.activeHookCount }}</strong>
+      </div>
+      <div class="status-block">
+        <span>Missing summaries</span>
+        <strong>{{ health.chaptersWithoutSummaries.length }}</strong>
+      </div>
+      <div class="status-block">
+        <span>Timeline gaps</span>
+        <strong>{{ health.timelineGapCount }}</strong>
+      </div>
+      <div class="status-block">
+        <span>State stale</span>
+        <strong>{{ health.latestStateStale ? 'yes' : 'no' }}</strong>
+      </div>
+      <div class="status-block">
+        <span>PendingAction</span>
+        <strong>{{ health.pendingActionCount }}</strong>
+      </div>
+    </div>
+
+    <div v-if="healthIssues.length > 0" class="health-issue-list" aria-label="Project health issues">
+      <div v-for="issue in healthIssues" :key="issue.id" class="health-issue-row">
+        <strong>{{ issue.title }}</strong>
+        <span>{{ issue.detail }}</span>
       </div>
     </div>
 

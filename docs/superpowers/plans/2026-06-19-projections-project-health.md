@@ -24,45 +24,44 @@
 
 ### Task 1: Define Projection Targets
 
-- [ ] `.oan/indexes/state.md`
-- [ ] `.oan/indexes/foreshadow.md`
-- [ ] `.oan/indexes/timeline.md`
-- [ ] `.oan/indexes/progress.md`
-- [ ] `.oan/indexes/context-snapshot.md` as optional agent-readable index
+- [x] `.oan/indexes/state.md`
+- [x] `.oan/indexes/foreshadow.md`
+- [x] `.oan/indexes/timeline.md`
+- [x] `.oan/indexes/progress.md`
+- [x] `.oan/indexes/context-snapshot.md` as optional agent-readable index
 
 ### Task 2: Build Generators
 
-- [ ] Read `state/*.yaml`.
-- [ ] Read `foreshadow/active.yaml` and `foreshadow/resolved.yaml`.
-- [ ] Read `timeline/*.yaml`.
-- [ ] Read `summaries/`.
-- [ ] Generate deterministic Markdown.
+- [x] Read `state/*.yaml`.
+- [x] Read `foreshadow/active.yaml` and `foreshadow/resolved.yaml`.
+- [x] Read `timeline/*.yaml`.
+- [x] Read `summaries/`.
+- [x] Generate deterministic Markdown.
 
 ### Task 3: Keep Projection Non-Canonical
 
-- [ ] Add heading warning: generated projection, can be rebuilt.
-- [ ] Do not let write-intent tools read projection instead of truth files when truth files are needed.
-- [ ] If projection missing, agent should fall back to truth files.
+- [x] Add heading warning: generated projection, can be rebuilt.
+- [x] Do not let write-intent tools read projection instead of truth files when truth files are needed.
+- [x] If projection missing, agent should fall back to truth files.
 
 ### Task 4: Project Health Model
 
-- [ ] Detect missing character card references where possible.
-- [ ] Detect chapters with no summary.
-- [ ] Count active hooks.
-- [ ] Detect stale latest state if chapter accepted after state update.
-- [ ] Detect timeline gaps when chapter summaries exist without events.
-- [ ] Report pending action count.
+- [x] Detect missing character card references where possible.
+- [x] Detect chapters with no summary.
+- [x] Count active hooks.
+- [x] Detect stale latest state if chapter accepted after state update.
+- [x] Detect timeline gaps when chapter summaries exist without events.
+- [x] Report pending action count.
 
 ### Task 5: Backend / UI
 
-- [ ] Add read-only endpoint or core call for project health.
-- [ ] Add minimal UI panel or inspector section.
-- [ ] UI must not mutate canon.
+- [x] Add read-only endpoint or core call for project health.
+- [x] Add minimal UI panel or inspector section.
+- [x] UI must not mutate canon.
 
 ### Task 6: Tests
 
-- [ ] Projection rebuild from sample workspace.
-- [ ] Delete projection and rebuild identical output.
-- [ ] Project health returns warnings without writing files.
-- [ ] Projection failure does not fail ordinary writing command tests.
-
+- [x] Projection rebuild from sample workspace.
+- [x] Delete projection and rebuild identical output.
+- [x] Project health returns warnings without writing files.
+- [x] Projection failure does not fail ordinary writing command tests.

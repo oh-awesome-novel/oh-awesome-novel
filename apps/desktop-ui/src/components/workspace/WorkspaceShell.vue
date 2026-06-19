@@ -13,6 +13,7 @@ import type {
   ChapterIndexChapter,
   ChapterIndexStatus,
   FileTreeNode,
+  ProjectHealth,
   WorkspaceOnboardingInput,
   WorkspaceStatus,
   WorkspaceSummary,
@@ -50,6 +51,7 @@ const treeLoading = shallowRef(false);
 const treeError = shallowRef('');
 const chapterIndex = shallowRef<ChapterIndex>();
 const chapterStatus = shallowRef<ChapterIndexStatus>();
+const projectHealth = shallowRef<ProjectHealth>();
 const chaptersLoading = shallowRef(false);
 const chaptersError = shallowRef('');
 const workspaceStatus = shallowRef<WorkspaceStatus>();
@@ -78,6 +80,7 @@ onMounted(() => {
   void loadTree();
   void loadChapters();
   void loadWorkspaceStatus();
+  void loadProjectHealth();
 });
 
 watch(
@@ -145,6 +148,14 @@ async function loadWorkspaceStatus() {
         dirty: null,
       },
     };
+  }
+}
+
+async function loadProjectHealth() {
+  try {
+    projectHealth.value = (await api.getProjectHealth()).health;
+  } catch {
+    projectHealth.value = undefined;
   }
 }
 
@@ -217,6 +228,7 @@ async function completeOnboarding(payload: OnboardingFinishPayload) {
 
     await Promise.all([
       loadWorkspaceStatus(),
+      loadProjectHealth(),
       loadTree(),
     ]);
   } catch (error) {
@@ -246,6 +258,7 @@ function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
 async function refreshAfterPendingAction() {
   await Promise.all([
     loadWorkspaceStatus(),
+    loadProjectHealth(),
     loadTree(),
     loadChapters(),
     activeFilePath.value ? openFile(activeFilePath.value) : Promise.resolve(),
@@ -361,6 +374,7 @@ async function refreshAfterPendingAction() {
         :workspace="workspace"
         :provider-configured="providerConfigured"
         :status="workspaceStatus"
+        :health="projectHealth"
         @generate-next-chapter="openCopilot('请基于当前大纲和章节状态，提出下一章生成方案，并先说明会创建哪些 PendingAction。')"
         @open-chapters="openChapterNavigation"
         @open-copilot="openCopilot()"

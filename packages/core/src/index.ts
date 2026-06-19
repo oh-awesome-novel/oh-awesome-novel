@@ -188,3 +188,25 @@ export type {
   SessionRunMetadata,
   SessionRunStatus,
 } from './session-artifacts.js';
+
+// Projections And Project Health
+export {
+  PROJECTION_TARGETS,
+  PROJECTION_WARNING,
+  buildWorkspaceProjectionDocuments,
+  writeWorkspaceProjections,
+} from './projections.js';
+export {
+  formatProjectHealthMarkdown,
+  readProjectHealth,
+} from './project-health.js';
+export type {
+  ProjectionDocument,
+  ProjectionTarget,
+} from './projections.js';
+export type {
+  ProjectHealth,
+  ProjectHealthIssue,
+  ProjectHealthSeverity,
+  ReadProjectHealthOptions,
+} from './project-health.js';

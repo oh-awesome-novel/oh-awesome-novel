@@ -960,7 +960,28 @@
   }
 
   .home-status-grid {
-    @apply mb-4.5 grid grid-cols-3 gap-2.5;
+    @apply mb-4.5 grid grid-cols-4 gap-2.5;
+  }
+
+  .home-health-panel {
+    @apply mb-4.5 grid grid-cols-4 gap-2.5;
+  }
+
+  .health-issue-list {
+    @apply mb-4.5 grid gap-2;
+  }
+
+  .health-issue-row {
+    @apply rounded-card border border-gray-200 bg-white p-3 text-sm dark:border-neutral-700 dark:bg-neutral-900;
+  }
+
+  .health-issue-row strong,
+  .health-issue-row span {
+    @apply block;
+  }
+
+  .health-issue-row span {
+    @apply mt-1 text-slate-500 dark:text-neutral-400;
   }
 
   .status-block {
@@ -1189,6 +1210,7 @@
     .model-row-card,
     .workspace-toolbar,
     .home-status-grid,
+    .home-health-panel,
     .quick-action-grid,
     .onboarding-layout,
     .onboarding-goals,

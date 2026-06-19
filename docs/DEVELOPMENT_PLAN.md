@@ -358,7 +358,7 @@ Detailed vNext split:
 - `1020` Planning Commands And Prewrite Calibration。（Completed）
 - `1030` Review And Settlement Workflow。（Completed）
 - `1040` Session Artifacts And Author Reports。（Completed）
-- `1050` Projections And Project Health。
+- `1050` Projections And Project Health。（Completed）
 - `1060` Play Mode And Tavern Character Import。
 
 这些任务必须继续遵守：单 agent Aider-style runtime、filesystem-first、PendingAction / Human Approval、reference 只作为可追溯写作参考。

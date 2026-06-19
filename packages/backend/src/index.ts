@@ -20,6 +20,7 @@ import {
   loadNovelCopilotSkill,
   loadWorkspaceList,
   normalizeLlmProviderConfig,
+  readProjectHealth,
   removeLlmProviderConfig,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
@@ -152,6 +153,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.get('/api/workspace/project-health', (context) =>
+    handleWorkspaceProjectHealth(options, state, context));
   app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
   app.get('/api/workspace/pending-actions', (context) => handleListPendingActions(options, state, context));
   app.post('/api/workspace/pending-actions/:id/:decision', (context) => {
@@ -673,6 +676,20 @@ async function handleWorkspaceStatus(
     pendingActionCount: pendingActions.length,
     git: gitStatus,
   });
+}
+
+async function handleWorkspaceProjectHealth(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const pendingActions = await listPendingActions({ workspaceRoot });
+  const health = await readProjectHealth(workspaceRoot, {
+    pendingActionCount: pendingActions.length,
+  });
+
+  return jsonResponse(context, 200, { health });
 }
 
 async function handleSaveWorkspaceOnboarding(
