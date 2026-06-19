@@ -2,7 +2,7 @@
 
 Status: Reference Notes
 
-本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern 中可吸收的写作 workflow / Play 经验。
+本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern 和若干写作 skill 项目中可吸收的写作 workflow / Play 经验。
 
 后续还会继续阅读其他参考项目。因此本文档刻意保留来源标注，避免把不同项目的启发混在一起，也避免把“候选改进”误认为 OAN 已实现能力。
 
@@ -15,6 +15,11 @@ Status: Reference Notes
 - `[InkOS-reference]`：来自 `reference-only/inkos` 的参考项目观察。
 - `[StoryForge-reference]`：来自 `reference-only/storyforge` 的参考项目观察。
 - `[SillyTavern-reference]`：来自 `reference-only/SillyTavern` 的参考项目观察。
+- `[AwesomeNovelSkill-reference]`：来自 `reference-only/awesome-novel-skill` 当前版本的参考项目观察。
+- `[AwesomeNovelSkill-v3-reference]`：来自 `awesome-novel-skill` v3.x 单 agent harness 历史版本的参考观察。
+- `[NovelWriterSkills-reference]`：来自 `reference-only/novel-writer-skills` 的参考项目观察。
+- `[OhAwesomeNovelSkill-reference]`：来自 `reference-only/oh-awesome-novel-skill` 的参考项目观察。
+- `[OhStoryClaudeCode-reference]`：来自 `reference-only/oh-story-claudecode` 的参考项目观察。
 - `[OAN-adaptation]`：基于参考项目启发，但已经按 OAN 边界重新改写。
 - `[Future-reference]`：预留给后续其他参考项目。
 
@@ -122,8 +127,11 @@ OAN 当前指引已经有正确方向，但还偏粗。[OAN-current]
 - `/整理本章` 还没有要求先生成 observation log，再从正文证据生成状态增量。
 - 伏笔推进、提及、回收、延后还没有区分得足够细。
 - 审稿维度还没有稳定化为可复用 checklist。
+- `/审稿` 还没有稳定 findings schema，例如 severity、category、location、evidence、issue、suggested fix、needs user decision。[NovelWriterSkills-reference][OhStoryClaudeCode-reference][OAN-adaptation]
+- `/去AI味` 还没有明确“只改表达、不改剧情事实、不删除伏笔/钩子/关键信息”的保护规则。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference][OAN-adaptation]
 - 状态、时间线、伏笔目前是事实源，但还缺少面向作者阅读的派生 projection 规范。
 - 还缺少独立 Play / Roleplay Sandbox 产品面，让用户在阅读和写作之外沉浸式进入小说世界。[SillyTavern-reference][OAN-adaptation]
+- 参考作品拆解 / 对标资料目前只在 `docs/tasks/0900.md` 规划中，还没有形成可运行的 reference deconstruction layer。[OhStoryClaudeCode-reference][OAN-adaptation]
 
 ## InkOS Learnings
 
@@ -481,9 +489,134 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 
 这些字段能显著增强 Play 和对白生成，但不应自动覆盖 OAN 的 constitution、world、state、timeline 或 canonical character facts。
 
+## Novel Writing Skill Learnings
+
+以下内容来自 `awesome-novel-skill`、`novel-writer-skills`、`oh-awesome-novel-skill` 和 `oh-story-claudecode` 的写作 skill 参考观察，尚不是 OAN 当前行为，除非另有标注。[AwesomeNovelSkill-reference][NovelWriterSkills-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
+
+这些项目与 InkOS、StoryForge 的启发有大量重叠。因此本节只合并增量：写作 skill 里的具体 agent 指引、单章推进纪律、单 agent harness、去 AI 味保护和参考拆解 workflow。
+
+### Concept Conflict Resolution
+
+为避免后续文档概念分裂，OAN 统一采用以下口径。[OAN-adaptation]
+
+- `chapter-intent`、`chapter-contract`、`Chapter Memo` 都归并为 **本章契约**。它是写作前中间产物，不是章节正文，也不默认成为长期事实源。[InkOS-reference][AwesomeNovelSkill-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
+- `PRE_WRITE_CHECK`、写前读取清单、写前校准表都归并为 **写前校准表**。它可以作为 assistant 输出、session artifact 或 shadow metadata，不写进 `chapters/` 正文文件。[InkOS-reference][NovelWriterSkills-reference][OhStoryClaudeCode-reference]
+- `minimal-memory` / 最简记忆包 是 `context-package` 的子字段，不是新的数据库或独立 truth source。[OhStoryClaudeCode-reference][OAN-adaptation]
+- `SOLO Mode` / 快速推进模式只能影响确认频率和交互节奏，不能跳过 PendingAction、diff、Human Approval 和 evidence-only settlement。[AwesomeNovelSkill-v3-reference][OAN-constraint]
+- `reference deconstruction` / 拆文 / 对标 是 task 0900 的参考材料层，不是当前小说 workspace 的事实源，也不应默认每章运行。[OhStoryClaudeCode-reference][OAN-adaptation]
+- 固定多 agent 架构只作为参考项目实现观察，不进入 OAN 默认 runtime；OAN 默认仍是 Aider-style 单 agent tool loop，可选 specialist skill 按需启用。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference][OAN-constraint]
+
+### State-Driven Single Agent Harness
+
+`awesome-novel-skill` v3.x 的早期形态不是当前固定 multi-agent 架构，而是单 agent 状态驱动 harness。[AwesomeNovelSkill-v3-reference]
+
+OAN 可吸收：
+
+- 每轮从文件系统重建状态：workflow、chapter status、draft / archive 是否存在、settlement 是否完成。
+- 根据状态路由到规划、写作、审稿、整理、归档等阶段，但默认仍由同一个 Copilot 执行。
+- 可提供低摩擦“快速推进模式”，但只减少确认次数，不允许直接写真实目标文件。
+- 每章完成后依靠落盘 truth files 和 session artifact 恢复上下文，避免无限累积聊天历史。
+- Specialist skill 只在需要时调用，例如去 AI 味、审稿、拆文、导入或角色扮演 rehearsal。
+
+这与 OAN 当前 Aider-style runtime 不冲突；它强化的是状态机和文件证据，不是引入 planner 或常驻多 agent 平台。[OAN-adaptation][OAN-constraint]
+
+### Chapter Contract Extensions
+
+写作 skill 项目给“本章契约”补充了更具体的字段。[AwesomeNovelSkill-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
+
+OAN `/规划下一章` 可在已有 InkOS chapter-intent 基础上补充：
+
+- chapter id / title candidate。
+- 本章读者情绪目标。
+- POV。
+- 冲突阶梯。
+- 信息差变化。
+- 场景序列或 8-12 个 key beats。
+- 角色出场与状态前置。
+- 伏笔操作：新增、推进、提及、回收、延后。
+- 章尾必须发生的改变。
+- 禁止事项。
+
+这些字段不要求一开始全部成为正式 schema；可以先作为 `chapter-intent` 的结构化输出，再根据实际写作体验固化。[OAN-adaptation]
+
+### Pre-Write Calibration
+
+`novel-writer-skills` 的 `/write` 强制读取顺序和写前 checklist 很适合 OAN 的 `/写下一章`。[NovelWriterSkills-reference]
+
+OAN `/写下一章` 的写前校准表可合并这些来源：
+
+- 已读取上下文：source id、文件路径、工具结果、读取理由。
+- 本章契约复述：目标、冲突、情绪、POV、章尾变化。
+- 必须兑现：hook id、状态变化、读者期待。
+- 暂不暴露：秘密、底牌、未到时机的设定。
+- 风险检查：OOC、信息越界、世界规则冲突、战力或资源异常、AI 味高危点。
+- 写入方式：正文只能通过 `chapter.createDraft` 创建 PendingAction。
+
+这与 InkOS `PRE_WRITE_CHECK` 和 StoryForge chapter context recipe 是同一个方向，应统一实现，而不是分成多个检查表。[InkOS-reference][StoryForge-reference][NovelWriterSkills-reference][OhStoryClaudeCode-reference][OAN-adaptation]
+
+### Minimal Memory Package
+
+`oh-story-claudecode` 的最简记忆包可作为 OAN `context-package` 的一个明确字段。[OhStoryClaudeCode-reference]
+
+OAN 可定义：
+
+- 角色状态：只保留本章涉及角色的最新身份、能力、关系、公众形象。
+- 相关伏笔 / 前史：只保留本章会写错的因果信息。
+- 世界约束：只保留本章涉及的规则、地点、能力或社会限制。
+- omitted：说明哪些信息被排除，因为与本章无直接因果关系。
+
+判断标准可以写成一句话：只保留“不知道这个，本章会写错”的信息。[OAN-adaptation]
+
+这不替代 StoryForge 的 source id / budget layer，也不替代 InkOS 的 protected / compressible / excluded。它是三者之上的写作任务压缩视图。[InkOS-reference][StoryForge-reference][OhStoryClaudeCode-reference]
+
+### De-AI Protection Rules
+
+`awesome-novel-skill` 和 `oh-story-claudecode` 都强调去 AI 味不能破坏剧情功能。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
+
+OAN `/去AI味` 应明确：
+
+- 只改表达，不改剧情事实。
+- 不删除伏笔、钩子、角色特征、关键信息或必要转折。
+- 不把“更文学”当作默认目标，优先符合当前作品风格。
+- 输出修改理由和风险点。
+- 正文替换仍通过 PendingAction。
+
+这条应作为 `/去AI味` 的硬保护规则，避免“修文风”时把可结算事实或后续钩子删掉。[OAN-adaptation]
+
+### Review Findings Schema
+
+`oh-story-claudecode` 的审稿报告格式和 `novel-writer-skills` 的分析命令都支持把审稿从泛泛建议变成可执行问题列表。[OhStoryClaudeCode-reference][NovelWriterSkills-reference]
+
+OAN `/审稿` 可统一 findings schema：
+
+- severity。
+- category。
+- location。
+- evidence。
+- issue。
+- suggested fix。
+- whether needs user decision。
+
+这与 StoryForge 的 review-to-revision loop 不冲突：OAN 默认只输出报告；用户确认后，才把指定 finding 转成 `chapter.createDraft` 或 SemanticPatch。[StoryForge-reference][OAN-adaptation]
+
+### Reference Deconstruction Layer
+
+`oh-story-claudecode` 的 `story-long-analyze` 和 `story-import` 提醒 OAN：参考作品不应只是一段聊天里的“对标”，应成为可查询的 reference bundle。[OhStoryClaudeCode-reference]
+
+OAN 可吸收为 task 0900 的方向：
+
+- 用户提供合法持有或有权使用的参考文本。
+- 先生成 quick preview，再决定是否全量拆解。
+- 拆解产物包括章节摘要、剧情聚合、角色/关系/设定观察、文风 profile、场景技法和 distilled summary。
+- 写作时只召回结构、节奏、文风观察，不复制桥段或表达。
+- 原文 source 默认不进入 prompt。
+- reference-derived adoption 必须生成 PendingAction / diff，由用户确认。
+
+这与 StoryForge chunk import 和 InkOS style/import workflow 可以合并为一个 OAN reference deconstruction layer，当前落点是 `docs/tasks/0900.md`。[StoryForge-reference][InkOS-reference][OhStoryClaudeCode-reference][OAN-adaptation]
+
 ## Proposed OAN Agent Writing Loop vNext
 
-以下是综合 OAN 当前边界与 InkOS、StoryForge、SillyTavern 启发后的候选升级方向，不代表已实现。[OAN-adaptation][InkOS-reference][StoryForge-reference][SillyTavern-reference]
+以下是综合 OAN 当前边界与 InkOS、StoryForge、SillyTavern 和写作 skill 项目启发后的候选升级方向，不代表已实现。[OAN-adaptation][InkOS-reference][StoryForge-reference][SillyTavern-reference][AwesomeNovelSkill-reference][NovelWriterSkills-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
 
 ### 1. Intake
 
@@ -496,6 +629,8 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 - 整理/结算：读取已采纳正文，生成 observation log 和 PendingAction bundle。
 - 改状态/伏笔/角色：先读对应事实源，再生成 PendingAction。
 - 进入 Play：切换到独立 Play Mode，读取 Play 起点、角色、世界规则和当前状态；Play 结果默认只进入 Play session，不直接改事实源。
+- 使用参考作品：进入 reference context selector，只读取已启用 reference 的 distilled summary；原文 source 默认不进 prompt。[OhStoryClaudeCode-reference][OAN-adaptation]
+- 快速推进模式：可以降低交互摩擦，但仍必须走 PendingAction / diff / Human Approval，不允许直接写真实文件。[AwesomeNovelSkill-v3-reference][OAN-constraint]
 
 ### 2. Observe
 
@@ -519,12 +654,18 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 - 每个被读取的材料应在 `context-package` 中有 source id、文件路径、读取理由和预算层级。
 - 不默认全量读取；先读核心必需材料，再按任务相关性补读角色、世界、时间线、伏笔、风格和参考资料。
 - 未读取但可能相关的材料，应进入 omitted 列表，避免 agent 假装知道。
+- 对当前章节生成 `minimal-memory`：只保留“不知道这个，本章会写错”的角色状态、相关伏笔/前史和世界约束。[OhStoryClaudeCode-reference][OAN-adaptation]
+- 如果读取 reference，只记录 distilled source；若用户显式要求读原文，必须说明原因和范围。[OhStoryClaudeCode-reference][OAN-adaptation]
 
 ### 3. Plan
 
 如果任务涉及下一章或较大剧情推进，生成本章契约：
 
+- chapter id / title candidate。
 - 当前任务。
+- POV。
+- 冲突阶梯。
+- 信息差变化。
 - 场景序列。
 - 可选 scene / beat 列表。
 - 出场角色。
@@ -558,7 +699,9 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 - 上下文范围。
 - 当前锚点。
 - 待处理 hooks。
+- 暂不暴露的秘密、底牌和设定。
 - 风险扫描。
+- 写入方式确认：只能通过 `chapter.createDraft` PendingAction。
 
 然后才生成标题和正文草稿。正文写入只能通过 `chapter.createDraft` PendingAction。
 
@@ -566,12 +709,17 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 
 审稿默认不改正文。输出：
 
-- findings by severity。
+- severity。
+- category。
+- location。
 - evidence。
+- issue。
 - suggested fix。
-- whether rewrite is needed。
+- whether needs user decision。
 
 用户要求改写时，先确认要修哪些问题，再使用 `chapter.createDraft` 或 SemanticPatch 生成替换草稿 PendingAction。
+
+`/去AI味` 属于 review / revision 子类，必须遵守保护规则：只改表达，不改剧情事实，不删除伏笔、钩子、角色特征、关键信息或必要转折。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference][OAN-adaptation]
 
 ### 7. Settle
 
@@ -603,40 +751,53 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 
 | Candidate | Type | Source | OAN status |
 | --- | --- | --- | --- |
-| 本章契约 `chapter-intent` | Add | InkOS chapter memo / plan idea | Accepted direction; not implemented |
-| `context-package` / `rule-stack` / `trace` | Add | InkOS plan/compose artifacts + StoryForge context assembly | Accepted direction; not implemented |
+| 本章契约 `chapter-intent` | Add | InkOS chapter memo / plan idea + AwesomeNovelSkill chapter memo + OhAwesomeNovelSkill chapter loop + OhStoryClaudeCode detail outline | Accepted direction; not implemented |
+| 本章契约扩展字段：POV、冲突阶梯、信息差、章尾改变 | Modify | AwesomeNovelSkill chapter outline + OhStoryClaudeCode long-write outline | Accepted direction; not implemented |
+| `context-package` / `rule-stack` / `trace` | Add | InkOS plan/compose artifacts + StoryForge context assembly + NovelWriterSkills pre-write file checklist | Accepted direction; not implemented |
+| `minimal-memory` 最简记忆包 | Add | OhStoryClaudeCode state-tracking protocol | Accepted direction; not implemented |
 | 轻量 context source discipline，不新增重型 registry | Add | StoryForge `CONTEXT_SOURCES` idea | Accepted direction; not implemented |
 | `protected / compressible / excluded` 语义分层 | Add | InkOS context governance | Accepted direction; not implemented |
 | `L0 / L1 / L2 / L3` 预算层级 | Add | StoryForge context budget | Accepted direction; not implemented |
-| `/写下一章` 前置 `PRE_WRITE_CHECK` | Modify | InkOS writer pre-write check + StoryForge chapter recipe | Accepted direction; not implemented |
-| 写前默认读档策略：核心必读 + 条件补读 | Modify | StoryForge chapter context recipe | Accepted direction; not implemented |
-| `/整理本章` 先 observation log 后 PendingAction bundle | Modify | InkOS Observer / settlement pattern + StoryForge settlement objects | Accepted direction; not implemented |
+| `/写下一章` 前置 `PRE_WRITE_CHECK` / 写前校准表 | Modify | InkOS writer pre-write check + StoryForge chapter recipe + NovelWriterSkills write checklist + OhStoryClaudeCode daily workflow | Accepted direction; not implemented |
+| 写前默认读档策略：核心必读 + 条件补读 | Modify | StoryForge chapter context recipe + NovelWriterSkills read order + OhStoryClaudeCode status filter | Accepted direction; not implemented |
+| 状态驱动单 agent harness | Add | AwesomeNovelSkill v3 SOLO / state-driven loop + OhAwesomeNovelSkill lightweight single-agent workflow | Accepted direction; not implemented |
+| `/整理本章` 先 observation log 后 PendingAction bundle | Modify | InkOS Observer / settlement pattern + StoryForge settlement objects + AwesomeNovelSkill updater archive + OhAwesomeNovelSkill archive memory update | Accepted direction; not implemented |
 | 状态变化以 diff 表达：old/new/evidence/confidence | Modify | StoryForge state diff + OAN Apply Engine | Accepted direction; not implemented |
-| 伏笔 mention / advance / resolve / defer 分级 | Modify | InkOS hookOps discipline | Accepted direction; not implemented |
-| evidence-only settlement 规则 | Modify | InkOS settler constraints + OAN human approval | Accepted direction; not implemented |
+| 伏笔 mention / advance / resolve / defer 分级 | Modify | InkOS hookOps discipline + AwesomeNovelSkill / OhStoryClaudeCode hooks update | Accepted direction; not implemented |
+| evidence-only settlement 规则 | Modify | InkOS settler constraints + AwesomeNovelSkill updater archive + OhStoryClaudeCode tracking update + OAN human approval | Accepted direction; not implemented |
 | settlement report 增加 next handoff / unresolved ambiguity | Add | StoryForge settlement extension | Accepted direction; not implemented |
-| 审稿 checklist 固定化 | Modify | InkOS continuity audit dimensions + StoryForge review dimensions | Accepted direction; not implemented |
+| 审稿 checklist 固定化 | Modify | InkOS continuity audit dimensions + StoryForge review dimensions + NovelWriterSkills analyze + OhStoryClaudeCode story-review | Accepted direction; not implemented |
+| 审稿 findings schema | Add | OhStoryClaudeCode story-review + NovelWriterSkills analyze | Accepted direction; not implemented |
 | 审稿报告到修订 patch 的二段确认闭环 | Add | StoryForge review-to-revision flow | Accepted direction; not implemented |
+| `/去AI味` 保护规则 | Modify | AwesomeNovelSkill anti-ai + OhStoryClaudeCode story-deslop | Accepted direction; not implemented |
 | 状态/伏笔/时间线 Markdown projections | Add | InkOS Markdown projection idea | Accepted direction; not implemented |
 | AI-readable context snapshot 作为派生索引 | Add | StoryForge context snapshot | Accepted direction; not implemented |
 | capability id / prompt provenance / generated manual | Add | StoryForge PromptModuleKey and AI manual | Accepted direction; not implemented |
 | run log 记录 capability、context package、patch 和 token usage | Add | StoryForge aiUsageLog | Accepted direction; not implemented |
 | 导入已有小说采用 chunk + rolling context + pending adoption | Add | InkOS import/continuation + StoryForge import pipeline | Accepted direction; not implemented |
+| 参考作品拆解 / reference deconstruction layer | Add | OhStoryClaudeCode story-long-analyze/story-import + StoryForge import pipeline + InkOS import/style workflow | Accepted direction; task 0900 planned |
+| reference context selector：只召回 distilled technique notes | Add | OhStoryClaudeCode 对标 / 文风召回 + OAN task 0900 | Accepted direction; task 0900 planned |
 | 长任务 resumable session 写入 shadow / pending 区 | Add | StoryForge stream session persistence | Accepted direction; not implemented |
 
 ## Not Adopted From Reference Projects
 
-以下参考项目能力不应进入 OAN，除非未来架构文档明确改变方向。[OAN-constraint][InkOS-reference][StoryForge-reference]
+以下参考项目能力不应进入 OAN，除非未来架构文档明确改变方向。[OAN-constraint][InkOS-reference][StoryForge-reference][AwesomeNovelSkill-reference][OhStoryClaudeCode-reference]
 
 - 自主多 agent runtime。
+- 固定多 agent 写作流水线作为 OAN 默认路径。
 - 后台 daemon 自动写作。
 - 直接写真实小说文件或直接写数据库作为最终持久化路径。
 - SQLite / memory.db / IndexedDB 作为小说事实源。
 - 自动无限修订闭环。
 - 跳过 Human Approval 的批量状态更新。
+- “快速推进模式”跳过 PendingAction / Git diff / Human Approval。
 - 浏览器端直接保存 provider key 作为 OAN 主方案。
 - localStorage context memo 作为可信来源。
 - 重型 Context Source Registry runtime；当前只吸收轻量 source discipline。
+- 每章默认强制拆文、对标、文风召回。
+- 参考作品原文默认进入写作 prompt。
+- 参考作品角色、世界观、时间线或伏笔自动写入当前小说 truth files。
+- 为了去 AI 味删除剧情事实、伏笔、钩子、角色特征或必要转折。
 - 复制参考项目实现代码、prompt 原文或 UI 文案。
 
 ## Future Reference Merge Checklist
@@ -671,6 +832,9 @@ Notes:
 - `docs/INKOS_REFERENCE_LESSONS.md`
 - `docs/STORYFORGE_REFERENCE_OVERVIEW.md`
 - `docs/STORYFORGE_REFERENCE_LESSONS.md`
+- `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`
+- `docs/tasks/0900.md`
+- `docs/IMPORT_TAVERN_COMPATIBLE_CHARACTER_CARD.md`
 - `reference-only/inkos/README.md`
 - `reference-only/inkos/packages/core/src/agents/writer-prompts.ts`
 - `reference-only/inkos/packages/core/src/agents/settler-prompts.ts`
@@ -679,3 +843,11 @@ Notes:
 - `reference-only/storyforge/src/lib/registry/assemble-context.ts`
 - `reference-only/storyforge/src/components/editor/ChapterEditor.tsx`
 - `reference-only/storyforge/src/lib/registry/adoption-schema.ts`
+- `reference-only/awesome-novel-skill/SKILL.md`
+- `reference-only/novel-writer-skills/templates/commands/write.md`
+- `reference-only/oh-awesome-novel-skill/SKILL.md`
+- `reference-only/oh-story-claudecode/skills/story-long-write/SKILL.md`
+- `reference-only/oh-story-claudecode/skills/story-long-analyze/SKILL.md`
+- `reference-only/oh-story-claudecode/skills/story-import/SKILL.md`
+- `reference-only/oh-story-claudecode/skills/story-review/SKILL.md`
+- `reference-only/oh-story-claudecode/skills/story-deslop/SKILL.md`
