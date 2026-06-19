@@ -12,11 +12,15 @@ import type { LanguageModel, ToolSet, UIMessage } from 'ai';
 import {
   createEmptyLlmProviderConfigState,
   getDefaultLlmProviderConfig,
+  initWorkspace,
   loadNovelCopilotSkill,
   loadWorkspaceList,
+  removeLlmProviderConfig,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
+  saveWorkspaceOnboarding,
   saveWorkspaceList,
+  setDefaultLlmProviderConfig,
   upsertLlmProviderConfig,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
@@ -179,6 +183,11 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/workspaces/create') {
+    await handleCreateWorkspace(options, state, request, response);
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/workspaces/open') {
     await handleOpenWorkspace(options, state, request, response);
     return;
@@ -204,6 +213,38 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/provider-config/check') {
+    await handleCheckProviderConfig(options, state, request, response);
+    return;
+  }
+
+  const providerDefaultMatch = url.pathname.match(/^\/api\/provider-config\/([^/]+)\/default$/);
+  if (request.method === 'POST' && providerDefaultMatch) {
+    await handleSetDefaultProviderConfig(
+      options,
+      state,
+      decodeURIComponent(providerDefaultMatch[1] ?? ''),
+      response,
+    );
+    return;
+  }
+
+  const providerDeleteMatch = url.pathname.match(/^\/api\/provider-config\/([^/]+)$/);
+  if (request.method === 'DELETE' && providerDeleteMatch) {
+    await handleDeleteProviderConfig(
+      options,
+      state,
+      decodeURIComponent(providerDeleteMatch[1] ?? ''),
+      response,
+    );
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/provider-config/models') {
+    await handleListProviderModels(request, response);
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/workspace') {
     await handleGetActiveWorkspace(options, state, response);
     return;
@@ -221,6 +262,11 @@ async function routeRequest(
 
   if (request.method === 'GET' && url.pathname === '/api/workspace/status') {
     await handleWorkspaceStatus(options, state, response);
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/workspace/onboarding') {
+    await handleSaveWorkspaceOnboarding(options, state, request, response);
     return;
   }
 
@@ -341,6 +387,61 @@ async function handleImportWorkspace(
   writeJson(response, 200, { workspace: workspaces.find((item) => item.path === validation.path) });
 }
 
+async function handleCreateWorkspace(
+  options: NovelBackendOptions,
+  state: BackendState,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  await ensureProviderConfigLoaded(options, state);
+  const body = await readJsonBody(request);
+  const requestedPath = getOptionalString(body, 'path');
+
+  if (!requestedPath) {
+    writeJson(response, 400, { error: 'Workspace path is required.' });
+    return;
+  }
+
+  const targetPath = resolve(requestedPath);
+
+  if (isInternalWorkspacePath(targetPath)) {
+    writeJson(response, 400, { error: 'Cannot create a workspace inside an internal runtime directory.' });
+    return;
+  }
+
+  try {
+    await mkdir(targetPath, { recursive: true });
+    await initWorkspace(targetPath);
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  const validation = await validateOanWorkspace(targetPath);
+  if (!validation.ok) {
+    writeJson(response, 400, { error: validation.reason ?? 'Failed to create an OAN workspace.' });
+    return;
+  }
+
+  state.activeWorkspaceRoot = validation.path;
+  const now = new Date().toISOString();
+  const workspaces = await upsertLauncherWorkspace(options, {
+    name: validation.name,
+    path: validation.path,
+    novelName: validation.novelName,
+    addedAt: now,
+    lastOpenedAt: now,
+  });
+
+  writeJson(response, 200, {
+    workspace: workspaces.find((item) => item.path === validation.path),
+    providerConfigured: state.providerConfigState.providers.length > 0,
+    onboarding: { show: true },
+  });
+}
+
 async function handleOpenWorkspace(
   options: NovelBackendOptions,
   state: BackendState,
@@ -453,7 +554,7 @@ async function handleSaveProviderConfig(
   const kind = getOptionalString(body, 'kind') as LlmProviderKind | undefined;
   const model = getOptionalString(body, 'model')?.trim();
 
-  if (!kind || !['openai', 'openai-compatible', 'deepseek', 'custom'].includes(kind)) {
+  if (!kind || !isSupportedProviderKind(kind)) {
     writeJson(response, 400, { error: 'Provider kind is invalid.' });
     return;
   }
@@ -463,19 +564,133 @@ async function handleSaveProviderConfig(
     return;
   }
 
+  const existingProvider = state.providerConfigState.providers.find((provider) => provider.id === id);
+  const apiKey = getOptionalString(body, 'apiKey')?.trim() || existingProvider?.apiKey;
+
   const provider: LlmProviderConfig = {
     id,
     kind,
     model,
     displayName: getOptionalString(body, 'displayName')?.trim() || id,
-    baseUrl: getOptionalString(body, 'baseUrl')?.trim() || undefined,
-    apiKeyEnv: getOptionalString(body, 'apiKeyEnv')?.trim() || undefined,
-    default: true,
+    baseUrl: getOptionalString(body, 'baseUrl')?.trim() || providerDefaultBaseUrl(kind),
+    apiKey,
+    apiKeyEnv: existingProvider?.apiKeyEnv,
+    default: body.default === true || state.providerConfigState.providers.length === 0,
   };
 
   state.providerConfigState = upsertLlmProviderConfig(state.providerConfigState, provider);
   await saveProviderConfigState(options, state.providerConfigState);
   await handleGetProviderConfig(options, state, response);
+}
+
+async function handleSetDefaultProviderConfig(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  response: ServerResponse,
+): Promise<void> {
+  await ensureProviderConfigLoaded(options, state);
+
+  try {
+    state.providerConfigState = setDefaultLlmProviderConfig(state.providerConfigState, id);
+    await saveProviderConfigState(options, state.providerConfigState);
+    await handleGetProviderConfig(options, state, response);
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleDeleteProviderConfig(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  response: ServerResponse,
+): Promise<void> {
+  await ensureProviderConfigLoaded(options, state);
+  state.providerConfigState = removeLlmProviderConfig(state.providerConfigState, id);
+  await saveProviderConfigState(options, state.providerConfigState);
+  await handleGetProviderConfig(options, state, response);
+}
+
+async function handleListProviderModels(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJsonBody(request);
+  const baseUrl = normalizeProviderBaseUrl(getOptionalString(body, 'baseUrl'));
+  const apiKey = getOptionalString(body, 'apiKey')?.trim();
+
+  if (!baseUrl) {
+    writeJson(response, 400, { error: 'Base URL is required.' });
+    return;
+  }
+
+  try {
+    const modelsUrl = new URL('models', ensureTrailingSlash(baseUrl)).toString();
+    const modelsResponse = await fetch(modelsUrl, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    });
+    const data = await modelsResponse.json() as unknown;
+
+    if (!modelsResponse.ok) {
+      writeJson(response, modelsResponse.status, {
+        error: readProviderErrorMessage(data) ?? 'Failed to fetch model list.',
+      });
+      return;
+    }
+
+    writeJson(response, 200, { models: extractOpenAiCompatibleModels(data) });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleCheckProviderConfig(
+  options: NovelBackendOptions,
+  state: BackendState,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  await ensureProviderConfigLoaded(options, state);
+  const body = await readJsonBody(request);
+  const providerId = getOptionalString(body, 'providerId')?.trim();
+  const savedProvider = providerId
+    ? state.providerConfigState.providers.find((provider) => provider.id === providerId)
+    : undefined;
+  const kind = (getOptionalString(body, 'kind') ?? savedProvider?.kind) as LlmProviderKind | undefined;
+  const model = getOptionalString(body, 'model')?.trim() || savedProvider?.model;
+
+  if (!kind || !isSupportedProviderKind(kind)) {
+    writeJson(response, 400, { error: 'Provider kind is invalid.' });
+    return;
+  }
+
+  if (!model) {
+    writeJson(response, 400, { error: 'Model is required.' });
+    return;
+  }
+
+  const baseUrl = normalizeProviderBaseUrl(
+    getOptionalString(body, 'baseUrl') ?? savedProvider?.baseUrl ?? providerDefaultBaseUrl(kind),
+  );
+  const apiKey = getOptionalString(body, 'apiKey')?.trim() || savedProvider?.apiKey;
+
+  if (!baseUrl) {
+    writeJson(response, 400, { error: 'Base URL is required.' });
+    return;
+  }
+
+  if (!apiKey) {
+    writeJson(response, 400, { error: 'API key is required.' });
+    return;
+  }
+
+  const result = await checkOpenAiCompatibleProvider({ baseUrl, apiKey, model });
+  writeJson(response, 200, result);
 }
 
 async function handleGetActiveWorkspace(
@@ -557,6 +772,41 @@ async function handleWorkspaceStatus(
   writeJson(response, 200, {
     pendingActionCount: pendingActions.length,
     git: gitStatus,
+  });
+}
+
+async function handleSaveWorkspaceOnboarding(
+  options: NovelBackendOptions,
+  state: BackendState,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(request);
+  const config = await saveWorkspaceOnboarding(workspaceRoot, {
+    novelName: getOptionalString(body, 'novelName'),
+    inspiration: getOptionalString(body, 'inspiration'),
+    characterSeed: getOptionalString(body, 'characterSeed'),
+    startGoal: getOptionalString(body, 'startGoal'),
+    skipped: body.skipped === true,
+  });
+  const validation = await validateOanWorkspace(workspaceRoot);
+
+  if (!validation.ok) {
+    writeJson(response, 400, { error: validation.reason ?? 'Workspace config became invalid.' });
+    return;
+  }
+
+  const workspaces = await upsertLauncherWorkspace(options, {
+    name: validation.name,
+    path: validation.path,
+    novelName: validation.novelName,
+    lastOpenedAt: new Date().toISOString(),
+  });
+
+  writeJson(response, 200, {
+    config,
+    workspace: workspaces.find((item) => item.path === validation.path),
   });
 }
 
@@ -875,6 +1125,187 @@ async function saveProviderConfigState(
 
 function providerConfigFilePath(options: NovelBackendOptions): string {
   return join(resolveGlobalConfigDir(options), 'llm-providers.json');
+}
+
+function isSupportedProviderKind(value: string): value is LlmProviderKind {
+  return [
+    'openai',
+    'openai-compatible',
+    'deepseek',
+    'opencode-go',
+    'xiaomi-mimo',
+    'custom',
+  ].includes(value);
+}
+
+function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
+  const presets: Partial<Record<LlmProviderKind, string>> = {
+    openai: 'https://api.openai.com/v1',
+    deepseek: 'https://api.deepseek.com',
+    'opencode-go': 'https://api.opencodego.com/v1',
+    'xiaomi-mimo': 'https://api.mimo.mi.com/v1',
+  };
+
+  return presets[kind];
+}
+
+function normalizeProviderBaseUrl(value?: string): string | undefined {
+  const baseUrl = value?.trim();
+  return baseUrl ? baseUrl.replace(/\/+$/u, '') : undefined;
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value : `${value}/`;
+}
+
+function extractOpenAiCompatibleModels(data: unknown): Array<{ id: string }> {
+  if (!isRecord(data) || !Array.isArray(data.data)) {
+    return [];
+  }
+
+  return data.data
+    .map((item) => {
+      if (!isRecord(item) || typeof item.id !== 'string') {
+        return undefined;
+      }
+
+      return { id: item.id };
+    })
+    .filter((item): item is { id: string } => Boolean(item));
+}
+
+function readProviderErrorMessage(data: unknown): string | undefined {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+
+  if (typeof data.error === 'string') {
+    return data.error;
+  }
+
+  if (typeof data.message === 'string') {
+    return data.message;
+  }
+
+  if (isRecord(data.error) && typeof data.error.message === 'string') {
+    return data.error.message;
+  }
+
+  return undefined;
+}
+
+async function checkOpenAiCompatibleProvider(input: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): Promise<{
+  ok: boolean;
+  model: string;
+  latencyMs: number;
+  status?: number;
+  message: string;
+}> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const chatUrl = new URL('chat/completions', ensureTrailingSlash(input.baseUrl)).toString();
+    const providerResponse = await fetch(chatUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a connectivity check. Reply with OK only.',
+          },
+          {
+            role: 'user',
+            content: 'Reply OK.',
+          },
+        ],
+        max_tokens: 4,
+        temperature: 0,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+    const data = await readProviderResponse(providerResponse);
+    const latencyMs = Date.now() - startedAt;
+
+    if (!providerResponse.ok) {
+      return {
+        ok: false,
+        model: input.model,
+        latencyMs,
+        status: providerResponse.status,
+        message: readProviderErrorMessage(data)
+          ?? `Model check failed with HTTP ${providerResponse.status}.`,
+      };
+    }
+
+    return {
+      ok: true,
+      model: input.model,
+      latencyMs,
+      status: providerResponse.status,
+      message: extractOpenAiCompatibleReplyText(data) ?? '模型检测通过。',
+    };
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === 'AbortError';
+
+    return {
+      ok: false,
+      model: input.model,
+      latencyMs: Date.now() - startedAt,
+      message: aborted
+        ? 'Model check timed out after 15s.'
+        : error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readProviderResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { message: text };
+  }
+}
+
+function extractOpenAiCompatibleReplyText(data: unknown): string | undefined {
+  if (!isRecord(data) || !Array.isArray(data.choices)) {
+    return undefined;
+  }
+
+  for (const choice of data.choices) {
+    if (!isRecord(choice)) {
+      continue;
+    }
+
+    if (isRecord(choice.message) && typeof choice.message.content === 'string') {
+      return choice.message.content.trim() || undefined;
+    }
+
+    if (typeof choice.text === 'string') {
+      return choice.text.trim() || undefined;
+    }
+  }
+
+  return undefined;
 }
 
 async function validateOanWorkspace(path: string): Promise<WorkspaceValidationResult> {

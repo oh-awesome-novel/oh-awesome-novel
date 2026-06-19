@@ -20,12 +20,21 @@ const form = reactive<ProviderConfigInput>({
   id: 'default',
   kind: 'deepseek',
   displayName: 'DeepSeek',
-  baseUrl: '',
+  baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
-  apiKeyEnv: 'DEEPSEEK_API_KEY',
+  apiKey: '',
+  default: true,
 });
 
-const canSave = computed(() => Boolean(form.kind && form.model.trim()));
+const canSave = computed(() => Boolean(form.kind && form.model.trim() && form.apiKey?.trim()));
+
+const providerOptions = [
+  { kind: 'deepseek', label: 'DeepSeek', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com' },
+  { kind: 'openai', label: 'OpenAI', model: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1' },
+  { kind: 'opencode-go', label: 'OpenCode Go', model: 'opencode-chat', baseUrl: 'https://api.opencodego.com/v1' },
+  { kind: 'xiaomi-mimo', label: 'Xiaomi MiMo', model: 'mimo-v2.5', baseUrl: 'https://api.mimo.mi.com/v1' },
+  { kind: 'custom', label: '自定义 OpenAI-compatible', model: '', baseUrl: '' },
+];
 
 function save() {
   if (!canSave.value) {
@@ -33,6 +42,18 @@ function save() {
   }
 
   emit('save', { ...form });
+}
+
+function applyProviderPreset() {
+  const preset = providerOptions.find((option) => option.kind === form.kind);
+
+  if (!preset) {
+    return;
+  }
+
+  form.displayName = preset.label;
+  form.baseUrl = preset.baseUrl;
+  form.model = preset.model;
 }
 </script>
 
@@ -56,11 +77,14 @@ function save() {
       <div class="form-grid">
         <label class="field">
           <span>Provider 类型</span>
-          <select v-model="form.kind" class="text-input">
-            <option value="deepseek">DeepSeek</option>
-            <option value="openai">OpenAI</option>
-            <option value="openai-compatible">OpenAI-compatible</option>
-            <option value="custom">Custom</option>
+          <select v-model="form.kind" class="text-input" @change="applyProviderPreset">
+            <option
+              v-for="option in providerOptions"
+              :key="option.kind"
+              :value="option.kind"
+            >
+              {{ option.label }}
+            </option>
           </select>
         </label>
         <label class="field">
@@ -71,13 +95,13 @@ function save() {
           <span>Model</span>
           <input v-model="form.model" class="text-input" type="text">
         </label>
-        <label class="field">
+        <label v-if="form.kind === 'custom'" class="field">
           <span>Base URL</span>
-          <input v-model="form.baseUrl" class="text-input" type="url" placeholder="可留空">
+          <input v-model="form.baseUrl" class="text-input" type="url" placeholder="https://example.com/v1">
         </label>
         <label class="field field-wide">
-          <span>API key 环境变量名</span>
-          <input v-model="form.apiKeyEnv" class="text-input" type="text" placeholder="例如 DEEPSEEK_API_KEY">
+          <span>API Key</span>
+          <input v-model="form.apiKey" class="text-input" type="password" placeholder="直接填写 API key">
         </label>
       </div>
 

@@ -16,6 +16,7 @@
 ## 文档目录
 
 - [PROJECT_VISION.md](PROJECT_VISION.md): 项目愿景、边界和非目标。
+- [PRODUCT_OVERVIEW.md](PRODUCT_OVERVIEW.md): 当前项目作为产品的完整形态和功能概览。
 - [REQUIREMENTS.md](REQUIREMENTS.md): 产品需求、功能需求和约束。
 - [ARCHITECTURE.md](ARCHITECTURE.md): 最终架构蓝图。
 - [FILESYSTEM_SPEC.md](FILESYSTEM_SPEC.md): 小说项目目录、对象文件树和文件格式。

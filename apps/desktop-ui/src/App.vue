@@ -16,6 +16,7 @@ const { theme, toggleTheme } = useThemePreference();
 const workspaces = shallowRef<WorkspaceSummary[]>([]);
 const activeWorkspace = shallowRef<WorkspaceSummary>();
 const pendingWorkspace = shallowRef<WorkspaceSummary>();
+const startWorkspaceGuide = shallowRef(false);
 const providerConfigured = shallowRef(false);
 const loading = shallowRef(false);
 const savingProvider = shallowRef(false);
@@ -88,6 +89,38 @@ async function importWorkspaceFromFolderPicker() {
   }
 }
 
+async function createWorkspace(path: string) {
+  loading.value = true;
+  error.value = '';
+
+  try {
+    const result = await api.createWorkspace(path);
+    activeWorkspace.value = result.workspace;
+    providerConfigured.value = result.providerConfigured;
+    pendingWorkspace.value = undefined;
+    startWorkspaceGuide.value = result.onboarding.show;
+    await refreshWorkspaces();
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : String(caught);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function createWorkspaceFromFolderPicker() {
+  const selectDirectory = window.ohAwesomeNovel?.workspace?.selectDirectory;
+
+  if (!selectDirectory) {
+    return;
+  }
+
+  const path = await selectDirectory();
+
+  if (path) {
+    await createWorkspace(path);
+  }
+}
+
 async function openWorkspace(workspace: WorkspaceSummary) {
   loading.value = true;
   error.value = '';
@@ -96,6 +129,7 @@ async function openWorkspace(workspace: WorkspaceSummary) {
     const result = await api.openWorkspace(workspace.path);
     activeWorkspace.value = result.workspace;
     providerConfigured.value = result.providerConfigured;
+    startWorkspaceGuide.value = false;
 
     if (!result.providerConfigured) {
       pendingWorkspace.value = result.workspace;
@@ -131,6 +165,7 @@ async function removeWorkspace(workspace: WorkspaceSummary) {
     workspaces.value = result.workspaces;
     if (activeWorkspace.value?.path === workspace.path) {
       activeWorkspace.value = undefined;
+      startWorkspaceGuide.value = false;
     }
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
@@ -171,11 +206,21 @@ function cancelProviderGate() {
 function leaveWorkspace() {
   activeWorkspace.value = undefined;
   pendingWorkspace.value = undefined;
+  startWorkspaceGuide.value = false;
   void refreshWorkspaces();
 }
 
 function openProviderSettings() {
   pendingWorkspace.value = activeWorkspace.value;
+}
+
+function updateActiveWorkspace(workspace: WorkspaceSummary) {
+  activeWorkspace.value = workspace;
+  void refreshWorkspaces();
+}
+
+function updateProviderConfigured(configured: boolean) {
+  providerConfigured.value = configured;
 }
 </script>
 
@@ -185,9 +230,11 @@ function openProviderSettings() {
     :workspace="activeWorkspace"
     :provider-configured="providerConfigured"
     :theme="theme"
+    :start-guide="startWorkspaceGuide"
     @leave-workspace="leaveWorkspace"
     @configure-provider="openProviderSettings"
     @toggle-theme="toggleTheme"
+    @workspace-updated="updateActiveWorkspace"
   />
   <WorkspaceLauncher
     v-else
@@ -197,6 +244,8 @@ function openProviderSettings() {
     :theme="theme"
     :app-version="appVersion"
     :desktop-folder-picker-available="desktopFolderPickerAvailable"
+    @create="createWorkspace"
+    @browse-create="createWorkspaceFromFolderPicker"
     @import="importWorkspace"
     @browse-import="importWorkspaceFromFolderPicker"
     @open="openWorkspace"
@@ -204,6 +253,7 @@ function openProviderSettings() {
     @rename="renameWorkspace"
     @refresh="refreshWorkspaces"
     @toggle-theme="toggleTheme"
+    @provider-configured="updateProviderConfigured"
   />
   <ProviderGateModal
     :open="providerGateOpen"

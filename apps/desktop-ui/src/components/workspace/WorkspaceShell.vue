@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef } from 'vue';
+import { computed, onMounted, shallowRef, watch } from 'vue';
 
 import ChapterNavigationView from './ChapterNavigationView.vue';
 import CopilotPanel from './CopilotPanel.vue';
 import FileTreePanel from './FileTreePanel.vue';
 import FileViewer from './FileViewer.vue';
 import WorkspaceHome from './WorkspaceHome.vue';
+import WorkspaceOnboardingGuide from './WorkspaceOnboardingGuide.vue';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type {
   ChapterIndex,
   ChapterIndexChapter,
   ChapterIndexStatus,
   FileTreeNode,
+  WorkspaceOnboardingInput,
   WorkspaceStatus,
   WorkspaceSummary,
 } from '../../composables/useWorkspaceApi';
@@ -20,13 +22,19 @@ const props = defineProps<{
   workspace: WorkspaceSummary;
   providerConfigured: boolean;
   theme: 'light' | 'dark';
+  startGuide: boolean;
 }>();
 
 const emit = defineEmits<{
   leaveWorkspace: [];
   configureProvider: [];
   toggleTheme: [];
+  workspaceUpdated: [workspace: WorkspaceSummary];
 }>();
+
+interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
+  prompt: string;
+}
 
 const api = useWorkspaceApi();
 const leftVisible = shallowRef(true);
@@ -46,6 +54,9 @@ const chaptersLoading = shallowRef(false);
 const chaptersError = shallowRef('');
 const workspaceStatus = shallowRef<WorkspaceStatus>();
 const queuedPrompt = shallowRef('');
+const guideVisible = shallowRef(props.startGuide);
+const guideSaving = shallowRef(false);
+const guideError = shallowRef('');
 
 const shellClass = computed(() => ({
   'workspace-shell-left-hidden': !leftVisible.value,
@@ -68,6 +79,15 @@ onMounted(() => {
   void loadChapters();
   void loadWorkspaceStatus();
 });
+
+watch(
+  () => props.startGuide,
+  (shouldStartGuide) => {
+    if (shouldStartGuide) {
+      guideVisible.value = true;
+    }
+  },
+);
 
 async function loadTree() {
   treeLoading.value = true;
@@ -162,6 +182,48 @@ function openCopilot(prompt?: string) {
 
 function openPendingActions() {
   void loadWorkspaceStatus();
+}
+
+async function skipOnboarding() {
+  guideSaving.value = true;
+  guideError.value = '';
+
+  try {
+    const result = await api.saveWorkspaceOnboarding({ skipped: true });
+    emit('workspaceUpdated', result.workspace);
+    guideVisible.value = false;
+    await loadWorkspaceStatus();
+  } catch (error) {
+    guideError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    guideSaving.value = false;
+  }
+}
+
+async function completeOnboarding(payload: OnboardingFinishPayload) {
+  guideSaving.value = true;
+  guideError.value = '';
+
+  try {
+    const { prompt, ...input } = payload;
+    const result = await api.saveWorkspaceOnboarding(input);
+    emit('workspaceUpdated', result.workspace);
+    guideVisible.value = false;
+    openCopilot(prompt);
+
+    if (!props.providerConfigured) {
+      emit('configureProvider');
+    }
+
+    await Promise.all([
+      loadWorkspaceStatus(),
+      loadTree(),
+    ]);
+  } catch (error) {
+    guideError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    guideSaving.value = false;
+  }
 }
 
 function clearQueuedPrompt() {
@@ -266,7 +328,18 @@ async function refreshAfterPendingAction() {
     </aside>
 
     <section class="workspace-center" aria-label="Agent Copilot workspace">
+      <WorkspaceOnboardingGuide
+        v-if="guideVisible"
+        :workspace="workspace"
+        :provider-configured="providerConfigured"
+        :saving="guideSaving"
+        :error="guideError"
+        @skip="skipOnboarding"
+        @finish="completeOnboarding"
+        @configure-provider="emit('configureProvider')"
+      />
       <CopilotPanel
+        v-else
         :provider-configured="providerConfigured"
         :queued-prompt="queuedPrompt"
         @prompt-consumed="clearQueuedPrompt"

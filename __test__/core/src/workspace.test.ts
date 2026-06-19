@@ -8,6 +8,8 @@ import {
   resolveGlobalOanConfigDir,
   loadWorkspaceList,
   saveWorkspaceList,
+  loadWorkspaceConfig,
+  saveWorkspaceOnboarding,
   formatVolumeDirectoryName,
   formatChapterFileName,
   resolveChapterFilePath,
@@ -147,6 +149,37 @@ describe('initWorkspace', () => {
     } finally {
       await rm(globalConfigDir, { recursive: true, force: true });
     }
+  });
+
+  it('saves onboarding answers into workspace config', async () => {
+    await initWorkspace(tempDir);
+
+    const config = await saveWorkspaceOnboarding(tempDir, {
+      novelName: '雾港来信',
+      inspiration: '一封迟到十年的信改变了港口城市的命运。',
+      characterSeed: '生成女主、旧友、港口调查员三张角色卡。',
+      startGoal: 'characters',
+    });
+
+    expect(config.novelName).toBe('雾港来信');
+    expect(config.onboarding).toMatchObject({
+      completed: true,
+      skipped: false,
+      novelName: '雾港来信',
+      inspiration: '一封迟到十年的信改变了港口城市的命运。',
+      characterSeed: '生成女主、旧友、港口调查员三张角色卡。',
+      startGoal: 'characters',
+    });
+
+    await expect(loadWorkspaceConfig(tempDir))
+      .resolves
+      .toMatchObject({
+        novelName: '雾港来信',
+        onboarding: expect.objectContaining({
+          completed: true,
+          skipped: false,
+        }),
+      });
   });
 });
 

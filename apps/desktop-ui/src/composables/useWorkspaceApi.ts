@@ -26,7 +26,9 @@ export interface ProviderConfigState {
     model: string;
     displayName?: string;
     baseUrl?: string;
+    hasApiKey?: boolean;
     apiKeyEnv?: string;
+    default?: boolean;
   }>;
 }
 
@@ -36,7 +38,29 @@ export interface ProviderConfigInput {
   displayName?: string;
   baseUrl?: string;
   model: string;
+  apiKey?: string;
+  default?: boolean;
   apiKeyEnv?: string;
+}
+
+export interface ProviderCheckInput {
+  providerId?: string;
+  kind?: string;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}
+
+export interface ProviderCheckResult {
+  ok: boolean;
+  model: string;
+  latencyMs: number;
+  status?: number;
+  message: string;
+}
+
+export interface ProviderModelSummary {
+  id: string;
 }
 
 export interface ChapterIndex {
@@ -72,6 +96,14 @@ export interface WorkspaceStatus {
     status: 'clean' | 'dirty' | 'unknown';
     dirty: boolean | null;
   };
+}
+
+export interface WorkspaceOnboardingInput {
+  novelName?: string;
+  inspiration?: string;
+  characterSeed?: string;
+  startGoal?: string;
+  skipped?: boolean;
 }
 
 export interface PendingAction {
@@ -117,6 +149,15 @@ export function useWorkspaceApi() {
         method: 'POST',
         body: { path },
       }),
+    createWorkspace: (path: string) =>
+      requestJson<{
+        workspace: WorkspaceSummary;
+        providerConfigured: boolean;
+        onboarding: { show: boolean };
+      }>(backendBaseUrl, '/api/workspaces/create', {
+        method: 'POST',
+        body: { path },
+      }),
     openWorkspace: (path: string) =>
       requestJson<{ workspace: WorkspaceSummary; providerConfigured: boolean }>(
         backendBaseUrl,
@@ -143,6 +184,32 @@ export function useWorkspaceApi() {
         method: 'POST',
         body: provider,
       }),
+    setDefaultProviderConfig: (id: string) =>
+      requestJson<ProviderConfigState>(
+        backendBaseUrl,
+        `/api/provider-config/${encodeURIComponent(id)}/default`,
+        { method: 'POST' },
+      ),
+    deleteProviderConfig: (id: string) =>
+      requestJson<ProviderConfigState>(
+        backendBaseUrl,
+        `/api/provider-config/${encodeURIComponent(id)}`,
+        { method: 'DELETE' },
+      ),
+    listProviderModels: (input: { baseUrl: string; apiKey?: string }) =>
+      requestJson<{ models: ProviderModelSummary[] }>(
+        backendBaseUrl,
+        '/api/provider-config/models',
+        {
+          method: 'POST',
+          body: input,
+        },
+      ),
+    checkProviderConfig: (input: ProviderCheckInput) =>
+      requestJson<ProviderCheckResult>(backendBaseUrl, '/api/provider-config/check', {
+        method: 'POST',
+        body: input,
+      }),
     getWorkspaceTree: () =>
       requestJson<{ tree: FileTreeNode[] }>(backendBaseUrl, '/api/workspace/tree'),
     getWorkspaceFile: (path: string) =>
@@ -152,6 +219,15 @@ export function useWorkspaceApi() {
       ),
     getWorkspaceStatus: () =>
       requestJson<WorkspaceStatus>(backendBaseUrl, '/api/workspace/status'),
+    saveWorkspaceOnboarding: (input: WorkspaceOnboardingInput) =>
+      requestJson<{ workspace: WorkspaceSummary; config: unknown }>(
+        backendBaseUrl,
+        '/api/workspace/onboarding',
+        {
+          method: 'POST',
+          body: input,
+        },
+      ),
     listPendingActions: () =>
       requestJson<{ pendingActions: PendingAction[] }>(
         backendBaseUrl,

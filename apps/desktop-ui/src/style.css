@@ -528,7 +528,55 @@
     @apply min-w-0 rounded-card border border-gray-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900;
   }
 
+  .about-guide {
+    @apply max-w-4xl;
+  }
+
+  .about-section-heading {
+    @apply border-b border-gray-200 pb-3 dark:border-neutral-800;
+  }
+
+  .guide-grid {
+    @apply mt-4 grid gap-2.5;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guide-step {
+    @apply grid gap-3 rounded-card border border-gray-200 bg-gray-100 p-3 text-slate-950 dark:border-neutral-700 dark:bg-neutral-800 dark:text-stone-100;
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .guide-step span {
+    @apply grid h-7 w-7 place-items-center rounded-md bg-white text-sm font-black text-cyan-800 dark:bg-neutral-950 dark:text-cyan-200;
+  }
+
+  .guide-step strong,
+  .guide-step p {
+    @apply block;
+  }
+
+  .guide-step strong {
+    @apply font-bold;
+  }
+
+  .guide-step p,
+  .guide-flow {
+    @apply mt-1 mb-0 leading-relaxed text-slate-500 dark:text-neutral-400;
+  }
+
+  .guide-flow {
+    @apply pl-5;
+  }
+
+  .guide-flow li {
+    @apply mt-2;
+  }
+
   .settings-main {
+    @apply min-w-0 overflow-auto px-10.5 py-8.5;
+  }
+
+  .model-main {
     @apply min-w-0 overflow-auto px-10.5 py-8.5;
   }
 
@@ -542,6 +590,113 @@
 
   .settings-section {
     @apply mt-6 max-w-3xl rounded-card border border-gray-200 bg-white p-5 dark:border-neutral-700 dark:bg-neutral-900;
+  }
+
+  .model-status-section {
+    @apply mt-5 grid max-w-4xl grid-cols-3 gap-2.5;
+  }
+
+  .model-workbench {
+    @apply grid max-w-6xl gap-4;
+    grid-template-columns: minmax(320px, .9fr) minmax(420px, 1.1fr);
+  }
+
+  .model-provider-list {
+    @apply max-w-none;
+  }
+
+  .model-config-section {
+    @apply max-w-none;
+  }
+
+  .model-form {
+    @apply mt-4 grid grid-cols-2 gap-3;
+  }
+
+  .model-provider-stack {
+    @apply mt-4 flex flex-col gap-2;
+  }
+
+  .model-provider-card {
+    @apply grid gap-3 rounded-card border border-gray-200 bg-gray-100 p-3 dark:border-neutral-700 dark:bg-neutral-800;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .model-provider-card-active {
+    @apply border-cyan-700/35 bg-cyan-50 dark:border-cyan-300/35 dark:bg-cyan-950/40;
+  }
+
+  .model-provider-card-main strong,
+  .model-provider-card-main span,
+  .model-provider-card-main small {
+    @apply block;
+  }
+
+  .model-provider-card-main span,
+  .model-provider-card-main small,
+  .model-fetch-row span {
+    @apply mt-1 text-sm text-slate-500 dark:text-neutral-400;
+  }
+
+  .model-provider-card-actions {
+    @apply flex flex-wrap items-center justify-end gap-1.5;
+  }
+
+  .model-preset-row {
+    @apply mt-4 flex flex-wrap gap-2;
+  }
+
+  .model-fetch-row {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .model-default-check {
+    @apply flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-neutral-300;
+  }
+
+  .model-default-check input {
+    @apply h-4 w-4 accent-cyan-700 dark:accent-cyan-300;
+  }
+
+  .model-check-panel {
+    @apply flex flex-wrap items-center justify-between gap-3 rounded-card border border-gray-200 bg-gray-100 p-3 dark:border-neutral-700 dark:bg-neutral-800;
+  }
+
+  .model-check-panel-ok {
+    @apply border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-950/30;
+  }
+
+  .model-check-panel-failed {
+    @apply border-rose-200 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-950/30;
+  }
+
+  .model-check-copy {
+    @apply min-w-0;
+  }
+
+  .model-check-copy strong,
+  .model-check-copy span {
+    @apply block;
+  }
+
+  .model-check-copy span {
+    @apply mt-1 text-sm leading-snug text-slate-500 dark:text-neutral-400;
+  }
+
+  .model-check-panel-ok .model-check-copy span {
+    @apply text-emerald-700 dark:text-emerald-300;
+  }
+
+  .model-check-panel-failed .model-check-copy span {
+    @apply text-rose-700 dark:text-rose-300;
+  }
+
+  .model-actions {
+    @apply flex items-center justify-end gap-2 pt-2;
+  }
+
+  .success-copy {
+    @apply mt-2 mb-0 leading-snug text-emerald-700 dark:text-emerald-300;
   }
 
   .settings-section-heading {
@@ -719,7 +874,8 @@
   }
 
   .home-pane,
-  .viewer-pane {
+  .viewer-pane,
+  .onboarding-guide {
     @apply min-h-[calc(100vh-86px)] rounded-card border border-gray-200 bg-white dark:border-neutral-700 dark:bg-neutral-900;
   }
 
@@ -759,6 +915,127 @@
 
   .quick-action span {
     @apply mt-1.5 leading-snug text-slate-500 dark:text-neutral-400;
+  }
+
+  .onboarding-guide {
+    @apply grid min-h-0 overflow-hidden;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .onboarding-header {
+    @apply flex items-start justify-between gap-4 border-b border-gray-200 p-4 dark:border-neutral-700;
+  }
+
+  .onboarding-title {
+    @apply m-0 text-[24px] leading-tight tracking-normal;
+  }
+
+  .onboarding-layout {
+    @apply grid min-h-0 gap-0 overflow-hidden;
+    grid-template-columns: minmax(168px, 0.36fr) minmax(0, 1fr);
+  }
+
+  .onboarding-steps {
+    @apply flex min-h-0 flex-col gap-1 overflow-auto border-r border-gray-200 bg-gray-100 p-3 dark:border-neutral-700 dark:bg-neutral-800;
+  }
+
+  .onboarding-step {
+    @apply grid gap-1 rounded-card border border-transparent bg-transparent p-2.5 text-left text-slate-500 hover:bg-white hover:text-slate-950 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-stone-100;
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .onboarding-step span {
+    @apply row-span-2 grid h-6 w-6 place-items-center rounded-md bg-white text-xs font-black text-slate-500 dark:bg-neutral-900 dark:text-neutral-400;
+  }
+
+  .onboarding-step strong,
+  .onboarding-step small {
+    @apply block min-w-0;
+  }
+
+  .onboarding-step strong {
+    @apply text-sm text-slate-950 dark:text-stone-100;
+  }
+
+  .onboarding-step small {
+    @apply text-xs leading-snug text-slate-500 dark:text-neutral-400;
+  }
+
+  .onboarding-step-active {
+    @apply border-cyan-700/25 bg-white text-slate-950 shadow-sm dark:border-cyan-300/25 dark:bg-neutral-900 dark:text-stone-100;
+  }
+
+  .onboarding-step-active span {
+    @apply bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-200;
+  }
+
+  .onboarding-card {
+    @apply grid min-h-0 gap-3 overflow-auto p-4;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+
+  .onboarding-section {
+    @apply grid content-start gap-3;
+  }
+
+  .onboarding-section-icon {
+    @apply text-cyan-700 dark:text-cyan-300;
+  }
+
+  .onboarding-section-title {
+    @apply m-0 text-xl leading-tight tracking-normal;
+  }
+
+  .onboarding-textarea {
+    @apply min-h-30 resize-y;
+  }
+
+  .onboarding-choice-grid {
+    @apply grid gap-2;
+  }
+
+  .onboarding-check,
+  .onboarding-goal {
+    @apply rounded-card border border-gray-200 bg-white text-slate-950 dark:border-neutral-700 dark:bg-neutral-950 dark:text-stone-100;
+  }
+
+  .onboarding-check {
+    @apply flex min-h-11 items-center gap-2.5 px-3 py-2 text-sm font-bold;
+  }
+
+  .onboarding-check input,
+  .onboarding-goal input {
+    @apply h-4 w-4 accent-cyan-700 dark:accent-cyan-300;
+  }
+
+  .onboarding-goals {
+    @apply grid grid-cols-2 gap-2.5;
+  }
+
+  .onboarding-goal {
+    @apply grid min-h-24 cursor-pointer gap-1 p-3;
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .onboarding-goal strong,
+  .onboarding-goal span {
+    @apply block;
+  }
+
+  .onboarding-goal strong {
+    @apply font-bold;
+  }
+
+  .onboarding-goal span {
+    @apply text-sm leading-snug text-slate-500 dark:text-neutral-400;
+  }
+
+  .onboarding-actions {
+    @apply flex items-center justify-end gap-2 border-t border-gray-200 pt-3 dark:border-neutral-700;
+  }
+
+  .onboarding-primary {
+    @apply min-w-38;
   }
 
   .viewer-pane {
@@ -823,24 +1100,32 @@
     @apply mt-4.5;
   }
 
-  .launcher-main {
+    .launcher-main {
     @apply p-5.5;
   }
 
-  .settings-main {
+  .settings-main,
+  .model-main {
     @apply p-5.5;
   }
 
-  .launcher-main-header,
-  .launcher-import-bar,
-  .project-row,
-  .about-card,
-  .about-grid,
-  .workspace-toolbar,
-  .home-status-grid,
-  .quick-action-grid,
-  .form-grid,
-  .checkpoint-shell {
+    .launcher-main-header,
+    .launcher-import-bar,
+    .project-row,
+    .about-card,
+    .about-grid,
+    .guide-grid,
+    .model-status-section,
+    .model-workbench,
+    .model-provider-card,
+    .model-form,
+    .workspace-toolbar,
+    .home-status-grid,
+    .quick-action-grid,
+    .onboarding-layout,
+    .onboarding-goals,
+    .form-grid,
+    .checkpoint-shell {
     grid-template-columns: 1fr;
   }
 
@@ -867,6 +1152,10 @@
   }
 
   .workspace-center {
+    @apply border-r-0 border-b;
+  }
+
+  .onboarding-steps {
     @apply border-r-0 border-b;
   }
 

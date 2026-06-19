@@ -2,6 +2,7 @@
 import { shallowRef, watch } from 'vue';
 import { RefreshCw, Search, Settings } from '@lucide/vue';
 
+import LauncherModelView from './LauncherModelView.vue';
 import LauncherSettingsView from './LauncherSettingsView.vue';
 import { useWorkspaceSearch } from '../../composables/useWorkspaceSearch';
 import type { WorkspaceSummary } from '../../composables/useWorkspaceApi';
@@ -17,6 +18,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  create: [path: string];
+  browseCreate: [];
   import: [path: string];
   browseImport: [];
   open: [workspace: WorkspaceSummary];
@@ -24,15 +27,18 @@ const emit = defineEmits<{
   rename: [workspace: WorkspaceSummary, name: string];
   refresh: [];
   toggleTheme: [];
+  providerConfigured: [configured: boolean];
 }>();
 
 const query = shallowRef('');
 const importPath = shallowRef('');
+const createPath = shallowRef('');
 const editingPath = shallowRef('');
 const editingName = shallowRef('');
 const selectedPath = shallowRef('');
 const pathDialogOpen = shallowRef(false);
-const activeSection = shallowRef<'workspaces' | 'about' | 'settings'>('workspaces');
+const createDialogOpen = shallowRef(false);
+const activeSection = shallowRef<'workspaces' | 'model' | 'about' | 'settings'>('workspaces');
 const searchableWorkspaces = shallowRef(props.workspaces);
 
 const { results } = useWorkspaceSearch(searchableWorkspaces, query);
@@ -70,6 +76,26 @@ function submitImport() {
   closePathDialog();
 }
 
+function submitCreate() {
+  const path = createPath.value.trim();
+
+  if (!path) {
+    return;
+  }
+
+  emit('create', path);
+  closeCreateDialog();
+}
+
+function requestNewWorkspaceFolder() {
+  if (props.desktopFolderPickerAvailable) {
+    emit('browseCreate');
+    return;
+  }
+
+  createDialogOpen.value = true;
+}
+
 function requestWorkspaceFolder() {
   if (props.desktopFolderPickerAvailable) {
     emit('browseImport');
@@ -82,6 +108,11 @@ function requestWorkspaceFolder() {
 function closePathDialog() {
   pathDialogOpen.value = false;
   importPath.value = '';
+}
+
+function closeCreateDialog() {
+  createDialogOpen.value = false;
+  createPath.value = '';
 }
 
 function startRename(workspace: WorkspaceSummary) {
@@ -151,6 +182,14 @@ function formatOpenedAt(value?: string) {
         </button>
         <button
           class="launcher-nav-item"
+          :class="{ 'launcher-nav-item-active': activeSection === 'model' }"
+          type="button"
+          @click="activeSection = 'model'"
+        >
+          <span>模型</span>
+        </button>
+        <button
+          class="launcher-nav-item"
           :class="{ 'launcher-nav-item-active': activeSection === 'about' }"
           type="button"
           @click="activeSection = 'about'"
@@ -195,7 +234,12 @@ function formatOpenedAt(value?: string) {
           >
             <RefreshCw :size="17" aria-hidden="true" />
           </button>
-          <button class="secondary-button launcher-action-button" type="button" disabled>
+          <button
+            class="secondary-button launcher-action-button"
+            type="button"
+            :disabled="loading"
+            @click="requestNewWorkspaceFolder"
+          >
             新建
           </button>
           <button
@@ -321,7 +365,45 @@ function formatOpenedAt(value?: string) {
           </form>
         </section>
       </div>
+
+      <div v-if="createDialogOpen" class="modal-backdrop" role="presentation">
+        <section class="web-path-modal" role="dialog" aria-modal="true" aria-label="新建工作区">
+          <div class="web-path-modal-header">
+            <div>
+              <p class="eyebrow">Web Preview</p>
+              <h2 class="panel-title">新建工作区</h2>
+            </div>
+            <button class="icon-button" type="button" aria-label="关闭" @click="closeCreateDialog">
+              ×
+            </button>
+          </div>
+
+          <p class="empty-copy">纯 Web 预览不能调用系统文件夹选择器，请输入一个空目录路径。</p>
+
+          <form class="web-path-form" @submit.prevent="submitCreate">
+            <input
+              v-model="createPath"
+              class="text-input"
+              type="text"
+              placeholder="例如 /Users/me/novels/new-story"
+            >
+            <div class="modal-actions">
+              <button class="secondary-button" type="button" :disabled="loading" @click="closeCreateDialog">
+                取消
+              </button>
+              <button class="primary-button" type="submit" :disabled="loading || !createPath.trim()">
+                创建
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
     </section>
+
+    <LauncherModelView
+      v-else-if="activeSection === 'model'"
+      @saved="emit('providerConfigured', $event)"
+    />
 
     <section v-else-if="activeSection === 'about'" class="launcher-main about-main" aria-label="About Oh Awesome Novel">
       <div class="about-card">
@@ -343,6 +425,56 @@ function formatOpenedAt(value?: string) {
           <p class="empty-copy">当前界面以 Electron 为主路径，Web 预览只作为开发 fallback。</p>
         </section>
       </div>
+
+      <section class="about-section about-guide">
+        <div class="about-section-heading">
+          <p class="eyebrow">Guide</p>
+          <h2 class="panel-title">使用说明</h2>
+        </div>
+        <div class="guide-grid">
+          <article class="guide-step">
+            <span>1</span>
+            <div>
+              <strong>创建或打开 workspace</strong>
+              <p>新建会初始化 OAN 文件树；打开会导入已有小说目录到最近项目列表。</p>
+            </div>
+          </article>
+          <article class="guide-step">
+            <span>2</span>
+            <div>
+              <strong>完成新建引导</strong>
+              <p>填写小说名、基础灵感和角色方向，也可以跳过，之后再从 Copilot 开始。</p>
+            </div>
+          </article>
+          <article class="guide-step">
+            <span>3</span>
+            <div>
+              <strong>配置 Provider</strong>
+              <p>配置模型后，中央 Copilot 可以读取项目文件并根据快捷指令推进写作。</p>
+            </div>
+          </article>
+          <article class="guide-step">
+            <span>4</span>
+            <div>
+              <strong>审批写入</strong>
+              <p>角色卡、章节草稿、摘要和状态更新都会先进入 PendingAction，确认后才写入真实文件。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="about-section about-guide">
+        <div class="about-section-heading">
+          <p class="eyebrow">Workflow</p>
+          <h2 class="panel-title">推荐写作流程</h2>
+        </div>
+        <ol class="guide-flow">
+          <li>先用 `/生成角色卡` 和 `/规划下一章` 固定人物关系、章节目标与冲突。</li>
+          <li>再用 `/写下一章` 生成章节草稿 PendingAction，在右侧查看文件或差异后决定接受。</li>
+          <li>每章结束后用 `/整理本章` 更新摘要、角色状态、timeline 和 foreshadow。</li>
+          <li>需要润色时使用 `/审稿` 或 `/去AI味`，仍然通过 PendingAction 审批落盘。</li>
+        </ol>
+      </section>
     </section>
 
     <LauncherSettingsView

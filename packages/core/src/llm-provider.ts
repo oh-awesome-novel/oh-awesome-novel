@@ -12,6 +12,8 @@ export type LlmProviderKind =
   | 'openai'
   | 'openai-compatible'
   | 'deepseek'
+  | 'opencode-go'
+  | 'xiaomi-mimo'
   | 'custom';
 
 export interface LlmProviderConfig {
@@ -20,6 +22,10 @@ export interface LlmProviderConfig {
   model: string;
   displayName?: string;
   baseUrl?: string;
+  /** Direct API key stored in the app-level config. Redacted before returning to UI. */
+  apiKey?: string;
+  /** True when a redacted provider has a stored direct API key. */
+  hasApiKey?: boolean;
   /** Environment variable name that holds the API key. */
   apiKeyEnv?: string;
   headers?: Record<string, string>;
@@ -131,15 +137,21 @@ function withDefaultFlags(
  * Returns a copy of the provider config with sensitive fields redacted.
  *
  * - `headers` values are replaced with `'[redacted]'`.
- * - `apiKeyEnv` is preserved (it is an env-var name, not a secret value).
+ * - `apiKey` is removed and represented as `hasApiKey`.
+ * - `apiKeyEnv` is preserved for backward compatibility with old configs.
  */
 export const redactLlmProviderConfig = (
   provider: LlmProviderConfig,
-): LlmProviderConfig => ({
-  ...provider,
-  headers: provider.headers
-    ? Object.fromEntries(
-        Object.keys(provider.headers).map((key) => [key, '[redacted]']),
-      )
-    : undefined,
-});
+): LlmProviderConfig => {
+  const { apiKey, ...redactedProvider } = provider;
+
+  return {
+    ...redactedProvider,
+    hasApiKey: Boolean(apiKey),
+    headers: provider.headers
+      ? Object.fromEntries(
+          Object.keys(provider.headers).map((key) => [key, '[redacted]']),
+        )
+      : undefined,
+  };
+};

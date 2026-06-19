@@ -10,6 +10,8 @@ export {
   resolveChapterFilePath,
   resolveVolumeMetadataFilePath,
   resolveNarrativeChapterFilePath,
+  loadWorkspaceConfig,
+  saveWorkspaceOnboarding,
 } from './workspace.js';
 
 export type {
@@ -17,6 +19,9 @@ export type {
   WorkspaceConfig,
   WorkspaceEntry,
   WorkspaceList,
+  WorkspaceConfigData,
+  WorkspaceOnboardingInput,
+  WorkspaceOnboardingState,
   ChapterPathParts,
 } from './workspace.js';
 

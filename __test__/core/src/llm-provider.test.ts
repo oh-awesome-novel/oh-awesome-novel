@@ -27,7 +27,7 @@ describe('upsertLlmProviderConfig', () => {
     kind: 'openai',
     model: 'gpt-4o',
     displayName: 'GPT-4o',
-    apiKeyEnv: 'OPENAI_API_KEY',
+    apiKey: 'openai-secret',
     default: true,
   };
 
@@ -35,7 +35,7 @@ describe('upsertLlmProviderConfig', () => {
     id: 'deepseek-chat',
     kind: 'deepseek',
     model: 'deepseek-chat',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    apiKey: 'deepseek-secret',
   };
 
   it('adds a provider to an empty state', () => {
@@ -112,13 +112,13 @@ describe('removeLlmProviderConfig', () => {
       id: 'openai-gpt4',
       kind: 'openai',
       model: 'gpt-4o',
-      apiKeyEnv: 'OPENAI_API_KEY',
+      apiKey: 'openai-secret',
     });
     const s2 = upsertLlmProviderConfig(s1, {
       id: 'deepseek-chat',
       kind: 'deepseek',
       model: 'deepseek-chat',
-      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      apiKey: 'deepseek-secret',
     });
 
     const s3 = removeLlmProviderConfig(s2, 'openai-gpt4');
@@ -247,11 +247,12 @@ describe('setDefaultLlmProviderConfig', () => {
 });
 
 describe('redactLlmProviderConfig', () => {
-  it('redacts header values', () => {
+  it('redacts header values and direct api keys', () => {
     const provider: LlmProviderConfig = {
       id: 'test',
       kind: 'openai-compatible',
       model: 'gpt-4o',
+      apiKey: 'secret-api-key',
       headers: {
         'X-API-Key': 'secret-value',
         Authorization: 'Bearer token123',
@@ -262,6 +263,8 @@ describe('redactLlmProviderConfig', () => {
     const redacted = redactLlmProviderConfig(provider);
     expect(redacted.headers?.['X-API-Key']).toBe('[redacted]');
     expect(redacted.headers?.['Authorization']).toBe('[redacted]');
+    expect(redacted.apiKey).toBeUndefined();
+    expect(redacted.hasApiKey).toBe(true);
     expect(redacted.apiKeyEnv).toBe('MY_API_KEY');
   });
 

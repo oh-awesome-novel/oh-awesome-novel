@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { parse, stringify } from 'yaml';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +30,31 @@ export interface WorkspaceEntry {
 
 export interface WorkspaceList {
   workspaces: WorkspaceEntry[];
+}
+
+export interface WorkspaceOnboardingInput {
+  novelName?: string;
+  inspiration?: string;
+  characterSeed?: string;
+  startGoal?: string;
+  skipped?: boolean;
+}
+
+export interface WorkspaceOnboardingState {
+  completed: boolean;
+  skipped: boolean;
+  novelName?: string;
+  inspiration?: string;
+  characterSeed?: string;
+  startGoal?: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceConfigData {
+  version: number;
+  novelName?: string;
+  onboarding?: WorkspaceOnboardingState;
+  [key: string]: unknown;
 }
 
 export interface ChapterPathParts {
@@ -154,6 +180,79 @@ function assertWorkspaceList(value: unknown, source: string): WorkspaceList {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace config
+// ---------------------------------------------------------------------------
+
+export async function loadWorkspaceConfig(rootDir: string): Promise<WorkspaceConfigData> {
+  const filePath = workspaceConfigPath(rootDir);
+
+  try {
+    const raw = await readFile(filePath, 'utf-8');
+    const parsed = parse(raw) as unknown;
+
+    if (!isRecord(parsed)) {
+      return { version: 1 };
+    }
+
+    return {
+      ...parsed,
+      version: typeof parsed.version === 'number' ? parsed.version : 1,
+    } as WorkspaceConfigData;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { version: 1 };
+    }
+
+    throw error;
+  }
+}
+
+export async function saveWorkspaceOnboarding(
+  rootDir: string,
+  input: WorkspaceOnboardingInput,
+): Promise<WorkspaceConfigData> {
+  const config = await loadWorkspaceConfig(rootDir);
+  const novelName = normalizeOptionalString(input.novelName);
+  const inspiration = normalizeOptionalString(input.inspiration);
+  const characterSeed = normalizeOptionalString(input.characterSeed);
+  const startGoal = normalizeOptionalString(input.startGoal);
+  const skipped = Boolean(input.skipped);
+
+  if (novelName) {
+    config.novelName = novelName;
+  }
+
+  config.onboarding = withoutUndefined({
+    completed: !skipped,
+    skipped,
+    novelName,
+    inspiration,
+    characterSeed,
+    startGoal,
+    updatedAt: new Date().toISOString(),
+  }) as WorkspaceOnboardingState;
+
+  await writeFile(workspaceConfigPath(rootDir), stringify(config), 'utf-8');
+
+  return config;
+}
+
+function workspaceConfigPath(rootDir: string): string {
+  return join(resolve(rootDir), '.oan', 'config.yaml');
+}
+
+function normalizeOptionalString(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function withoutUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
+  );
 }
 
 // ---------------------------------------------------------------------------

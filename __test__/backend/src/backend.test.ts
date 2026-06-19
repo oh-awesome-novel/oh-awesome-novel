@@ -1,6 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
@@ -134,6 +136,64 @@ describe('novel HTTP backend', () => {
       });
   });
 
+  it('creates a workspace and stores onboarding answers', async () => {
+    const targetRoot = await createTempWorkspace();
+    const globalConfigDir = await createTempWorkspace();
+    const backend = await startNovelHttpBackend({ globalConfigDir });
+    servers.push(backend);
+    const canonicalTargetRoot = await realpath(targetRoot);
+
+    const created = await fetchJson<{
+      workspace: { path: string; name: string };
+      providerConfigured: boolean;
+      onboarding: { show: boolean };
+    }>(`${backend.url}/api/workspaces/create`, {
+      method: 'POST',
+      body: JSON.stringify({ path: targetRoot }),
+    });
+
+    expect(created).toMatchObject({
+      workspace: {
+        path: canonicalTargetRoot,
+      },
+      providerConfigured: false,
+      onboarding: { show: true },
+    });
+    await expect(readFile(join(targetRoot, '.oan/config.yaml'), 'utf-8'))
+      .resolves
+      .toContain('version: 1');
+
+    const saved = await fetchJson<{
+      workspace: { name: string; novelName: string };
+      config: { novelName: string; onboarding: { completed: boolean; skipped: boolean } };
+    }>(`${backend.url}/api/workspace/onboarding`, {
+      method: 'POST',
+      body: JSON.stringify({
+        novelName: '雾港来信',
+        inspiration: '一封迟到十年的信。',
+        characterSeed: '先生成女主和调查员。',
+        startGoal: 'characters',
+      }),
+    });
+
+    expect(saved).toMatchObject({
+      workspace: {
+        name: '雾港来信',
+        novelName: '雾港来信',
+      },
+      config: {
+        novelName: '雾港来信',
+        onboarding: {
+          completed: true,
+          skipped: false,
+        },
+      },
+    });
+    await expect(readFile(join(targetRoot, '.oan/config.yaml'), 'utf-8'))
+      .resolves
+      .toContain('novelName: 雾港来信');
+  });
+
   it('lists and accepts persisted PendingActions through workspace approval endpoints', async () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startNovelHttpBackend({ workspaceRoot });
@@ -173,7 +233,7 @@ describe('novel HTTP backend', () => {
     ).resolves.toContain('新摘要');
   });
 
-  it('stores provider config outside the novel workspace runtime', async () => {
+  it('stores multiple provider configs outside the novel workspace runtime', async () => {
     const workspaceRoot = await createTempWorkspace();
     const globalConfigDir = await createTempWorkspace();
     const backend = await startNovelHttpBackend({ workspaceRoot, globalConfigDir });
@@ -183,13 +243,37 @@ describe('novel HTTP backend', () => {
       .resolves
       .toMatchObject({ configured: false, providers: [] });
 
-    await expect(fetchJson(`${backend.url}/api/provider-config`, {
+    const firstProviderSave = await fetchJson<{
+      providers: Array<{ id: string; hasApiKey?: boolean; apiKey?: string }>;
+    }>(`${backend.url}/api/provider-config`, {
       method: 'POST',
       body: JSON.stringify({
         id: 'default',
         kind: 'deepseek',
         model: 'deepseek-chat',
-        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        apiKey: 'deepseek-secret',
+        default: true,
+      }),
+    });
+    expect(firstProviderSave).toMatchObject({
+      configured: true,
+      defaultProviderId: 'default',
+      providers: [
+        expect.objectContaining({
+          id: 'default',
+          hasApiKey: true,
+        }),
+      ],
+    });
+    expect(firstProviderSave.providers[0]).not.toHaveProperty('apiKey');
+
+    await expect(fetchJson(`${backend.url}/api/provider-config`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'openai',
+        kind: 'openai',
+        model: 'gpt-4.1-mini',
+        apiKey: 'openai-secret',
       }),
     }))
       .resolves
@@ -197,10 +281,20 @@ describe('novel HTTP backend', () => {
         configured: true,
         defaultProviderId: 'default',
         providers: [
-          expect.objectContaining({
-            id: 'default',
-            apiKeyEnv: 'DEEPSEEK_API_KEY',
-          }),
+          expect.objectContaining({ id: 'default', default: true }),
+          expect.objectContaining({ id: 'openai', default: false, hasApiKey: true }),
+        ],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/openai/default`, {
+      method: 'POST',
+    }))
+      .resolves
+      .toMatchObject({
+        defaultProviderId: 'openai',
+        providers: [
+          expect.objectContaining({ id: 'default', default: false }),
+          expect.objectContaining({ id: 'openai', default: true }),
         ],
       });
 
@@ -214,13 +308,91 @@ describe('novel HTTP backend', () => {
       .resolves
       .toMatchObject({
         configured: true,
-        defaultProviderId: 'default',
+        defaultProviderId: 'openai',
         providers: [
           expect.objectContaining({
             id: 'default',
-            apiKeyEnv: 'DEEPSEEK_API_KEY',
+            hasApiKey: true,
+          }),
+          expect.objectContaining({
+            id: 'openai',
+            hasApiKey: true,
           }),
         ],
+      });
+  });
+
+  it('fetches OpenAI-compatible model lists through the backend', async () => {
+    const modelServer = await startModelListServer();
+    servers.push(modelServer);
+    const backend = await startNovelHttpBackend({ workspaceRoot: await createTempWorkspace() });
+    servers.push(backend);
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/models`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseUrl: `${modelServer.url}/v1`,
+        apiKey: 'custom-secret',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        models: [
+          { id: 'custom-large' },
+          { id: 'custom-small' },
+        ],
+      });
+  });
+
+  it('checks OpenAI-compatible models through the backend', async () => {
+    const modelServer = await startModelListServer();
+    servers.push(modelServer);
+    const backend = await startNovelHttpBackend({ workspaceRoot: await createTempWorkspace() });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/provider-config`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'custom',
+        kind: 'custom',
+        baseUrl: `${modelServer.url}/v1`,
+        model: 'custom-large',
+        apiKey: 'custom-secret',
+        default: true,
+      }),
+    });
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/check`, {
+      method: 'POST',
+      body: JSON.stringify({
+        providerId: 'custom',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        ok: true,
+        model: 'custom-large',
+        status: 200,
+        message: 'OK',
+        latencyMs: expect.any(Number),
+      });
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/check`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'custom',
+        baseUrl: `${modelServer.url}/v1`,
+        model: 'custom-small',
+        apiKey: 'wrong-secret',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        ok: false,
+        model: 'custom-small',
+        status: 401,
+        message: 'unauthorized',
+        latencyMs: expect.any(Number),
       });
   });
 });
@@ -253,6 +425,98 @@ async function createOanWorkspace(): Promise<string> {
   await writeFile(join(root, 'summaries/chapter/0001/0001.md'), '# 第一章\n\n旧摘要。\n', 'utf-8');
 
   return root;
+}
+
+async function startModelListServer(): Promise<{ url: string; close(): Promise<void> }> {
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.headers.authorization !== 'Bearer custom-secret') {
+        response.writeHead(401, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'unauthorized' } }));
+        return;
+      }
+
+      if (request.url === '/v1/models') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          data: [
+            { id: 'custom-large', object: 'model' },
+            { id: 'custom-small', object: 'model' },
+          ],
+        }));
+        return;
+      }
+
+      if (request.url === '/v1/chat/completions') {
+        const body = await readMockJsonBody(request);
+        if (body.model !== 'custom-large' && body.model !== 'custom-small') {
+          response.writeHead(404, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ error: { message: 'model not found' } }));
+          return;
+        }
+
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'OK',
+              },
+            },
+          ],
+        }));
+        return;
+      }
+
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'not found' } }));
+    })().catch((error: unknown) => {
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    });
+  });
+
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+
+  if (!address || typeof address === 'string') {
+    throw new Error('Model list server did not expose a TCP address.');
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
+  };
+}
+
+async function readMockJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (!chunks.length) {
+    return {};
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
 }
 
 async function fetchJson<T = unknown>(

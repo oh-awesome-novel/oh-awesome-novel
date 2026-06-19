@@ -11,6 +11,9 @@
     "dist",
     "src"
   ],
+  "dependencies": {
+    "yaml": "^2.4.2"
+  },
   "scripts": {
     "build": "tsdown",
     "test": "npm run test:run --workspace @oh-awesome-novel/test-core",
