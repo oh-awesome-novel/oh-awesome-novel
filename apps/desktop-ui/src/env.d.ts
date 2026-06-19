@@ -1,17 +1,11 @@
 /// <reference types="vite/client" />
 
-interface Window {
-  ohAwesomeNovel?: {
-    backendBaseUrl?: string;
-    app?: {
-      getVersion: () => Promise<string>;
-    };
-    theme?: {
-      get: () => Promise<'light' | 'dark'>;
-      set: (theme: 'light' | 'dark') => Promise<'light' | 'dark'>;
-    };
-    workspace?: {
-      selectDirectory: () => Promise<string | undefined>;
-    };
-  };
+import type { OanDesktopBridge } from '@oh-awesome-novel/client';
+
+declare global {
+  interface Window {
+    ohAwesomeNovel?: OanDesktopBridge;
+  }
 }
+
+export {};

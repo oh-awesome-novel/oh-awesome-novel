@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/vue": "^3.0.197",
     "@lucide/vue": "^1.18.0",
+    "@oh-awesome-novel/client": "^0.0.1",
     "minisearch": "^7.2.0",
     "vue": "^3.5.34"
   },

@@ -1,9 +1,12 @@
 import { onMounted, shallowRef, watch } from 'vue';
 
-export type ThemeMode = 'light' | 'dark';
+import { oanClient } from '../client';
+import type { ThemeMode } from '@oh-awesome-novel/client';
+
+export type { ThemeMode };
 
 export function useThemePreference() {
-  const theme = shallowRef<ThemeMode>(getSystemTheme());
+  const theme = shallowRef<ThemeMode>(oanClient.getSystemThemePreference());
   const hydrated = shallowRef(false);
 
   onMounted(async () => {
@@ -34,23 +37,9 @@ export function useThemePreference() {
 }
 
 async function readThemePreference(): Promise<ThemeMode> {
-  const desktopTheme = window.ohAwesomeNovel?.theme;
-
-  if (desktopTheme) {
-    return desktopTheme.get();
-  }
-
-  return getSystemTheme();
+  return oanClient.getThemePreference();
 }
 
 async function writeThemePreference(theme: ThemeMode): Promise<void> {
-  const desktopTheme = window.ohAwesomeNovel?.theme;
-
-  if (desktopTheme) {
-    await desktopTheme.set(theme);
-  }
-}
-
-function getSystemTheme(): ThemeMode {
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  await oanClient.setThemePreference(theme);
 }

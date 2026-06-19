@@ -1,0 +1,26 @@
+{
+  "name": "@oh-awesome-novel/client",
+  "version": "0.0.1",
+  "description": "Frontend client facade for Oh Awesome Novel HTTP and desktop bridge APIs.",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "npm run test:run --workspace @oh-awesome-novel/test-client",
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-client"
+  },
+  "dependencies": {
+    "ai": "^6.0.197"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.2",
+    "typescript": "~6.0.2"
+  }
+}

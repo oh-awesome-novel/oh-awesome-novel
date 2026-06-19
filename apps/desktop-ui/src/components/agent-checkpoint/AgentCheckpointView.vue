@@ -9,7 +9,6 @@ import ToolActivityList from './ToolActivityList.vue';
 import { useAgentCheckpointChat, type PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 const {
-  backendBaseUrl,
   chat,
   input,
   messages,
@@ -43,7 +42,6 @@ function markPendingAction(action: PendingActionView, decision: 'accepted' | 're
       <div class="brand-block">
         <p class="eyebrow">oh-awesome-novel</p>
         <h1 class="app-title">Agent Checkpoint</h1>
-        <p class="backend-url">{{ backendBaseUrl }}</p>
       </div>
 
       <CheckpointControls

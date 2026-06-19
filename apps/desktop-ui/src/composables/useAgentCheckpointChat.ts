@@ -1,9 +1,8 @@
 import { Chat } from '@ai-sdk/vue';
-import { DefaultChatTransport } from 'ai';
 import type { UIMessage } from 'ai';
 import { computed, shallowRef } from 'vue';
 
-import { resolveBackendBaseUrl } from './useBackendBaseUrl';
+import { oanClient } from '../client';
 
 export interface PendingActionView {
   id: string;
@@ -14,13 +13,10 @@ export interface PendingActionView {
 }
 
 export function useAgentCheckpointChat() {
-  const backendBaseUrl = resolveBackendBaseUrl();
   const input = shallowRef('');
   const chat = shallowRef(
     new Chat<UIMessage>({
-      transport: new DefaultChatTransport({
-        api: `${backendBaseUrl}/api/agent/chat`,
-      }),
+      transport: oanClient.createAgentChatTransport(),
     }),
   );
 
@@ -47,7 +43,6 @@ export function useAgentCheckpointChat() {
   }
 
   return {
-    backendBaseUrl,
     chat,
     input,
     messages,

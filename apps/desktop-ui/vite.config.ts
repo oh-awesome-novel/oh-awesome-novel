@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
+import { fileURLToPath, URL } from "node:url";
 
 const backendProxyTarget =
   process.env.VITE_OAN_BACKEND_PROXY_TARGET ??
@@ -10,6 +11,13 @@ const backendProxyTarget =
 export default defineConfig({
   base: "./",
   plugins: [tailwindcss(), vue()],
+  resolve: {
+    alias: {
+      "@oh-awesome-novel/client": fileURLToPath(
+        new URL("../../packages/client/src/index.ts", import.meta.url),
+      ),
+    },
+  },
   server: {
     proxy: {
       "/api": {

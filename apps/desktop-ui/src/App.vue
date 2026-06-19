@@ -4,6 +4,7 @@ import { computed, onMounted, shallowRef } from 'vue';
 import ProviderGateModal from './components/workspace/ProviderGateModal.vue';
 import WorkspaceLauncher from './components/workspace/WorkspaceLauncher.vue';
 import WorkspaceShell from './components/workspace/WorkspaceShell.vue';
+import { oanClient } from './client';
 import { useWorkspaceApi } from './composables/useWorkspaceApi';
 import { useThemePreference } from './composables/useThemePreference';
 import type {
@@ -27,20 +28,14 @@ const appVersion = shallowRef('');
 const providerGateOpen = computed(() => Boolean(pendingWorkspace.value || providerError.value));
 
 onMounted(() => {
-  desktopFolderPickerAvailable.value = Boolean(window.ohAwesomeNovel?.workspace?.selectDirectory);
+  desktopFolderPickerAvailable.value = oanClient.isDirectoryPickerAvailable();
   void loadAppVersion();
   void refreshWorkspaces();
 });
 
 async function loadAppVersion() {
-  const getVersion = window.ohAwesomeNovel?.app?.getVersion;
-
-  if (!getVersion) {
-    return;
-  }
-
   try {
-    appVersion.value = await getVersion();
+    appVersion.value = await oanClient.getAppVersion() ?? '';
   } catch {
     appVersion.value = '';
   }
@@ -76,13 +71,11 @@ async function importWorkspace(path: string) {
 }
 
 async function importWorkspaceFromFolderPicker() {
-  const selectDirectory = window.ohAwesomeNovel?.workspace?.selectDirectory;
-
-  if (!selectDirectory) {
+  if (!oanClient.isDirectoryPickerAvailable()) {
     return;
   }
 
-  const path = await selectDirectory();
+  const path = await oanClient.selectDirectory();
 
   if (path) {
     await importWorkspace(path);
@@ -108,13 +101,11 @@ async function createWorkspace(path: string) {
 }
 
 async function createWorkspaceFromFolderPicker() {
-  const selectDirectory = window.ohAwesomeNovel?.workspace?.selectDirectory;
-
-  if (!selectDirectory) {
+  if (!oanClient.isDirectoryPickerAvailable()) {
     return;
   }
 
-  const path = await selectDirectory();
+  const path = await oanClient.selectDirectory();
 
   if (path) {
     await createWorkspace(path);
