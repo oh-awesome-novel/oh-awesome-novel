@@ -6,6 +6,7 @@ import type {
   ProviderCheckResult,
   ProviderConfigInput,
   ProviderConfigState,
+  ProviderModelConfig,
   ProviderModelSummary,
 } from '../../composables/useWorkspaceApi';
 
@@ -16,6 +17,12 @@ interface ProviderPreset {
   defaultModel: string;
   baseUrl?: string;
   custom?: boolean;
+  local?: boolean;
+}
+
+interface ModelDraft {
+  id: string;
+  displayName: string;
 }
 
 const emit = defineEmits<{
@@ -52,6 +59,14 @@ const providerPresets: ProviderPreset[] = [
     baseUrl: 'https://api.mimo.mi.com/v1',
   },
   {
+    kind: 'ollama',
+    label: 'Ollama',
+    defaultId: 'ollama',
+    defaultModel: '',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    local: true,
+  },
+  {
     kind: 'custom',
     label: '自定义 OpenAI-compatible',
     defaultId: 'custom',
@@ -76,14 +91,20 @@ const providerState = shallowRef<ProviderConfigState>({
 });
 const fetchedModels = shallowRef<ProviderModelSummary[]>([]);
 const checkResult = shallowRef<ProviderCheckResult | null>(null);
+const editingModelId = shallowRef('');
 const form = reactive<ProviderConfigInput>({
   id: 'deepseek',
   kind: 'deepseek',
   displayName: 'DeepSeek',
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
+  models: [{ id: 'deepseek-chat', default: true }],
   apiKey: '',
   default: true,
+});
+const modelDraft = reactive<ModelDraft>({
+  id: '',
+  displayName: '',
 });
 
 const currentProvider = computed(() => {
@@ -100,18 +121,34 @@ const savedProviderForCheck = computed(() => {
 });
 const currentPreset = computed(() => providerPresets.find((preset) => preset.kind === form.kind));
 const isCustomProvider = computed(() => Boolean(currentPreset.value?.custom));
-const hasCheckApiKey = computed(() => Boolean(form.apiKey?.trim()) || Boolean(savedProviderForCheck.value?.hasApiKey));
+const isLocalProvider = computed(() => Boolean(currentPreset.value?.local) || form.kind === 'ollama');
+const providerNeedsApiKey = computed(() => !isLocalProvider.value);
+const hasCheckApiKey = computed(() =>
+  !providerNeedsApiKey.value
+  || Boolean(form.apiKey?.trim())
+  || Boolean(savedProviderForCheck.value?.hasApiKey));
+const currentModels = computed(() => form.models ?? []);
+const canFetchModels = computed(() => Boolean(
+  hasCheckApiKey.value && (form.baseUrl?.trim() || currentPreset.value?.baseUrl),
+));
 const canSave = computed(() => {
   const hasApiKey = Boolean(form.apiKey?.trim())
     || Boolean(providerState.value.providers.find((provider) => provider.id === form.id)?.hasApiKey);
+  const credentialReady = providerNeedsApiKey.value ? hasApiKey : true;
 
-  return Boolean(form.kind && form.id.trim() && form.model.trim() && hasApiKey);
+  return Boolean(
+    form.kind
+      && form.id.trim()
+      && form.model.trim()
+      && currentModels.value.length > 0
+      && credentialReady,
+  );
 });
 const canCheck = computed(() => Boolean(
   form.kind
     && form.model.trim()
     && hasCheckApiKey.value
-    && (!isCustomProvider.value || form.baseUrl?.trim()),
+    && (form.baseUrl?.trim() || currentPreset.value?.baseUrl),
 ));
 const checkResultClass = computed(() => ({
   'model-check-panel-ok': checkResult.value?.ok,
@@ -121,7 +158,9 @@ const checkResultSummary = computed(() => {
   const result = checkResult.value;
 
   if (!result) {
-    return hasCheckApiKey.value ? '发送一次极短请求，确认当前模型配置可用。' : '填写 API Key 后可以检测模型。';
+    return hasCheckApiKey.value
+      ? '发送一次极短请求，确认当前模型配置可用。'
+      : '填写 API Key 后可以检测模型。';
   }
 
   const status = result.status ? `HTTP ${result.status} · ` : '';
@@ -162,13 +201,16 @@ function startNewProvider(preset = providerPresets[0]) {
   editingId.value = '';
   fetchedModels.value = [];
   modelError.value = '';
+  resetModelDraft();
   resetCheckResult();
+  const models = preset.defaultModel ? [{ id: preset.defaultModel, default: true }] : [];
   Object.assign(form, {
     id: uniqueProviderId(preset.defaultId),
     kind: preset.kind,
     displayName: preset.label,
     baseUrl: preset.baseUrl ?? '',
     model: preset.defaultModel,
+    models,
     apiKey: '',
     default: providerState.value.providers.length === 0,
   });
@@ -184,13 +226,16 @@ function editProvider(id: string) {
   editingId.value = id;
   fetchedModels.value = [];
   modelError.value = '';
+  resetModelDraft();
   resetCheckResult();
+  const models = normalizeProviderModels(provider.models, provider.model);
   Object.assign(form, {
     id: provider.id,
     kind: provider.kind,
     displayName: provider.displayName ?? provider.id,
     baseUrl: provider.baseUrl ?? providerPreset(provider.kind)?.baseUrl ?? '',
     model: provider.model,
+    models,
     apiKey: '',
     default: provider.default,
   });
@@ -206,11 +251,13 @@ function applyProviderPreset() {
   form.displayName = preset.label;
   form.baseUrl = preset.baseUrl ?? '';
   form.model = preset.defaultModel;
+  form.models = preset.defaultModel ? [{ id: preset.defaultModel, default: true }] : [];
   if (!editingId.value || form.id === editingId.value) {
     form.id = uniqueProviderId(preset.defaultId, editingId.value);
   }
   fetchedModels.value = [];
   modelError.value = '';
+  resetModelDraft();
   resetCheckResult();
 }
 
@@ -230,6 +277,7 @@ async function saveProviderConfig() {
       displayName: form.displayName?.trim() || form.id.trim(),
       baseUrl: form.baseUrl?.trim() || undefined,
       model: form.model.trim(),
+      models: normalizeFormModels(),
       apiKey: form.apiKey?.trim() || undefined,
       default: Boolean(form.default),
     });
@@ -284,21 +332,20 @@ async function deleteProvider(id: string) {
   }
 }
 
-async function fetchCustomModels() {
+async function fetchProviderModels() {
   modelLoading.value = true;
   modelError.value = '';
   fetchedModels.value = [];
 
   try {
     const result = await api.listProviderModels({
-      baseUrl: form.baseUrl?.trim() ?? '',
+      providerId: editingId.value || form.id.trim(),
+      kind: form.kind,
+      baseUrl: form.baseUrl?.trim() || undefined,
       apiKey: form.apiKey?.trim() || undefined,
     });
     fetchedModels.value = result.models;
-
-    if (!form.model && result.models[0]) {
-      form.model = result.models[0].id;
-    }
+    mergeFetchedModels(result.models);
   } catch (caught) {
     modelError.value = caught instanceof Error ? caught.message : String(caught);
   } finally {
@@ -306,7 +353,7 @@ async function fetchCustomModels() {
   }
 }
 
-async function checkProviderConfig() {
+async function checkProviderConfig(modelId = form.model) {
   if (!canCheck.value) {
     return;
   }
@@ -320,7 +367,7 @@ async function checkProviderConfig() {
       providerId: editingId.value || form.id.trim(),
       kind: form.kind,
       baseUrl: form.baseUrl?.trim() || undefined,
-      model: form.model.trim(),
+      model: modelId.trim(),
       apiKey: form.apiKey?.trim() || undefined,
     });
   } catch (caught) {
@@ -330,9 +377,129 @@ async function checkProviderConfig() {
   }
 }
 
+async function checkModel(modelId: string) {
+  await checkProviderConfig(modelId);
+}
+
 function resetCheckResult() {
   checkError.value = '';
   checkResult.value = null;
+}
+
+function saveModelDraft() {
+  const id = modelDraft.id.trim();
+  if (!id) {
+    return;
+  }
+
+  const existingModels = normalizeFormModels();
+  const defaultModelId = form.model === editingModelId.value ? id : form.model || id;
+  const nextModel: ProviderModelConfig = {
+    id,
+    displayName: modelDraft.displayName.trim() || undefined,
+    default: existingModels.length === 0 || defaultModelId === id,
+  };
+  const nextModels = editingModelId.value
+    ? existingModels.map((model) => model.id === editingModelId.value ? {
+        ...model,
+        ...nextModel,
+        default: model.default || nextModel.default,
+      } : model)
+    : [...existingModels.filter((model) => model.id !== id), nextModel];
+
+  form.models = normalizeProviderModels(nextModels, defaultModelId);
+  form.model = defaultModelId;
+  if (!form.model || !form.models.some((model) => model.id === form.model)) {
+    setDefaultModel(id);
+  }
+  resetModelDraft();
+}
+
+function editModelDraft(model: ProviderModelConfig) {
+  editingModelId.value = model.id;
+  modelDraft.id = model.id;
+  modelDraft.displayName = model.displayName ?? '';
+}
+
+function removeModel(id: string) {
+  const nextModels = currentModels.value.filter((model) => model.id !== id);
+  const nextDefault = form.model === id ? nextModels[0]?.id ?? '' : form.model;
+  form.models = normalizeProviderModels(nextModels, nextDefault);
+  form.model = nextDefault;
+  if (editingModelId.value === id) {
+    resetModelDraft();
+  }
+  resetCheckResult();
+}
+
+function setDefaultModel(id: string) {
+  form.model = id;
+  form.models = normalizeProviderModels(currentModels.value, id);
+  resetCheckResult();
+}
+
+function resetModelDraft() {
+  editingModelId.value = '';
+  modelDraft.id = '';
+  modelDraft.displayName = '';
+}
+
+function mergeFetchedModels(models: ProviderModelSummary[]) {
+  const existingModels = normalizeFormModels();
+  const existingIds = new Set(existingModels.map((model) => model.id));
+  const nextModels = [
+    ...existingModels,
+    ...models
+      .filter((model) => model.id && !existingIds.has(model.id))
+      .map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        contextWindow: model.contextWindow,
+      })),
+  ];
+  const defaultModelId = form.model || nextModels[0]?.id || '';
+
+  form.models = normalizeProviderModels(nextModels, defaultModelId);
+  form.model = defaultModelId;
+  resetCheckResult();
+}
+
+function normalizeFormModels(): ProviderModelConfig[] {
+  return normalizeProviderModels(currentModels.value, form.model);
+}
+
+function normalizeProviderModels(
+  models: ProviderModelConfig[] | undefined,
+  defaultModelId: string | undefined,
+): ProviderModelConfig[] {
+  const modelMap = new Map<string, ProviderModelConfig>();
+
+  for (const model of models ?? []) {
+    const id = model.id.trim();
+    if (!id) {
+      continue;
+    }
+
+    modelMap.set(id, {
+      ...model,
+      id,
+      displayName: model.displayName?.trim() || undefined,
+    });
+  }
+
+  const normalizedDefaultModelId = defaultModelId?.trim()
+    || [...modelMap.values()].find((model) => model.default)?.id
+    || [...modelMap.keys()][0]
+    || '';
+
+  if (normalizedDefaultModelId && !modelMap.has(normalizedDefaultModelId)) {
+    modelMap.set(normalizedDefaultModelId, { id: normalizedDefaultModelId });
+  }
+
+  return [...modelMap.values()].map((model) => ({
+    ...model,
+    default: model.id === normalizedDefaultModelId,
+  }));
 }
 
 function providerPreset(kind: string | undefined): ProviderPreset | undefined {
@@ -341,6 +508,12 @@ function providerPreset(kind: string | undefined): ProviderPreset | undefined {
 
 function providerLabel(kind: string): string {
   return providerPreset(kind)?.label ?? kind;
+}
+
+function providerCredentialStatus(provider: { kind: string; hasApiKey?: boolean }): string {
+  return provider.kind === 'ollama'
+    ? '本地无需 API key'
+    : provider.hasApiKey ? 'API key 已保存' : '缺少 API key';
 }
 
 function uniqueProviderId(baseId: string, currentId = ''): string {
@@ -382,7 +555,7 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
       </div>
       <div class="status-block">
         <span>API Key</span>
-        <strong>{{ currentProvider?.hasApiKey ? '已保存' : '未设置' }}</strong>
+        <strong>{{ currentProvider ? providerCredentialStatus(currentProvider) : '未设置' }}</strong>
       </div>
     </section>
 
@@ -403,8 +576,8 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
           >
             <div class="model-provider-card-main">
               <strong>{{ provider.displayName ?? provider.id }}</strong>
-              <span>{{ providerLabel(provider.kind) }} · {{ provider.model }}</span>
-              <small>{{ provider.hasApiKey ? 'API key 已保存' : '缺少 API key' }}</small>
+              <span>{{ providerLabel(provider.kind) }} · {{ provider.models?.length ?? 1 }} 个模型</span>
+              <small>默认 {{ provider.model }} · {{ providerCredentialStatus(provider) }}</small>
             </div>
             <div class="model-provider-card-actions">
               <span v-if="provider.default" class="status-pill">默认</span>
@@ -448,7 +621,7 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
       <section class="settings-section model-config-section">
         <div class="settings-section-heading">
           <h2 class="panel-title">{{ editingId ? '编辑 Provider' : '新增 Provider' }}</h2>
-          <p class="empty-copy">常见提供方只需要填写 API key；自定义 provider 需要兼容 OpenAI 消息格式。</p>
+          <p class="empty-copy">常见云端提供方只需要填写 API key；Ollama 使用本地服务，自定义 provider 需要兼容 OpenAI 消息格式。</p>
         </div>
 
         <form class="model-form" @submit.prevent="saveProviderConfig">
@@ -492,30 +665,18 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
             >
           </label>
 
-          <label class="field" for="provider-model-input">
-            <span>Model</span>
-            <input
-              id="provider-model-input"
-              v-model="form.model"
-              class="text-input"
-              type="text"
-              list="provider-model-options"
-              placeholder="deepseek-chat"
-            >
-          </label>
-
-          <label v-if="isCustomProvider" class="field field-wide" for="provider-base-url-input">
+          <label v-if="isCustomProvider || isLocalProvider" class="field field-wide" for="provider-base-url-input">
             <span>Base URL</span>
             <input
               id="provider-base-url-input"
               v-model="form.baseUrl"
               class="text-input"
               type="url"
-              placeholder="https://example.com/v1"
+              :placeholder="isLocalProvider ? 'http://127.0.0.1:11434/v1' : 'https://example.com/v1'"
             >
           </label>
 
-          <label class="field field-wide" for="provider-api-key-input">
+          <label v-if="providerNeedsApiKey" class="field field-wide" for="provider-api-key-input">
             <span>API Key</span>
             <input
               id="provider-api-key-input"
@@ -525,26 +686,119 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
               :placeholder="editingId ? '留空则保留已保存 API key' : '直接填写 API key'"
             >
           </label>
+          <p v-else class="empty-copy field-wide">
+            本地 Ollama 不需要 API Key，保持 Ollama 服务运行即可。
+          </p>
 
-          <datalist id="provider-model-options">
-            <option
-              v-for="model in fetchedModels"
-              :key="model.id"
-              :value="model.id"
-            ></option>
-          </datalist>
+          <section class="model-editor field-wide">
+            <div class="model-editor-heading">
+              <div>
+                <strong>模型</strong>
+                <span>一个 Provider 可以维护多个模型，Copilot 使用默认模型。</span>
+              </div>
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="modelLoading || !canFetchModels"
+                @click="fetchProviderModels"
+              >
+                {{ modelLoading ? '获取中…' : '获取模型' }}
+              </button>
+            </div>
 
-          <div v-if="isCustomProvider" class="model-fetch-row field-wide">
-            <button
-              class="secondary-button"
-              type="button"
-              :disabled="modelLoading || !form.baseUrl?.trim() || !form.apiKey?.trim()"
-              @click="fetchCustomModels"
-            >
-              {{ modelLoading ? '拉取中…' : '拉取模型列表' }}
-            </button>
-            <span v-if="fetchedModels.length">{{ fetchedModels.length }} 个模型可选</span>
-          </div>
+            <div class="model-draft-grid">
+              <label class="field" for="provider-model-id-input">
+                <span>Model ID</span>
+                <input
+                  id="provider-model-id-input"
+                  v-model="modelDraft.id"
+                  class="text-input"
+                  type="text"
+                  list="provider-model-options"
+                  placeholder="deepseek-chat"
+                >
+              </label>
+              <label class="field" for="provider-model-name-input">
+                <span>显示名称</span>
+                <input
+                  id="provider-model-name-input"
+                  v-model="modelDraft.displayName"
+                  class="text-input"
+                  type="text"
+                  placeholder="可选"
+                >
+              </label>
+              <button
+                class="secondary-button model-draft-button"
+                type="button"
+                :disabled="!modelDraft.id.trim()"
+                @click="saveModelDraft"
+              >
+                {{ editingModelId ? '更新模型' : '添加模型' }}
+              </button>
+              <button
+                v-if="editingModelId"
+                class="row-action-button model-draft-cancel"
+                type="button"
+                @click="resetModelDraft"
+              >
+                取消
+              </button>
+            </div>
+
+            <datalist id="provider-model-options">
+              <option
+                v-for="model in fetchedModels"
+                :key="model.id"
+                :value="model.id"
+              ></option>
+            </datalist>
+
+            <div v-if="currentModels.length" class="model-row-list">
+              <article
+                v-for="model in currentModels"
+                :key="model.id"
+                class="model-row-card"
+                :class="{ 'model-row-card-default': model.default }"
+              >
+                <button
+                  class="model-default-dot"
+                  type="button"
+                  :aria-label="`设 ${model.id} 为默认模型`"
+                  @click="setDefaultModel(model.id)"
+                ></button>
+                <div class="model-row-main">
+                  <strong>{{ model.displayName || model.id }}</strong>
+                  <span>{{ model.id }}</span>
+                  <small v-if="model.contextWindow">Context {{ model.contextWindow.toLocaleString() }}</small>
+                </div>
+                <div class="model-row-actions">
+                  <span v-if="model.default" class="status-pill">默认</span>
+                  <button class="row-action-button" type="button" @click="checkModel(model.id)">
+                    检测
+                  </button>
+                  <button class="row-action-button" type="button" @click="editModelDraft(model)">
+                    编辑
+                  </button>
+                  <button
+                    class="row-action-button row-action-danger"
+                    type="button"
+                    :disabled="currentModels.length === 1"
+                    @click="removeModel(model.id)"
+                  >
+                    删除
+                  </button>
+                </div>
+              </article>
+            </div>
+            <p v-else class="empty-copy">
+              还没有模型。手动添加一个模型，或从当前 Provider 获取模型列表。
+            </p>
+
+            <p v-if="fetchedModels.length" class="empty-copy">
+              已获取并合并 {{ fetchedModels.length }} 个远程模型。
+            </p>
+          </section>
 
           <label class="model-default-check field-wide">
             <input v-model="form.default" type="checkbox">
@@ -560,7 +814,7 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
               class="secondary-button"
               type="button"
               :disabled="checking || !canCheck"
-              @click="checkProviderConfig"
+              @click="checkProviderConfig()"
             >
               {{ checking ? '检测中…' : '检测模型' }}
             </button>

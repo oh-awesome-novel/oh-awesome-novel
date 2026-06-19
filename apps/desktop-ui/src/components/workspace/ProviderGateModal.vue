@@ -16,6 +16,14 @@ const emit = defineEmits<{
   cancel: [];
 }>();
 
+interface ProviderOption {
+  kind: string;
+  label: string;
+  model: string;
+  baseUrl: string;
+  local?: boolean;
+}
+
 const form = reactive<ProviderConfigInput>({
   id: 'default',
   kind: 'deepseek',
@@ -26,15 +34,23 @@ const form = reactive<ProviderConfigInput>({
   default: true,
 });
 
-const canSave = computed(() => Boolean(form.kind && form.model.trim() && form.apiKey?.trim()));
-
-const providerOptions = [
+const providerOptions: ProviderOption[] = [
   { kind: 'deepseek', label: 'DeepSeek', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com' },
   { kind: 'openai', label: 'OpenAI', model: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1' },
   { kind: 'opencode-go', label: 'OpenCode Go', model: 'opencode-chat', baseUrl: 'https://api.opencodego.com/v1' },
   { kind: 'xiaomi-mimo', label: 'Xiaomi MiMo', model: 'mimo-v2.5', baseUrl: 'https://api.mimo.mi.com/v1' },
+  { kind: 'ollama', label: 'Ollama', model: '', baseUrl: 'http://127.0.0.1:11434/v1', local: true },
   { kind: 'custom', label: '自定义 OpenAI-compatible', model: '', baseUrl: '' },
 ];
+
+const currentProviderOption = computed(() =>
+  providerOptions.find((option) => option.kind === form.kind));
+const providerNeedsApiKey = computed(() => !currentProviderOption.value?.local);
+const canSave = computed(() => Boolean(
+  form.kind
+    && form.model.trim()
+    && (!providerNeedsApiKey.value || form.apiKey?.trim()),
+));
 
 function save() {
   if (!canSave.value) {
@@ -54,6 +70,9 @@ function applyProviderPreset() {
   form.displayName = preset.label;
   form.baseUrl = preset.baseUrl;
   form.model = preset.model;
+  if (preset.local) {
+    form.apiKey = '';
+  }
 }
 </script>
 
@@ -95,14 +114,22 @@ function applyProviderPreset() {
           <span>Model</span>
           <input v-model="form.model" class="text-input" type="text">
         </label>
-        <label v-if="form.kind === 'custom'" class="field">
+        <label v-if="form.kind === 'custom' || !providerNeedsApiKey" class="field">
           <span>Base URL</span>
-          <input v-model="form.baseUrl" class="text-input" type="url" placeholder="https://example.com/v1">
+          <input
+            v-model="form.baseUrl"
+            class="text-input"
+            type="url"
+            :placeholder="providerNeedsApiKey ? 'https://example.com/v1' : 'http://127.0.0.1:11434/v1'"
+          >
         </label>
-        <label class="field field-wide">
+        <label v-if="providerNeedsApiKey" class="field field-wide">
           <span>API Key</span>
           <input v-model="form.apiKey" class="text-input" type="password" placeholder="直接填写 API key">
         </label>
+        <p v-else class="empty-copy field-wide">
+          本地 Ollama 不需要 API Key，确认 Ollama 服务正在运行，并填写已安装的模型名。
+        </p>
       </div>
 
       <p v-if="error" class="error-copy">{{ error }}</p>

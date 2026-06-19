@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -251,6 +251,10 @@ describe('novel HTTP backend', () => {
         id: 'default',
         kind: 'deepseek',
         model: 'deepseek-chat',
+        models: [
+          { id: 'deepseek-chat', displayName: 'DeepSeek Chat' },
+          { id: 'deepseek-reasoner', displayName: 'DeepSeek Reasoner' },
+        ],
         apiKey: 'deepseek-secret',
         default: true,
       }),
@@ -262,6 +266,11 @@ describe('novel HTTP backend', () => {
         expect.objectContaining({
           id: 'default',
           hasApiKey: true,
+          model: 'deepseek-chat',
+          models: [
+            expect.objectContaining({ id: 'deepseek-chat', default: true }),
+            expect.objectContaining({ id: 'deepseek-reasoner', default: false }),
+          ],
         }),
       ],
     });
@@ -313,6 +322,10 @@ describe('novel HTTP backend', () => {
           expect.objectContaining({
             id: 'default',
             hasApiKey: true,
+            models: [
+              expect.objectContaining({ id: 'deepseek-chat' }),
+              expect.objectContaining({ id: 'deepseek-reasoner' }),
+            ],
           }),
           expect.objectContaining({
             id: 'openai',
@@ -325,7 +338,10 @@ describe('novel HTTP backend', () => {
   it('fetches OpenAI-compatible model lists through the backend', async () => {
     const modelServer = await startModelListServer();
     servers.push(modelServer);
-    const backend = await startNovelHttpBackend({ workspaceRoot: await createTempWorkspace() });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot: await createTempWorkspace(),
+      globalConfigDir: await createTempWorkspace(),
+    });
     servers.push(backend);
 
     await expect(fetchJson(`${backend.url}/api/provider-config/models`, {
@@ -338,16 +354,80 @@ describe('novel HTTP backend', () => {
       .resolves
       .toMatchObject({
         models: [
-          { id: 'custom-large' },
+          { id: 'custom-large', displayName: 'Custom Large', contextWindow: 128000 },
           { id: 'custom-small' },
         ],
+      });
+  });
+
+  it('supports local Ollama model lists and checks without API keys', async () => {
+    const ollamaServer = await startOllamaServer();
+    servers.push(ollamaServer);
+    const backend = await startNovelHttpBackend({
+      workspaceRoot: await createTempWorkspace(),
+      globalConfigDir: await createTempWorkspace(),
+    });
+    servers.push(backend);
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/models`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'ollama',
+        baseUrl: `${ollamaServer.url}/v1`,
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        models: [
+          { id: 'llama3.2:latest', displayName: 'llama3.2:latest (3.2B)' },
+        ],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/provider-config`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'ollama',
+        kind: 'ollama',
+        baseUrl: `${ollamaServer.url}/v1`,
+        model: 'llama3.2:latest',
+        models: [{ id: 'llama3.2:latest', displayName: 'llama3.2:latest (3.2B)' }],
+        default: true,
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        providers: [
+          expect.objectContaining({
+            id: 'ollama',
+            hasApiKey: false,
+            model: 'llama3.2:latest',
+          }),
+        ],
+      });
+
+    await expect(fetchJson(`${backend.url}/api/provider-config/check`, {
+      method: 'POST',
+      body: JSON.stringify({
+        providerId: 'ollama',
+      }),
+    }))
+      .resolves
+      .toMatchObject({
+        ok: true,
+        model: 'llama3.2:latest',
+        status: 200,
+        message: 'OK',
+        latencyMs: expect.any(Number),
       });
   });
 
   it('checks OpenAI-compatible models through the backend', async () => {
     const modelServer = await startModelListServer();
     servers.push(modelServer);
-    const backend = await startNovelHttpBackend({ workspaceRoot: await createTempWorkspace() });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot: await createTempWorkspace(),
+      globalConfigDir: await createTempWorkspace(),
+    });
     servers.push(backend);
 
     await fetchJson(`${backend.url}/api/provider-config`, {
@@ -440,7 +520,12 @@ async function startModelListServer(): Promise<{ url: string; close(): Promise<v
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({
           data: [
-            { id: 'custom-large', object: 'model' },
+            {
+              id: 'custom-large',
+              object: 'model',
+              name: 'Custom Large',
+              context_length: 128000,
+            },
             { id: 'custom-small', object: 'model' },
           ],
         }));
@@ -487,6 +572,83 @@ async function startModelListServer(): Promise<{ url: string; close(): Promise<v
 
   if (!address || typeof address === 'string') {
     throw new Error('Model list server did not expose a TCP address.');
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
+  };
+}
+
+async function startOllamaServer(): Promise<{ url: string; close(): Promise<void> }> {
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.url === '/api/tags') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          models: [
+            {
+              name: 'llama3.2:latest',
+              model: 'llama3.2:latest',
+              details: {
+                parameter_size: '3.2B',
+              },
+            },
+          ],
+        }));
+        return;
+      }
+
+      if (request.url === '/v1/chat/completions') {
+        const body = await readMockJsonBody(request);
+        if (body.model !== 'llama3.2:latest') {
+          response.writeHead(404, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ error: { message: 'model not found' } }));
+          return;
+        }
+
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: 'OK',
+              },
+            },
+          ],
+        }));
+        return;
+      }
+
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'not found' } }));
+    })().catch((error: unknown) => {
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    });
+  });
+
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+
+  if (!address || typeof address === 'string') {
+    throw new Error('Ollama server did not expose a TCP address.');
   }
 
   return {

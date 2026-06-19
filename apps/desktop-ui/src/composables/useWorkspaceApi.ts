@@ -24,6 +24,7 @@ export interface ProviderConfigState {
     id: string;
     kind: string;
     model: string;
+    models?: ProviderModelConfig[];
     displayName?: string;
     baseUrl?: string;
     hasApiKey?: boolean;
@@ -38,9 +39,18 @@ export interface ProviderConfigInput {
   displayName?: string;
   baseUrl?: string;
   model: string;
+  models?: ProviderModelConfig[];
   apiKey?: string;
   default?: boolean;
   apiKeyEnv?: string;
+}
+
+export interface ProviderModelConfig {
+  id: string;
+  displayName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  default?: boolean;
 }
 
 export interface ProviderCheckInput {
@@ -61,6 +71,8 @@ export interface ProviderCheckResult {
 
 export interface ProviderModelSummary {
   id: string;
+  displayName?: string;
+  contextWindow?: number;
 }
 
 export interface ChapterIndex {
@@ -196,7 +208,12 @@ export function useWorkspaceApi() {
         `/api/provider-config/${encodeURIComponent(id)}`,
         { method: 'DELETE' },
       ),
-    listProviderModels: (input: { baseUrl: string; apiKey?: string }) =>
+    listProviderModels: (input: {
+      providerId?: string;
+      kind?: string;
+      baseUrl?: string;
+      apiKey?: string;
+    }) =>
       requestJson<{ models: ProviderModelSummary[] }>(
         backendBaseUrl,
         '/api/provider-config/models',

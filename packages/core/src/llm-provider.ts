@@ -14,12 +14,24 @@ export type LlmProviderKind =
   | 'deepseek'
   | 'opencode-go'
   | 'xiaomi-mimo'
+  | 'ollama'
   | 'custom';
+
+export interface LlmProviderModel {
+  id: string;
+  displayName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  default?: boolean;
+}
 
 export interface LlmProviderConfig {
   id: string;
   kind: LlmProviderKind;
+  /** Current default model id for runtime compatibility. */
   model: string;
+  /** Models configured under this provider. */
+  models?: LlmProviderModel[];
   displayName?: string;
   baseUrl?: string;
   /** Direct API key stored in the app-level config. Redacted before returning to UI. */
@@ -50,18 +62,19 @@ export const upsertLlmProviderConfig = (
   state: LlmProviderConfigState,
   provider: LlmProviderConfig,
 ): LlmProviderConfigState => {
+  const normalizedProvider = normalizeLlmProviderConfig(provider);
   const existingIndex = state.providers.findIndex(
-    (item) => item.id === provider.id,
+    (item) => item.id === normalizedProvider.id,
   );
   const nextProviders =
     existingIndex === -1
-      ? [...state.providers, provider]
+      ? [...state.providers, normalizedProvider]
       : state.providers.map((item, index) =>
-          index === existingIndex ? provider : item,
+          index === existingIndex ? normalizedProvider : item,
         );
-  const defaultProviderId = provider.default
-    ? provider.id
-    : state.defaultProviderId ?? provider.id;
+  const defaultProviderId = normalizedProvider.default
+    ? normalizedProvider.id
+    : state.defaultProviderId ?? normalizedProvider.id;
 
   return withDefaultFlags(nextProviders, defaultProviderId);
 };
@@ -121,13 +134,58 @@ function withDefaultFlags(
     : providers[0]?.id;
 
   return {
-    providers: providers.map((provider) => ({
-      ...provider,
-      default: provider.id === validDefaultProviderId,
-    })),
+    providers: providers.map((provider) => {
+      const normalizedProvider = normalizeLlmProviderConfig(provider);
+
+      return {
+        ...normalizedProvider,
+        default: normalizedProvider.id === validDefaultProviderId,
+      };
+    }),
     defaultProviderId: validDefaultProviderId,
   };
 }
+
+export const normalizeLlmProviderConfig = (
+  provider: LlmProviderConfig,
+): LlmProviderConfig => {
+  const modelMap = new Map<string, LlmProviderModel>();
+
+  for (const model of provider.models ?? []) {
+    const id = model.id.trim();
+    if (!id) {
+      continue;
+    }
+
+    modelMap.set(id, {
+      ...model,
+      id,
+      displayName: model.displayName?.trim() || undefined,
+    });
+  }
+
+  const explicitDefaultModelId = provider.model?.trim()
+    || [...modelMap.values()].find((model) => model.default)?.id
+    || [...modelMap.keys()][0]
+    || '';
+
+  if (explicitDefaultModelId && !modelMap.has(explicitDefaultModelId)) {
+    modelMap.set(explicitDefaultModelId, {
+      id: explicitDefaultModelId,
+    });
+  }
+
+  const models = [...modelMap.values()].map((model) => ({
+    ...model,
+    default: model.id === explicitDefaultModelId,
+  }));
+
+  return {
+    ...provider,
+    model: explicitDefaultModelId,
+    models,
+  };
+};
 
 // ---------------------------------------------------------------------------
 // Redaction
@@ -147,6 +205,7 @@ export const redactLlmProviderConfig = (
 
   return {
     ...redactedProvider,
+    ...normalizeLlmProviderConfig(redactedProvider),
     hasApiKey: Boolean(apiKey),
     headers: provider.headers
       ? Object.fromEntries(

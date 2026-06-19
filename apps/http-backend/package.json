@@ -1,0 +1,24 @@
+{
+  "name": "@oh-awesome-novel/http-backend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Standalone local HTTP backend launcher for Electron-free testing.",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "scripts": {
+    "prebuild": "npm run build --workspace @oh-awesome-novel/backend",
+    "build": "tsdown",
+    "dev": "npm run build && node dist/index.mjs",
+    "start": "node dist/index.mjs"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/backend": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.1",
+    "tsdown": "^0.22.2",
+    "typescript": "~6.0.2"
+  }
+}

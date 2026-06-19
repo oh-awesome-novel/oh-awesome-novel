@@ -46,11 +46,13 @@ export {
   getLlmProviderConfig,
   getDefaultLlmProviderConfig,
   setDefaultLlmProviderConfig,
+  normalizeLlmProviderConfig,
   redactLlmProviderConfig,
 } from './llm-provider.js';
 
 export type {
   LlmProviderKind,
+  LlmProviderModel,
   LlmProviderConfig,
   LlmProviderConfigState,
 } from './llm-provider.js';

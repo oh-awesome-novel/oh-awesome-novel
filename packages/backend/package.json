@@ -17,11 +17,13 @@
     "test:watch": "npm run test --workspace @oh-awesome-novel/test-backend"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.5",
     "@oh-awesome-novel/agent": "^0.0.1",
     "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/runtime": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1",
-    "ai": "^6.0.197"
+    "ai": "^6.0.197",
+    "hono": "^4.12.26"
   },
   "devDependencies": {
     "@types/node": "^24.13.1",

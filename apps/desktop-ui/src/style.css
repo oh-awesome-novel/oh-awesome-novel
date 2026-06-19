@@ -650,6 +650,72 @@
     @apply flex flex-wrap items-center gap-2;
   }
 
+  .model-editor {
+    @apply grid gap-3 rounded-card border border-gray-200 bg-gray-100 p-3 dark:border-neutral-700 dark:bg-neutral-800;
+  }
+
+  .model-editor-heading {
+    @apply flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 pb-3 dark:border-neutral-700;
+  }
+
+  .model-editor-heading strong,
+  .model-editor-heading span {
+    @apply block;
+  }
+
+  .model-editor-heading span {
+    @apply mt-1 text-sm leading-snug text-slate-500 dark:text-neutral-400;
+  }
+
+  .model-draft-grid {
+    @apply grid items-end gap-2.5;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr) auto auto;
+  }
+
+  .model-draft-button {
+    @apply min-h-10.5;
+  }
+
+  .model-draft-cancel {
+    @apply min-h-10.5 px-3;
+  }
+
+  .model-row-list {
+    @apply flex flex-col gap-2;
+  }
+
+  .model-row-card {
+    @apply grid items-center gap-3 rounded-card border border-gray-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+
+  .model-row-card-default {
+    @apply border-cyan-700/35 bg-cyan-50 dark:border-cyan-300/35 dark:bg-cyan-950/40;
+  }
+
+  .model-default-dot {
+    @apply h-4 w-4 rounded-full border border-slate-300 bg-white p-0 dark:border-neutral-500 dark:bg-neutral-900;
+  }
+
+  .model-row-card-default .model-default-dot {
+    @apply border-cyan-700 bg-cyan-700 shadow-[inset_0_0_0_3px_white] dark:border-cyan-300 dark:bg-cyan-300 dark:shadow-[inset_0_0_0_3px_rgb(23,23,23)];
+  }
+
+  .model-row-main strong,
+  .model-row-main span,
+  .model-row-main small {
+    @apply block overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .model-row-main span,
+  .model-row-main small {
+    @apply mt-1 text-sm text-slate-500 dark:text-neutral-400;
+  }
+
+  .model-row-actions {
+    @apply flex flex-wrap items-center justify-end gap-1.5;
+  }
+
   .model-default-check {
     @apply flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-neutral-300;
   }
@@ -1119,6 +1185,8 @@
     .model-workbench,
     .model-provider-card,
     .model-form,
+    .model-draft-grid,
+    .model-row-card,
     .workspace-toolbar,
     .home-status-grid,
     .quick-action-grid,

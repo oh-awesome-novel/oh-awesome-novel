@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { execFile } from 'node:child_process';
@@ -6,8 +6,12 @@ import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'nod
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { pipeUIMessageStreamToResponse } from 'ai';
+import { createUIMessageStreamResponse } from 'ai';
 import type { LanguageModel, ToolSet, UIMessage } from 'ai';
+import { createAdaptorServer } from '@hono/node-server';
+import { Hono } from 'hono';
+import type { Context } from 'hono';
+import { cors } from 'hono/cors';
 
 import {
   createEmptyLlmProviderConfigState,
@@ -15,6 +19,7 @@ import {
   initWorkspace,
   loadNovelCopilotSkill,
   loadWorkspaceList,
+  normalizeLlmProviderConfig,
   removeLlmProviderConfig,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
@@ -24,6 +29,7 @@ import {
   upsertLlmProviderConfig,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
+import type { LlmProviderModel } from '@oh-awesome-novel/core';
 import {
   runtimeEventsToUiMessageStream,
   streamNovelAgentCheckpointTurn,
@@ -101,7 +107,13 @@ interface FileTreeNode {
   children?: FileTreeNode[];
 }
 
-export function createNovelHttpBackend(options: NovelBackendOptions): Server {
+export type NovelHonoApp = Hono;
+
+type NovelBackendContext = Context;
+
+type JsonBody = Record<string, unknown>;
+
+export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   const state: BackendState = {
     activeWorkspaceRoot: options.workspaceRoot,
     providerConfigState: options.providerConfig
@@ -109,16 +121,67 @@ export function createNovelHttpBackend(options: NovelBackendOptions): Server {
       : createEmptyLlmProviderConfigState(),
     providerConfigLoaded: Boolean(options.providerConfig),
   };
+  const app = new Hono();
 
-  return createServer(async (request, response) => {
-    try {
-      await routeRequest(options, state, request, response);
-    } catch (error) {
-      writeJson(response, 500, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+  app.use('*', cors({
+    origin: '*',
+    allowHeaders: ['content-type'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  }));
+
+  app.onError((error, context) => jsonResponse(context, 500, {
+    error: error instanceof Error ? error.message : String(error),
+  }));
+
+  app.get('/api/health', (context) => context.json({ ok: true }));
+  app.get('/api/workspaces', (context) => handleListWorkspaces(options, state, context));
+  app.post('/api/workspaces/import', (context) => handleImportWorkspace(options, context));
+  app.post('/api/workspaces/create', (context) => handleCreateWorkspace(options, state, context));
+  app.post('/api/workspaces/open', (context) => handleOpenWorkspace(options, state, context));
+  app.patch('/api/workspaces/name', (context) => handleRenameWorkspace(options, context));
+  app.delete('/api/workspaces', (context) => handleRemoveWorkspace(options, state, context));
+  app.get('/api/provider-config', (context) => handleGetProviderConfig(options, state, context));
+  app.post('/api/provider-config', (context) => handleSaveProviderConfig(options, state, context));
+  app.post('/api/provider-config/check', (context) => handleCheckProviderConfig(options, state, context));
+  app.post('/api/provider-config/models', (context) => handleListProviderModels(options, state, context));
+  app.post('/api/provider-config/:id/default', (context) =>
+    handleSetDefaultProviderConfig(options, state, context.req.param('id') ?? '', context));
+  app.delete('/api/provider-config/:id', (context) =>
+    handleDeleteProviderConfig(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace', (context) => handleGetActiveWorkspace(options, state, context));
+  app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
+  app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
+  app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
+  app.get('/api/workspace/pending-actions', (context) => handleListPendingActions(options, state, context));
+  app.post('/api/workspace/pending-actions/:id/:decision', (context) => {
+    const decision = context.req.param('decision');
+
+    if (decision !== 'accept' && decision !== 'reject') {
+      return jsonResponse(context, 404, { error: 'Not found.' });
     }
+
+    return handlePendingActionDecision(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      decision,
+      context,
+    );
   });
+  app.get('/api/workspace/chapters', (context) => handleWorkspaceChapters(options, state, context));
+  app.post('/api/workspace/chapters/rescan', (context) =>
+    handleWorkspaceChapterRescan(options, state, context));
+  app.post('/api/agent/chat', (context) => handleAgentChat(options, state, context));
+  app.notFound((context) => jsonResponse(context, 404, { error: 'Not found.' }));
+
+  return app;
+}
+
+export function createNovelHttpBackend(options: NovelBackendOptions): Server {
+  const app = createNovelHonoApp(options);
+
+  return createAdaptorServer({ fetch: app.fetch }) as Server;
 }
 
 export async function startNovelHttpBackend(
@@ -152,176 +215,18 @@ export async function startNovelHttpBackend(
   };
 }
 
-async function routeRequest(
-  options: NovelBackendOptions,
-  state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  setCorsHeaders(response);
-
-  if (request.method === 'OPTIONS') {
-    response.writeHead(204);
-    response.end();
-    return;
-  }
-
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-
-  if (request.method === 'GET' && url.pathname === '/api/health') {
-    writeJson(response, 200, { ok: true });
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspaces') {
-    await handleListWorkspaces(options, state, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/workspaces/import') {
-    await handleImportWorkspace(options, request, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/workspaces/create') {
-    await handleCreateWorkspace(options, state, request, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/workspaces/open') {
-    await handleOpenWorkspace(options, state, request, response);
-    return;
-  }
-
-  if (request.method === 'PATCH' && url.pathname === '/api/workspaces/name') {
-    await handleRenameWorkspace(options, request, response);
-    return;
-  }
-
-  if (request.method === 'DELETE' && url.pathname === '/api/workspaces') {
-    await handleRemoveWorkspace(options, state, request, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/provider-config') {
-    await handleGetProviderConfig(options, state, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/provider-config') {
-    await handleSaveProviderConfig(options, state, request, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/provider-config/check') {
-    await handleCheckProviderConfig(options, state, request, response);
-    return;
-  }
-
-  const providerDefaultMatch = url.pathname.match(/^\/api\/provider-config\/([^/]+)\/default$/);
-  if (request.method === 'POST' && providerDefaultMatch) {
-    await handleSetDefaultProviderConfig(
-      options,
-      state,
-      decodeURIComponent(providerDefaultMatch[1] ?? ''),
-      response,
-    );
-    return;
-  }
-
-  const providerDeleteMatch = url.pathname.match(/^\/api\/provider-config\/([^/]+)$/);
-  if (request.method === 'DELETE' && providerDeleteMatch) {
-    await handleDeleteProviderConfig(
-      options,
-      state,
-      decodeURIComponent(providerDeleteMatch[1] ?? ''),
-      response,
-    );
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/provider-config/models') {
-    await handleListProviderModels(request, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace') {
-    await handleGetActiveWorkspace(options, state, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace/tree') {
-    await handleWorkspaceTree(options, state, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace/file') {
-    await handleWorkspaceFile(options, state, url, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace/status') {
-    await handleWorkspaceStatus(options, state, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/workspace/onboarding') {
-    await handleSaveWorkspaceOnboarding(options, state, request, response);
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace/pending-actions') {
-    await handleListPendingActions(options, state, response);
-    return;
-  }
-
-  const pendingActionDecisionMatch = url.pathname.match(
-    /^\/api\/workspace\/pending-actions\/([^/]+)\/(accept|reject)$/,
-  );
-
-  if (request.method === 'POST' && pendingActionDecisionMatch) {
-    await handlePendingActionDecision(
-      options,
-      state,
-      decodeURIComponent(pendingActionDecisionMatch[1] ?? ''),
-      pendingActionDecisionMatch[2] as 'accept' | 'reject',
-      response,
-    );
-    return;
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/workspace/chapters') {
-    await handleWorkspaceChapters(options, state, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/workspace/chapters/rescan') {
-    await handleWorkspaceChapterRescan(options, state, response);
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/agent/chat') {
-    await handleAgentChat(options, state, request, response);
-    return;
-  }
-
-  writeJson(response, 404, { error: 'Not found.' });
-}
-
 async function handleAgentChat(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const messages = Array.isArray(body.messages) ? (body.messages as UIMessage[]) : [];
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
 
   if (!requestText.trim()) {
-    writeJson(response, 400, { error: 'A user message is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'A user message is required.' });
   }
 
   const runtimeEvents = await createRuntimeEventStream(options, state, {
@@ -331,8 +236,7 @@ async function handleAgentChat(
   });
   const stream = runtimeEventsToUiMessageStream(runtimeEvents);
 
-  pipeUIMessageStreamToResponse({
-    response,
+  return createUIMessageStreamResponse({
     stream,
     headers: {
       'Cache-Control': 'no-cache, no-transform',
@@ -345,12 +249,12 @@ async function handleAgentChat(
 async function handleListWorkspaces(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
   const workspaces = await loadLauncherWorkspaces(options);
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     workspaces,
     activeWorkspacePath: state.activeWorkspaceRoot,
     providerConfigured: state.providerConfigState.providers.length > 0,
@@ -359,22 +263,19 @@ async function handleListWorkspaces(
 
 async function handleImportWorkspace(
   options: NovelBackendOptions,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  const body = await readJsonBody(request);
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
   const requestedPath = getOptionalString(body, 'path');
   const displayName = getOptionalString(body, 'name');
 
   if (!requestedPath) {
-    writeJson(response, 400, { error: 'Workspace path is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
 
   const validation = await validateOanWorkspace(requestedPath);
   if (!validation.ok) {
-    writeJson(response, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
-    return;
+    return jsonResponse(context, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
   }
 
   const workspaces = await upsertLauncherWorkspace(options, {
@@ -384,45 +285,46 @@ async function handleImportWorkspace(
     addedAt: new Date().toISOString(),
   });
 
-  writeJson(response, 200, { workspace: workspaces.find((item) => item.path === validation.path) });
+  return jsonResponse(context, 200, {
+    workspace: workspaces.find((item) => item.path === validation.path),
+  });
 }
 
 async function handleCreateWorkspace(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const requestedPath = getOptionalString(body, 'path');
 
   if (!requestedPath) {
-    writeJson(response, 400, { error: 'Workspace path is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
 
   const targetPath = resolve(requestedPath);
 
   if (isInternalWorkspacePath(targetPath)) {
-    writeJson(response, 400, { error: 'Cannot create a workspace inside an internal runtime directory.' });
-    return;
+    return jsonResponse(context, 400, {
+      error: 'Cannot create a workspace inside an internal runtime directory.',
+    });
   }
 
   try {
     await mkdir(targetPath, { recursive: true });
     await initWorkspace(targetPath);
   } catch (error) {
-    writeJson(response, 400, {
+    return jsonResponse(context, 400, {
       error: error instanceof Error ? error.message : String(error),
     });
-    return;
   }
 
   const validation = await validateOanWorkspace(targetPath);
   if (!validation.ok) {
-    writeJson(response, 400, { error: validation.reason ?? 'Failed to create an OAN workspace.' });
-    return;
+    return jsonResponse(context, 400, {
+      error: validation.reason ?? 'Failed to create an OAN workspace.',
+    });
   }
 
   state.activeWorkspaceRoot = validation.path;
@@ -435,7 +337,7 @@ async function handleCreateWorkspace(
     lastOpenedAt: now,
   });
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     workspace: workspaces.find((item) => item.path === validation.path),
     providerConfigured: state.providerConfigState.providers.length > 0,
     onboarding: { show: true },
@@ -445,22 +347,19 @@ async function handleCreateWorkspace(
 async function handleOpenWorkspace(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const requestedPath = getOptionalString(body, 'path');
 
   if (!requestedPath) {
-    writeJson(response, 400, { error: 'Workspace path is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
 
   const validation = await validateOanWorkspace(requestedPath);
   if (!validation.ok) {
-    writeJson(response, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
-    return;
+    return jsonResponse(context, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
   }
 
   state.activeWorkspaceRoot = validation.path;
@@ -471,7 +370,7 @@ async function handleOpenWorkspace(
     lastOpenedAt: new Date().toISOString(),
   }, { preserveName: true });
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     workspace: workspaces.find((item) => item.path === validation.path),
     providerConfigured: state.providerConfigState.providers.length > 0,
   });
@@ -479,16 +378,14 @@ async function handleOpenWorkspace(
 
 async function handleRenameWorkspace(
   options: NovelBackendOptions,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  const body = await readJsonBody(request);
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
   const requestedPath = getOptionalString(body, 'path');
   const name = getOptionalString(body, 'name')?.trim();
 
   if (!requestedPath || !name) {
-    writeJson(response, 400, { error: 'Workspace path and name are required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Workspace path and name are required.' });
   }
 
   const workspaces = await loadRawLauncherWorkspaces(options);
@@ -498,21 +395,19 @@ async function handleRenameWorkspace(
   );
   await saveRawLauncherWorkspaces(options, next);
 
-  writeJson(response, 200, { workspaces: await loadLauncherWorkspaces(options) });
+  return jsonResponse(context, 200, { workspaces: await loadLauncherWorkspaces(options) });
 }
 
 async function handleRemoveWorkspace(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  const body = await readJsonBody(request);
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
   const requestedPath = getOptionalString(body, 'path');
 
   if (!requestedPath) {
-    writeJson(response, 400, { error: 'Workspace path is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
 
   const normalizedPath = resolve(requestedPath);
@@ -524,18 +419,18 @@ async function handleRemoveWorkspace(
     state.activeWorkspaceRoot = undefined;
   }
 
-  writeJson(response, 200, { workspaces: await loadLauncherWorkspaces(options) });
+  return jsonResponse(context, 200, { workspaces: await loadLauncherWorkspaces(options) });
 }
 
 async function handleGetProviderConfig(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
   const providers = state.providerConfigState.providers.map(redactLlmProviderConfig);
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     providers,
     defaultProviderId: state.providerConfigState.defaultProviderId,
     configured: providers.length > 0,
@@ -545,23 +440,23 @@ async function handleGetProviderConfig(
 async function handleSaveProviderConfig(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const id = getOptionalString(body, 'id')?.trim() || 'default';
   const kind = getOptionalString(body, 'kind') as LlmProviderKind | undefined;
-  const model = getOptionalString(body, 'model')?.trim();
+  const models = readProviderModels(body);
+  const model = getOptionalString(body, 'model')?.trim()
+    || models.find((item) => item.default)?.id
+    || models[0]?.id;
 
   if (!kind || !isSupportedProviderKind(kind)) {
-    writeJson(response, 400, { error: 'Provider kind is invalid.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Provider kind is invalid.' });
   }
 
   if (!model) {
-    writeJson(response, 400, { error: 'Model is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Model is required.' });
   }
 
   const existingProvider = state.providerConfigState.providers.find((provider) => provider.id === id);
@@ -571,6 +466,7 @@ async function handleSaveProviderConfig(
     id,
     kind,
     model,
+    models,
     displayName: getOptionalString(body, 'displayName')?.trim() || id,
     baseUrl: getOptionalString(body, 'baseUrl')?.trim() || providerDefaultBaseUrl(kind),
     apiKey,
@@ -580,23 +476,23 @@ async function handleSaveProviderConfig(
 
   state.providerConfigState = upsertLlmProviderConfig(state.providerConfigState, provider);
   await saveProviderConfigState(options, state.providerConfigState);
-  await handleGetProviderConfig(options, state, response);
+  return handleGetProviderConfig(options, state, context);
 }
 
 async function handleSetDefaultProviderConfig(
   options: NovelBackendOptions,
   state: BackendState,
   id: string,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
 
   try {
     state.providerConfigState = setDefaultLlmProviderConfig(state.providerConfigState, id);
     await saveProviderConfigState(options, state.providerConfigState);
-    await handleGetProviderConfig(options, state, response);
+    return handleGetProviderConfig(options, state, context);
   } catch (error) {
-    writeJson(response, 400, {
+    return jsonResponse(context, 400, {
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -606,44 +502,55 @@ async function handleDeleteProviderConfig(
   options: NovelBackendOptions,
   state: BackendState,
   id: string,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
   state.providerConfigState = removeLlmProviderConfig(state.providerConfigState, id);
   await saveProviderConfigState(options, state.providerConfigState);
-  await handleGetProviderConfig(options, state, response);
+  return handleGetProviderConfig(options, state, context);
 }
 
 async function handleListProviderModels(
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  const body = await readJsonBody(request);
-  const baseUrl = normalizeProviderBaseUrl(getOptionalString(body, 'baseUrl'));
-  const apiKey = getOptionalString(body, 'apiKey')?.trim();
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  await ensureProviderConfigLoaded(options, state);
+  const body = await readJsonBody(context);
+  const providerId = getOptionalString(body, 'providerId')?.trim();
+  const savedProvider = providerId
+    ? state.providerConfigState.providers.find((provider) => provider.id === providerId)
+    : undefined;
+  const kind = (getOptionalString(body, 'kind') ?? savedProvider?.kind ?? 'custom') as
+    | LlmProviderKind
+    | undefined;
+  const baseUrl = normalizeProviderBaseUrl(
+    getOptionalString(body, 'baseUrl') ?? savedProvider?.baseUrl ?? (kind ? providerDefaultBaseUrl(kind) : undefined),
+  );
+  const apiKey = getOptionalString(body, 'apiKey')?.trim() || savedProvider?.apiKey;
+
+  if (!kind || !isSupportedProviderKind(kind)) {
+    return jsonResponse(context, 400, { error: 'Provider kind is invalid.' });
+  }
 
   if (!baseUrl) {
-    writeJson(response, 400, { error: 'Base URL is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Base URL is required.' });
+  }
+
+  if (providerRequiresApiKey(kind) && !apiKey) {
+    return jsonResponse(context, 400, { error: 'API key is required.' });
   }
 
   try {
-    const modelsUrl = new URL('models', ensureTrailingSlash(baseUrl)).toString();
-    const modelsResponse = await fetch(modelsUrl, {
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-    });
-    const data = await modelsResponse.json() as unknown;
+    const result = await fetchProviderModelList({ kind, baseUrl, apiKey });
 
-    if (!modelsResponse.ok) {
-      writeJson(response, modelsResponse.status, {
-        error: readProviderErrorMessage(data) ?? 'Failed to fetch model list.',
-      });
-      return;
+    if (!result.ok) {
+      return jsonResponse(context, result.status, { error: result.error });
     }
 
-    writeJson(response, 200, { models: extractOpenAiCompatibleModels(data) });
+    return jsonResponse(context, 200, { models: result.models });
   } catch (error) {
-    writeJson(response, 400, {
+    return jsonResponse(context, 400, {
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -652,11 +559,10 @@ async function handleListProviderModels(
 async function handleCheckProviderConfig(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const providerId = getOptionalString(body, 'providerId')?.trim();
   const savedProvider = providerId
     ? state.providerConfigState.providers.find((provider) => provider.id === providerId)
@@ -665,13 +571,11 @@ async function handleCheckProviderConfig(
   const model = getOptionalString(body, 'model')?.trim() || savedProvider?.model;
 
   if (!kind || !isSupportedProviderKind(kind)) {
-    writeJson(response, 400, { error: 'Provider kind is invalid.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Provider kind is invalid.' });
   }
 
   if (!model) {
-    writeJson(response, 400, { error: 'Model is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Model is required.' });
   }
 
   const baseUrl = normalizeProviderBaseUrl(
@@ -680,29 +584,27 @@ async function handleCheckProviderConfig(
   const apiKey = getOptionalString(body, 'apiKey')?.trim() || savedProvider?.apiKey;
 
   if (!baseUrl) {
-    writeJson(response, 400, { error: 'Base URL is required.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Base URL is required.' });
   }
 
-  if (!apiKey) {
-    writeJson(response, 400, { error: 'API key is required.' });
-    return;
+  if (providerRequiresApiKey(kind) && !apiKey) {
+    return jsonResponse(context, 400, { error: 'API key is required.' });
   }
 
   const result = await checkOpenAiCompatibleProvider({ baseUrl, apiKey, model });
-  writeJson(response, 200, result);
+  return jsonResponse(context, 200, result);
 }
 
 async function handleGetActiveWorkspace(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   await ensureProviderConfigLoaded(options, state);
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const validation = await validateOanWorkspace(workspaceRoot);
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     workspace: {
       name: validation.name,
       novelName: validation.novelName,
@@ -717,28 +619,26 @@ async function handleGetActiveWorkspace(
 async function handleWorkspaceTree(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = await realpath(requireActiveWorkspaceRoot(options, state));
-  writeJson(response, 200, { tree: await buildFileTree(workspaceRoot, workspaceRoot) });
+  return jsonResponse(context, 200, { tree: await buildFileTree(workspaceRoot, workspaceRoot) });
 }
 
 async function handleWorkspaceFile(
   options: NovelBackendOptions,
   state: BackendState,
-  url: URL,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = await realpath(requireActiveWorkspaceRoot(options, state));
-  const filePath = resolveWorkspaceFile(workspaceRoot, url.searchParams.get('path') ?? '');
+  const filePath = resolveWorkspaceFile(workspaceRoot, context.req.query('path') ?? '');
   const fileStat = await stat(filePath);
 
   if (!fileStat.isFile()) {
-    writeJson(response, 400, { error: 'Selected path is not a file.' });
-    return;
+    return jsonResponse(context, 400, { error: 'Selected path is not a file.' });
   }
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     path: relative(workspaceRoot, filePath),
     content: await readFile(filePath, 'utf-8'),
   });
@@ -747,29 +647,29 @@ async function handleWorkspaceFile(
 async function handleWorkspaceChapters(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const [index, status] = await Promise.all([
     buildChapterIndex({ workspaceRoot }),
     readChapterIndexStatus({ workspaceRoot }),
   ]);
 
-  writeJson(response, 200, { index, status });
+  return jsonResponse(context, 200, { index, status });
 }
 
 async function handleWorkspaceStatus(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const [pendingActions, gitStatus] = await Promise.all([
     listPendingActions({ workspaceRoot }),
     readGitWorkspaceStatus(workspaceRoot),
   ]);
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     pendingActionCount: pendingActions.length,
     git: gitStatus,
   });
@@ -778,11 +678,10 @@ async function handleWorkspaceStatus(
 async function handleSaveWorkspaceOnboarding(
   options: NovelBackendOptions,
   state: BackendState,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(context);
   const config = await saveWorkspaceOnboarding(workspaceRoot, {
     novelName: getOptionalString(body, 'novelName'),
     inspiration: getOptionalString(body, 'inspiration'),
@@ -793,8 +692,9 @@ async function handleSaveWorkspaceOnboarding(
   const validation = await validateOanWorkspace(workspaceRoot);
 
   if (!validation.ok) {
-    writeJson(response, 400, { error: validation.reason ?? 'Workspace config became invalid.' });
-    return;
+    return jsonResponse(context, 400, {
+      error: validation.reason ?? 'Workspace config became invalid.',
+    });
   }
 
   const workspaces = await upsertLauncherWorkspace(options, {
@@ -804,7 +704,7 @@ async function handleSaveWorkspaceOnboarding(
     lastOpenedAt: new Date().toISOString(),
   });
 
-  writeJson(response, 200, {
+  return jsonResponse(context, 200, {
     config,
     workspace: workspaces.find((item) => item.path === validation.path),
   });
@@ -813,12 +713,12 @@ async function handleSaveWorkspaceOnboarding(
 async function handleListPendingActions(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const pendingActions = await listPendingActions({ workspaceRoot });
 
-  writeJson(response, 200, { pendingActions });
+  return jsonResponse(context, 200, { pendingActions });
 }
 
 async function handlePendingActionDecision(
@@ -826,26 +726,26 @@ async function handlePendingActionDecision(
   state: BackendState,
   id: string,
   decision: 'accept' | 'reject',
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const result = decision === 'accept'
     ? await acceptPendingAction({ workspaceRoot, id })
     : await rejectPendingAction({ workspaceRoot, id });
 
-  writeJson(response, 200, result);
+  return jsonResponse(context, 200, result);
 }
 
 async function handleWorkspaceChapterRescan(
   options: NovelBackendOptions,
   state: BackendState,
-  response: ServerResponse,
-): Promise<void> {
+  context: NovelBackendContext,
+): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const index = await writeChapterIndexFile({ workspaceRoot });
   const status = await readChapterIndexStatus({ workspaceRoot });
 
-  writeJson(response, 200, { index, status });
+  return jsonResponse(context, 200, { index, status });
 }
 
 async function createRuntimeEventStream(
@@ -1097,7 +997,12 @@ async function loadProviderConfigState(options: NovelBackendOptions): Promise<Ll
       isRecord(parsed.state) &&
       Array.isArray(parsed.state.providers)
     ) {
-      return parsed.state as LlmProviderConfigState;
+      const state = parsed.state as unknown as LlmProviderConfigState;
+
+      return {
+        ...state,
+        providers: state.providers.map(normalizeLlmProviderConfig),
+      };
     }
   } catch {
     // Missing or unreadable global provider config falls back to an empty state.
@@ -1111,13 +1016,17 @@ async function saveProviderConfigState(
   state: LlmProviderConfigState,
 ): Promise<void> {
   const filePath = providerConfigFilePath(options);
+  const normalizedState: LlmProviderConfigState = {
+    ...state,
+    providers: state.providers.map(normalizeLlmProviderConfig),
+  };
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(
     filePath,
     `${JSON.stringify({
       kind: 'llm-provider-config',
       version: 1,
-      state,
+      state: normalizedState,
     }, null, 2)}\n`,
     'utf-8',
   );
@@ -1134,6 +1043,7 @@ function isSupportedProviderKind(value: string): value is LlmProviderKind {
     'deepseek',
     'opencode-go',
     'xiaomi-mimo',
+    'ollama',
     'custom',
   ].includes(value);
 }
@@ -1144,9 +1054,14 @@ function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
     deepseek: 'https://api.deepseek.com',
     'opencode-go': 'https://api.opencodego.com/v1',
     'xiaomi-mimo': 'https://api.mimo.mi.com/v1',
+    ollama: 'http://127.0.0.1:11434/v1',
   };
 
   return presets[kind];
+}
+
+function providerRequiresApiKey(kind: LlmProviderKind): boolean {
+  return kind !== 'ollama';
 }
 
 function normalizeProviderBaseUrl(value?: string): string | undefined {
@@ -1158,20 +1073,133 @@ function ensureTrailingSlash(value: string): string {
   return value.endsWith('/') ? value : `${value}/`;
 }
 
-function extractOpenAiCompatibleModels(data: unknown): Array<{ id: string }> {
+async function fetchProviderModelList(input: {
+  kind: LlmProviderKind;
+  baseUrl: string;
+  apiKey?: string;
+}): Promise<
+  | { ok: true; models: LlmProviderModel[] }
+  | { ok: false; status: number; error: string }
+> {
+  if (input.kind === 'ollama') {
+    return fetchOllamaModelList(input.baseUrl);
+  }
+
+  const modelsUrl = new URL('models', ensureTrailingSlash(input.baseUrl)).toString();
+  const modelsResponse = await fetch(modelsUrl, {
+    headers: createProviderAuthHeaders(input.apiKey),
+  });
+  const data = await modelsResponse.json() as unknown;
+
+  if (!modelsResponse.ok) {
+    return {
+      ok: false,
+      status: modelsResponse.status,
+      error: readProviderErrorMessage(data) ?? 'Failed to fetch model list.',
+    };
+  }
+
+  return {
+    ok: true,
+    models: extractOpenAiCompatibleModels(data),
+  };
+}
+
+async function fetchOllamaModelList(baseUrl: string): Promise<
+  | { ok: true; models: LlmProviderModel[] }
+  | { ok: false; status: number; error: string }
+> {
+  const modelsResponse = await fetch(ollamaTagsUrl(baseUrl));
+  const data = await modelsResponse.json() as unknown;
+
+  if (!modelsResponse.ok) {
+    return {
+      ok: false,
+      status: modelsResponse.status,
+      error: readProviderErrorMessage(data) ?? 'Failed to fetch Ollama model list.',
+    };
+  }
+
+  return {
+    ok: true,
+    models: extractOllamaModels(data),
+  };
+}
+
+function ollamaTagsUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  const trimmedPath = url.pathname.replace(/\/+$/u, '');
+
+  url.pathname = trimmedPath.endsWith('/v1')
+    ? `${trimmedPath.slice(0, -3)}/api/tags`
+    : `${trimmedPath}/api/tags`;
+  url.search = '';
+  url.hash = '';
+
+  return url.toString();
+}
+
+function createProviderAuthHeaders(apiKey?: string): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
+
+function extractOpenAiCompatibleModels(data: unknown): LlmProviderModel[] {
   if (!isRecord(data) || !Array.isArray(data.data)) {
     return [];
   }
 
   return data.data
-    .map((item) => {
+    .map((item): LlmProviderModel | undefined => {
       if (!isRecord(item) || typeof item.id !== 'string') {
         return undefined;
       }
 
-      return { id: item.id };
+      const model: LlmProviderModel = { id: item.id };
+
+      if (typeof item.name === 'string') {
+        model.displayName = item.name;
+      }
+
+      if (typeof item.context_length === 'number') {
+        model.contextWindow = item.context_length;
+      }
+
+      return model;
     })
-    .filter((item): item is { id: string } => Boolean(item));
+    .filter((item): item is LlmProviderModel => Boolean(item));
+}
+
+function extractOllamaModels(data: unknown): LlmProviderModel[] {
+  if (!isRecord(data) || !Array.isArray(data.models)) {
+    return [];
+  }
+
+  return data.models
+    .map((item): LlmProviderModel | undefined => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+
+      const id = getOptionalString(item, 'model')?.trim()
+        || getOptionalString(item, 'name')?.trim();
+
+      if (!id) {
+        return undefined;
+      }
+
+      const model: LlmProviderModel = { id };
+      const details = isRecord(item.details) ? item.details : undefined;
+      const parameterSize = details
+        ? getOptionalString(details, 'parameter_size')?.trim()
+        : undefined;
+
+      if (parameterSize) {
+        model.displayName = `${id} (${parameterSize})`;
+      }
+
+      return model;
+    })
+    .filter((item): item is LlmProviderModel => Boolean(item));
 }
 
 function readProviderErrorMessage(data: unknown): string | undefined {
@@ -1196,7 +1224,7 @@ function readProviderErrorMessage(data: unknown): string | undefined {
 
 async function checkOpenAiCompatibleProvider(input: {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
   model: string;
 }): Promise<{
   ok: boolean;
@@ -1214,7 +1242,7 @@ async function checkOpenAiCompatibleProvider(input: {
     const providerResponse = await fetch(chatUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${input.apiKey}`,
+        ...createProviderAuthHeaders(input.apiKey),
         'content-type': 'application/json',
       },
       body: JSON.stringify({
@@ -1540,43 +1568,78 @@ function getLastUserText(messages: UIMessage[]): string | undefined {
     .trim();
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
+async function readJsonBody(context: NovelBackendContext): Promise<JsonBody> {
+  const text = await context.req.text();
 
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  if (!chunks.length) {
+  if (!text.trim()) {
     return {};
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
+  return JSON.parse(text) as JsonBody;
 }
 
 function getOptionalString(value: Record<string, unknown>, key: string): string | undefined {
   return typeof value[key] === 'string' ? value[key] : undefined;
 }
 
+function getOptionalNumber(value: Record<string, unknown>, key: string): number | undefined {
+  return typeof value[key] === 'number' && Number.isFinite(value[key]) ? value[key] : undefined;
+}
+
+function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] {
+  const rawModels = Array.isArray(value.models) ? value.models : [];
+
+  return rawModels
+    .map((item): LlmProviderModel | undefined => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+
+      const id = getOptionalString(item, 'id')?.trim();
+      if (!id) {
+        return undefined;
+      }
+
+      const model: LlmProviderModel = {
+        id,
+        default: item.default === true,
+      };
+      const displayName = getOptionalString(item, 'displayName')?.trim();
+      const contextWindow = getOptionalNumber(item, 'contextWindow');
+      const maxOutputTokens = getOptionalNumber(item, 'maxOutputTokens');
+
+      if (displayName) {
+        model.displayName = displayName;
+      }
+
+      if (contextWindow !== undefined) {
+        model.contextWindow = contextWindow;
+      }
+
+      if (maxOutputTokens !== undefined) {
+        model.maxOutputTokens = maxOutputTokens;
+      }
+
+      return model;
+    })
+    .filter((item): item is LlmProviderModel => Boolean(item));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function writeJson(
-  response: ServerResponse,
+function jsonResponse(
+  _context: NovelBackendContext,
   statusCode: number,
   payload: unknown,
-): void {
-  response.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8',
+): Response {
+  return new Response(JSON.stringify(payload), {
+    status: statusCode,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    },
   });
-  response.end(JSON.stringify(payload));
-}
-
-function setCorsHeaders(response: ServerResponse): void {
-  response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Headers', 'content-type');
-  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
 }
 
 export type { LanguageModel };

@@ -43,7 +43,10 @@ describe('upsertLlmProviderConfig', () => {
     const next = upsertLlmProviderConfig(state, openaiProvider);
 
     expect(next.providers).toHaveLength(1);
-    expect(next.providers[0]).toEqual(openaiProvider);
+    expect(next.providers[0]).toMatchObject({
+      ...openaiProvider,
+      models: [{ id: 'gpt-4o', default: true }],
+    });
     expect(next.defaultProviderId).toBe('openai-gpt4');
   });
 
@@ -72,6 +75,46 @@ describe('upsertLlmProviderConfig', () => {
 
     expect(s2.providers).toHaveLength(1);
     expect(s2.providers[0].model).toBe('gpt-4o-mini');
+    expect(s2.providers[0].models).toEqual([{ id: 'gpt-4o-mini', default: true }]);
+  });
+
+  it('normalizes multiple models under one provider', () => {
+    const state = createEmptyLlmProviderConfigState();
+    const next = upsertLlmProviderConfig(state, {
+      id: 'custom-openai',
+      kind: 'custom',
+      model: 'custom-small',
+      models: [
+        { id: 'custom-large', displayName: 'Large' },
+        { id: 'custom-small', displayName: 'Small' },
+      ],
+    });
+
+    expect(next.providers[0]).toMatchObject({
+      id: 'custom-openai',
+      model: 'custom-small',
+      models: [
+        { id: 'custom-large', displayName: 'Large', default: false },
+        { id: 'custom-small', displayName: 'Small', default: true },
+      ],
+    });
+  });
+
+  it('supports local Ollama providers without API keys', () => {
+    const state = createEmptyLlmProviderConfigState();
+    const next = upsertLlmProviderConfig(state, {
+      id: 'ollama',
+      kind: 'ollama',
+      model: 'llama3.2:latest',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+    });
+
+    expect(next.providers[0]).toMatchObject({
+      id: 'ollama',
+      kind: 'ollama',
+      model: 'llama3.2:latest',
+      models: [{ id: 'llama3.2:latest', default: true }],
+    });
   });
 
   it('sets defaultProviderId when default: true', () => {
@@ -167,9 +210,10 @@ describe('getLlmProviderConfig', () => {
       model: 'gpt-4o',
     };
     const s1 = upsertLlmProviderConfig(state, provider);
-    expect(getLlmProviderConfig(s1, 'test-id')).toEqual({
+    expect(getLlmProviderConfig(s1, 'test-id')).toMatchObject({
       ...provider,
       default: true,
+      models: [{ id: 'gpt-4o', default: true }],
     });
   });
 
