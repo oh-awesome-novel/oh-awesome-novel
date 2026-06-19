@@ -100,6 +100,24 @@ describe('novel copilot skill contract', () => {
     expect(writeNextCommand?.prompt).toContain('PRE_WRITE_CHECK');
     expect(skill.system).toContain('PRE_WRITE_CHECK');
     expect(skill.system).toContain('chapter.createDraft');
+    expect(writeNextCommand?.prompt).not.toContain('precommit');
+    expect(writeNextCommand?.prompt).not.toContain('postcommit');
+  });
+
+  it('keeps heavy outline structure out of ordinary chapter planning', () => {
+    const skill = createDefaultNovelCopilotSkill();
+    const planNextCommand = skill.quickCommands.find(
+      (command) => command.id === 'chapter.planNext',
+    );
+    const volumeCommand = skill.quickCommands.find(
+      (command) => command.id === 'volume.planNext',
+    );
+
+    expect(planNextCommand?.prompt).toContain('轻量本章契约');
+    expect(planNextCommand?.prompt).not.toContain('CBN/CPNs/CEN');
+    expect(volumeCommand?.prompt).toContain('CBN/CPNs/CEN');
+    expect(skill.system).toContain('Do not impose those heavy fields');
+    expect(skill.system).toContain('Planning outputs are assistant-visible artifacts');
   });
 
   it('makes review report-only and separates it from settlement', () => {

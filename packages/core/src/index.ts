@@ -102,3 +102,24 @@ export type {
   SemanticBoundary,
   WriteContextPackageArtifactInput,
 } from './agent-context-package.js';
+
+// Writing Planning
+export {
+  formatChapterContractMarkdown,
+  formatPreWriteCheckMarkdown,
+  formatVolumePlanningPacketMarkdown,
+} from './writing-planning.js';
+
+export type {
+  ChapterContract,
+  ChapterContractCastEntry,
+  ChapterContractHook,
+  ChapterPlanningPacket,
+  HookPlanOperation,
+  OutlinePlanningPacket,
+  PlanningGranularity,
+  PlanningPacket,
+  PreWriteCheck,
+  PreWriteRiskScan,
+  VolumePlanningPacket,
+} from './writing-planning.js';

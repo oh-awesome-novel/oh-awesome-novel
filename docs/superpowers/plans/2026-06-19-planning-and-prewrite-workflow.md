@@ -22,39 +22,38 @@
 
 ### Task 1: Add Planning Types
 
-- [ ] Define `ChapterContract`.
-- [ ] Define `VolumePlanningPacket`.
-- [ ] Define `OutlinePlanningPacket`.
-- [ ] Define `PreWriteCheck`.
-- [ ] Define `PlanningGranularity = 'outline' | 'volume' | 'chapter' | 'keyChapter'`.
+- [x] Define `ChapterContract`.
+- [x] Define `VolumePlanningPacket`.
+- [x] Define `OutlinePlanningPacket`.
+- [x] Define `PreWriteCheck`.
+- [x] Define `PlanningGranularity = 'outline' | 'volume' | 'chapter' | 'keyChapter'`.
 
 ### Task 2: Add Formatters
 
-- [ ] Add Markdown formatter for light chapter contract.
-- [ ] Add Markdown formatter for volume planning packet.
-- [ ] Add Markdown formatter for `PRE_WRITE_CHECK`.
-- [ ] Keep formatters deterministic for tests.
+- [x] Add Markdown formatter for light chapter contract.
+- [x] Add Markdown formatter for volume planning packet.
+- [x] Add Markdown formatter for `PRE_WRITE_CHECK`.
+- [x] Keep formatters deterministic for tests.
 
 ### Task 3: Update Command Prompts
 
-- [ ] `/规划大纲`: reads constitution, workflow, long direction, existing summaries/state, distilled references if enabled.
-- [ ] `/规划下一卷`: reads prior volume/stage summary, current state, active hooks, character arcs, timeline, necessary world rules.
-- [ ] `/规划下一章`: outputs light chapter contract by default.
-- [ ] `/写下一章`: must output short `PRE_WRITE_CHECK` before `chapter.createDraft`.
+- [x] `/规划大纲`: reads constitution, workflow, long direction, existing summaries/state, distilled references if enabled.
+- [x] `/规划下一卷`: reads prior volume/stage summary, current state, active hooks, character arcs, timeline, necessary world rules.
+- [x] `/规划下一章`: outputs light chapter contract by default.
+- [x] `/写下一章`: must output short `PRE_WRITE_CHECK` before `chapter.createDraft`.
 
 ### Task 4: Prevent Overweight Single-Chapter Flow
 
-- [ ] Prompt says CBN / CPNs / CEN only for volume, outline, key chapters, or user-requested detailed planning.
-- [ ] Tests assert ordinary `/写下一章` prompt does not require full prewrite/precommit/postcommit gate.
+- [x] Prompt says CBN / CPNs / CEN only for volume, outline, key chapters, or user-requested detailed planning.
+- [x] Tests assert ordinary `/写下一章` prompt does not require full prewrite/precommit/postcommit gate.
 
 ### Task 5: Persistence Boundary
 
-- [ ] Planning outputs remain assistant/session artifacts by default.
-- [ ] If user asks to persist a plan, route through a future write-intent or existing appropriate PendingAction path.
-- [ ] Do not store chapter contract in `chapters/` body.
+- [x] Planning outputs remain assistant/session artifacts by default.
+- [x] If user asks to persist a plan, route through a future write-intent or existing appropriate PendingAction path.
+- [x] Do not store chapter contract in `chapters/` body.
 
 ### Task 6: Verification
 
-- [ ] Run core tests.
-- [ ] Manually inspect prompt text for no direct writes.
-
+- [x] Run core tests.
+- [x] Manually inspect prompt text for no direct writes.

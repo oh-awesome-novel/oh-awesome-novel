@@ -305,6 +305,7 @@ export const createDefaultNovelCopilotSkill = (
     'Do not reveal hidden chain of thought.',
     'For /规划下一章, output a light chapter contract: chapter id/title candidate, current task, POV, core conflict or scene direction, key cast and starting states, hooks to add/advance/mention/resolve/defer, ending change, and forbidden moves.',
     'For /规划大纲 and /规划下一卷, you may use heavier outline fields such as conflict ladder, information-gap changes, key beats, volume-level character arcs, foreshadow debt, payoff windows, and CBN/CPNs/CEN. Do not impose those heavy fields on ordinary single-chapter writing.',
+    'Planning outputs are assistant-visible artifacts or session artifacts by default. Do not store a chapter contract inside chapter prose or canonical truth files unless the user explicitly asks for a persisted plan PendingAction.',
     '',
     '## Draft Or Propose',
     '',
