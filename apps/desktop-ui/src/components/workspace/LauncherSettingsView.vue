@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { Moon, Sun } from '@lucide/vue';
+import { computed } from 'vue';
+import { useComposerShortcutPreference } from '../../composables/useComposerShortcutPreference';
 
 defineProps<{
   theme: 'light' | 'dark';
@@ -8,6 +10,11 @@ defineProps<{
 const emit = defineEmits<{
   toggleTheme: [];
 }>();
+
+const { shortcut, shortcutOptions, setShortcut } = useComposerShortcutPreference();
+const selectedShortcutDescription = computed(() =>
+  shortcutOptions.value.find((option) => option.value === shortcut.value)?.description ?? '',
+);
 </script>
 
 <template>
@@ -46,8 +53,34 @@ const emit = defineEmits<{
 
     <div class="settings-section">
       <div class="settings-section-heading">
+        <h2 class="panel-title">快捷键</h2>
+        <p class="empty-copy">控制 Copilot 输入框的发送方式。</p>
+      </div>
+
+      <div class="settings-option-row settings-option-row-stack">
+        <div class="settings-option-copy">
+          <strong>消息发送</strong>
+          <span>{{ selectedShortcutDescription }}</span>
+        </div>
+        <div class="settings-choice-group" aria-label="消息发送快捷键">
+          <button
+            v-for="option in shortcutOptions"
+            :key="option.value"
+            class="settings-choice-button"
+            :class="{ 'settings-choice-button-active': shortcut === option.value }"
+            type="button"
+            @click="setShortcut(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-heading">
         <h2 class="panel-title">即将支持</h2>
-        <p class="empty-copy">后续可以在这里扩展编辑器、快捷键、模型和工作区行为等配置。</p>
+        <p class="empty-copy">后续可以在这里扩展编辑器、模型和工作区行为等配置。</p>
       </div>
     </div>
   </section>

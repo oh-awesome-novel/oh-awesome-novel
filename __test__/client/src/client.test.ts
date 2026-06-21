@@ -70,6 +70,10 @@ describe('createOanClient', () => {
       app: {
         getVersion: vi.fn(async () => '1.2.3'),
       },
+      appConfig: {
+        get: vi.fn(async () => ({ composerSubmitShortcut: 'meta-enter' })),
+        set: vi.fn(async (config) => config),
+      },
       theme: {
         get: vi.fn(async () => 'light'),
         set: vi.fn(async (theme) => theme),
@@ -91,8 +95,60 @@ describe('createOanClient', () => {
     await expect(client.getAppVersion()).resolves.toBe('1.2.3');
     await expect(client.getThemePreference()).resolves.toBe('light');
     await expect(client.setThemePreference('dark')).resolves.toBe('dark');
+    await expect(client.getComposerSubmitShortcutPreference()).resolves.toBe('meta-enter');
+    await expect(client.setComposerSubmitShortcutPreference('ctrl-enter')).resolves.toBe('ctrl-enter');
     expect(client.isDirectoryPickerAvailable()).toBe(true);
     await expect(client.selectDirectory()).resolves.toBe('/workspace');
+  });
+
+  it('reads and writes app config through the HTTP backend when no desktop bridge exists', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+
+      if (init?.method === 'PATCH') {
+        return new Response(JSON.stringify({
+          config: JSON.parse(String(init.body)),
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        config: {
+          theme: 'light',
+          composerSubmitShortcut: 'meta-enter',
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.getAppConfig()).resolves.toEqual({
+      theme: 'light',
+      composerSubmitShortcut: 'meta-enter',
+    });
+    await expect(client.getThemePreference()).resolves.toBe('light');
+    await expect(client.getComposerSubmitShortcutPreference()).resolves.toBe('meta-enter');
+    await expect(client.setComposerSubmitShortcutPreference('ctrl-enter')).resolves.toBe('ctrl-enter');
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://backend.test/api/app-config',
+      'http://backend.test/api/app-config',
+      'http://backend.test/api/app-config',
+      'http://backend.test/api/app-config',
+    ]);
+    expect(calls[3]?.init).toMatchObject({ method: 'PATCH' });
+    expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({
+      composerSubmitShortcut: 'ctrl-enter',
+    });
   });
 
   it('falls back to injected browser capabilities when no desktop bridge exists', async () => {

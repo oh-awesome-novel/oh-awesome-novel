@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { GitBranch, ShieldCheck } from '@lucide/vue';
 import ChapterNavigationView from './ChapterNavigationView.vue';
 import FileTreePanel from './FileTreePanel.vue';
 import type {
@@ -18,6 +19,7 @@ defineProps<{
   chapterStatus?: ChapterIndexStatus;
   chaptersLoading: boolean;
   chaptersError: string;
+  gitAutoCommitOnAccept: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -25,7 +27,6 @@ const emit = defineEmits<{
   openFile: [path: string];
   openChapter: [chapter: ChapterIndexChapter];
   rescanChapters: [];
-  pin: [];
 }>();
 </script>
 
@@ -50,28 +51,42 @@ const emit = defineEmits<{
           Chapters
         </button>
       </div>
-      <button class="icon-button" type="button" aria-label="固定左栏" @click="emit('pin')">
-        ⇥
-      </button>
     </div>
 
-    <FileTreePanel
-      v-if="tab === 'files'"
-      :tree="tree"
-      :active-path="activePath"
-      :loading="treeLoading"
-      :error="treeError"
-      @open-file="emit('openFile', $event)"
-    />
-    <ChapterNavigationView
-      v-else
-      :index="chapterIndex"
-      :status="chapterStatus"
-      :active-path="activePath"
-      :loading="chaptersLoading"
-      :error="chaptersError"
-      @open-chapter="emit('openChapter', $event)"
-      @rescan="emit('rescanChapters')"
-    />
+    <div class="left-panel-main">
+      <FileTreePanel
+        v-if="tab === 'files'"
+        :tree="tree"
+        :active-path="activePath"
+        :loading="treeLoading"
+        :error="treeError"
+        @open-file="emit('openFile', $event)"
+      />
+      <ChapterNavigationView
+        v-else
+        :index="chapterIndex"
+        :status="chapterStatus"
+        :active-path="activePath"
+        :loading="chaptersLoading"
+        :error="chaptersError"
+        @open-chapter="emit('openChapter', $event)"
+        @rescan="emit('rescanChapters')"
+      />
+    </div>
+
+    <footer class="left-panel-status" aria-label="Workspace safeguards">
+      <span class="left-panel-status-pill left-panel-status-pill-review" title="所有写入先进入 PendingAction 审阅">
+        <ShieldCheck :size="14" aria-hidden="true" />
+        审阅保护
+      </span>
+      <span
+        class="left-panel-status-pill left-panel-status-pill-git"
+        :class="{ 'left-panel-status-pill-muted': !gitAutoCommitOnAccept }"
+        :title="gitAutoCommitOnAccept ? '接受 PendingAction 后自动提交' : '当前 workspace 已关闭 PendingAction 自动提交'"
+      >
+        <GitBranch :size="14" aria-hidden="true" />
+        {{ gitAutoCommitOnAccept ? 'Git 自动提交' : 'Git 手动提交' }}
+      </span>
+    </footer>
   </aside>
 </template>

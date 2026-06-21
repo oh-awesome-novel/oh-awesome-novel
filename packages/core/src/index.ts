@@ -31,10 +31,13 @@ export {
   saveAppConfig,
   loadThemePreference,
   saveThemePreference,
+  loadComposerSubmitShortcutPreference,
+  saveComposerSubmitShortcutPreference,
 } from './app-config.js';
 
 export type {
   AppConfig,
+  ComposerSubmitShortcutPreference,
   ThemePreference,
 } from './app-config.js';
 

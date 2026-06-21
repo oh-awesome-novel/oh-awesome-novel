@@ -22,7 +22,7 @@ async function copyText(text: string) {
 </script>
 
 <template>
-  <div class="panel transcript-panel">
+  <div class="transcript-panel agent-timeline-panel">
     <div class="panel-heading">
       <h2 class="panel-title">Agent Timeline</h2>
       <span class="count-pill">{{ items.length }}</span>

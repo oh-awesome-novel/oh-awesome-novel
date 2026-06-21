@@ -2,11 +2,21 @@ import { DefaultChatTransport } from 'ai';
 import type { ChatTransport, UIMessage } from 'ai';
 
 export type ThemeMode = 'light' | 'dark';
+export type ComposerSubmitShortcutPreference = 'enter' | 'meta-enter' | 'ctrl-enter';
+
+export interface AppConfigState {
+  theme?: ThemeMode;
+  composerSubmitShortcut?: ComposerSubmitShortcutPreference;
+}
 
 export interface OanDesktopBridge {
   backendBaseUrl?: string;
   app?: {
     getVersion: () => Promise<string>;
+  };
+  appConfig?: {
+    get: () => Promise<AppConfigState>;
+    set: (config: Partial<AppConfigState>) => Promise<AppConfigState>;
   };
   theme?: {
     get: () => Promise<ThemeMode>;
@@ -129,6 +139,9 @@ export interface ChapterIndexStatus {
 export interface WorkspaceStatus {
   pendingActionCount: number;
   git: GitWorkspaceStatus;
+  gitConfig: {
+    autoCommitOnAccept: boolean;
+  };
 }
 
 export type ReferenceSourceType =
@@ -427,8 +440,14 @@ export interface OanClient {
   createAgentChatTransport(): ChatTransport<UIMessage>;
   getAppVersion(): Promise<string | undefined>;
   getSystemThemePreference(): ThemeMode;
+  getAppConfig(): Promise<AppConfigState>;
+  saveAppConfig(config: Partial<AppConfigState>): Promise<AppConfigState>;
   getThemePreference(): Promise<ThemeMode>;
   setThemePreference(theme: ThemeMode): Promise<ThemeMode>;
+  getComposerSubmitShortcutPreference(): Promise<ComposerSubmitShortcutPreference | undefined>;
+  setComposerSubmitShortcutPreference(
+    shortcut: ComposerSubmitShortcutPreference,
+  ): Promise<ComposerSubmitShortcutPreference>;
   isDirectoryPickerAvailable(): boolean;
   selectDirectory(): Promise<string | undefined>;
   listWorkspaces(): Promise<{
@@ -543,6 +562,33 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       body?: unknown;
     } = {},
   ) => requestJsonWith<T>(fetcher, backendBaseUrl, path, requestOptions);
+  const getAppConfig = async (): Promise<AppConfigState> => {
+    if (bridge?.appConfig?.get) {
+      return normalizeAppConfig(await bridge.appConfig.get());
+    }
+
+    try {
+      const result = await requestJson<{ config?: AppConfigState }>('/api/app-config');
+      return normalizeAppConfig(result.config);
+    } catch {
+      return {};
+    }
+  };
+  const saveAppConfig = async (config: Partial<AppConfigState>): Promise<AppConfigState> => {
+    if (bridge?.appConfig?.set) {
+      return normalizeAppConfig(await bridge.appConfig.set(config));
+    }
+
+    try {
+      const result = await requestJson<{ config?: AppConfigState }>('/api/app-config', {
+        method: 'PATCH',
+        body: config,
+      });
+      return normalizeAppConfig(result.config);
+    } catch {
+      return normalizeAppConfig(config);
+    }
+  };
 
   return {
     backendBaseUrl,
@@ -553,8 +599,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       }),
     getAppVersion: async () => bridge?.app?.getVersion(),
     getSystemThemePreference: systemTheme,
-    getThemePreference: async () => bridge?.theme?.get() ?? systemTheme(),
-    setThemePreference: async (theme) => bridge?.theme?.set(theme) ?? theme,
+    getAppConfig,
+    saveAppConfig,
+    getThemePreference: async () =>
+      bridge?.theme?.get() ?? (await getAppConfig()).theme ?? systemTheme(),
+    setThemePreference: async (theme) =>
+      bridge?.theme?.set(theme) ?? (await saveAppConfig({ theme })).theme ?? theme,
+    getComposerSubmitShortcutPreference: async () =>
+      (await getAppConfig()).composerSubmitShortcut,
+    setComposerSubmitShortcutPreference: async (shortcut) =>
+      (await saveAppConfig({ composerSubmitShortcut: shortcut })).composerSubmitShortcut ?? shortcut,
     isDirectoryPickerAvailable: () => Boolean(bridge?.workspace?.selectDirectory),
     selectDirectory: async () => bridge?.workspace?.selectDirectory(),
     listWorkspaces: () =>
@@ -819,6 +873,29 @@ function detectSystemThemePreference(): ThemeMode {
   return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: light)').matches
     ? 'light'
     : 'dark';
+}
+
+function normalizeAppConfig(value: unknown): AppConfigState {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return {
+    theme: isThemeMode(value.theme) ? value.theme : undefined,
+    composerSubmitShortcut: isComposerSubmitShortcutPreference(value.composerSubmitShortcut)
+      ? value.composerSubmitShortcut
+      : undefined,
+  };
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === 'light' || value === 'dark';
+}
+
+function isComposerSubmitShortcutPreference(
+  value: unknown,
+): value is ComposerSubmitShortcutPreference {
+  return value === 'enter' || value === 'meta-enter' || value === 'ctrl-enter';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -67,6 +67,36 @@ describe('novel HTTP backend', () => {
       .toEqual({ ok: true });
   });
 
+  it('stores app config in the global config directory', async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const globalConfigDir = await createTempWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot, globalConfigDir });
+    servers.push(backend);
+
+    await expect(fetchJson(`${backend.url}/api/app-config`))
+      .resolves
+      .toEqual({ config: {} });
+
+    await expect(fetchJson(`${backend.url}/api/app-config`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        theme: 'dark',
+        composerSubmitShortcut: 'ctrl-enter',
+      }),
+    }))
+      .resolves
+      .toEqual({
+        config: {
+          theme: 'dark',
+          composerSubmitShortcut: 'ctrl-enter',
+        },
+      });
+
+    await expect(readFile(join(globalConfigDir, 'app-config.json'), 'utf-8'))
+      .resolves
+      .toContain('"composerSubmitShortcut": "ctrl-enter"');
+  });
+
   it('supports launcher workspace flow and read-only workspace endpoints', async () => {
     const workspaceRoot = await createOanWorkspace();
     const globalConfigDir = await createTempWorkspace();
@@ -118,6 +148,9 @@ describe('novel HTTP backend', () => {
       .resolves
       .toMatchObject({
         pendingActionCount: 0,
+        gitConfig: {
+          autoCommitOnAccept: true,
+        },
         git: {
           status: 'unknown',
           dirty: null,

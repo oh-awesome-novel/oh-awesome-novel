@@ -298,6 +298,15 @@
     @apply overflow-hidden text-ellipsis whitespace-nowrap text-xs text-slate-500 dark:text-neutral-400;
   }
 
+  .agent-timeline-panel {
+    @apply grid min-h-0 min-w-0 flex-1 overflow-hidden bg-transparent;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .agent-timeline-panel .panel-heading {
+    @apply mb-2;
+  }
+
   .agent-timeline {
     @apply min-h-0 overflow-auto;
   }
@@ -395,8 +404,97 @@
   }
 
   .composer {
-    @apply grid gap-3 rounded-card border border-gray-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900;
-    grid-template-columns: minmax(0, 1fr) 92px;
+    @apply mt-auto grid gap-2.5 bg-transparent p-0;
+  }
+
+  .composer-command-rail {
+    @apply flex gap-1.5 overflow-x-auto px-0 pb-0.5;
+  }
+
+  .composer-command-chip {
+    @apply h-7.5 shrink-0 rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-bold text-slate-600 transition-colors hover:border-cyan-700/30 hover:bg-cyan-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:border-cyan-300/30 dark:hover:bg-cyan-950/50 dark:hover:text-cyan-200;
+  }
+
+  .composer-surface {
+    @apply grid gap-2 rounded-[16px] border border-gray-200 bg-white p-2.5 shadow-sm transition-colors dark:border-neutral-700 dark:bg-neutral-950;
+  }
+
+  .composer-disabled .composer-surface {
+    @apply opacity-80;
+  }
+
+  .composer .composer-input {
+    @apply min-h-24 resize-none rounded-none border-0 bg-transparent px-1 py-1.5 text-base leading-relaxed shadow-none focus:border-transparent focus:outline-none dark:bg-transparent;
+  }
+
+  .composer-footer {
+    @apply flex min-h-10 items-center justify-between gap-2;
+  }
+
+  .composer-action-cluster {
+    @apply flex min-w-0 flex-wrap items-center gap-1.5;
+  }
+
+  .composer-icon-button,
+  .composer-send-button {
+    @apply grid h-9 min-h-9 w-9 shrink-0 place-items-center rounded-full transition-colors;
+  }
+
+  .composer-icon-button {
+    @apply border border-gray-200 bg-gray-100 text-slate-500 hover:border-cyan-700/30 hover:bg-cyan-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:border-cyan-300/30 dark:hover:bg-cyan-950/50 dark:hover:text-cyan-200;
+  }
+
+  .composer-mode-button {
+    @apply inline-flex min-h-8 items-center gap-1.5 rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-bold text-slate-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300;
+  }
+
+  .composer-mode-button {
+    @apply hover:border-cyan-700/30 hover:bg-cyan-50 hover:text-cyan-800 dark:hover:border-cyan-300/30 dark:hover:bg-cyan-950/50 dark:hover:text-cyan-200;
+  }
+
+  .composer-send-button {
+    @apply border border-slate-950 bg-slate-950 text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-slate-400 dark:border-stone-100 dark:bg-stone-100 dark:text-neutral-950 dark:hover:bg-white dark:disabled:border-neutral-700 dark:disabled:bg-neutral-800 dark:disabled:text-neutral-500;
+  }
+
+  .composer-send-button:disabled {
+    pointer-events: none;
+  }
+
+  .composer-send-wrap {
+    @apply relative grid shrink-0 place-items-center;
+  }
+
+  .composer-send-wrap::before {
+    @apply absolute right-0 bottom-full h-2 w-52 content-[''];
+  }
+
+  .composer-send-popover {
+    @apply invisible pointer-events-none absolute right-0 bottom-[calc(100%+0.5rem)] z-20 grid min-w-52 translate-y-1 gap-1 rounded-card border border-gray-200 bg-white p-1.5 text-sm opacity-0 shadow-app transition dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-app-dark;
+  }
+
+  .composer-send-wrap:hover .composer-send-popover,
+  .composer-send-wrap:focus-within .composer-send-popover {
+    @apply visible pointer-events-auto translate-y-0 opacity-100;
+  }
+
+  .composer-send-popover-heading {
+    @apply grid gap-0.5 px-2 py-1;
+  }
+
+  .composer-send-popover-heading strong {
+    @apply text-xs font-black text-slate-950 dark:text-stone-100;
+  }
+
+  .composer-send-popover-heading span {
+    @apply text-[11px] font-bold text-slate-500 dark:text-neutral-400;
+  }
+
+  .composer-send-shortcut-option {
+    @apply flex min-h-8 items-center rounded-md border border-transparent px-2 text-left text-xs font-bold text-slate-600 hover:border-cyan-700/20 hover:bg-cyan-50 hover:text-cyan-800 dark:text-neutral-300 dark:hover:border-cyan-300/25 dark:hover:bg-cyan-950/50 dark:hover:text-cyan-200;
+  }
+
+  .composer-send-shortcut-option-active {
+    @apply border-cyan-700/30 bg-cyan-50 text-cyan-800 dark:border-cyan-300/30 dark:bg-cyan-950/60 dark:text-cyan-100;
   }
 
   .launcher-shell {
@@ -861,6 +959,10 @@
     @apply flex items-center justify-between gap-4 pt-4;
   }
 
+  .settings-option-row-stack {
+    @apply items-start;
+  }
+
   .settings-option-copy {
     @apply flex min-w-0 flex-col gap-1;
   }
@@ -875,6 +977,18 @@
 
   .theme-choice-button {
     @apply inline-flex min-h-9.5 shrink-0 items-center gap-2 rounded-card border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-slate-950 hover:border-cyan-700 hover:bg-cyan-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-stone-100 dark:hover:border-cyan-300 dark:hover:bg-cyan-950/50;
+  }
+
+  .settings-choice-group {
+    @apply flex flex-wrap justify-end gap-1.5;
+  }
+
+  .settings-choice-button {
+    @apply inline-flex min-h-9 shrink-0 items-center rounded-card border border-gray-200 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 hover:border-cyan-700 hover:bg-cyan-50 hover:text-cyan-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:border-cyan-300 dark:hover:bg-cyan-950/50 dark:hover:text-cyan-200;
+  }
+
+  .settings-choice-button-active {
+    @apply border-cyan-700 bg-cyan-50 text-cyan-800 dark:border-cyan-300 dark:bg-cyan-950/60 dark:text-cyan-100;
   }
 
   .modal-backdrop {
@@ -915,7 +1029,7 @@
 
   .workspace-shell {
     @apply grid min-h-screen bg-white dark:bg-neutral-950;
-    grid-template-rows: 48px minmax(0, 1fr);
+    grid-template-rows: 44px minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -937,29 +1051,125 @@
   }
 
   .workspace-toolbar {
-    @apply col-span-full grid items-center gap-3.5 border-b border-gray-200 bg-white px-2.5 py-1.5 dark:border-neutral-800 dark:bg-neutral-900;
+    @apply relative z-30 col-span-full grid min-w-0 items-center gap-2 border-b border-gray-200 bg-white px-3 py-1 dark:border-neutral-800 dark:bg-neutral-900;
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
+  .workspace-toolbar .toolbar-left,
+  .workspace-toolbar .toolbar-right {
+    @apply min-w-0 gap-1.5;
+  }
+
+  .toolbar-nav-group {
+    @apply inline-flex h-8 min-w-0 items-center gap-1 rounded-card border border-gray-200 bg-gray-100 p-px dark:border-neutral-800 dark:bg-neutral-950;
+  }
+
+  .toolbar-nav-group .toolbar-icon-action {
+    @apply h-7 min-h-7 w-7;
+  }
+
+  .toolbar-icon-action,
+  .toolbar-status-button,
+  .toolbar-editor-trigger {
+    @apply relative grid h-8 min-h-8 w-8 shrink-0 place-items-center rounded-md border border-transparent bg-transparent p-0 text-slate-600 hover:border-gray-200 hover:bg-white hover:text-slate-950 dark:text-neutral-300 dark:hover:border-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-stone-100;
+  }
+
+  .toolbar-icon-action-active {
+    @apply border-cyan-700/20 bg-white text-cyan-800 shadow-sm dark:border-cyan-300/25 dark:bg-neutral-800 dark:text-cyan-200;
+  }
+
+  .toolbar-icon-badge {
+    @apply absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-cyan-700 px-1 text-[10px] font-black leading-none text-white dark:bg-cyan-300 dark:text-neutral-950;
+  }
+
+  .toolbar-status-button {
+    @apply border-gray-200 bg-gray-100 dark:border-neutral-800 dark:bg-neutral-950;
+  }
+
+  .toolbar-status-button-ready {
+    @apply text-cyan-800 dark:text-cyan-200;
+  }
+
+  .toolbar-status-dot {
+    @apply absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-neutral-950;
+  }
+
+  .toolbar-status-button-ready .toolbar-status-dot {
+    @apply bg-emerald-500;
+  }
+
   .toolbar-title {
-    @apply min-w-0 text-center;
+    @apply mx-auto min-w-0 max-w-[440px] rounded-card px-2 text-center;
+  }
+
+  .toolbar-title strong {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-tight;
   }
 
   .toolbar-title span {
-    @apply overflow-hidden text-ellipsis whitespace-nowrap text-xs;
+    @apply overflow-hidden text-ellipsis whitespace-nowrap text-[11px] leading-tight;
+  }
+
+  .toolbar-editor-menu {
+    @apply relative shrink-0;
+  }
+
+  .toolbar-editor-trigger {
+    @apply flex w-12 items-center justify-center gap-1 border-gray-200 bg-gray-100 dark:border-neutral-800 dark:bg-neutral-950;
+    list-style: none;
+  }
+
+  .toolbar-editor-trigger::-webkit-details-marker {
+    display: none;
+  }
+
+  .toolbar-editor-list {
+    @apply absolute right-0 top-[calc(100%+8px)] z-40 grid min-w-[168px] gap-1 rounded-card border border-gray-200 bg-white p-1.5 shadow-app dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-app-dark;
+  }
+
+  .toolbar-editor-menu:not([open]) .toolbar-editor-list {
+    @apply hidden;
+  }
+
+  .toolbar-editor-item {
+    @apply flex min-h-8.5 items-center gap-2 rounded-md border border-transparent bg-transparent px-2.5 py-1.5 text-left text-sm font-bold text-slate-700 hover:border-cyan-700/20 hover:bg-cyan-50 hover:text-slate-950 dark:text-neutral-200 dark:hover:border-cyan-300/25 dark:hover:bg-cyan-950/50 dark:hover:text-stone-100;
   }
 
   .workspace-left-panel {
-    @apply min-h-0 overflow-auto border-r border-gray-200 bg-gray-100 dark:border-neutral-800 dark:bg-neutral-900;
+    @apply flex min-h-0 flex-col overflow-hidden border-r border-gray-200 bg-gray-100 dark:border-neutral-800 dark:bg-neutral-900;
   }
 
   .workspace-left-panel {
-    @apply p-2.5;
+    @apply px-3 pb-2.5 pt-3.5;
   }
 
   .left-panel-toolbar {
     @apply grid items-start gap-2;
-    grid-template-columns: minmax(0, 1fr) 34px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .left-panel-main {
+    @apply min-h-0 flex-1 overflow-auto;
+  }
+
+  .left-panel-status {
+    @apply mt-2 flex shrink-0 flex-wrap gap-1.5 border-t border-gray-200 pt-2 dark:border-neutral-800;
+  }
+
+  .left-panel-status-pill {
+    @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border px-2 text-[11px] font-black leading-none;
+  }
+
+  .left-panel-status-pill-review {
+    @apply border-cyan-700/20 bg-cyan-50 text-cyan-800 dark:border-cyan-300/25 dark:bg-cyan-950/45 dark:text-cyan-100;
+  }
+
+  .left-panel-status-pill-git {
+    @apply border-emerald-700/20 bg-emerald-50 text-emerald-800 dark:border-emerald-300/25 dark:bg-emerald-950/35 dark:text-emerald-100;
+  }
+
+  .left-panel-status-pill-muted {
+    @apply border-gray-300 bg-white text-slate-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-400;
   }
 
   .left-edge-hover-zone {
@@ -971,8 +1181,11 @@
   }
 
   .copilot-panel {
-    @apply grid h-full min-h-0 gap-2.5 bg-white dark:bg-neutral-950;
-    grid-template-rows: auto auto minmax(0, 1.2fr) minmax(0, .7fr) auto auto auto;
+    @apply flex h-full min-h-0 flex-col gap-3 bg-white dark:bg-neutral-950;
+  }
+
+  .copilot-stop-button {
+    @apply self-start;
   }
 
   .workspace-center {
@@ -1372,6 +1585,27 @@
 
   .toolbar-title {
     @apply text-left;
+  }
+
+  .workspace-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .workspace-toolbar {
+    @apply py-2;
+  }
+
+  .workspace-toolbar .toolbar-left,
+  .workspace-toolbar .toolbar-right {
+    @apply w-full flex-wrap;
+  }
+
+  .toolbar-title {
+    @apply order-first max-w-none;
+  }
+
+  .toolbar-editor-list {
+    @apply left-0 right-auto;
   }
 
   .workspace-left-panel,

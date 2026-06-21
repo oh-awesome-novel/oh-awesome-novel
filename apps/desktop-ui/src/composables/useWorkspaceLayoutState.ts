@@ -1,20 +1,13 @@
-import { computed, onMounted, shallowRef, watch } from 'vue';
+import { computed, shallowRef } from 'vue';
 
 export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references' | 'play';
 
-interface PersistedWorkspaceLayoutState {
-  leftPinned?: boolean;
-  rightShown?: boolean;
-  rightTab?: WorkspaceRightTab;
-  rightWidthPercent?: number;
-  sidebarTab?: 'files' | 'chapters';
-}
-
 export function useWorkspaceLayoutState(workspacePath: string) {
-  const storageKey = `oan.workspace.layout.${hashWorkspacePath(workspacePath)}`;
+  void workspacePath;
+
   const leftPinned = shallowRef(true);
   const leftOverlayOpen = shallowRef(false);
-  const rightShown = shallowRef(true);
+  const rightShown = shallowRef(false);
   const rightTab = shallowRef<WorkspaceRightTab>('approval');
   const rightWidthPercent = shallowRef(36);
   const sidebarTab = shallowRef<'files' | 'chapters'>('files');
@@ -27,28 +20,6 @@ export function useWorkspaceLayoutState(workspacePath: string) {
     'workspace-workbench-left-hidden': !leftPinned.value,
     'workspace-workbench-right-hidden': !rightShown.value,
   }));
-
-  onMounted(() => {
-    const stored = readStoredLayout(storageKey);
-    leftPinned.value = stored.leftPinned ?? leftPinned.value;
-    rightShown.value = stored.rightShown ?? rightShown.value;
-    rightTab.value = stored.rightTab ?? rightTab.value;
-    rightWidthPercent.value = clampRightWidth(stored.rightWidthPercent ?? rightWidthPercent.value);
-    sidebarTab.value = stored.sidebarTab ?? sidebarTab.value;
-  });
-
-  watch(
-    [leftPinned, rightShown, rightTab, rightWidthPercent, sidebarTab],
-    () => {
-      writeStoredLayout(storageKey, {
-        leftPinned: leftPinned.value,
-        rightShown: rightShown.value,
-        rightTab: rightTab.value,
-        rightWidthPercent: rightWidthPercent.value,
-        sidebarTab: sidebarTab.value,
-      });
-    },
-  );
 
   function toggleLeftPinned() {
     leftPinned.value = !leftPinned.value;
@@ -84,39 +55,4 @@ export function useWorkspaceLayoutState(workspacePath: string) {
     toggleLeftPinned,
     toggleRightPanel,
   };
-}
-
-function readStoredLayout(key: string): PersistedWorkspaceLayoutState {
-  if (typeof localStorage === 'undefined') {
-    return {};
-  }
-
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as PersistedWorkspaceLayoutState : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeStoredLayout(key: string, value: PersistedWorkspaceLayoutState) {
-  if (typeof localStorage === 'undefined') {
-    return;
-  }
-
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function hashWorkspacePath(path: string): string {
-  let hash = 0;
-
-  for (const char of path) {
-    hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
-  }
-
-  return Math.abs(hash).toString(36);
-}
-
-function clampRightWidth(value: number): number {
-  return Math.min(Math.max(value, 28), 48);
 }

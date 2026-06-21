@@ -24,6 +24,8 @@ import {
   formatPlayWorldRefereePrompt,
   formatProjectHealthMarkdown,
   formatReferenceContextSelectionMarkdown,
+  loadAppConfig,
+  saveAppConfig,
   loadWorkspaceConfig,
   loadNovelCopilotSkill,
   loadWorkspaceList,
@@ -44,7 +46,14 @@ import {
   writePlaySessionFiles,
   writeWorkspaceProjections,
 } from '@oh-awesome-novel/core';
-import type { LlmProviderConfig, LlmProviderConfigState, LlmProviderKind } from '@oh-awesome-novel/core';
+import type {
+  AppConfig,
+  ComposerSubmitShortcutPreference,
+  LlmProviderConfig,
+  LlmProviderConfigState,
+  LlmProviderKind,
+  ThemePreference,
+} from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
 import type {
   PlayActivatedSource,
@@ -171,6 +180,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   }));
 
   app.get('/api/health', (context) => context.json({ ok: true }));
+  app.get('/api/app-config', (context) => handleGetAppConfig(options, context));
+  app.patch('/api/app-config', (context) => handleSaveAppConfig(options, context));
   app.get('/api/workspaces', (context) => handleListWorkspaces(options, state, context));
   app.post('/api/workspaces/import', (context) => handleImportWorkspace(options, context));
   app.post('/api/workspaces/create', (context) => handleCreateWorkspace(options, state, context));
@@ -368,6 +379,52 @@ async function handleImportWorkspace(
   return jsonResponse(context, 200, {
     workspace: workspaces.find((item) => item.path === validation.path),
   });
+}
+
+async function handleGetAppConfig(
+  options: NovelBackendOptions,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const config = await loadAppConfig(resolveGlobalConfigDir(options));
+
+  return jsonResponse(context, 200, { config });
+}
+
+async function handleSaveAppConfig(
+  options: NovelBackendOptions,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const configDir = resolveGlobalConfigDir(options);
+  const nextConfig: AppConfig = {
+    ...(await loadAppConfig(configDir)),
+  };
+
+  if (hasOwn(body, 'theme')) {
+    const theme = getOptionalString(body, 'theme');
+
+    if (!theme || !isThemePreference(theme)) {
+      return jsonResponse(context, 400, { error: 'Theme preference is invalid.' });
+    }
+
+    nextConfig.theme = theme;
+  }
+
+  if (hasOwn(body, 'composerSubmitShortcut')) {
+    const shortcut = getOptionalString(body, 'composerSubmitShortcut');
+
+    if (!shortcut || !isComposerSubmitShortcutPreference(shortcut)) {
+      return jsonResponse(context, 400, {
+        error: 'Composer submit shortcut preference is invalid.',
+      });
+    }
+
+    nextConfig.composerSubmitShortcut = shortcut;
+  }
+
+  await saveAppConfig(configDir, nextConfig);
+
+  return jsonResponse(context, 200, { config: nextConfig });
 }
 
 async function handleCreateWorkspace(
@@ -744,14 +801,16 @@ async function handleWorkspaceStatus(
   context: NovelBackendContext,
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
-  const [pendingActions, gitStatus] = await Promise.all([
+  const [pendingActions, gitStatus, gitConfig] = await Promise.all([
     listPendingActions({ workspaceRoot }),
     readGitStatus(workspaceRoot),
+    readWorkspaceGitConfig(workspaceRoot),
   ]);
 
   return jsonResponse(context, 200, {
     pendingActionCount: pendingActions.length,
     git: gitStatus,
+    gitConfig,
   });
 }
 
@@ -1694,6 +1753,16 @@ function isSupportedProviderKind(value: string): value is LlmProviderKind {
   ].includes(value);
 }
 
+function isThemePreference(value: string): value is ThemePreference {
+  return value === 'light' || value === 'dark';
+}
+
+function isComposerSubmitShortcutPreference(
+  value: string,
+): value is ComposerSubmitShortcutPreference {
+  return value === 'enter' || value === 'meta-enter' || value === 'ctrl-enter';
+}
+
 function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
   const presets: Partial<Record<LlmProviderKind, string>> = {
     openai: 'https://api.openai.com/v1',
@@ -2195,21 +2264,24 @@ async function buildPostDecisionRefresh(workspaceRoot: string): Promise<{
   workspaceStatus: {
     pendingActionCount: number;
     git: Awaited<ReturnType<typeof readGitStatus>>;
+    gitConfig: Awaited<ReturnType<typeof readWorkspaceGitConfig>>;
   };
   projectHealth: ProjectHealth;
 }> {
   const pendingActions = await listPendingActions({ workspaceRoot });
-  const [gitStatus, projectHealth] = await Promise.all([
+  const [gitStatus, projectHealth, gitConfig] = await Promise.all([
     readGitStatus(workspaceRoot),
     readProjectHealth(workspaceRoot, {
       pendingActionCount: pendingActions.length,
     }),
+    readWorkspaceGitConfig(workspaceRoot),
   ]);
 
   return {
     workspaceStatus: {
       pendingActionCount: pendingActions.length,
       git: gitStatus,
+      gitConfig,
     },
     projectHealth,
   };
@@ -2579,6 +2651,10 @@ function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function jsonResponse(

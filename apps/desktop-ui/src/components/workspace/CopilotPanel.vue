@@ -87,10 +87,6 @@ watch(
   },
 );
 
-function useQuickCommand(prompt: string) {
-  input.value = prompt;
-}
-
 function acceptPendingAction(action: PendingActionView) {
   decisions[action.id] = 'accepting';
   decisionErrors[action.id] = '';
@@ -127,33 +123,14 @@ function mergePendingActions(
 
 <template>
   <section class="copilot-panel" aria-label="Agent Copilot">
-    <div class="panel-heading">
-      <div>
-        <p class="eyebrow">Copilot</p>
-        <h2 class="panel-title">Novel Agent</h2>
-      </div>
-      <button
-        v-if="chat.status !== 'ready'"
-        class="secondary-button tight-button"
-        type="button"
-        @click="stop"
-      >
-        停止
-      </button>
-    </div>
-
-    <div class="quick-command-strip" aria-label="Novel quick commands">
-      <button
-        v-for="command in quickCommands"
-        :key="command.id"
-        class="quick-command-chip"
-        type="button"
-        :disabled="!providerConfigured"
-        @click="useQuickCommand(command.prompt)"
-      >
-        {{ command.label }}
-      </button>
-    </div>
+    <button
+      v-if="chat.status !== 'ready'"
+      class="secondary-button tight-button copilot-stop-button"
+      type="button"
+      @click="stop"
+    >
+      停止
+    </button>
 
     <div v-if="!providerConfigured" class="provider-disabled">
       <strong>Copilot 当前不可用</strong>
@@ -191,6 +168,9 @@ function mergePendingActions(
       <ChatComposer
         v-model="input"
         :disabled="chat.status !== 'ready'"
+        :quick-commands="quickCommands"
+        :quick-commands-disabled="!providerConfigured"
+        @configure-model="emit('configureProvider')"
         @submit="sendCurrentInput"
       />
     </template>

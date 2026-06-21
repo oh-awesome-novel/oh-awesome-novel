@@ -61,7 +61,6 @@ defineProps<{
 const emit = defineEmits<{
   updateLeftOverlayOpen: [open: boolean];
   updateSidebarTab: [tab: 'files' | 'chapters'];
-  pinLeft: [];
   openFile: [path: string];
   openChapter: [chapter: ChapterIndexChapter];
   rescanChapters: [];
@@ -92,11 +91,11 @@ const emit = defineEmits<{
       :chapter-status="chapterStatus"
       :chapters-loading="chaptersLoading"
       :chapters-error="chaptersError"
+      :git-auto-commit-on-accept="workspaceStatus?.gitConfig?.autoCommitOnAccept ?? true"
       @update-tab="emit('updateSidebarTab', $event)"
       @open-file="emit('openFile', $event)"
       @open-chapter="emit('openChapter', $event)"
       @rescan-chapters="emit('rescanChapters')"
-      @pin="emit('pinLeft')"
     />
     <WorkspaceLeftHoverRail
       v-else
@@ -113,11 +112,11 @@ const emit = defineEmits<{
         :chapter-status="chapterStatus"
         :chapters-loading="chaptersLoading"
         :chapters-error="chaptersError"
+        :git-auto-commit-on-accept="workspaceStatus?.gitConfig?.autoCommitOnAccept ?? true"
         @update-tab="emit('updateSidebarTab', $event)"
         @open-file="emit('openFile', $event)"
         @open-chapter="emit('openChapter', $event)"
         @rescan-chapters="emit('rescanChapters')"
-        @pin="emit('pinLeft')"
       />
     </WorkspaceLeftHoverRail>
 

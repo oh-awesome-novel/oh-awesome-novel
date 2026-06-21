@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('ohAwesomeNovel', {
   app: {
     getVersion: () => ipcRenderer.invoke('oan:app:get-version'),
   },
+  appConfig: {
+    get: () => ipcRenderer.invoke('oan:app-config:get'),
+    set: (config: unknown) => ipcRenderer.invoke('oan:app-config:set', config),
+  },
   theme: {
     get: () => ipcRenderer.invoke('oan:theme:get'),
     set: (theme: 'light' | 'dark') => ipcRenderer.invoke('oan:theme:set', theme),

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef, watch } from 'vue';
 
+import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
@@ -162,6 +163,9 @@ async function loadWorkspaceStatus() {
         status: 'unknown',
         dirty: null,
         files: [],
+      },
+      gitConfig: {
+        autoCommitOnAccept: true,
       },
     };
   }
@@ -386,53 +390,27 @@ function applyDecisionRefresh(
 
 <template>
   <main class="workspace-shell">
-    <header class="workspace-toolbar">
-      <div class="toolbar-left">
-        <button class="icon-button" type="button" aria-label="切换文件栏" @click="layout.toggleLeftPinned">
-          ☰
-        </button>
-        <button class="ghost-button" type="button" @click="showHome">Home</button>
-        <button class="ghost-button" type="button" @click="openChapterNavigation">Chapters</button>
-        <button class="ghost-button" type="button" @click="searchOpen = true">Search</button>
-        <button class="ghost-button" type="button" @click="openPendingActions">Pending</button>
-        <button class="ghost-button" type="button" @click="layout.openRightPanel('git')">Git</button>
-        <button class="ghost-button" type="button" @click="layout.openRightPanel('references')">Refs</button>
-        <button class="ghost-button" type="button" @click="layout.openRightPanel('play')">Play</button>
-      </div>
-      <div class="toolbar-title">
-        <strong>{{ props.workspace.name }}</strong>
-        <span>{{ props.workspace.path }}</span>
-        <small v-if="editorError" class="toolbar-error">{{ editorError }}</small>
-      </div>
-      <div class="toolbar-right">
-        <span class="status-pill">{{ providerConfigured ? 'Provider ready' : 'Read-only' }}</span>
-        <button class="ghost-button" type="button" @click="openExternalEditor('vscode')">VS Code</button>
-        <button class="ghost-button" type="button" @click="openExternalEditor('zed')">Zed</button>
-        <button class="ghost-button" type="button" @click="openExternalEditor('webstorm')">WebStorm</button>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="切换审阅栏"
-          @click="layout.toggleRightPanel()"
-        >
-          ⇤
-        </button>
-        <button
-          class="theme-switch theme-switch-compact"
-          type="button"
-          role="switch"
-          :aria-checked="theme === 'dark'"
-          @click="emit('toggleTheme')"
-        >
-          <span class="theme-switch-track" aria-hidden="true">
-            <span class="theme-switch-thumb"></span>
-          </span>
-          <span>{{ theme === 'dark' ? 'Dark' : 'Light' }}</span>
-        </button>
-        <button class="ghost-button" type="button" @click="emit('configureProvider')">Settings</button>
-        <button class="ghost-button" type="button" @click="emit('leaveWorkspace')">Launcher</button>
-      </div>
-    </header>
+    <WorkspaceToolbar
+      :workspace="workspace"
+      :provider-configured="providerConfigured"
+      :theme="theme"
+      :left-pinned="layout.leftPinned.value"
+      :right-shown="layout.rightShown.value"
+      :right-tab="layout.rightTab.value"
+      :pending-action-count="workspaceStatus?.pendingActionCount ?? workspacePendingActions.length"
+      :editor-error="editorError"
+      @toggle-left="layout.toggleLeftPinned"
+      @show-home="showHome"
+      @open-chapters="openChapterNavigation"
+      @open-search="searchOpen = true"
+      @open-pending="openPendingActions"
+      @open-right-tab="layout.openRightPanel"
+      @open-external-editor="openExternalEditor"
+      @toggle-right="layout.toggleRightPanel()"
+      @configure-provider="emit('configureProvider')"
+      @toggle-theme="emit('toggleTheme')"
+      @leave-workspace="emit('leaveWorkspace')"
+    />
 
     <WorkspaceWorkbench
       :workspace="workspace"
@@ -467,7 +445,6 @@ function applyDecisionRefresh(
       :project-health="projectHealth"
       @update-left-overlay-open="layout.leftOverlayOpen.value = $event"
       @update-sidebar-tab="layout.sidebarTab.value = $event"
-      @pin-left="layout.leftPinned.value = true"
       @open-file="openFile"
       @open-chapter="openChapter"
       @rescan-chapters="rescanChapters"
