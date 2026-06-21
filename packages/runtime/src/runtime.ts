@@ -89,16 +89,26 @@ export class RuntimeSession {
         abortSignal: input.abortSignal,
       });
 
+      if (response.toolCalls?.length) {
+        if (response.message) {
+          assistantMessage = response.message;
+        }
+
+        this.state.curMessages.push({
+          role: 'assistant',
+          content: response.message?.content ?? '',
+          toolCalls: response.toolCalls,
+        });
+        await this.executeToolCalls(response, tools);
+        continue;
+      }
+
       if (response.message) {
         assistantMessage = response.message;
         this.state.curMessages.push(response.message);
       }
 
-      if (!response.toolCalls?.length) {
-        return this.finish('completed', assistantMessage);
-      }
-
-      await this.executeToolCalls(response, tools);
+      return this.finish('completed', assistantMessage);
     }
 
     return this.finish('max_tool_loops', assistantMessage);

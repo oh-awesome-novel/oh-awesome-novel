@@ -7,6 +7,7 @@ export interface RuntimeMessage {
   content: string;
   name?: string;
   toolCallId?: string;
+  toolCalls?: RuntimeToolCall[];
 }
 
 export interface RuntimeToolCall {

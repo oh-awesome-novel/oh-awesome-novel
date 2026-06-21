@@ -54,7 +54,7 @@ export function useAgentCheckpointChat() {
   };
 }
 
-function collectPendingActions(messages: UIMessage[]): PendingActionView[] {
+export function collectPendingActions(messages: UIMessage[]): PendingActionView[] {
   return messages.flatMap((message) =>
     message.parts.flatMap((part) => {
       if (part.type !== 'data-pending-action' || !isPendingAction(part.data)) {

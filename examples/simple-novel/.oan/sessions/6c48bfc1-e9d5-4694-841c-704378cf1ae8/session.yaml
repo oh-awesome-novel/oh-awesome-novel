@@ -1,0 +1,6 @@
+id: 6c48bfc1-e9d5-4694-841c-704378cf1ae8
+title: 测试工具展示：请务必使用工具，不要直接猜测。依次调用
+  workflow.get、character.list、world.search（可以空查询）查看当前小说工作区的
+  workflow、角色列表和世界观文件，然后用中文简要说明你看到了什么。不要创建、修改或删除任何文件。
+createdAt: 2026-06-21T05:49:12.698Z
+updatedAt: 2026-06-21T05:49:42.784Z

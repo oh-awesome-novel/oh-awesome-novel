@@ -1,0 +1,23 @@
+library:
+  name: 雾港图书馆
+  status: open
+  clues:
+    - 十年前停电新闻
+    - 旧钟楼误报火警剪报
+old_newspaper_office:
+  name: 旧报社
+  status: semi-abandoned
+  clues:
+    - 未刊照片
+    - 任野收到的警告复印件
+clocktower:
+  name: 旧钟楼
+  status: suspicious
+  clues:
+    - 被改动的火警记录
+warehouse:
+  name: 码头仓库
+  status: future danger
+  clues:
+    - 七月十七日暑期读书会
+

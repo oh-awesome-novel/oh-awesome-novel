@@ -1,0 +1,9 @@
+name: lightnovel
+steps:
+  - constitution
+  - world
+  - character
+  - outline
+  - chapter
+  - summary
+  - review

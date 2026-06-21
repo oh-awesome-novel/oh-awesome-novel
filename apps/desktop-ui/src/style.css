@@ -300,31 +300,101 @@
 
   .agent-timeline-panel {
     @apply grid min-h-0 min-w-0 flex-1 overflow-hidden bg-transparent;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
-  .agent-timeline-panel .panel-heading {
-    @apply mb-2;
+  .conversation-empty {
+    @apply flex min-h-0 items-start justify-center pt-12 text-sm text-slate-400 dark:text-neutral-500;
   }
 
   .agent-timeline {
     @apply min-h-0 overflow-auto;
   }
 
+  .agent-conversation {
+    @apply gap-3 px-0.5 pb-4 pt-1;
+  }
+
   .timeline-item {
     @apply min-w-0;
   }
 
-  .timeline-tool-row {
-    @apply w-full;
+  .timeline-item-user-message,
+  .timeline-item-agent-message {
+    @apply flex;
+  }
+
+  .timeline-item-user-message {
+    @apply justify-end;
+  }
+
+  .timeline-item-agent-message {
+    @apply justify-start;
+  }
+
+  .conversation-message {
+    @apply relative min-w-0;
+  }
+
+  .conversation-message-user {
+    @apply max-w-[78%] rounded-[18px] bg-gray-100 px-4 py-2.5 text-slate-950 dark:bg-neutral-800 dark:text-stone-100;
+  }
+
+  .conversation-message-assistant {
+    @apply max-w-[92%] px-0 py-1 text-slate-950 dark:text-stone-100;
+  }
+
+  .conversation-message .message-text {
+    @apply text-[15px] leading-7;
+  }
+
+  .conversation-message-user .message-text {
+    @apply leading-6;
+  }
+
+  .conversation-copy-button {
+    @apply mt-1 rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xs font-bold text-slate-400 opacity-0 hover:border-gray-200 hover:bg-white hover:text-slate-700 dark:text-neutral-500 dark:hover:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-200;
+  }
+
+  .conversation-message:hover .conversation-copy-button,
+  .conversation-message:focus-within .conversation-copy-button {
+    @apply opacity-100;
+  }
+
+  .timeline-item-tool-activity {
+    @apply flex justify-center;
+  }
+
+  .conversation-tool-event {
+    @apply w-full max-w-[620px] min-w-0;
+  }
+
+  .conversation-tool-button {
+    @apply mx-auto flex min-h-7 max-w-full items-center gap-2 rounded-md border border-transparent bg-transparent px-2 text-left text-xs font-bold text-slate-500 hover:border-gray-200 hover:bg-gray-100 hover:text-slate-800 dark:text-neutral-400 dark:hover:border-neutral-800 dark:hover:bg-neutral-900 dark:hover:text-neutral-200;
+  }
+
+  .conversation-tool-dot {
+    @apply h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500 dark:bg-cyan-300;
+  }
+
+  .conversation-tool-name {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[12px] text-slate-700 dark:text-neutral-200;
+  }
+
+  .conversation-tool-kind {
+    @apply shrink-0 font-mono text-[11px] text-slate-400 dark:text-neutral-500;
   }
 
   .tool-detail {
-    @apply mt-2 mb-0 max-h-32 overflow-auto rounded-card bg-neutral-950 p-2.5 text-xs text-stone-100;
+    @apply mt-1 mb-0 max-h-32 overflow-auto rounded-card bg-neutral-950 p-2.5 text-xs text-stone-100;
   }
 
   .timeline-status {
     @apply m-0 rounded-card border border-gray-200 bg-gray-100 p-2.5 text-sm text-slate-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400;
+  }
+
+  .conversation-status {
+    @apply mx-auto w-fit border-0 bg-transparent p-0 text-xs;
   }
 
   .tool-row {
@@ -1028,7 +1098,8 @@
   }
 
   .workspace-shell {
-    @apply grid min-h-screen bg-white dark:bg-neutral-950;
+    @apply grid min-h-0 overflow-hidden bg-white dark:bg-neutral-950;
+    height: 100dvh;
     grid-template-rows: 44px minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1144,8 +1215,28 @@
   }
 
   .left-panel-toolbar {
-    @apply grid items-start gap-2;
+    @apply mb-3 grid items-start gap-2;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .left-nav-list {
+    @apply flex flex-col gap-1 border-b border-gray-200 pb-3 dark:border-neutral-800;
+  }
+
+  .left-nav-item {
+    @apply flex min-h-11 w-full items-center gap-3 rounded-md border border-transparent bg-transparent px-1.5 text-left text-[17px] font-black leading-none text-slate-800 hover:bg-white hover:text-slate-950 dark:text-neutral-200 dark:hover:bg-neutral-950 dark:hover:text-stone-100;
+  }
+
+  .left-nav-item svg {
+    @apply shrink-0 text-slate-500 dark:text-neutral-400;
+  }
+
+  .left-nav-item-active {
+    @apply bg-white text-slate-950 shadow-sm dark:bg-neutral-950 dark:text-stone-100;
+  }
+
+  .left-nav-item-active svg {
+    @apply text-cyan-700 dark:text-cyan-200;
   }
 
   .left-panel-main {
@@ -1158,6 +1249,10 @@
 
   .left-panel-status-pill {
     @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border px-2 text-[11px] font-black leading-none;
+  }
+
+  .left-panel-status-icon-button {
+    @apply grid h-7 min-h-7 w-7 shrink-0 place-items-center rounded-md border-0 bg-transparent p-0 text-slate-500 hover:text-cyan-800 dark:text-neutral-400 dark:hover:text-cyan-100;
   }
 
   .left-panel-status-pill-review {
@@ -1243,6 +1338,44 @@
 
   .compact-heading {
     @apply mb-2;
+  }
+
+  .heading-icon-button {
+    @apply grid h-6.5 min-h-6.5 w-6.5 shrink-0 place-items-center rounded-md border border-transparent bg-transparent p-0 text-slate-500 hover:border-gray-200 hover:bg-white hover:text-slate-950 disabled:opacity-35 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:bg-neutral-950 dark:hover:text-stone-100;
+  }
+
+  .conversation-history-list {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .conversation-history-row {
+    @apply grid min-h-14 w-full items-start gap-2.5 rounded-md border border-transparent bg-transparent px-2 py-2 text-left text-slate-950 hover:bg-white dark:text-stone-100 dark:hover:bg-neutral-950;
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .conversation-history-row svg {
+    @apply mt-0.5 text-slate-500 dark:text-neutral-400;
+  }
+
+  .conversation-history-row-active {
+    @apply border-gray-200 bg-white dark:border-neutral-700 dark:bg-neutral-950;
+  }
+
+  .conversation-history-copy {
+    @apply min-w-0;
+  }
+
+  .conversation-history-copy strong,
+  .conversation-history-copy span {
+    @apply block overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .conversation-history-copy strong {
+    @apply text-sm font-black leading-tight;
+  }
+
+  .conversation-history-copy span {
+    @apply mt-1 text-xs leading-tight text-slate-500 dark:text-neutral-400;
   }
 
   .file-tree,

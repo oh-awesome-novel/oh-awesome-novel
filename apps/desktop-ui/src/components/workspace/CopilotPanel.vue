@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
+import type { ChatStatus, UIMessage } from 'ai';
 
 import AgentTimeline from '../agent-checkpoint/AgentTimeline.vue';
 import ChatComposer from '../agent-checkpoint/ChatComposer.vue';
@@ -7,14 +8,15 @@ import CompactApprovalTray from '../agent-checkpoint/CompactApprovalTray.vue';
 import PendingActionPanel from '../agent-checkpoint/PendingActionPanel.vue';
 import { useAgentTimeline } from '../../composables/useAgentTimeline';
 import type { PendingAction } from '../../composables/useWorkspaceApi';
-import {
-  useAgentCheckpointChat,
-  type PendingActionView,
-} from '../../composables/useAgentCheckpointChat';
+import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 const props = defineProps<{
   providerConfigured: boolean;
   queuedPrompt: string;
+  chatStatus: ChatStatus;
+  chatInput: string;
+  chatMessages: UIMessage[];
+  chatPendingActions: PendingActionView[];
   pendingActions: PendingAction[];
   pendingActionsLoading: boolean;
   pendingActionsError: string;
@@ -22,6 +24,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  updateChatInput: [input: string];
+  sendChatInput: [];
+  stopChat: [];
   promptConsumed: [];
   configureProvider: [];
   acceptPendingAction: [action: PendingActionView];
@@ -30,14 +35,11 @@ const emit = defineEmits<{
   openPendingActionDiff: [action: PendingActionView];
 }>();
 
-const {
-  chat,
-  input,
-  messages,
-  pendingActions,
-  sendCurrentInput,
-  stop,
-} = useAgentCheckpointChat();
+const inputModel = computed({
+  get: () => props.chatInput,
+  set: (value: string) => emit('updateChatInput', value),
+});
+const messages = computed(() => props.chatMessages);
 const { items: timelineItems } = useAgentTimeline(messages);
 
 type PendingDecision = 'accepting' | 'rejecting' | 'accepted' | 'rejected';
@@ -57,7 +59,7 @@ const quickCommands = [
   { id: 'chapter.deAi', label: '去AI味', prompt: '/去AI味' },
 ];
 const decoratedPendingActions = computed(() =>
-  mergePendingActions(props.pendingActions, pendingActions.value).map((action) => ({
+  mergePendingActions(props.pendingActions, props.chatPendingActions).map((action) => ({
     ...action,
     decision: decisions[action.id],
     decisionError: decisionErrors[action.id],
@@ -71,7 +73,7 @@ watch(
       return;
     }
 
-    input.value = prompt;
+    emit('updateChatInput', prompt);
     emit('promptConsumed');
   },
 );
@@ -124,10 +126,10 @@ function mergePendingActions(
 <template>
   <section class="copilot-panel" aria-label="Agent Copilot">
     <button
-      v-if="chat.status !== 'ready'"
+      v-if="chatStatus !== 'ready'"
       class="secondary-button tight-button copilot-stop-button"
       type="button"
-      @click="stop"
+      @click="emit('stopChat')"
     >
       停止
     </button>
@@ -166,12 +168,12 @@ function mergePendingActions(
         @open-diff="emit('openPendingActionDiff', $event)"
       />
       <ChatComposer
-        v-model="input"
-        :disabled="chat.status !== 'ready'"
+        v-model="inputModel"
+        :disabled="chatStatus !== 'ready'"
         :quick-commands="quickCommands"
         :quick-commands-disabled="!providerConfigured"
         @configure-model="emit('configureProvider')"
-        @submit="sendCurrentInput"
+        @submit="emit('sendChatInput')"
       />
     </template>
   </section>

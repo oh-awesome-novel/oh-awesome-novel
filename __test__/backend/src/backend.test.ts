@@ -57,6 +57,42 @@ describe('novel HTTP backend', () => {
     expect(body).toContain('"type":"data-tool-log"');
   });
 
+  it('uses the default AI SDK model resolver when provider config is present', async () => {
+    const modelServer = await startModelListServer();
+    servers.push(modelServer);
+    const backend = await startNovelHttpBackend({
+      workspaceRoot: await createOanWorkspace(),
+      providerConfig: {
+        id: 'custom',
+        kind: 'custom',
+        baseUrl: `${modelServer.url}/v1`,
+        model: 'custom-large',
+        apiKey: 'custom-secret',
+      },
+    });
+    servers.push(backend);
+
+    const response = await fetch(`${backend.url}/api/agent/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            parts: [{ type: 'text', text: '请回复 OK，不要调用工具。' }],
+          },
+        ],
+      }),
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    expect(body).toContain('"type":"text-delta"');
+    expect(body).toContain('OK');
+  });
+
   it('exposes a health endpoint', async () => {
     const workspaceRoot = await createTempWorkspace();
     const backend = await startNovelHttpBackend({ workspaceRoot });
@@ -812,6 +848,41 @@ async function startModelListServer(): Promise<{ url: string; close(): Promise<v
         if (body.model !== 'custom-large' && body.model !== 'custom-small') {
           response.writeHead(404, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ error: { message: 'model not found' } }));
+          return;
+        }
+
+        if (body.stream === true) {
+          response.writeHead(200, { 'content-type': 'text/event-stream' });
+          response.write(`data: ${JSON.stringify({
+            id: 'chatcmpl-test',
+            object: 'chat.completion.chunk',
+            created: 0,
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                  content: 'OK',
+                },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`);
+          response.write(`data: ${JSON.stringify({
+            id: 'chatcmpl-test',
+            object: 'chat.completion.chunk',
+            created: 0,
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: 'stop',
+              },
+            ],
+          })}\n\n`);
+          response.end('data: [DONE]\n\n');
           return;
         }
 

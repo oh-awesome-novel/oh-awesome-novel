@@ -1,0 +1,3 @@
+{"role":"system","content":"You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.\nUse tools to inspect or edit the active workspace.\nDo not operate outside the active workspace.\nDo not target hidden files or hidden directories.\nPrefer structured workspace context over broad file loading.\nWorkspace root: /Users/yel/mac/oh-awesome-novel/examples/simple-novel\nActive skill: novel-copilot"}
+{"role":"user","content":"请回复 pong。不要调用工具。"}
+{"role":"assistant","content":"pong"}

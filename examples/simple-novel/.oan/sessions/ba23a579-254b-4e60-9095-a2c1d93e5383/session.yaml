@@ -1,0 +1,5 @@
+id: ba23a579-254b-4e60-9095-a2c1d93e5383
+title: 工具调用测试第二轮：请只调用 character.list 一次，再调用 world.search 一次（query 填“雾港”）。不要调用
+  workflow.get，不要重复工具，不要写文件。最后用两句话总结当前项目已有内容。
+createdAt: 2026-06-21T06:05:48.109Z
+updatedAt: 2026-06-21T06:06:00.301Z

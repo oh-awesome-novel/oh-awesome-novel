@@ -5,10 +5,12 @@ import { RefreshCw, Search, Settings } from '@lucide/vue';
 import LauncherModelView from './LauncherModelView.vue';
 import LauncherSettingsView from './LauncherSettingsView.vue';
 import { useWorkspaceSearch } from '../../composables/useWorkspaceSearch';
+import type { LauncherSection } from './launcherSections';
 import type { WorkspaceSummary } from '../../composables/useWorkspaceApi';
 import appIconUrl from '../../assets/oan-app-icon.svg';
 
 const props = defineProps<{
+  section: LauncherSection;
   workspaces: WorkspaceSummary[];
   loading: boolean;
   error?: string;
@@ -28,6 +30,7 @@ const emit = defineEmits<{
   refresh: [];
   toggleTheme: [];
   providerConfigured: [configured: boolean];
+  updateSection: [section: LauncherSection];
 }>();
 
 const query = shallowRef('');
@@ -38,7 +41,6 @@ const editingName = shallowRef('');
 const selectedPath = shallowRef('');
 const pathDialogOpen = shallowRef(false);
 const createDialogOpen = shallowRef(false);
-const activeSection = shallowRef<'workspaces' | 'model' | 'about' | 'settings'>('workspaces');
 const searchableWorkspaces = shallowRef(props.workspaces);
 
 const { results } = useWorkspaceSearch(searchableWorkspaces, query);
@@ -174,25 +176,25 @@ function formatOpenedAt(value?: string) {
       <nav class="launcher-nav" aria-label="Launcher sections">
         <button
           class="launcher-nav-item"
-          :class="{ 'launcher-nav-item-active': activeSection === 'workspaces' }"
+          :class="{ 'launcher-nav-item-active': section === 'workspaces' }"
           type="button"
-          @click="activeSection = 'workspaces'"
+          @click="emit('updateSection', 'workspaces')"
         >
           <span>项目</span>
         </button>
         <button
           class="launcher-nav-item"
-          :class="{ 'launcher-nav-item-active': activeSection === 'model' }"
+          :class="{ 'launcher-nav-item-active': section === 'model' }"
           type="button"
-          @click="activeSection = 'model'"
+          @click="emit('updateSection', 'model')"
         >
           <span>模型</span>
         </button>
         <button
           class="launcher-nav-item"
-          :class="{ 'launcher-nav-item-active': activeSection === 'about' }"
+          :class="{ 'launcher-nav-item-active': section === 'about' }"
           type="button"
-          @click="activeSection = 'about'"
+          @click="emit('updateSection', 'about')"
         >
           <span>关于</span>
         </button>
@@ -201,17 +203,17 @@ function formatOpenedAt(value?: string) {
       <div class="launcher-sidebar-footer">
         <button
           class="settings-button"
-          :class="{ 'settings-button-active': activeSection === 'settings' }"
+          :class="{ 'settings-button-active': section === 'settings' }"
           type="button"
           aria-label="设置"
-          @click="activeSection = 'settings'"
+          @click="emit('updateSection', 'settings')"
         >
           <Settings :size="20" aria-hidden="true" />
         </button>
       </div>
     </aside>
 
-    <section v-if="activeSection === 'workspaces'" class="launcher-main" aria-label="Workspace list">
+    <section v-if="section === 'workspaces'" class="launcher-main" aria-label="Workspace list">
       <header class="launcher-main-header">
         <div class="launcher-search">
           <Search class="launcher-search-icon" :size="18" aria-hidden="true" />
@@ -401,11 +403,11 @@ function formatOpenedAt(value?: string) {
     </section>
 
     <LauncherModelView
-      v-else-if="activeSection === 'model'"
+      v-else-if="section === 'model'"
       @saved="emit('providerConfigured', $event)"
     />
 
-    <section v-else-if="activeSection === 'about'" class="launcher-main about-main" aria-label="About Oh Awesome Novel">
+    <section v-else-if="section === 'about'" class="launcher-main about-main" aria-label="About Oh Awesome Novel">
       <div class="about-card">
         <img class="about-icon" :src="appIconUrl" alt="" aria-hidden="true">
         <div>

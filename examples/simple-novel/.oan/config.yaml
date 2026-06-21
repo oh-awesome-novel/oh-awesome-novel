@@ -1,0 +1,10 @@
+version: 1
+novelName: Simple Novel
+onboarding:
+  completed: true
+  skipped: false
+  novelName: Simple Novel
+  inspiration: 一个安静的小城图书管理员意外收到未来自己的来信，开始调查一场还未发生的火灾。
+  characterSeed: 主角角色卡、关键搭档/关系角色卡；主角谨慎、记忆力好但害怕改变；关键搭档是旧报社记者，知道小城过去的秘密。
+  startGoal: outline
+  updatedAt: 2026-06-21T04:17:59.112Z

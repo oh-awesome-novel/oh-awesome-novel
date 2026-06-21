@@ -1,0 +1,24 @@
+kind: chapter-index
+version: 1
+generatedAt: 2026-06-21T05:54:26.828Z
+git:
+  head: 433da655e6fbb49fc6da9f3f449c70fd54801eaf
+  dirty: true
+source:
+  root: chapters
+volumes:
+  - id: "0001"
+    path: chapters/0001
+    title: 第一卷 雾港来信
+    metadataPath: chapters/0001/0000.md
+    chapters:
+      - id: 0001/0001
+        path: chapters/0001/0001.md
+        title: 第一章 逾期十年的信
+        volumeId: "0001"
+        chapterNumber: "0001"
+      - id: 0001/0002
+        path: chapters/0001/0002.md
+        title: 第二章 旧报社没有关灯
+        volumeId: "0001"
+        chapterNumber: "0002"

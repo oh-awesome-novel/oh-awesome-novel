@@ -1,0 +1,14 @@
+foreshadow:
+  - id: f001
+    setup: 墙上的钟慢了半拍。
+    payoff_plan: 旧钟楼机械故障会触发第十三下钟声。
+    status: active
+  - id: f002
+    setup: 未来来信只给三条信息。
+    payoff_plan: 未来米拉的时间线正在被改写，信件内容受限。
+    status: active
+  - id: f003
+    setup: 任野保存未刊照片却不主动展示。
+    payoff_plan: 照片里有任野不愿面对的人。
+    status: active
+

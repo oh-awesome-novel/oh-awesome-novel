@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue';
+import { computed, shallowRef, watch } from 'vue';
 
 import type { FileTreeNode } from '../../composables/useWorkspaceApi';
 
@@ -7,15 +7,23 @@ const props = defineProps<{
   node: FileTreeNode;
   activePath?: string;
   depth: number;
+  collapseVersion?: number;
 }>();
 
 const emit = defineEmits<{
   openFile: [path: string];
 }>();
 
-const expanded = shallowRef(props.depth < 1);
+const expanded = shallowRef(false);
 const isDirectory = computed(() => props.node.type === 'directory');
 const isActive = computed(() => props.node.path === props.activePath);
+
+watch(
+  () => props.collapseVersion,
+  () => {
+    expanded.value = false;
+  },
+);
 
 function activate() {
   if (isDirectory.value) {
@@ -46,6 +54,7 @@ function activate() {
         :node="child"
         :active-path="activePath"
         :depth="depth + 1"
+        :collapse-version="collapseVersion"
         @open-file="emit('openFile', $event)"
       />
     </ul>

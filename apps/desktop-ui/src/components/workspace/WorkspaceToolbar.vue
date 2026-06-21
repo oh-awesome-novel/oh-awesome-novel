@@ -19,7 +19,6 @@ import {
   PanelRightOpen,
   Pencil,
   Search,
-  Settings,
   Sun,
   LogOut,
 } from '@lucide/vue';
@@ -230,16 +229,6 @@ function chooseEditor(editor: ExternalEditor) {
       >
         <Moon v-if="theme === 'dark'" :size="17" aria-hidden="true" />
         <Sun v-else :size="17" aria-hidden="true" />
-      </button>
-
-      <button
-        class="toolbar-icon-action"
-        type="button"
-        aria-label="Provider settings"
-        title="Provider settings"
-        @click="emit('configureProvider')"
-      >
-        <Settings :size="17" aria-hidden="true" />
       </button>
 
       <button

@@ -68,6 +68,7 @@ import type {
   ReferenceSourceType,
 } from '@oh-awesome-novel/core';
 import {
+  createAiSdkProviderResolver,
   inferNovelAgentCapability,
   runNovelAgentTurn,
   runtimeEventsToUiMessageStream,
@@ -1238,8 +1239,9 @@ async function handlePlayWorldRefereeTurn(
   await ensureProviderConfigLoaded(options, state);
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+  const resolveModel = options.resolveModel ?? createAiSdkProviderResolver();
 
-  if (!providerConfig || !options.resolveModel) {
+  if (!providerConfig) {
     return jsonResponse(context, 409, {
       error: 'World referee turn requires model mode with provider config.',
     });
@@ -1265,7 +1267,7 @@ async function handlePlayWorldRefereeTurn(
 
   const result = await runNovelAgentTurn({
     providerConfig,
-    resolveModel: options.resolveModel,
+    resolveModel,
     workspaceRoot,
     workspace: await loadNovelAgentWorkspaceSnapshot(workspaceRoot),
     request: [
@@ -1426,8 +1428,10 @@ async function createRuntimeEventStream(
   const shouldUseModel = options.mode === 'model' || Boolean(providerConfig);
 
   if (shouldUseModel) {
-    if (!providerConfig || !options.resolveModel) {
-      throw new Error('Model mode requires provider config and a model resolver.');
+    const resolveModel = options.resolveModel ?? createAiSdkProviderResolver();
+
+    if (!providerConfig) {
+      throw new Error('Model mode requires provider config.');
     }
 
     const [workspace, skill] = await Promise.all([
@@ -1469,7 +1473,7 @@ async function createRuntimeEventStream(
 
     return streamNovelAgentTurn({
       providerConfig,
-      resolveModel: options.resolveModel,
+      resolveModel,
       workspaceRoot: input.workspaceRoot,
       workspace,
       request: input.request,

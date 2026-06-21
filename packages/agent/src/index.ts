@@ -1,3 +1,4 @@
+import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 
 import {
@@ -117,6 +118,58 @@ export type AiSdkProviderResolver = (
   providerConfig: LlmProviderConfig,
 ) => LanguageModel | Promise<LanguageModel>;
 
+export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
+  (providerConfig) => {
+    const baseURL = resolveProviderBaseUrl(providerConfig);
+    const apiKey = resolveProviderApiKey(providerConfig);
+    const provider = createOpenAI({
+      name: providerConfig.kind === 'custom' ? providerConfig.id : providerConfig.kind,
+      ...(baseURL ? { baseURL } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
+    });
+
+    return provider.chat(providerConfig.model);
+  };
+
+function resolveProviderBaseUrl(providerConfig: LlmProviderConfig): string | undefined {
+  if (providerConfig.baseUrl?.trim()) {
+    return providerConfig.baseUrl.trim();
+  }
+
+  if (providerConfig.kind === 'ollama') {
+    return 'http://127.0.0.1:11434/v1';
+  }
+
+  if (providerConfig.kind === 'deepseek') {
+    return 'https://api.deepseek.com';
+  }
+
+  if (providerConfig.kind === 'opencode-go') {
+    return 'https://api.opencodego.com/v1';
+  }
+
+  if (providerConfig.kind === 'xiaomi-mimo') {
+    return 'https://api.mimo.mi.com/v1';
+  }
+
+  return undefined;
+}
+
+function resolveProviderApiKey(providerConfig: LlmProviderConfig): string | undefined {
+  const apiKey = providerConfig.apiKey?.trim();
+
+  if (apiKey) {
+    return apiKey;
+  }
+
+  if (providerConfig.kind === 'ollama') {
+    return 'ollama';
+  }
+
+  return undefined;
+}
+
 export interface AiSdkModelAdapterInput {
   providerConfig: LlmProviderConfig;
   resolveModel: AiSdkProviderResolver;
@@ -153,9 +206,13 @@ async function* streamAiSdkModelResponse(
   request: RuntimeModelRequest,
 ): AsyncIterable<RuntimeModelStreamEvent> {
   const model = await input.resolveModel(input.providerConfig);
+  const system = toModelSystemPrompt(request.messages);
   const result = streamText({
     model,
-    messages: request.messages.map(toModelMessage),
+    ...(system ? { system } : {}),
+    messages: request.messages
+      .filter((message) => message.role !== 'system')
+      .map(toModelMessage),
     tools: toModelVisibleToolSet(request.tools),
     abortSignal: request.abortSignal,
     maxRetries: 0,
@@ -806,7 +863,34 @@ const toModelVisibleToolSet = (tools: ToolSet): ToolSet =>
     ]),
   ) as ToolSet;
 
+const toModelSystemPrompt = (messages: RuntimeMessage[]): string =>
+  messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join('\n\n');
+
 const toModelMessage = (message: RuntimeMessage): ModelMessage => {
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    return {
+      role: 'assistant',
+      content: [
+        ...(message.content
+          ? [{
+              type: 'text' as const,
+              text: message.content,
+            }]
+          : []),
+        ...message.toolCalls.map((toolCall) => ({
+          type: 'tool-call' as const,
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          input: toolCall.args,
+        })),
+      ],
+    };
+  }
+
   if (message.role === 'tool') {
     return {
       role: 'tool',
@@ -815,10 +899,7 @@ const toModelMessage = (message: RuntimeMessage): ModelMessage => {
           type: 'tool-result',
           toolCallId: message.toolCallId ?? message.name ?? 'tool-call',
           toolName: message.name ?? 'tool',
-          output: {
-            type: 'text',
-            value: message.content,
-          },
+          output: toModelToolResultOutput(message.content),
         },
       ],
     };
@@ -828,6 +909,22 @@ const toModelMessage = (message: RuntimeMessage): ModelMessage => {
     role: message.role,
     content: message.content,
   };
+};
+
+const toModelToolResultOutput = (
+  content: string,
+): { type: 'json'; value: unknown } | { type: 'text'; value: string } => {
+  try {
+    return {
+      type: 'json',
+      value: JSON.parse(content),
+    };
+  } catch {
+    return {
+      type: 'text',
+      value: content,
+    };
+  }
 };
 
 const toRuntimeToolCall = (toolCall: {

@@ -3,6 +3,7 @@ import { computed, onMounted, shallowRef, watch } from 'vue';
 
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
+import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
@@ -37,6 +38,7 @@ interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
 }
 
 const api = useWorkspaceApi();
+const conversations = useAgentConversationSessions();
 const searchOpen = shallowRef(false);
 const searchQuery = shallowRef('');
 const layout = useWorkspaceLayoutState(props.workspace.path);
@@ -216,6 +218,18 @@ function openChapter(chapter: ChapterIndexChapter) {
 
 function openChapterNavigation() {
   layout.sidebarTab.value = 'chapters';
+  layout.leftPinned.value = true;
+}
+
+function startNewConversation() {
+  conversations.createConversation();
+  layout.sidebarTab.value = 'history';
+  layout.leftPinned.value = true;
+}
+
+function selectConversation(id: string) {
+  conversations.selectConversation(id);
+  layout.sidebarTab.value = 'history';
   layout.leftPinned.value = true;
 }
 
@@ -443,14 +457,24 @@ function applyDecisionRefresh(
       :pending-actions-error="pendingActionsError"
       :workspace-status="workspaceStatus"
       :project-health="projectHealth"
+      :conversations="conversations.conversationSummaries.value"
+      :chat-status="conversations.activeStatus.value"
+      :chat-input="conversations.activeInput.value"
+      :chat-messages="conversations.activeMessages.value"
+      :chat-pending-actions="conversations.activePendingActions.value"
       @update-left-overlay-open="layout.leftOverlayOpen.value = $event"
       @update-sidebar-tab="layout.sidebarTab.value = $event"
       @open-file="openFile"
       @open-chapter="openChapter"
       @rescan-chapters="rescanChapters"
+      @new-conversation="startNewConversation"
+      @select-conversation="selectConversation"
       @skip-onboarding="skipOnboarding"
       @finish-onboarding="completeOnboarding"
       @configure-provider="emit('configureProvider')"
+      @update-chat-input="conversations.activeInput.value = $event"
+      @send-chat-input="conversations.sendCurrentInput"
+      @stop-chat="conversations.stop"
       @prompt-consumed="clearQueuedPrompt"
       @accept-pending-action="acceptPendingAction"
       @reject-pending-action="rejectPendingAction"

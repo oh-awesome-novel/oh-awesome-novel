@@ -1,0 +1,5 @@
+id: c4e5833a-a8ef-49f2-b1b9-32fa1ee4353b
+title: 工具调用测试：不要调用 workflow.get。请先调用 character.list 一次，再调用 world.search 一次（query
+  填“雾港”）。不要重复任何工具。完成后用三句话总结角色和世界观。不要创建、修改或删除文件。
+createdAt: 2026-06-21T06:02:53.838Z
+updatedAt: 2026-06-21T06:03:12.663Z

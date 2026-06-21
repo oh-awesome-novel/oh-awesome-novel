@@ -1,0 +1,12 @@
+{
+  "workspaces": [
+    {
+      "name": "Simple Novel",
+      "path": "/Users/yel/mac/oh-awesome-novel/examples/simple-novel",
+      "novelName": "Simple Novel",
+      "addedAt": "2026-06-21T04:16:50.573Z",
+      "lastOpenedAt": "2026-06-21T06:56:20.228Z",
+      "valid": true
+    }
+  ]
+}

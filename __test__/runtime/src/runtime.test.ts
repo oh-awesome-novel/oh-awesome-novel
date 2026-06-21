@@ -77,6 +77,16 @@ describe('RuntimeSession', () => {
     expect(result.messages.some((message) => message.role === 'tool')).toBe(
       true,
     );
+    expect(model.requests[1].messages.at(-2)).toMatchObject({
+      role: 'assistant',
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'character.get',
+          args: { id: 'heroine' },
+        },
+      ],
+    });
     expect(model.requests[1].messages.at(-1)?.role).toBe('tool');
   });
 

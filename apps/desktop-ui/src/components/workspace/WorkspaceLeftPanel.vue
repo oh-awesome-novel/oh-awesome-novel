@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { GitBranch, ShieldCheck } from '@lucide/vue';
+import {
+  BookOpen,
+  Files,
+  GitBranch,
+  History,
+  Settings,
+  ShieldCheck,
+  SquarePen,
+} from '@lucide/vue';
 import ChapterNavigationView from './ChapterNavigationView.vue';
+import ConversationHistoryPanel from './ConversationHistoryPanel.vue';
 import FileTreePanel from './FileTreePanel.vue';
+import type { AgentConversationSummary } from '../../composables/useAgentConversationSessions';
 import type {
   ChapterIndex,
   ChapterIndexChapter,
@@ -10,7 +20,7 @@ import type {
 } from '../../composables/useWorkspaceApi';
 
 defineProps<{
-  tab: 'files' | 'chapters';
+  tab: 'files' | 'chapters' | 'history';
   tree: FileTreeNode[];
   activePath: string;
   treeLoading: boolean;
@@ -20,42 +30,70 @@ defineProps<{
   chaptersLoading: boolean;
   chaptersError: string;
   gitAutoCommitOnAccept: boolean;
+  conversations: AgentConversationSummary[];
 }>();
 
 const emit = defineEmits<{
-  updateTab: [tab: 'files' | 'chapters'];
+  updateTab: [tab: 'files' | 'chapters' | 'history'];
   openFile: [path: string];
   openChapter: [chapter: ChapterIndexChapter];
   rescanChapters: [];
+  configureProvider: [];
+  newConversation: [];
+  selectConversation: [id: string];
 }>();
 </script>
 
 <template>
   <aside class="workspace-left-panel" aria-label="Workspace navigation">
     <div class="left-panel-toolbar">
-      <div class="segmented-control">
+      <nav class="left-nav-list" aria-label="Workspace actions">
         <button
-          class="segment-button"
-          :class="{ 'segment-button-active': tab === 'files' }"
+          class="left-nav-item"
+          type="button"
+          @click="emit('newConversation')"
+        >
+          <SquarePen :size="21" aria-hidden="true" />
+          <span>新对话</span>
+        </button>
+        <button
+          class="left-nav-item"
+          :class="{ 'left-nav-item-active': tab === 'history' }"
+          type="button"
+          @click="emit('updateTab', 'history')"
+        >
+          <History :size="21" aria-hidden="true" />
+          <span>历史对话</span>
+        </button>
+        <button
+          class="left-nav-item"
+          :class="{ 'left-nav-item-active': tab === 'files' }"
           type="button"
           @click="emit('updateTab', 'files')"
         >
-          Files
+          <Files :size="21" aria-hidden="true" />
+          <span>文件</span>
         </button>
         <button
-          class="segment-button"
-          :class="{ 'segment-button-active': tab === 'chapters' }"
+          class="left-nav-item"
+          :class="{ 'left-nav-item-active': tab === 'chapters' }"
           type="button"
           @click="emit('updateTab', 'chapters')"
         >
-          Chapters
+          <BookOpen :size="21" aria-hidden="true" />
+          <span>章节</span>
         </button>
-      </div>
+      </nav>
     </div>
 
     <div class="left-panel-main">
+      <ConversationHistoryPanel
+        v-if="tab === 'history'"
+        :conversations="conversations"
+        @select-conversation="emit('selectConversation', $event)"
+      />
       <FileTreePanel
-        v-if="tab === 'files'"
+        v-else-if="tab === 'files'"
         :tree="tree"
         :active-path="activePath"
         :loading="treeLoading"
@@ -75,6 +113,15 @@ const emit = defineEmits<{
     </div>
 
     <footer class="left-panel-status" aria-label="Workspace safeguards">
+      <button
+        class="left-panel-status-icon-button"
+        type="button"
+        aria-label="Provider settings"
+        title="Provider settings"
+        @click="emit('configureProvider')"
+      >
+        <Settings :size="14" aria-hidden="true" />
+      </button>
       <span class="left-panel-status-pill left-panel-status-pill-review" title="所有写入先进入 PendingAction 审阅">
         <ShieldCheck :size="14" aria-hidden="true" />
         审阅保护

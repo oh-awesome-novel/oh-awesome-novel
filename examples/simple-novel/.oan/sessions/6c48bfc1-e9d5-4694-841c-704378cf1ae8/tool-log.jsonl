@@ -1,0 +1,16 @@
+{"type":"tool_call_start","toolCall":{"id":"call_jpppvwss","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_jpppvwss","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_lcih7cvq","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_lcih7cvq","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_5ikogqrr","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_5ikogqrr","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_igyl0c42","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_igyl0c42","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_1s0ep9ke","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_1s0ep9ke","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_kg9wco3b","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_kg9wco3b","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_15xwm1mr","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_15xwm1mr","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}
+{"type":"tool_call_start","toolCall":{"id":"call_ncfcqlsb","name":"workflow.get","args":{}}}
+{"type":"tool_call_finish","toolCall":{"id":"call_ncfcqlsb","name":"workflow.get","args":{}},"result":{"ok":true,"content":{"file":".oan/workflow.yaml","data":{"name":"lightnovel","steps":["constitution","world","character","outline","chapter","summary","review"]}}}}

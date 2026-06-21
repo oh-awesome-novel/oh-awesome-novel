@@ -1,0 +1,18 @@
+mira:
+  location: 雾港图书馆
+  knows:
+    - 收到未来自己的来信
+    - 十年前停电与旧钟楼误报有关
+  emotional_state: 怀疑但开始行动
+ren:
+  location: 旧报社
+  knows:
+    - 火警记录被改动
+    - 自己也收到过异常来信
+  emotional_state: 防备
+future-mira:
+  location: unknown
+  knows:
+    - 七月十七日码头仓库会出事
+  emotional_state: unknown
+

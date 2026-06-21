@@ -1,0 +1,18 @@
+events:
+  - id: e001
+    date: 十年前七月十七日
+    title: 雾港全城停电三十七分钟
+    impact: 火警记录被改动，码头仓库疑似发生未公开事件。
+  - id: e002
+    date: 今年七月三日
+    title: 米拉收到未来来信
+    impact: 调查开始。
+  - id: e003
+    date: 今年七月三日夜
+    title: 米拉找到任野
+    impact: 确认异常来信不是孤例。
+  - id: e004
+    date: 今年七月十七日
+    title: 码头仓库暑期读书会
+    impact: 未来来信提示的火灾危险点。
+

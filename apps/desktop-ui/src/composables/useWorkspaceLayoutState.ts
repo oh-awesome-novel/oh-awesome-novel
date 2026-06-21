@@ -1,6 +1,7 @@
 import { computed, shallowRef } from 'vue';
 
 export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references' | 'play';
+export type WorkspaceSidebarTab = 'files' | 'chapters' | 'history';
 
 export function useWorkspaceLayoutState(workspacePath: string) {
   void workspacePath;
@@ -10,7 +11,7 @@ export function useWorkspaceLayoutState(workspacePath: string) {
   const rightShown = shallowRef(false);
   const rightTab = shallowRef<WorkspaceRightTab>('approval');
   const rightWidthPercent = shallowRef(36);
-  const sidebarTab = shallowRef<'files' | 'chapters'>('files');
+  const sidebarTab = shallowRef<WorkspaceSidebarTab>('files');
 
   const workbenchStyle = computed(() => ({
     '--right-panel-width': `${rightWidthPercent.value}%`,

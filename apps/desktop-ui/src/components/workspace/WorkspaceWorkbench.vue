@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import type { ChatStatus, UIMessage } from 'ai';
 import CopilotPanel from './CopilotPanel.vue';
 import WorkspaceLeftHoverRail from './WorkspaceLeftHoverRail.vue';
 import WorkspaceLeftPanel from './WorkspaceLeftPanel.vue';
 import WorkspaceOnboardingGuide from './WorkspaceOnboardingGuide.vue';
 import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
+import type { AgentConversationSummary } from '../../composables/useAgentConversationSessions';
 import type { WorkspaceRightTab } from '../../composables/useWorkspaceLayoutState';
 import type {
   ChapterIndex,
@@ -27,7 +29,7 @@ defineProps<{
   providerConfigured: boolean;
   leftPinned: boolean;
   leftOverlayOpen: boolean;
-  sidebarTab: 'files' | 'chapters';
+  sidebarTab: 'files' | 'chapters' | 'history';
   workbenchClass: Record<string, boolean>;
   workbenchStyle: Record<string, string>;
   tree: FileTreeNode[];
@@ -56,11 +58,16 @@ defineProps<{
   pendingActionsError: string;
   workspaceStatus?: WorkspaceStatus;
   projectHealth?: ProjectHealth;
+  conversations: AgentConversationSummary[];
+  chatStatus: ChatStatus;
+  chatInput: string;
+  chatMessages: UIMessage[];
+  chatPendingActions: PendingActionView[];
 }>();
 
 const emit = defineEmits<{
   updateLeftOverlayOpen: [open: boolean];
-  updateSidebarTab: [tab: 'files' | 'chapters'];
+  updateSidebarTab: [tab: 'files' | 'chapters' | 'history'];
   openFile: [path: string];
   openChapter: [chapter: ChapterIndexChapter];
   rescanChapters: [];
@@ -75,6 +82,11 @@ const emit = defineEmits<{
   pendingActionCreated: [];
   selectRightTab: [tab: WorkspaceRightTab];
   closeRight: [];
+  newConversation: [];
+  selectConversation: [id: string];
+  updateChatInput: [input: string];
+  sendChatInput: [];
+  stopChat: [];
 }>();
 </script>
 
@@ -92,10 +104,14 @@ const emit = defineEmits<{
       :chapters-loading="chaptersLoading"
       :chapters-error="chaptersError"
       :git-auto-commit-on-accept="workspaceStatus?.gitConfig?.autoCommitOnAccept ?? true"
+      :conversations="conversations"
       @update-tab="emit('updateSidebarTab', $event)"
       @open-file="emit('openFile', $event)"
       @open-chapter="emit('openChapter', $event)"
       @rescan-chapters="emit('rescanChapters')"
+      @configure-provider="emit('configureProvider')"
+      @new-conversation="emit('newConversation')"
+      @select-conversation="emit('selectConversation', $event)"
     />
     <WorkspaceLeftHoverRail
       v-else
@@ -113,10 +129,14 @@ const emit = defineEmits<{
         :chapters-loading="chaptersLoading"
         :chapters-error="chaptersError"
         :git-auto-commit-on-accept="workspaceStatus?.gitConfig?.autoCommitOnAccept ?? true"
+        :conversations="conversations"
         @update-tab="emit('updateSidebarTab', $event)"
         @open-file="emit('openFile', $event)"
         @open-chapter="emit('openChapter', $event)"
         @rescan-chapters="emit('rescanChapters')"
+        @configure-provider="emit('configureProvider')"
+        @new-conversation="emit('newConversation')"
+        @select-conversation="emit('selectConversation', $event)"
       />
     </WorkspaceLeftHoverRail>
 
@@ -135,10 +155,17 @@ const emit = defineEmits<{
         v-else
         :provider-configured="providerConfigured"
         :queued-prompt="queuedPrompt"
+        :chat-status="chatStatus"
+        :chat-input="chatInput"
+        :chat-messages="chatMessages"
+        :chat-pending-actions="chatPendingActions"
         :pending-actions="pendingActions"
         :pending-actions-loading="pendingActionsLoading"
         :pending-actions-error="pendingActionsError"
         :right-panel-shown="rightShown"
+        @update-chat-input="emit('updateChatInput', $event)"
+        @send-chat-input="emit('sendChatInput')"
+        @stop-chat="emit('stopChat')"
         @prompt-consumed="emit('promptConsumed')"
         @configure-provider="emit('configureProvider')"
         @accept-pending-action="emit('acceptPendingAction', $event)"
