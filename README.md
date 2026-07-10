@@ -72,6 +72,38 @@ examples/          local example workspaces and global config
 reference-only/    reference projects, not product code
 ```
 
+## 参考项目
+
+`reference-only/` 下的目录只作为调研和设计参考，不是产品代码的一部分。
+
+| 本地目录 | GitHub |
+| --- | --- |
+| `reference-only/MiMo-Code` | [XiaomiMiMo/MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code) |
+| `reference-only/OpenHands` | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) |
+| `reference-only/SillyTavern` | [SillyTavern/SillyTavern](https://github.com/SillyTavern/SillyTavern) |
+| `reference-only/StoryWriter` | [THU-KEG/StoryWriter](https://github.com/THU-KEG/StoryWriter) |
+| `reference-only/aider` | [Aider-AI/aider](https://github.com/Aider-AI/aider) |
+| `reference-only/awesome-novel-skill` | [modoojunko/awesome-novel-skill](https://github.com/modoojunko/awesome-novel-skill) |
+| `reference-only/bash-tool` | [vercel-labs/bash-tool](https://github.com/vercel-labs/bash-tool) |
+| `reference-only/chatbox` | [chatboxai/chatbox](https://github.com/chatboxai/chatbox) |
+| `reference-only/eve` | [vercel/eve](https://github.com/vercel/eve) |
+| `reference-only/forge` | [electron/forge](https://github.com/electron/forge) |
+| `reference-only/hello-agents` | [datawhalechina/hello-agents](https://github.com/datawhalechina/hello-agents) |
+| `reference-only/inkos` | [Narcooo/inkos](https://github.com/Narcooo/inkos) |
+| `reference-only/just-bash` | [vercel-labs/just-bash](https://github.com/vercel-labs/just-bash) |
+| `reference-only/mini-swe-agent` | [SWE-agent/mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) |
+| `reference-only/nanoAgent` | [sanbuphy/nanoAgent](https://github.com/sanbuphy/nanoAgent) |
+| `reference-only/nanobot` | [HKUDS/nanobot](https://github.com/HKUDS/nanobot) |
+| `reference-only/note-gen` | [codexu/note-gen](https://github.com/codexu/note-gen) |
+| `reference-only/novel-bot` | [xiaoxiaoxiaotao/novel-bot](https://github.com/xiaoxiaoxiaotao/novel-bot) |
+| `reference-only/novel-writer-skills` | [wordflowlab/novel-writer-skills](https://github.com/wordflowlab/novel-writer-skills) |
+| `reference-only/oh-story-claudecode` | [worldwonderer/oh-story-claudecode](https://github.com/worldwonderer/oh-story-claudecode) |
+| `reference-only/opencode` | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
+| `reference-only/sandbox` | [vercel/sandbox](https://github.com/vercel/sandbox) |
+| `reference-only/storyforge` | [yuanbw2025/storyforge](https://github.com/yuanbw2025/storyforge) |
+| `reference-only/webnovel-writer` | [lingfengQAQ/webnovel-writer](https://github.com/lingfengQAQ/webnovel-writer) |
+| `reference-only/oh-awesome-novel-skill` | 本地参考 skill，当前没有独立 GitHub remote。 |
+
 ## 本地开发
 
 优先使用独立 HTTP 后端 + Vite Web UI 进行开发：
