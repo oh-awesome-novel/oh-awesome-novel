@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -18,12 +19,15 @@ import {
   acceptPendingAction,
   createWriteIntentTools,
   listPendingActions,
+  previewSemanticPatches,
   rejectPendingAction,
 } from '@oh-awesome-novel/tools';
 import type { ToolSet } from 'ai';
 
 const execFileAsync = promisify(execFile);
 const tempRoots: string[] = [];
+const cannotEnforceDirectoryPermissions =
+  process.platform === 'win32' || process.getuid?.() === 0;
 
 afterEach(async () => {
   for (const root of tempRoots.splice(0)) {
@@ -52,6 +56,9 @@ describe('write intent tools and human approval', () => {
     expect(action.diff).toContain('+    hp: recovering');
     expect(action.shadowWrites[0]).toMatchObject({
       targetFile: 'state/characters.yaml',
+      originalHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      draftHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      targetExisted: true,
     });
 
     await expect(
@@ -123,6 +130,172 @@ describe('write intent tools and human approval', () => {
     expect(accepted.gitDiff).toContain('hp: recovering');
     expect(accepted.dirtyStatus).toContain('state/characters.yaml');
   });
+
+  it('fails closed when a target changes after preview', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+    const result = await executeTool(tools, 'state.set', {
+      file: 'characters.yaml',
+      path: 'characters.heroine.hp',
+      value: 'recovering',
+    });
+    const action = expectSinglePendingAction(result);
+    const targetPath = join(workspaceRoot, 'state/characters.yaml');
+    const externalEdit = `characters:\n  heroine:\n    hp: externally-edited\n`;
+    await writeFile(targetPath, externalEdit, 'utf-8');
+
+    await expect(
+      acceptPendingAction({ workspaceRoot, id: action.id }),
+    ).rejects.toThrow(/target changed since preview.*state\/characters\.yaml/);
+
+    await expect(readFile(targetPath, 'utf-8')).resolves.toBe(externalEdit);
+    await expect(listPendingActions({ workspaceRoot })).resolves.toMatchObject([
+      { id: action.id, status: 'pending' },
+    ]);
+  });
+
+  it('fails closed for legacy PendingActions without baseline metadata', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const tools = createWriteIntentTools({ workspaceRoot });
+    const result = await executeTool(tools, 'state.set', {
+      file: 'characters.yaml',
+      path: 'characters.heroine.hp',
+      value: 'recovering',
+    });
+    const action = expectSinglePendingAction(result);
+    const recordPath = join(
+      workspaceRoot,
+      '.workspace',
+      'pending-actions',
+      `${action.id}.json`,
+    );
+    const stored = JSON.parse(await readFile(recordPath, 'utf-8')) as {
+      shadowWrites: Array<Record<string, unknown>>;
+    };
+    delete stored.shadowWrites[0].originalHash;
+    delete stored.shadowWrites[0].draftHash;
+    delete stored.shadowWrites[0].targetExisted;
+    await writeFile(recordPath, `${JSON.stringify(stored, null, 2)}\n`, 'utf-8');
+
+    await expect(
+      acceptPendingAction({ workspaceRoot, id: action.id }),
+    ).rejects.toThrow(/missing required baseline metadata/);
+    await expect(
+      readFile(join(workspaceRoot, 'state/characters.yaml'), 'utf-8'),
+    ).resolves.toContain('hp: injured');
+  });
+
+  it('preflights every shadow before materializing any multi-file target', async () => {
+    const workspaceRoot = await createTempNovelWorkspace();
+    const secondTarget = join(workspaceRoot, 'state/second.yaml');
+    await writeFile(secondTarget, 'value: original\n', 'utf-8');
+    const id = 'pa_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const patches = [
+      {
+        kind: 'collection' as const,
+        domain: 'state' as const,
+        file: 'characters.yaml',
+        operation: 'yamlSet' as const,
+        path: 'characters.heroine.hp',
+        value: 'recovering',
+      },
+      {
+        kind: 'collection' as const,
+        domain: 'state' as const,
+        file: 'second.yaml',
+        operation: 'yamlSet' as const,
+        path: 'value',
+        value: 'changed',
+      },
+    ];
+    const preview = await previewSemanticPatches({ workspaceRoot, id, patches });
+    await persistPendingAction(workspaceRoot, {
+      id,
+      title: 'Apply two files',
+      description: 'Exercise full preflight.',
+      patches,
+      touchedFiles: preview.touchedFiles,
+      diff: preview.diff,
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      shadowWrites: preview.shadowWrites,
+    });
+    const firstTarget = join(workspaceRoot, 'state/characters.yaml');
+    const firstBefore = await readFile(firstTarget, 'utf-8');
+    await writeFile(
+      join(workspaceRoot, preview.shadowWrites[1].shadowFile),
+      'value: tampered\n',
+      'utf-8',
+    );
+
+    await expect(
+      acceptPendingAction({ workspaceRoot, id, autoCommitOnAccept: false }),
+    ).rejects.toThrow(/shadow content changed since preview.*state\/second\.yaml/);
+    await expect(readFile(firstTarget, 'utf-8')).resolves.toBe(firstBefore);
+    await expect(readFile(secondTarget, 'utf-8')).resolves.toBe('value: original\n');
+  });
+
+  it.skipIf(cannotEnforceDirectoryPermissions)(
+    'rolls back earlier targets when a later staged write fails',
+    async () => {
+      const workspaceRoot = await createTempNovelWorkspace();
+      const lockedDirectory = join(workspaceRoot, 'state/locked');
+      const lockedTarget = join(lockedDirectory, 'second.yaml');
+      await mkdir(lockedDirectory, { recursive: true });
+      await writeFile(lockedTarget, 'value: original\n', 'utf-8');
+      const id = 'pa_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const patches = [
+        {
+          kind: 'collection' as const,
+          domain: 'state' as const,
+          file: 'characters.yaml',
+          operation: 'yamlSet' as const,
+          path: 'characters.heroine.hp',
+          value: 'recovering',
+        },
+        {
+          kind: 'collection' as const,
+          domain: 'state' as const,
+          file: 'locked/second.yaml',
+          operation: 'yamlSet' as const,
+          path: 'value',
+          value: 'changed',
+        },
+      ];
+      const preview = await previewSemanticPatches({ workspaceRoot, id, patches });
+      const record = {
+        id,
+        title: 'Apply two files',
+        description: 'Exercise multi-file rollback.',
+        patches,
+        touchedFiles: preview.touchedFiles,
+        diff: preview.diff,
+        createdAt: new Date().toISOString(),
+        status: 'pending',
+        shadowWrites: preview.shadowWrites,
+      };
+      await persistPendingAction(workspaceRoot, record);
+      const firstBefore = await readFile(join(workspaceRoot, 'state/characters.yaml'), 'utf-8');
+      const secondBefore = await readFile(lockedTarget, 'utf-8');
+
+      await chmod(lockedDirectory, 0o555);
+      try {
+        await expect(
+          acceptPendingAction({ workspaceRoot, id, autoCommitOnAccept: false }),
+        ).rejects.toThrow();
+      } finally {
+        await chmod(lockedDirectory, 0o755);
+      }
+
+      await expect(
+        readFile(join(workspaceRoot, 'state/characters.yaml'), 'utf-8'),
+      ).resolves.toBe(firstBefore);
+      await expect(readFile(lockedTarget, 'utf-8')).resolves.toBe(secondBefore);
+      await expect(listPendingActions({ workspaceRoot })).resolves.toMatchObject([
+        { id, status: 'pending' },
+      ]);
+    },
+  );
 
   it('rejects a PendingAction without writing the target and marks the shadow write rejected', async () => {
     const workspaceRoot = await createTempNovelWorkspace();
@@ -296,7 +469,23 @@ interface TestPendingAction {
   shadowWrites: Array<{
     targetFile: string;
     shadowFile: string;
+    originalHash: string;
+    draftHash: string;
+    targetExisted: boolean;
   }>;
+}
+
+async function persistPendingAction(
+  workspaceRoot: string,
+  action: Record<string, unknown>,
+): Promise<void> {
+  const pendingDirectory = join(workspaceRoot, '.workspace/pending-actions');
+  await mkdir(pendingDirectory, { recursive: true });
+  await writeFile(
+    join(pendingDirectory, `${String(action.id)}.json`),
+    `${JSON.stringify(action, null, 2)}\n`,
+    'utf-8',
+  );
 }
 
 async function createTempNovelWorkspace(): Promise<string> {

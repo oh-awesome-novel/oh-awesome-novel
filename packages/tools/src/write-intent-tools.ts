@@ -1,14 +1,15 @@
 import {
-  copyFile,
+  chmod,
   lstat,
   mkdir,
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   basename,
   dirname,
@@ -29,16 +30,17 @@ import {
   gitStatusShort,
 } from './git-integration';
 import type { GitCommitResult } from './git-integration';
-import { replaceSection } from './markdown';
-import { yamlAppendDraft, yamlSetDraft } from './yaml-engine';
+import { previewSemanticPatches } from './apply-engine';
+import type {
+  CollectionPatch,
+  NarrativePatch,
+  ObjectPatch,
+  SemanticPatch,
+  ShadowWriteReference,
+} from './apply-engine';
 
 export interface CreateWriteIntentToolsOptions {
   workspaceRoot: string;
-}
-
-export interface ShadowWriteReference {
-  targetFile: string;
-  shadowFile: string;
 }
 
 export interface WriteIntentPendingAction {
@@ -88,44 +90,29 @@ export interface RejectedPendingAction extends PendingActionDecision {
   status: 'rejected';
 }
 
-export type SemanticPatch = ObjectPatch | CollectionPatch | NarrativePatch;
-
-export interface ObjectPatch {
-  kind: 'object';
-  domain: 'character';
-  entityId: string;
-  file: string;
-  operation: 'replaceSection';
-  selector: {
-    section: string;
-  };
-  value: string;
-}
-
-export interface CollectionPatch {
-  kind: 'collection';
-  domain: 'state' | 'timeline' | 'foreshadow';
-  file: string;
-  operation: 'yamlSet' | 'yamlAppend';
-  path: string;
-  value: unknown;
-}
-
-export interface NarrativePatch {
-  kind: 'narrative';
-  domain: 'summary' | 'chapter';
-  file: string;
-  operation: 'replaceFile';
-  selector?: {
-    chapterId?: string;
-  };
-  value: string;
-}
-
-interface CandidateFile {
+interface PreparedShadowWrite {
+  actionId: string;
   targetFile: string;
-  original: string;
+  targetPath: string;
   draft: string;
+  originalHash: string;
+  draftHash: string;
+  targetExisted: boolean;
+  targetMode?: number;
+}
+
+interface MaterializedWrite {
+  targetPath: string;
+  targetExisted: boolean;
+  stagePath?: string;
+  backupPath?: string;
+  backupCreated: boolean;
+  applied: boolean;
+}
+
+interface MaterializationTransaction {
+  cleanup(): Promise<void>;
+  rollback(): Promise<void>;
 }
 
 export function createWriteIntentTools(
@@ -163,8 +150,6 @@ function chapterCreateDraftTool(options: CreateWriteIntentToolsOptions) {
       const content = normalizeMarkdownFile(expectStringArg(args, 'content'));
       const file = getOptionalStringArg(args, 'file') ?? `${chapterId}.md`;
       const targetFile = safeChapterDraftFile(file, chapterId);
-      const absolutePath = await resolveWritableReadTarget(options.workspaceRoot, targetFile);
-      const original = await readFileIfExists(absolutePath);
       const draft = title && !content.startsWith('# ')
         ? normalizeMarkdownFile(`# ${title}\n\n${content}`)
         : content;
@@ -173,7 +158,6 @@ function chapterCreateDraftTool(options: CreateWriteIntentToolsOptions) {
         domain: 'chapter',
         file: targetFile,
         operation: 'replaceFile',
-        selector: { chapterId },
         value: draft,
       };
 
@@ -182,11 +166,6 @@ function chapterCreateDraftTool(options: CreateWriteIntentToolsOptions) {
           title: `Create chapter ${chapterId} draft`,
           description: `Replace ${targetFile} with a proposed chapter draft.`,
           patches: [patch],
-          candidates: [{
-            targetFile,
-            original,
-            draft,
-          }],
         }),
       );
     },
@@ -230,22 +209,23 @@ export async function acceptPendingAction(
     throw new Error(`PendingAction ${input.id} is already ${action.status}.`);
   }
 
-  for (const write of action.shadowWrites) {
-    const target = await resolveWritableTarget(workspaceRealpath, write.targetFile);
-    const shadowPath = resolveInternalWorkspacePath(workspaceRealpath, write.shadowFile);
-    await assertTargetDoesNotEscape(workspaceRealpath, target.absolutePath);
-    await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(target.absolutePath));
-    await mkdir(dirname(target.absolutePath), { recursive: true });
-    await assertRealParentInsideWorkspace(workspaceRealpath, dirname(target.absolutePath));
-    await copyFile(shadowPath, target.absolutePath);
-  }
+  const preparedWrites = await preflightShadowWrites(workspaceRealpath, action);
+  const transaction = await materializePreparedWrites(workspaceRealpath, preparedWrites);
 
   const acceptedAction: StoredWriteIntentAction = {
     ...action,
     status: 'accepted',
     acceptedAt: new Date().toISOString(),
   };
-  await archiveStoredAction(workspaceRealpath, acceptedAction, 'accepted-actions');
+
+  try {
+    await archiveStoredAction(workspaceRealpath, acceptedAction, 'accepted-actions');
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+
+  await transaction.cleanup();
   const message = createPendingActionCommitMessage({
     pendingActionId: action.id,
     title: action.title,
@@ -271,6 +251,352 @@ export async function acceptPendingAction(
     gitCommit,
     dirtyStatus: await gitStatusShort(workspaceRealpath, action.touchedFiles),
   };
+}
+
+async function preflightShadowWrites(
+  workspaceRealpath: string,
+  action: StoredWriteIntentAction,
+): Promise<PreparedShadowWrite[]> {
+  if (
+    action.touchedFiles.length === 0 ||
+    action.shadowWrites.length !== action.touchedFiles.length
+  ) {
+    throw new Error(`PendingAction ${action.id} has inconsistent touched file mappings.`);
+  }
+
+  const touchedFiles = action.touchedFiles.map((file) => {
+    if (typeof file !== 'string') {
+      throw new Error(`PendingAction ${action.id} has an invalid touched file mapping.`);
+    }
+
+    return safeRelativePath(file);
+  });
+
+  if (new Set(touchedFiles).size !== touchedFiles.length) {
+    throw new Error(`PendingAction ${action.id} has duplicate touched file mappings.`);
+  }
+
+  const expectedShadowRoot = join(
+    workspaceRealpath,
+    '.workspace',
+    'shadow-writes',
+    action.id,
+  );
+  const shadowPaths = new Set<string>();
+  const preparedWrites: PreparedShadowWrite[] = [];
+
+  for (const [index, rawWrite] of action.shadowWrites.entries()) {
+    if (!isShadowWriteWithBaseline(rawWrite)) {
+      throw new Error(
+        `PendingAction ${action.id} is missing required baseline metadata for shadow write ${index + 1}.`,
+      );
+    }
+
+    const targetFile = safeRelativePath(rawWrite.targetFile);
+    if (targetFile !== touchedFiles[index]) {
+      throw new Error(`PendingAction ${action.id} has inconsistent touched file mappings.`);
+    }
+
+    const target = await resolveWritableTarget(workspaceRealpath, targetFile);
+    const shadowPath = resolveInternalWorkspacePath(workspaceRealpath, rawWrite.shadowFile);
+    assertPathInside(
+      expectedShadowRoot,
+      shadowPath,
+      `PendingAction ${action.id} shadow write is outside its expected action directory.`,
+    );
+
+    if (shadowPaths.has(shadowPath)) {
+      throw new Error(`PendingAction ${action.id} has duplicate shadow write mappings.`);
+    }
+    shadowPaths.add(shadowPath);
+
+    await assertPathContainsNoSymlinks(workspaceRealpath, shadowPath);
+    const shadowStat = await lstat(shadowPath);
+    if (shadowStat.isSymbolicLink() || !shadowStat.isFile()) {
+      throw new Error(`PendingAction ${action.id} shadow write must be a regular file.`);
+    }
+
+    const shadowRealpath = await realpath(shadowPath);
+    assertPathInside(
+      expectedShadowRoot,
+      shadowRealpath,
+      `PendingAction ${action.id} shadow write is outside its expected action directory.`,
+    );
+    const draft = await readFile(shadowRealpath, 'utf-8');
+    if (sha256(draft) !== rawWrite.draftHash) {
+      throw new Error(
+        `PendingAction ${action.id} shadow content changed since preview: ${targetFile}.`,
+      );
+    }
+
+    await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(target.absolutePath));
+    const targetMode = await assertTargetMatchesBaseline(
+      workspaceRealpath,
+      target.absolutePath,
+      targetFile,
+      rawWrite,
+      action.id,
+    );
+
+    preparedWrites.push({
+      actionId: action.id,
+      targetFile,
+      targetPath: target.absolutePath,
+      draft,
+      originalHash: rawWrite.originalHash,
+      draftHash: rawWrite.draftHash,
+      targetExisted: rawWrite.targetExisted,
+      targetMode,
+    });
+  }
+
+  return preparedWrites;
+}
+
+async function materializePreparedWrites(
+  workspaceRealpath: string,
+  preparedWrites: PreparedShadowWrite[],
+): Promise<MaterializationTransaction> {
+  const materializedWrites: MaterializedWrite[] = [];
+
+  try {
+    for (const prepared of preparedWrites) {
+      const targetParent = dirname(prepared.targetPath);
+      await assertExistingAncestorsInsideWorkspace(workspaceRealpath, targetParent);
+      await mkdir(targetParent, { recursive: true });
+      const realTargetParent = await realpath(targetParent);
+      assertPathInside(
+        workspaceRealpath,
+        realTargetParent,
+        'Parent directory resolves outside the active workspace.',
+      );
+
+      const targetPath = join(realTargetParent, basename(prepared.targetPath));
+      await assertTargetMatchesBaseline(
+        workspaceRealpath,
+        targetPath,
+        prepared.targetFile,
+        prepared,
+        prepared.actionId,
+      );
+
+      const token = randomUUID();
+      const write: MaterializedWrite = {
+        targetPath,
+        targetExisted: prepared.targetExisted,
+        stagePath: join(realTargetParent, `.oan-stage-${token}`),
+        backupPath: prepared.targetExisted
+          ? join(realTargetParent, `.oan-backup-${token}`)
+          : undefined,
+        backupCreated: false,
+        applied: false,
+      };
+      materializedWrites.push(write);
+
+      await writeFile(write.stagePath, prepared.draft, {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
+      if (prepared.targetMode !== undefined) {
+        await chmod(write.stagePath, prepared.targetMode);
+      }
+
+      if (write.backupPath) {
+        await rename(write.targetPath, write.backupPath);
+        write.backupCreated = true;
+        await assertBackupMatchesBaseline(
+          write.backupPath,
+          prepared.targetFile,
+          prepared.originalHash,
+          prepared.actionId,
+        );
+      }
+
+      await rename(write.stagePath, write.targetPath);
+      write.applied = true;
+      write.stagePath = undefined;
+    }
+  } catch (error) {
+    try {
+      await rollbackMaterializedWrites(materializedWrites);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'PendingAction materialization failed and rollback was incomplete.',
+      );
+    }
+
+    throw error;
+  }
+
+  let closed = false;
+  return {
+    async cleanup() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+
+      for (const write of materializedWrites) {
+        if (write.stagePath) {
+          await rm(write.stagePath, { force: true });
+        }
+        if (write.backupCreated && write.backupPath) {
+          await rm(write.backupPath, { force: true });
+          write.backupCreated = false;
+        }
+      }
+    },
+    async rollback() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      await rollbackMaterializedWrites(materializedWrites);
+    },
+  };
+}
+
+async function rollbackMaterializedWrites(
+  writes: MaterializedWrite[],
+): Promise<void> {
+  const errors: unknown[] = [];
+
+  for (const write of [...writes].reverse()) {
+    if (write.applied) {
+      try {
+        await rm(write.targetPath, { force: true });
+        write.applied = false;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    if (write.backupCreated && write.backupPath) {
+      try {
+        await rename(write.backupPath, write.targetPath);
+        write.backupCreated = false;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    if (write.stagePath) {
+      try {
+        await rm(write.stagePath, { force: true });
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'Could not completely roll back PendingAction writes.');
+  }
+}
+
+async function assertTargetMatchesBaseline(
+  workspaceRealpath: string,
+  targetPath: string,
+  targetFile: string,
+  baseline: Pick<PreparedShadowWrite, 'originalHash' | 'targetExisted'>,
+  actionId: string,
+): Promise<number | undefined> {
+  try {
+    const targetStat = await lstat(targetPath);
+    if (targetStat.isSymbolicLink()) {
+      throw new Error(`PendingAction target cannot be a symbolic link: ${targetFile}.`);
+    }
+    if (!targetStat.isFile()) {
+      throw new Error(`PendingAction target must be a regular file: ${targetFile}.`);
+    }
+
+    await assertTargetDoesNotEscape(workspaceRealpath, targetPath);
+    if (!baseline.targetExisted) {
+      throw pendingActionConflict(actionId, targetFile);
+    }
+
+    const current = await readFile(targetPath, 'utf-8');
+    if (sha256(current) !== baseline.originalHash) {
+      throw pendingActionConflict(actionId, targetFile);
+    }
+
+    return targetStat.mode;
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+
+    if (baseline.targetExisted || baseline.originalHash !== sha256('')) {
+      throw pendingActionConflict(actionId, targetFile);
+    }
+
+    return undefined;
+  }
+}
+
+async function assertBackupMatchesBaseline(
+  backupPath: string,
+  targetFile: string,
+  originalHash: string,
+  actionId: string,
+): Promise<void> {
+  const backupStat = await lstat(backupPath);
+  if (backupStat.isSymbolicLink() || !backupStat.isFile()) {
+    throw new Error(`PendingAction target cannot be replaced safely: ${targetFile}.`);
+  }
+
+  const content = await readFile(backupPath, 'utf-8');
+  if (sha256(content) !== originalHash) {
+    throw pendingActionConflict(actionId, targetFile);
+  }
+}
+
+function pendingActionConflict(actionId: string, targetFile: string): Error {
+  return new Error(
+    `PendingAction ${actionId} target changed since preview: ${targetFile}.`,
+  );
+}
+
+async function assertPathContainsNoSymlinks(
+  workspaceRealpath: string,
+  path: string,
+): Promise<void> {
+  const relativePath = relative(workspaceRealpath, path);
+  let cursor = workspaceRealpath;
+
+  for (const part of relativePath.split(sep).filter(Boolean)) {
+    cursor = join(cursor, part);
+    const stat = await lstat(cursor);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Internal workspace path cannot contain symbolic links: ${path}`);
+    }
+  }
+}
+
+function isShadowWriteWithBaseline(value: unknown): value is {
+  targetFile: string;
+  shadowFile: string;
+  originalHash: string;
+  draftHash: string;
+  targetExisted: boolean;
+} {
+  return (
+    isRecord(value) &&
+    typeof value.targetFile === 'string' &&
+    typeof value.shadowFile === 'string' &&
+    isSha256(value.originalHash) &&
+    isSha256(value.draftHash) &&
+    typeof value.targetExisted === 'boolean'
+  );
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value, 'utf-8').digest('hex');
 }
 
 export async function rejectPendingAction(
@@ -324,29 +650,22 @@ function characterUpdatePersonalityTool(options: CreateWriteIntentToolsOptions) 
       const section = expectStringArg(args, 'section');
       const content = expectStringArg(args, 'content');
       const file = getOptionalStringArg(args, 'file') ?? 'personality.md';
-      const targetFile = safeRelativePath(join('characters', characterId, safeRelativePath(file)));
-      const absolutePath = await resolveReadableTarget(options.workspaceRoot, targetFile);
-      const draft = await replaceSection(absolutePath, section, content);
       const patch: ObjectPatch = {
         kind: 'object',
         domain: 'character',
         entityId: characterId,
-        file: targetFile,
+        file,
         operation: 'replaceSection',
         selector: { section },
         value: content,
       };
+      const targetFile = safeRelativePath(join('characters', characterId, safeRelativePath(file)));
 
       return pendingActionResult(
         await createPendingAction(options.workspaceRoot, {
           title: `Update ${characterId} personality`,
           description: `Replace section "${section}" in ${targetFile}.`,
           patches: [patch],
-          candidates: [{
-            targetFile,
-            original: draft.original,
-            draft: draft.draft,
-          }],
         }),
       );
     },
@@ -370,28 +689,21 @@ function stateSetTool(options: CreateWriteIntentToolsOptions) {
       const file = expectStringArg(args, 'file');
       const path = expectStringArg(args, 'path');
       const value = expectArg(args, 'value');
-      const targetFile = safeRelativePath(join('state', safeRelativePath(file)));
-      const absolutePath = await resolveReadableTarget(options.workspaceRoot, targetFile);
-      const draft = await yamlSetDraft(absolutePath, path, value);
       const patch: CollectionPatch = {
         kind: 'collection',
         domain: 'state',
-        file: targetFile,
+        file,
         operation: 'yamlSet',
         path,
         value,
       };
+      const targetFile = safeRelativePath(join('state', safeRelativePath(file)));
 
       return pendingActionResult(
         await createPendingAction(options.workspaceRoot, {
           title: `Set state ${path}`,
           description: `Set ${path} in ${targetFile}.`,
           patches: [patch],
-          candidates: [{
-            targetFile,
-            original: draft.original,
-            draft: draft.draft,
-          }],
         }),
       );
     },
@@ -449,14 +761,11 @@ function summaryGenerateChapterTool(options: CreateWriteIntentToolsOptions) {
         chapterId,
       );
       const targetFile = safeRelativePath(join('summaries', safeRelativePath(file)));
-      const absolutePath = await resolveWritableReadTarget(options.workspaceRoot, targetFile);
-      const original = await readFileIfExists(absolutePath);
       const patch: NarrativePatch = {
         kind: 'narrative',
         domain: 'summary',
         file: targetFile,
         operation: 'replaceFile',
-        selector: { chapterId },
         value: content,
       };
 
@@ -465,11 +774,6 @@ function summaryGenerateChapterTool(options: CreateWriteIntentToolsOptions) {
           title: `Generate chapter ${chapterId} summary`,
           description: `Replace ${targetFile} with generated chapter summary.`,
           patches: [patch],
-          candidates: [{
-            targetFile,
-            original,
-            draft: content,
-          }],
         }),
       );
     },
@@ -502,28 +806,21 @@ function collectionAppendTool(input: {
       const file = getOptionalStringArg(args, 'file') ?? input.defaultFile;
       const path = getOptionalStringArg(args, 'path') ?? input.defaultPath;
       const value = expectArg(args, input.valueArg);
-      const targetFile = safeRelativePath(join(input.domain, safeRelativePath(file)));
-      const absolutePath = await resolveReadableTarget(input.options.workspaceRoot, targetFile);
-      const draft = await yamlAppendDraft(absolutePath, path, value);
       const patch: CollectionPatch = {
         kind: 'collection',
         domain: input.domain,
-        file: targetFile,
+        file,
         operation: 'yamlAppend',
         path,
         value,
       };
+      const targetFile = safeRelativePath(join(input.domain, safeRelativePath(file)));
 
       return pendingActionResult(
         await createPendingAction(input.options.workspaceRoot, {
           title: input.title(value),
           description: `Append to ${path} in ${targetFile}.`,
           patches: [patch],
-          candidates: [{
-            targetFile,
-            original: draft.original,
-            draft: draft.draft,
-          }],
         }),
       );
     },
@@ -536,30 +833,25 @@ async function createPendingAction(
     title: string;
     description: string;
     patches: SemanticPatch[];
-    candidates: CandidateFile[];
   },
 ): Promise<WriteIntentPendingAction> {
   const workspaceRealpath = await realpath(workspaceRoot);
   const id = `pa_${randomUUID()}`;
-  const shadowWrites = await Promise.all(
-    input.candidates.map((candidate) =>
-      writeShadowFile(workspaceRealpath, id, candidate.targetFile, candidate.draft),
-    ),
-  );
+  const preview = await previewSemanticPatches({
+    workspaceRoot: workspaceRealpath,
+    patches: input.patches,
+    id,
+  });
   const action: WriteIntentPendingAction = {
     id,
     title: input.title,
     description: input.description,
     patches: input.patches,
-    touchedFiles: input.candidates.map((candidate) => candidate.targetFile),
-    diff: input.candidates
-      .map((candidate) =>
-        createUnifiedDiff(candidate.targetFile, candidate.original, candidate.draft),
-      )
-      .join('\n'),
+    touchedFiles: preview.touchedFiles,
+    diff: preview.diff,
     createdAt: new Date().toISOString(),
     status: 'pending',
-    shadowWrites,
+    shadowWrites: preview.shadowWrites,
   };
 
   await writeStoredAction(workspaceRealpath, action);
@@ -570,30 +862,6 @@ function pendingActionResult(action: WriteIntentPendingAction): {
   pendingActions: WriteIntentPendingAction[];
 } {
   return { pendingActions: [action] };
-}
-
-async function writeShadowFile(
-  workspaceRealpath: string,
-  actionId: string,
-  targetFile: string,
-  content: string,
-): Promise<ShadowWriteReference> {
-  const shadowFile = join(
-    '.workspace',
-    'shadow-writes',
-    actionId,
-    sanitizeShadowPath(targetFile),
-  );
-  const absoluteShadowFile = resolveInternalWorkspacePath(workspaceRealpath, shadowFile);
-  await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(absoluteShadowFile));
-  await mkdir(dirname(absoluteShadowFile), { recursive: true });
-  await assertRealParentInsideWorkspace(workspaceRealpath, dirname(absoluteShadowFile));
-  await writeFile(absoluteShadowFile, content, 'utf-8');
-
-  return {
-    targetFile,
-    shadowFile,
-  };
 }
 
 async function writeStoredAction(
@@ -641,26 +909,6 @@ async function archiveStoredAction(
 
 function pendingActionPath(workspaceRealpath: string, id: string): string {
   return join(workspaceRealpath, '.workspace', 'pending-actions', `${id}.json`);
-}
-
-async function resolveReadableTarget(
-  workspaceRoot: string,
-  relativePath: string,
-): Promise<string> {
-  const workspaceRealpath = await realpath(workspaceRoot);
-  const target = await resolveWritableTarget(workspaceRealpath, relativePath);
-  await assertTargetDoesNotEscape(workspaceRealpath, target.absolutePath);
-  return target.absolutePath;
-}
-
-async function resolveWritableReadTarget(
-  workspaceRoot: string,
-  relativePath: string,
-): Promise<string> {
-  const workspaceRealpath = await realpath(workspaceRoot);
-  const target = await resolveWritableTarget(workspaceRealpath, relativePath);
-  await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(target.absolutePath));
-  return target.absolutePath;
 }
 
 async function resolveWritableTarget(
@@ -852,56 +1100,6 @@ function assertPathInside(workspaceRealpath: string, path: string, message: stri
 
   if (path !== workspaceRealpath && !path.startsWith(normalizedWorkspace)) {
     throw new Error(message);
-  }
-}
-
-function sanitizeShadowPath(requestedPath: string): string {
-  const parts = requestedPath
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .map((part) => part.replaceAll(/[^a-zA-Z0-9._-]/g, '_'));
-
-  return parts.length ? join(...parts) : 'write.txt';
-}
-
-function createUnifiedDiff(file: string, original: string, draft: string): string {
-  const originalLines = original.split('\n');
-  const draftLines = draft.split('\n');
-  const lines = [`diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`, '@@'];
-  const max = Math.max(originalLines.length, draftLines.length);
-
-  for (let index = 0; index < max; index += 1) {
-    const before = originalLines[index];
-    const after = draftLines[index];
-
-    if (before === after) {
-      if (before !== undefined && before !== '') {
-        lines.push(` ${before}`);
-      }
-      continue;
-    }
-
-    if (before !== undefined && before !== '') {
-      lines.push(`-${before}`);
-    }
-
-    if (after !== undefined && after !== '') {
-      lines.push(`+${after}`);
-    }
-  }
-
-  return `${lines.join('\n')}\n`;
-}
-
-async function readFileIfExists(filePath: string): Promise<string> {
-  try {
-    return await readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      return '';
-    }
-
-    throw error;
   }
 }
 

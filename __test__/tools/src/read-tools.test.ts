@@ -1,10 +1,22 @@
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createReadTools } from '@oh-awesome-novel/tools';
 import type { ToolSet } from 'ai';
 
-const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'sample-novel');
+import { prepareSampleNovel } from './support/sample-novel';
+
+let workspaceRoot = '';
+let cleanupSampleNovel: (() => Promise<void>) | undefined;
+
+beforeAll(async () => {
+  const sampleNovel = await prepareSampleNovel();
+  workspaceRoot = sampleNovel.workspaceRoot;
+  cleanupSampleNovel = sampleNovel.cleanup;
+});
+
+afterAll(async () => {
+  await cleanupSampleNovel?.();
+});
 
 describe('read tools', () => {
   it('creates the initial read tool set', () => {

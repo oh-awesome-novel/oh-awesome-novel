@@ -108,7 +108,17 @@ function parseYamlPath(path: string): Array<string | number> {
     return [];
   }
 
-  return path.split('.').map((part) => {
+  const parts = path.split('.');
+  if (parts.some((part) => !part.trim())) {
+    throw new Error(`YAML path "${path}" contains an empty segment.`);
+  }
+
+  const dangerous = parts.find((part) => DANGEROUS_PATH_SEGMENTS.has(part));
+  if (dangerous) {
+    throw new Error(`YAML path "${path}" contains forbidden segment "${dangerous}".`);
+  }
+
+  return parts.map((part) => {
     if (/^\d+$/.test(part)) {
       return Number(part);
     }
@@ -125,7 +135,11 @@ function getByPath(value: unknown, path: Array<string | number>): unknown {
       continue;
     }
 
-    if (isRecord(current) && typeof segment === 'string') {
+    if (
+      isRecord(current) &&
+      typeof segment === 'string' &&
+      Object.hasOwn(current, segment)
+    ) {
       current = current[segment];
       continue;
     }
@@ -193,7 +207,10 @@ function ensureParent(
     const nextSegment = path[index + 1];
 
     if (isRecord(current) && typeof segment === 'string') {
-      if (!isRecord(current[segment]) && !Array.isArray(current[segment])) {
+      if (
+        !Object.hasOwn(current, segment) ||
+        (!isRecord(current[segment]) && !Array.isArray(current[segment]))
+      ) {
         current[segment] = typeof nextSegment === 'number' ? [] : {};
       }
       current = current[segment];
@@ -221,6 +238,8 @@ function ensureParent(
 function cloneYamlData(value: unknown): unknown {
   return value === undefined ? {} : structuredClone(value);
 }
+
+const DANGEROUS_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

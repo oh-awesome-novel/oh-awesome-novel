@@ -61,17 +61,28 @@ export {
 export type {
   AcceptedPendingAction,
   AcceptPendingActionInput,
-  CollectionPatch,
   CreateWriteIntentToolsOptions,
-  NarrativePatch,
-  ObjectPatch,
   RejectedPendingAction,
   RejectPendingActionInput,
-  SemanticPatch,
-  ShadowWriteReference,
   StoredWriteIntentAction,
   WriteIntentPendingAction,
 } from './write-intent-tools';
+
+export {
+  previewSemanticPatches,
+  resolvePatchTargetFile,
+  validateSemanticPatch,
+} from './apply-engine';
+export type {
+  ApplyPreviewCandidate,
+  ApplyPreviewResult,
+  CollectionPatch,
+  NarrativePatch,
+  ObjectPatch,
+  PreviewSemanticPatchesInput,
+  SemanticPatch,
+  ShadowWriteReference,
+} from './apply-engine';
 
 export {
   commitFiles,
