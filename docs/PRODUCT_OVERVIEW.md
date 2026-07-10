@@ -7,7 +7,9 @@
 ```text
 桌面 Novel IDE
   + filesystem-first 小说工程
-  + 中央 Agent Copilot
+  + Writing / Play 顶级工作模式
+  + Writing 中央 Agent Copilot
+  + Play 互动世界工作区
   + 右侧真实文件查看 / diff 预览
   + PendingAction 人类审批
   + Git 历史与回滚
@@ -19,11 +21,20 @@
 
 新建 workspace 后，应用会进入一个可跳过的创作引导：填写小说名字、基础灵感、角色方向，并选择先生成角色卡、规划第一章或开始写章节。引导不会绕过审批写入正文，而是把这些信息保存到 workspace config，并整理成 Copilot 的第一条工作请求。
 
-进入 workspace 后，界面采用三栏工作区：
+进入 workspace 后，作者先在同层级的 `Writing | Play` 顶级模式间切换：
+
+- Writing 是小说编写工作台，面向正文、对象文件、Copilot 和 PendingAction。
+- Play 是互动世界工作台，面向 session、角色、场景、世界事件、Play-local state 和 adoption。
+
+Play 不是 Writing 右侧面板中的一个 tab。两种模式共享同一个小说 workspace、canonical sources、provider 与审批基础设施，但各自拥有完整的主区域、导航状态和内部布局。
+
+Writing 界面采用三栏工作区：
 
 - 左侧是文件树和章节导航。
 - 中间是 Novel Agent Copilot，是主要交互区。
 - 右侧是真实文件内容查看器、workspace 首页和后续 diff / 上下文视图承载区。
+
+Play 界面使用独立主工作区：中间承载 transcript / narrative 与 action composer，两侧或可折叠区域承载 scene / cast、world HUD、事件、上下文和 adoption。Play 内部可以使用右侧 inspector，但不能复用“右栏 Play tab”作为整个模式的容器。
 
 Copilot 会读取 `.oan/workflow.yaml`、constitution、summary、state、timeline、foreshadow、角色卡和章节正文等项目文件，并通过工具调用提出修改建议。所有正文、角色、状态、时间线、伏笔、摘要等写入都先生成 PendingAction，作者接受后才会写入真实文件。
 

@@ -1,6 +1,8 @@
 # Play Mode UI And Adoption Workflow Implementation Plan
 
 > **For agentic workers:** Use one world referee in the existing runtime. Do not implement multi-agent roleplay as the default.
+>
+> **Superseded UI boundary:** This plan originally allowed a Play panel or route, and the first implementation used a right-panel tab. The current target requires Play and Writing to be top-level sibling modes. Preserve the completed backend / adoption work, but use `docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md` for the replacement Play workspace; do not extend `PlayModeTab.vue` as the final UI.
 
 **Goal:** Connect Play session core helpers to backend routes, UI, and PendingAction adoption.
 
@@ -37,7 +39,7 @@
 
 ### Task 3: Play UI
 
-- [ ] Add Play panel or route.
+- [ ] Add Play as an independent top-level workspace route / mode, not a Writing right-panel tab.
 - [ ] Show transcript, play-local state, activated sources, observations, and adoption candidates.
 - [ ] Make canonical/non-canonical boundary visible.
 
@@ -61,4 +63,3 @@
 - [ ] Route test proves session files stay under `.workspace/play-sessions`.
 - [ ] Adoption test proves canonical files are unchanged before accept.
 - [ ] UI/client test covers Play route shape or client methods.
-

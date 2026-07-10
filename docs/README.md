@@ -25,6 +25,7 @@
 - [WORKSPACE_FRONTEND_LAYOUT_PLAN.md](WORKSPACE_FRONTEND_LAYOUT_PLAN.md): Codex-like 工作台前端布局计划，包含左右栏隐藏、右侧审阅区和消息流升级。
 - [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
 - [PLAY_MODE_SPEC.md](PLAY_MODE_SPEC.md): Play Mode / Roleplay Sandbox 的模式边界、session 文件布局和 adoption 边界。
+- [PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md): 将 Play 提升为与 Writing 同层级的顶级工作区，并引入世界时间、外部事件、回合事务和 HUD 的升级计划。
 - [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
 - [HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md): 写入确认、Git diff、commit 和回滚。
 - [NOVEL_CONSTITUTION.md](NOVEL_CONSTITUTION.md): 小说创作宪法规格。

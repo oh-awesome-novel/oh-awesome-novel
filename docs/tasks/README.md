@@ -54,13 +54,13 @@
 - [1060 Play Mode And Tavern Character Import](1060.md)
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
-- [1090 Play Mode UI And Adoption Workflow](1090.md)
 - [1100 Project Health Guardrails And Projection Refresh](1100.md)
 
 ## Needs Review Tasks
 
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0900 Project References](0900.md)
+- [1090 Play Mode UI And Adoption Workflow](1090.md)
 
 ## Planned Tasks
 

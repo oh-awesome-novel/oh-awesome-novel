@@ -6,6 +6,29 @@ Status: Draft Implementation Spec
 
 Play Mode 是 OAN 中与 Writing Mode 并列的沉浸式小说世界体验。它可以用于角色扮演、场景 rehearsal、多角色对话试跑和世界观体验，但默认不修改 canonical truth。
 
+## Product And Navigation Level
+
+Play Mode 是 workspace 内的顶级产品模式，不是 Writing 工作台右侧面板中的辅助 tab。
+
+目标信息架构：
+
+```text
+Workspace
+├── Writing
+│   └── Novel Agent / file tree / chapter / diff / approval
+└── Play
+    └── Play session / transcript / scene / world HUD / events / adoption
+```
+
+约束：
+
+- Workspace 顶级导航必须提供 `Writing | Play` 模式切换。
+- 进入 Play 后，中间主区域切换为完整 Play workspace；不得继续以 `WorkspaceRightPanel` 中的 `Play` tab 作为主容器。
+- Play 可以拥有自己的右侧 HUD / Event / Context / Adoption inspector，但它们属于 Play workspace 内部布局，不是 Writing review panel 中的 Play 入口。
+- 顶级模式、当前 Play session 和选中 branch 应可恢复，并支持刷新或重新打开 workspace 后回到原位置。
+- Writing 与 Play 共享同一小说 workspace、provider、canonical source 和 PendingAction 基础设施，但拥有独立的主交互状态与布局状态。
+- 当前 `PlayModeTab.vue` / `rightTab: 'play'` 形态属于过渡实现，后续应迁移而不是继续扩展。
+
 ## Mode Boundary
 
 - Writing Mode 面向正文、状态、时间线、伏笔和摘要的 PendingAction。
