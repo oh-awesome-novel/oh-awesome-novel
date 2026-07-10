@@ -6,7 +6,6 @@ import {
   Bot,
   Braces,
   ChevronDown,
-  CirclePlay,
   GitBranch,
   House,
   Library,
@@ -23,7 +22,11 @@ import {
   LogOut,
 } from '@lucide/vue';
 
-import type { WorkspaceRightTab } from '../../composables/useWorkspaceLayoutState';
+import WorkspaceModeNavigation from './WorkspaceModeNavigation.vue';
+import type {
+  WorkspaceMode,
+  WorkspaceRightTab,
+} from '../../composables/useWorkspaceLayoutState';
 import type { WorkspaceSummary } from '../../composables/useWorkspaceApi';
 
 type ExternalEditor = 'vscode' | 'zed' | 'webstorm';
@@ -43,6 +46,7 @@ interface EditorOption {
 
 const props = defineProps<{
   workspace: WorkspaceSummary;
+  workspaceMode: WorkspaceMode;
   providerConfigured: boolean;
   theme: 'light' | 'dark';
   leftPinned: boolean;
@@ -54,6 +58,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   toggleLeft: [];
+  selectWorkspaceMode: [mode: WorkspaceMode];
   showHome: [];
   openChapters: [];
   openSearch: [];
@@ -76,7 +81,6 @@ const navigationItems: ToolbarNavItem[] = [
   { id: 'pending', label: 'Pending actions', icon: ListChecks, rightTab: 'approval' },
   { id: 'git', label: 'Git', icon: GitBranch, rightTab: 'git' },
   { id: 'references', label: 'References', icon: Library, rightTab: 'references' },
-  { id: 'play', label: 'Play', icon: CirclePlay, rightTab: 'play' },
 ];
 
 const editorOptions: EditorOption[] = [
@@ -96,7 +100,7 @@ const themeLabel = computed(() =>
 );
 
 function isNavigationActive(item: ToolbarNavItem): boolean {
-  return Boolean(item.rightTab && props.rightTab === item.rightTab);
+  return props.workspaceMode === 'writing' && Boolean(item.rightTab && props.rightTab === item.rightTab);
 }
 
 function triggerNavigation(item: ToolbarNavItem) {
@@ -131,6 +135,7 @@ function chooseEditor(editor: ExternalEditor) {
   <header class="workspace-toolbar">
     <div class="toolbar-left">
       <button
+        v-if="workspaceMode === 'writing'"
         class="toolbar-icon-action"
         type="button"
         :aria-label="leftPinned ? '隐藏文件栏' : '固定文件栏'"
@@ -141,7 +146,12 @@ function chooseEditor(editor: ExternalEditor) {
         <PanelLeftOpen v-else :size="18" aria-hidden="true" />
       </button>
 
-      <nav class="toolbar-nav-group" aria-label="Workspace navigation">
+      <WorkspaceModeNavigation
+        :active-mode="workspaceMode"
+        @select-mode="emit('selectWorkspaceMode', $event)"
+      />
+
+      <nav v-if="workspaceMode === 'writing'" class="toolbar-nav-group" aria-label="Writing navigation">
         <button
           v-for="item in navigationItems"
           :key="item.id"
@@ -208,6 +218,7 @@ function chooseEditor(editor: ExternalEditor) {
       </details>
 
       <button
+        v-if="workspaceMode === 'writing'"
         class="toolbar-icon-action"
         type="button"
         :aria-label="rightShown ? '隐藏审阅栏' : '显示审阅栏'"

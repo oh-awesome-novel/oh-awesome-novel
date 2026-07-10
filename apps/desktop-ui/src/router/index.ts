@@ -37,7 +37,7 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
-    path: '/workspace',
+    path: '/workspace/:mode?',
     name: 'workspace',
     component: WorkspaceView,
     meta: {

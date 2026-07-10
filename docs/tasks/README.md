@@ -61,6 +61,7 @@
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0900 Project References](0900.md)
 - [1090 Play Mode UI And Adoption Workflow](1090.md)
+- [1120 Play World Events And Turn Settlement](1120.md)
 
 ## Planned Tasks
 

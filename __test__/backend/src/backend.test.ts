@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type IncomingMessage } from 'node:http';
@@ -505,6 +505,461 @@ describe('novel HTTP backend', () => {
     await expect(readFile(join(workspaceRoot, 'chapters/0001/0002.md'), 'utf-8'))
       .rejects
       .toThrow();
+  });
+
+  it('commits an injected Play referee settlement to Play-local world state only', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const canonicalChapterPath = join(workspaceRoot, 'chapters/0001/0001.md');
+    const canonicalChapterBefore = await readFile(canonicalChapterPath, 'utf-8');
+    const interactionPath = join(workspaceRoot, 'characters/heroine/interaction.md');
+    let playTurnRequest = '';
+    await mkdir(join(workspaceRoot, 'characters/heroine'), { recursive: true });
+    await writeFile(interactionPath, '她在压力下会先观察出口。\n', 'utf-8');
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async (input) => {
+        playTurnRequest = input.request;
+        return [
+          '远处的铁门落锁，东侧入口已被控制。',
+          '',
+          '```oan-play-settlement',
+          JSON.stringify({
+            elapsed: '35 minutes',
+            worldTimeAnchor: 'midnight',
+            events: [
+              {
+                kind: 'npcActed',
+                origin: 'npc',
+                title: '封锁推进',
+                summary: '东侧入口被控制',
+                visibility: 'playerVisible',
+                cause: { reason: '组织原有计划在本回合推进' },
+              },
+            ],
+            stateDelta: { stationStatus: 'blocked' },
+            observations: [
+              { summary: '封锁已推进', evidence: 'event settlement' },
+            ],
+            suggestedActions: ['调查东侧入口'],
+          }),
+          '```',
+        ].join('\n');
+      },
+    });
+    servers.push(backend);
+
+    const created = await fetchJson<{
+      session: { id: string; revision: number; transcript: unknown[] };
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-world-turn',
+        title: '车站试演',
+        sceneStart: '子夜车站',
+        characters: ['heroine'],
+        activatedSources: [{
+          sourceId: 'heroine.interaction',
+          path: 'characters/heroine/interaction.md',
+          reason: 'voice and reaction hint',
+          budgetLayer: 'L1',
+          semanticBoundary: 'compressible',
+          trust: 'interactionHint',
+        }],
+      }),
+    });
+
+    expect(created.session).toMatchObject({
+      id: 'play-world-turn',
+      revision: 0,
+      transcript: [],
+    });
+
+    const committed = await fetchJson<{
+      session: {
+        id: string;
+        revision: number;
+        transcript: Array<{ speaker: string; content: string; actionKind?: string }>;
+        playLocalState: Record<string, unknown>;
+        worldClock: { turn: number; revision: number; anchor?: string; elapsed?: string };
+        events: Array<Record<string, unknown>>;
+        observations: Array<Record<string, unknown>>;
+        suggestedActions: string[];
+      };
+    }>(`${backend.url}/api/workspace/play-sessions/${created.session.id}/world-referee-turn`, {
+      method: 'POST',
+      body: JSON.stringify({
+        userText: '等待并观察封锁变化',
+        actionKind: 'wait',
+        baseRevision: 0,
+      }),
+    });
+
+    expect(committed.session).toMatchObject({
+      id: 'play-world-turn',
+      revision: 1,
+      transcript: [
+        expect.objectContaining({
+          speaker: 'user',
+          content: '等待并观察封锁变化',
+          actionKind: 'wait',
+        }),
+        expect.objectContaining({
+          speaker: 'world-referee',
+          content: '远处的铁门落锁，东侧入口已被控制。',
+        }),
+      ],
+      playLocalState: { stationStatus: 'blocked' },
+      worldClock: {
+        turn: 1,
+        revision: 1,
+        anchor: 'midnight',
+        elapsed: '35 minutes',
+      },
+      suggestedActions: ['调查东侧入口'],
+    });
+    expect(committed.session.transcript[1]?.content).not.toContain('oan-play-settlement');
+    expect(committed.session.events).toEqual([
+      expect.objectContaining({
+        id: expect.any(String),
+        turnId: expect.any(String),
+        sequence: 1,
+        kind: 'npcActed',
+        origin: 'npc',
+        title: '封锁推进',
+        summary: '东侧入口被控制',
+        visibility: 'playerVisible',
+        worldClock: expect.objectContaining({ turn: 1, revision: 1, anchor: 'midnight' }),
+        canonical: false,
+        createdAt: expect.any(String),
+      }),
+    ]);
+    expect(committed.session.observations).toEqual([
+      expect.objectContaining({
+        id: expect.any(String),
+        summary: '封锁已推进',
+        evidence: 'event settlement',
+        canonical: false,
+      }),
+    ]);
+    expect(playTurnRequest).toContain('她在压力下会先观察出口。');
+    expect(playTurnRequest).toContain('Trust: interactionHint');
+    expect(playTurnRequest).toContain('User turn: 等待并观察封锁变化');
+
+    await expect(fetchJson<{
+      session: {
+        revision: number;
+        worldClock: { turn: number; revision: number };
+        events: Array<Record<string, unknown>>;
+        playLocalState: Record<string, unknown>;
+        observations: Array<Record<string, unknown>>;
+      };
+    }>(`${backend.url}/api/workspace/play-sessions/${created.session.id}`))
+      .resolves
+      .toMatchObject({
+        session: {
+          revision: 1,
+          worldClock: { turn: 1, revision: 1 },
+          events: [expect.objectContaining({ kind: 'npcActed', sequence: 1 })],
+          playLocalState: { stationStatus: 'blocked' },
+          observations: [expect.objectContaining({ summary: '封锁已推进' })],
+        },
+      });
+    await expect(readFile(canonicalChapterPath, 'utf-8'))
+      .resolves
+      .toBe(canonicalChapterBefore);
+  });
+
+  it('rejects a referee response without the structured settlement block', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => '只有叙事，没有结构化结算。',
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-missing-settlement',
+        title: 'Missing settlement',
+        sceneStart: 'Archive room',
+      }),
+    });
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-missing-settlement/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+      },
+    );
+
+    expect(response.status).toBe(422);
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-missing-settlement`,
+    )).resolves.toMatchObject({
+      session: { revision: 0, transcript: [], events: [], playLocalState: {} },
+    });
+  });
+
+  it('does not load an activated source that resolves outside the workspace', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const outsideRoot = await createTempWorkspace();
+    const outsideFile = join(outsideRoot, 'provider-secret.md');
+    const linkPath = join(workspaceRoot, 'world/outside-source.md');
+    let request = '';
+    await mkdir(join(workspaceRoot, 'world'), { recursive: true });
+    await writeFile(outsideFile, 'SHOULD_NOT_REACH_PROVIDER\n', 'utf-8');
+    await symlink(outsideFile, linkPath);
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async (input) => {
+        request = input.request;
+        return [
+          '房间没有发生明显变化。',
+          '```oan-play-settlement',
+          JSON.stringify({ events: [], stateDelta: {}, observations: [], suggestedActions: [] }),
+          '```',
+        ].join('\n');
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-source-boundary',
+        title: 'Source boundary',
+        sceneStart: 'Archive room',
+        activatedSources: [{
+          sourceId: 'outside',
+          path: 'world/outside-source.md',
+          reason: 'untrusted source',
+          budgetLayer: 'L1',
+          semanticBoundary: 'compressible',
+          trust: 'interactionHint',
+        }],
+      }),
+    });
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-source-boundary/world-referee-turn`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ userText: '观察', actionKind: 'look', baseRevision: 0 }),
+      },
+    );
+
+    expect(request).not.toContain('SHOULD_NOT_REACH_PROVIDER');
+  });
+
+  it('serializes all mutations for one Play session', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let markStarted: (() => void) | undefined;
+    let finishTurn: ((value: string) => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const refereeResponse = new Promise<string>((resolve) => {
+      finishTurn = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => {
+        markStarted?.();
+        return refereeResponse;
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-shared-lock',
+        title: 'Shared lock',
+        sceneStart: 'Archive room',
+      }),
+    });
+    const runningTurn = fetch(
+      `${backend.url}/api/workspace/play-sessions/play-shared-lock/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+      },
+    );
+    await started;
+
+    const competingMutation = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-shared-lock/transcript`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          speaker: 'note',
+          content: 'This must not race.',
+          baseRevision: 0,
+        }),
+      },
+    );
+    expect(competingMutation.status).toBe(409);
+
+    finishTurn?.([
+      '时间过去了。',
+      '```oan-play-settlement',
+      JSON.stringify({ events: [], stateDelta: {}, observations: [], suggestedActions: [] }),
+      '```',
+    ].join('\n'));
+    expect((await runningTurn).status).toBe(200);
+  });
+
+  it('rejects duplicate explicit Play session ids without overwriting the session', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const endpoint = `${backend.url}/api/workspace/play-sessions`;
+
+    await fetchJson(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'play-duplicate', title: 'First', sceneStart: 'Scene one' }),
+    });
+    await fetchJson(`${endpoint}/play-duplicate/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'Preserve me', baseRevision: 0 }),
+    });
+    const duplicate = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'play-duplicate', title: 'Second', sceneStart: 'Scene two' }),
+    });
+
+    expect(duplicate.status).toBe(409);
+    await expect(fetchJson(`${endpoint}/play-duplicate`)).resolves.toMatchObject({
+      session: {
+        title: 'First',
+        revision: 1,
+        transcript: [expect.objectContaining({ content: 'Preserve me' })],
+      },
+    });
+  });
+
+  it('rejects an invalid Play settlement without committing a partial turn', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => [
+        '这段叙事不应被提交。',
+        '',
+        '```oan-play-settlement',
+        '{"events": [}',
+        '```',
+      ].join('\n'),
+    });
+    servers.push(backend);
+
+    const created = await fetchJson<{
+      session: { id: string; revision: number; transcript: unknown[] };
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-invalid-turn',
+        title: '无效结算测试',
+        sceneStart: '子夜车站',
+      }),
+    });
+    const transcriptPath = join(
+      workspaceRoot,
+      '.workspace/play-sessions',
+      created.session.id,
+      'transcript.md',
+    );
+    const transcriptBefore = await readFile(transcriptPath, 'utf-8');
+
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: '等待',
+          actionKind: 'wait',
+          baseRevision: 0,
+        }),
+      },
+    );
+    const errorPayload = await response.json() as { error?: string };
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(errorPayload).toEqual({ error: expect.any(String) });
+    await expect(fetchJson(`${backend.url}/api/workspace/play-sessions/${created.session.id}`))
+      .resolves
+      .toMatchObject({
+        session: {
+          revision: 0,
+          transcript: [],
+          playLocalState: {},
+          worldClock: { turn: 0, revision: 0 },
+          events: [],
+          observations: [],
+        },
+      });
+    await expect(readFile(transcriptPath, 'utf-8')).resolves.toBe(transcriptBefore);
+  });
+
+  it('rejects stale Play base revisions before invoking the referee', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let refereeCalled = false;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => {
+        refereeCalled = true;
+        return 'This should not run.';
+      },
+    });
+    servers.push(backend);
+
+    const created = await fetchJson<{ session: { id: string } }>(
+      `${backend.url}/api/workspace/play-sessions`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          id: 'play-stale-revision',
+          title: 'Revision test',
+          sceneStart: 'Archive room',
+        }),
+      },
+    );
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}/transcript`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ speaker: 'note', content: 'Session edited.' }),
+      },
+    );
+
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: 'Continue',
+          actionKind: 'do',
+          baseRevision: 0,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(refereeCalled).toBe(false);
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: 1,
+        worldClock: { turn: 0, revision: 1 },
+        transcript: [expect.objectContaining({ content: 'Session edited.' })],
+      },
+    });
   });
 
   it('exposes Git status and quick commit endpoints', async () => {

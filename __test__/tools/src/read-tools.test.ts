@@ -1,3 +1,6 @@
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createReadTools } from '@oh-awesome-novel/tools';
@@ -34,6 +37,25 @@ describe('read tools', () => {
       'constitution.get',
       'workflow.get',
     ]);
+  });
+
+  it('rejects workspace files that resolve through a symlink to the outside', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'oan-read-tool-outside-'));
+    const outsideFile = join(outsideRoot, 'secret.yaml');
+    const linkName = `outside-${Date.now()}.yaml`;
+    const linkPath = join(workspaceRoot, 'state', linkName);
+
+    try {
+      await writeFile(outsideFile, 'secret: should-not-leak\n', 'utf-8');
+      await symlink(outsideFile, linkPath);
+
+      await expect(executeTool(createReadTools({ workspaceRoot }), 'state.get', {
+        file: linkName,
+      })).rejects.toThrow('resolves outside workspace');
+    } finally {
+      await rm(linkPath, { force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
   });
 
   it('reads structured character and state data', async () => {

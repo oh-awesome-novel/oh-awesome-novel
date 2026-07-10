@@ -1,6 +1,7 @@
 import { computed, shallowRef } from 'vue';
 
-export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references' | 'play';
+export type WorkspaceMode = 'writing' | 'play';
+export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references';
 export type WorkspaceSidebarTab = 'files' | 'chapters' | 'history';
 
 export function useWorkspaceLayoutState(workspacePath: string) {

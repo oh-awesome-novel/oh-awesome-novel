@@ -219,16 +219,21 @@ export type {
 
 // Play Mode And Tavern-Compatible Import
 export {
+  DEFAULT_PLAY_EVENT_POLICY,
+  PLAY_SESSION_SCHEMA_VERSION,
   PLAY_SESSION_FILES,
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
   createPlayAdoptionCandidate,
   createPlaySessionDraft,
+  createDefaultPlayWorldClock,
   formatPlayWorldRefereePrompt,
   listPlaySessions,
   readPlaySessionFiles,
   resolvePlaySessionPath,
+  parsePlayWorldRefereeResponse,
+  settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
 } from './play-session.js';
 export {
@@ -240,14 +245,28 @@ export {
 } from './tavern-card.js';
 export type {
   CreatePlaySessionInput,
+  ParsedPlayWorldRefereeResponse,
+  PlayActionKind,
   PlayActivatedSource,
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
   PlayObservation,
+  PlayEventDensity,
+  PlayEventOrigin,
+  PlayEventPolicy,
+  PlayEventVisibility,
   PlaySession,
   PlaySessionFile,
   PlaySourceTrust,
+  PlaySimulationMode,
   PlayTranscriptTurn,
+  PlayWorldClock,
+  PlayWorldEvent,
+  PlayWorldEventCause,
+  PlayWorldEventKind,
+  PlayWorldRefereeSettlement,
+  PlayWorldRefereeSettlementEvent,
+  SettlePlayWorldRefereeResponseInput,
 } from './play-session.js';
 export type {
   CreateOanTavernImportPreviewOptions,

@@ -42,12 +42,18 @@ Play session 使用 workspace 内部目录：
 
 ```text
 .workspace/play-sessions/<session-id>/
+  session.yaml
   transcript.md
   play-local-state.yaml
   activated-sources.yaml
+  events.yaml
   observations.yaml
   adoption-candidates.yaml
 ```
+
+当前 schema v2 在 `session.yaml` 中保存 revision、world clock、event policy、suggested actions 和 Play-local state visibility；`events.yaml` 保存结构化 Play-local world events。旧 session 缺少这些字段或文件时使用兼容默认值读取，高于当前实现的 schema version 必须拒绝，避免旧客户端破坏未来数据。
+
+session snapshot 采用 sibling staging directory + ready marker + directory swap 写入。提交中断时，读取器可以恢复完整 stage 或已有 backup；不得并行直写七个目标文件形成混合 revision。同一 session 的 world turn、transcript、observation 和 adoption mutation 必须共享互斥锁，并支持 `baseRevision` 冲突检查。
 
 这些文件用于恢复、复核和继续 Play，不进入 `chapters/`、`state/`、`timeline/`、`foreshadow/` 等事实域。
 
@@ -61,6 +67,8 @@ single world referee
   + activated canonical sources
   + imported interaction hints / lorebook
   + play-local state
+  + world clock / typed external events
+  + structured settlement before Play-local commit
 ```
 
 不引入重型多 agent runtime。多角色效果优先通过明确的角色 voice/state module 和世界裁判 prompt 达成。
@@ -90,6 +98,8 @@ Play observation 只表示“在这次 Play 中发生或显露的内容”。它
 - foreshadow candidate
 
 Adoption candidate 仍不是事实。它必须进入 PendingAction / diff / Human Approval。
+
+`playerUnknown` event 产生的 Play-local state、observation 和 candidate 必须携带同一 visibility / provenance。spoiler 默认关闭时，它们不能出现在 player-visible HUD 或 adoption 表单中；作者显式开启 author view 后才可查看。candidate 至少记录 source observation ids，并继承其 turn / event refs。
 
 ## Tavern-Compatible Character Import
 

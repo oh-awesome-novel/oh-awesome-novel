@@ -25,6 +25,11 @@ describe('createOanClient', () => {
       title: 'Play',
       sceneStart: 'Scene',
     });
+    await client.runPlayWorldRefereeTurn('play-1', {
+      userText: '等待两小时',
+      actionKind: 'wait',
+      baseRevision: 0,
+    });
     await client.createPlayAdoptionPendingAction('play-1', 'adopt-1', {
       chapterId: '0001/0002',
       content: '正文',
@@ -50,6 +55,15 @@ describe('createOanClient', () => {
       init: { method: 'POST' },
     });
     expect(calls[4]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/world-referee-turn',
+      init: { method: 'POST' },
+    });
+    expect(JSON.parse(String(calls[4]?.init?.body))).toEqual({
+      userText: '等待两小时',
+      actionKind: 'wait',
+      baseRevision: 0,
+    });
+    expect(calls[5]).toMatchObject({
       url: 'http://backend.test/api/workspace/play-sessions/play-1/adoption-candidates/adopt-1/pending-action',
       init: { method: 'POST' },
     });

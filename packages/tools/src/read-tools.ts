@@ -1,11 +1,12 @@
+import { realpathSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { basename, extname, join, normalize, relative } from 'node:path';
+import { basename, extname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { jsonSchema, tool } from 'ai';
 import type { ToolSet } from 'ai';
 
 import { loadMarkdown } from './markdown';
 import { loadYaml } from './yaml-engine';
-import { Dirent } from 'node:fs';
 
 export interface CreateReadToolsOptions {
   workspaceRoot: string;
@@ -35,7 +36,12 @@ function characterListTool(options: CreateReadToolsOptions) {
       const ids = await listDirectories(characterRoot);
       const characters = await Promise.all(
         ids.map(async (id) => {
-          const metaPath = join(characterRoot, id, 'meta.yaml');
+          const metaPath = resolveWorkspacePath(
+            options.workspaceRoot,
+            'characters',
+            safeSegment(id),
+            'meta.yaml',
+          );
           return {
             id,
             meta: await readYamlIfExists(metaPath),
@@ -340,6 +346,17 @@ function resolveWorkspacePath(root: string, ...parts: string[]): string {
 
   if (rel.startsWith('..') || rel === '') {
     throw new Error(`Path is outside workspace: ${parts.join('/')}`);
+  }
+
+  const realRoot = realpathSync(resolvedRoot);
+  const realResolved = realpathSync(resolved);
+  const realRelativePath = relative(realRoot, realResolved);
+  if (
+    realRelativePath === '..' ||
+    realRelativePath.startsWith(`..${sep}`) ||
+    isAbsolute(realRelativePath)
+  ) {
+    throw new Error(`Path resolves outside workspace: ${parts.join('/')}`);
   }
 
   return resolved;

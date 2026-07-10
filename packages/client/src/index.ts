@@ -256,6 +256,72 @@ export interface ReferenceContextSelection {
 
 export type PlaySourceTrust = 'canonical' | 'interactionHint' | 'playLocal' | 'modelImprovisation';
 export type PlayAdoptionTarget = 'chapterDraft' | 'state' | 'timeline' | 'foreshadow';
+export type PlayActionKind = 'say' | 'look' | 'move' | 'do' | 'wait';
+export type PlaySimulationMode = 'conversation' | 'reactiveWorld' | 'activeWorld';
+export type PlayEventDensity = 'quiet' | 'balanced' | 'volatile';
+export type PlayEventVisibility = 'playerVisible' | 'rumor' | 'playerUnknown';
+export type PlayEventOrigin =
+  | 'player'
+  | 'npc'
+  | 'faction'
+  | 'clock'
+  | 'environment'
+  | 'worldRule'
+  | 'manual';
+export type PlayWorldEventKind =
+  | 'environmentChanged'
+  | 'locationChanged'
+  | 'npcActed'
+  | 'factionActed'
+  | 'arrival'
+  | 'departure'
+  | 'deadlineAdvanced'
+  | 'resourceChanged'
+  | 'itemMoved'
+  | 'evidenceChanged'
+  | 'relationshipChanged'
+  | 'informationSpread'
+  | 'ruleConsequence'
+  | 'manual';
+
+export interface PlayWorldClock {
+  turn: number;
+  revision: number;
+  anchor?: string;
+  elapsed?: string;
+}
+
+export interface PlayEventPolicy {
+  simulationMode: PlaySimulationMode;
+  density: PlayEventDensity;
+  allowOffscreen: boolean;
+  allowHidden: boolean;
+  maxExternalEventsPerTurn: number;
+}
+
+export interface PlayEventCause {
+  reason: string;
+  sourceTurnIds?: string[];
+  sourceEventIds?: string[];
+  triggerId?: string;
+  pressureId?: string;
+  agendaId?: string;
+}
+
+export interface PlayWorldEvent {
+  id: string;
+  turnId: string;
+  sequence: number;
+  kind: PlayWorldEventKind;
+  origin: PlayEventOrigin;
+  title: string;
+  summary: string;
+  visibility: PlayEventVisibility;
+  cause: PlayEventCause;
+  worldClock: PlayWorldClock;
+  createdAt: string;
+  canonical: false;
+}
 
 export interface PlayActivatedSource {
   sourceId: string;
@@ -267,15 +333,20 @@ export interface PlayActivatedSource {
 }
 
 export interface PlayTranscriptTurn {
+  id?: string;
   speaker: string;
   content: string;
   createdAt: string;
+  actionKind?: PlayActionKind;
 }
 
 export interface PlayObservation {
   id: string;
   summary: string;
   evidence: string;
+  visibility: PlayEventVisibility;
+  sourceTurnIds: string[];
+  sourceEventIds: string[];
   canonical: false;
 }
 
@@ -285,18 +356,29 @@ export interface PlayAdoptionCandidate {
   summary: string;
   evidence: string;
   payload?: Record<string, unknown>;
+  visibility: PlayEventVisibility;
+  sourceObservationIds: string[];
+  sourceTurnIds: string[];
+  sourceEventIds: string[];
   requiresPendingAction: true;
 }
 
 export interface PlaySession {
+  schemaVersion: 2;
   id: string;
   title: string;
   createdAt: string;
+  revision: number;
   userPersona?: string;
   sceneStart: string;
   characters: string[];
   transcript: PlayTranscriptTurn[];
   playLocalState: Record<string, unknown>;
+  playLocalStateVisibility: Record<string, PlayEventVisibility>;
+  worldClock: PlayWorldClock;
+  eventPolicy: PlayEventPolicy;
+  events: PlayWorldEvent[];
+  suggestedActions: string[];
   activatedSources: PlayActivatedSource[];
   observations: PlayObservation[];
   adoptionCandidates: PlayAdoptionCandidate[];
@@ -509,17 +591,30 @@ export interface OanClient {
     userPersona?: string;
     characters?: string[];
     activatedSources?: PlayActivatedSource[];
+    eventPolicy?: Partial<PlayEventPolicy>;
   }): Promise<{ session: PlaySession; files: string[] }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  runPlayWorldRefereeTurn(id: string, input: {
+    userText: string;
+    actionKind?: PlayActionKind;
+    baseRevision?: number;
+  }): Promise<{
+    session: PlaySession;
+    result?: {
+      assistantMessage?: { role: 'assistant'; content: string };
+    };
+  }>;
   appendPlayTranscript(id: string, turn: {
     speaker: string;
     content: string;
     createdAt?: string;
+    baseRevision?: number;
   }): Promise<{ session: PlaySession }>;
   addPlayObservation(id: string, observation: {
     id?: string;
     summary: string;
     evidence: string;
+    baseRevision?: number;
   }): Promise<{ session: PlaySession }>;
   addPlayAdoptionCandidate(id: string, candidate: {
     id?: string;
@@ -527,6 +622,8 @@ export interface OanClient {
     summary: string;
     evidence: string;
     payload?: Record<string, unknown>;
+    sourceObservationIds?: string[];
+    baseRevision?: number;
   }): Promise<{ session: PlaySession; candidate: PlayAdoptionCandidate }>;
   createPlayAdoptionPendingAction(
     id: string,
@@ -745,6 +842,17 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     getPlaySession: (id) =>
       requestJson<{ session: PlaySession }>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
+      ),
+    runPlayWorldRefereeTurn: (id, input) =>
+      requestJson<{
+        session: PlaySession;
+        result?: { assistantMessage?: { role: 'assistant'; content: string } };
+      }>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/world-referee-turn`,
+        {
+          method: 'POST',
+          body: input,
+        },
       ),
     appendPlayTranscript: (id, turn) =>
       requestJson<{ session: PlaySession }>(

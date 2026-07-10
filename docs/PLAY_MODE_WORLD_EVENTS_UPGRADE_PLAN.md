@@ -43,7 +43,23 @@ Play Mode
 - 当前右侧 `Play` tab 只是待迁移的过渡实现，不是后续扩展容器。
 - Play 内部仍可有右侧 inspector，但关闭 inspector 不等于退出 Play。
 
-建议把本升级作为新的 Planned task 实施，不把它悄悄并入已经标记为 Completed 的 `docs/tasks/1090.md`。实施前应先把 `1090` 暴露出的现有 Play UI / client 缺口复核清楚。
+本升级由 `docs/tasks/1120.md` 独立追踪，不把世界事件范围悄悄并入原 `1090` 历史。`1090` 保留 UI / adoption 复核记录，`1120` 记录已落地纵向切片与后续事务、stream、checkpoint 范围。
+
+### 1.1 当前实施进度
+
+第一阶段纵向切片已经落地：
+
+- Play 已成为与 Writing 同层级的顶级工作区，并从 Writing right tabs 移除。
+- session schema v2 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`。
+- client / backend 已接通真实 world-referee turn；referee 只使用 read tools。
+- prompt 已加载最近 transcript、Play-local state、既有事件和 activated source 实际内容。
+- narrative + 必需的 `oan-play-settlement` 通过宿主的 schema、事件预算和 cause reference 校验后才写入；无效 settlement 不产生部分回合。
+- session 已采用 staged directory snapshot、ready marker、swap 与读取恢复；同 session 的所有 Play-local mutation 共享锁和 revision conflict 检查。
+- hidden event 的 state、observation 与 adoption provenance 已统一标记，spoiler 关闭时不会从 HUD / adoption 旁路泄露。
+- activated sources 与 referee read tools 已增加 realpath workspace containment，重复 session id 与未来 schema 会被拒绝。
+- UI 已提供 transcript、action kind、suggestions、HUD、visible / hidden event feed、source/state、observation 和 adoption candidate 表单。
+
+尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：流式 provisional turn 与 cancel、turn artifacts / transcript projection、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant，以及 canonical drift / context trace。
 
 ## 2. 规划依据与参考边界
 

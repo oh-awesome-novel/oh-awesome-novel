@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef, watch } from 'vue';
 
+import PlayWorkspace from '../play/PlayWorkspace.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
+import type { WorkspaceMode } from '../../composables/useWorkspaceLayoutState';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 import type {
@@ -24,6 +26,7 @@ const props = defineProps<{
   providerConfigured: boolean;
   theme: 'light' | 'dark';
   startGuide: boolean;
+  mode: WorkspaceMode;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +34,7 @@ const emit = defineEmits<{
   configureProvider: [];
   toggleTheme: [];
   workspaceUpdated: [workspace: WorkspaceSummary];
+  selectMode: [mode: WorkspaceMode];
 }>();
 
 interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
@@ -406,6 +410,7 @@ function applyDecisionRefresh(
   <main class="workspace-shell">
     <WorkspaceToolbar
       :workspace="workspace"
+      :workspace-mode="mode"
       :provider-configured="providerConfigured"
       :theme="theme"
       :left-pinned="layout.leftPinned.value"
@@ -414,6 +419,7 @@ function applyDecisionRefresh(
       :pending-action-count="workspaceStatus?.pendingActionCount ?? workspacePendingActions.length"
       :editor-error="editorError"
       @toggle-left="layout.toggleLeftPinned"
+      @select-workspace-mode="emit('selectMode', $event)"
       @show-home="showHome"
       @open-chapters="openChapterNavigation"
       @open-search="searchOpen = true"
@@ -427,6 +433,8 @@ function applyDecisionRefresh(
     />
 
     <WorkspaceWorkbench
+      v-show="mode === 'writing'"
+      id="writing-workspace"
       :workspace="workspace"
       :provider-configured="providerConfigured"
       :left-pinned="layout.leftPinned.value"
@@ -480,9 +488,16 @@ function applyDecisionRefresh(
       @reject-pending-action="rejectPendingAction"
       @review-pending-action="reviewPendingAction"
       @open-pending-action-diff="openPendingActionDiff"
-      @pending-action-created="refreshPendingActionSurface"
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
+    />
+
+    <PlayWorkspace
+      v-show="mode === 'play'"
+      :workspace="workspace"
+      :provider-configured="providerConfigured"
+      @configure-provider="emit('configureProvider')"
+      @pending-action-created="refreshPendingActionSurface"
     />
 
     <div v-if="searchOpen" class="search-overlay" role="dialog" aria-label="Workspace search">
