@@ -29,6 +29,10 @@ const {
   selectedSession,
   selectedSessionId,
   sending,
+  interactionBlocked,
+  canStop,
+  provisionalTurn,
+  turnAnnouncement,
   showSpoilers,
   sessions,
   sortedEvents,
@@ -42,6 +46,7 @@ const {
   createSession,
   refreshSessions,
   selectSession,
+  stopTurn,
   submitTurn,
 } = usePlayWorkspace(props.workspace.path);
 
@@ -65,9 +70,14 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           {{ selectedSession.eventPolicy.simulationMode }} · {{ selectedSession.eventPolicy.density }}
         </span>
         <span :class="{ 'play-status-live': sending }">
-          {{ sending ? 'World referee resolving' : 'Ready' }}
+          {{ provisionalTurn?.statusMessage || turnAnnouncement || 'Ready' }}
         </span>
-        <button type="button" :disabled="loading" aria-label="刷新 Play workspace" @click="refreshSessions">
+        <button
+          type="button"
+          :disabled="loading || sending"
+          aria-label="刷新 Play workspace"
+          @click="refreshSessions"
+        >
           <span aria-hidden="true">↻</span>
         </button>
       </div>
@@ -81,6 +91,8 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         :selected-session-id="selectedSessionId"
         :loading="loading"
         :creating="creating"
+        :busy="interactionBlocked"
+        :refresh-disabled="sending"
         @select-session="selectSession"
         @create-session="createSession"
         @refresh="refreshSessions"
@@ -91,7 +103,8 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           :title="selectedSession.title"
           :scene-start="selectedSession.sceneStart"
           :turns="selectedSession.transcript"
-          :sending="sending"
+          :provisional="provisionalTurn"
+          :announcement="turnAnnouncement"
         />
 
         <div v-if="!providerConfigured" class="play-provider-gate">
@@ -108,8 +121,11 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           v-model:user-text="userText"
           v-model:action-kind="actionKind"
           :disabled="!providerConfigured"
-          :sending="sending"
+          :busy="interactionBlocked"
+          :phase="provisionalTurn?.phase"
+          :can-stop="canStop"
           :suggestions="suggestedActions"
+          @stop="stopTurn"
           @submit="submitTurn"
         />
       </section>
@@ -135,6 +151,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           :candidates="visibleCandidates"
           :busy-candidate-id="adoptionBusyId"
           :creating-candidate="adoptionCreating"
+          :disabled="interactionBlocked"
           :notice="adoptionNotice"
           @create-candidate="createAdoptionCandidate"
           @create-pending-action="adoptCandidate"
@@ -147,184 +164,3 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
     </div>
   </section>
 </template>
-
-<style scoped>
-.play-workspace {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  grid-template-rows: 52px minmax(0, 1fr);
-  background: rgb(247 242 233);
-}
-
-.play-workspace-bar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 7px 14px;
-  border-bottom: 1px solid rgb(224 208 185);
-  background: rgb(255 252 247 / 94%);
-}
-
-.play-workspace-identity,
-.play-workspace-status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.play-workspace-identity > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: rgb(180 83 9);
-  font-size: 10px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.play-workspace-identity strong {
-  overflow: hidden;
-  color: rgb(68 54 43);
-  font-family: Georgia, "Times New Roman", serif;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.play-workspace-identity small,
-.play-workspace-status span {
-  color: rgb(139 112 88);
-  font-size: 10px;
-}
-
-.play-workspace-status span {
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: rgb(246 235 218);
-  font-weight: 800;
-}
-
-.play-workspace-status .play-status-live {
-  background: rgb(254 243 199);
-  color: rgb(146 64 14);
-}
-
-.play-workspace-status button {
-  display: grid;
-  width: 29px;
-  height: 29px;
-  place-items: center;
-  border: 1px solid rgb(224 208 185);
-  border-radius: 7px;
-  background: rgb(255 253 249);
-  color: rgb(120 75 36);
-}
-
-.play-workspace-error {
-  position: absolute; inset: 52px 0 auto; z-index: 5;
-  margin: 0;
-  padding: 7px 14px;
-  border-bottom: 1px solid rgb(254 202 202);
-  background: rgb(254 242 242);
-  color: rgb(185 28 28);
-  font-size: 11px;
-}
-
-.play-workspace-grid {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  grid-template-columns: 250px minmax(400px, 1fr) minmax(290px, 330px);
-}
-
-.play-stage-center {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  background: rgb(255 253 249);
-}
-
-.play-provider-gate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 18px;
-  border-top: 1px solid rgb(254 215 170);
-  background: rgb(255 247 237);
-}
-
-.play-provider-gate p {
-  margin: 3px 0 0;
-  color: rgb(154 52 18);
-  font-size: 10px;
-}
-
-.play-stage-empty {
-  display: grid;
-  min-height: 0;
-  align-content: center;
-  justify-items: center;
-  padding: 30px;
-  color: rgb(166 102 45);
-  text-align: center;
-}
-
-.play-stage-empty h1 {
-  margin: 12px 0 4px;
-  color: rgb(68 54 43);
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-.play-stage-empty p {
-  max-width: 480px;
-  color: rgb(139 112 88);
-  line-height: 1.6;
-}
-
-.play-world-inspector {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
-  border-left: 1px solid rgb(231 220 202);
-  background: rgb(252 249 244);
-}
-
-.play-inspector-empty {
-  color: rgb(139 112 88);
-  font-size: 11px;
-}
-
-@media (max-width: 1120px) {
-  .play-workspace-grid {
-    grid-template-columns: 220px minmax(360px, 1fr) 280px;
-  }
-
-  .play-workspace-identity small,
-  .play-workspace-status span:first-child {
-    display: none;
-  }
-}
-
-@media (max-width: 860px) {
-  .play-workspace {
-    overflow: auto;
-  }
-
-  .play-workspace-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .play-world-inspector {
-    border-top: 1px solid rgb(231 220 202);
-    border-left: 0;
-  }
-}
-
-</style>

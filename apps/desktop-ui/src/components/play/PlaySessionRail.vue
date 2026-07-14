@@ -10,6 +10,8 @@ const props = defineProps<{
   selectedSessionId: string;
   loading: boolean;
   creating: boolean;
+  busy: boolean;
+  refreshDisabled: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -40,7 +42,7 @@ watch(
       <button
         class="play-icon-button"
         type="button"
-        :disabled="loading"
+        :disabled="loading || refreshDisabled"
         aria-label="刷新 Play sessions"
         @click="emit('refresh')"
       >
@@ -48,14 +50,19 @@ watch(
       </button>
     </div>
 
-    <button class="play-create-trigger" type="button" @click="createOpen = !createOpen">
+    <button
+      class="play-create-trigger"
+      type="button"
+      :disabled="busy"
+      @click="createOpen = !createOpen"
+    >
       <span aria-hidden="true">[+]</span>
       New session
     </button>
 
     <PlaySessionCreateForm
       v-if="createOpen"
-      :creating="creating"
+      :creating="creating || busy"
       @cancel="createOpen = false"
       @create="emit('createSession', $event)"
     />
@@ -67,6 +74,7 @@ watch(
         class="play-session-card"
         :class="{ 'play-session-card-active': session.id === selectedSessionId }"
         type="button"
+        :disabled="busy"
         @click="emit('selectSession', session.id)"
       >
         <span class="play-session-title">{{ session.title }}</span>
@@ -81,126 +89,3 @@ watch(
     </div>
   </aside>
 </template>
-
-<style scoped>
-.play-session-rail {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  gap: 12px;
-  overflow: auto;
-  padding: 16px;
-  border-right: 1px solid rgb(231 220 202);
-  background: rgb(250 246 238);
-}
-
-.play-rail-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.play-rail-heading h2 {
-  margin: 2px 0 0;
-  color: rgb(68 54 43);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 18px;
-}
-
-.play-kicker {
-  color: rgb(180 83 9);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.play-icon-button,
-.play-create-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: 1px solid rgb(214 198 174);
-  border-radius: 7px;
-  background: rgb(255 252 247);
-  color: rgb(120 75 36);
-  font-weight: 800;
-}
-
-.play-icon-button {
-  width: 31px;
-  height: 31px;
-  padding: 0;
-}
-
-.play-create-trigger {
-  min-height: 34px;
-}
-
-.play-session-list {
-  display: grid;
-  gap: 8px;
-}
-
-.play-session-card {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  padding: 11px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: rgb(68 54 43);
-  text-align: left;
-}
-
-.play-session-card:hover,
-.play-session-card-active {
-  border-color: rgb(214 198 174);
-  background: rgb(255 252 247);
-}
-
-.play-session-card-active {
-  box-shadow: inset 3px 0 rgb(217 119 6);
-}
-
-.play-session-title {
-  font-weight: 900;
-}
-
-.play-session-scene,
-.play-session-meta,
-.play-empty-copy {
-  color: rgb(139 112 88);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.play-session-scene {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-:global([data-theme="dark"]) .play-session-rail {
-  border-color: rgb(68 58 49);
-  background: rgb(29 25 22);
-}
-
-:global([data-theme="dark"]) .play-rail-heading h2,
-:global([data-theme="dark"]) .play-session-card {
-  color: rgb(245 235 220);
-}
-
-:global([data-theme="dark"]) .play-icon-button,
-:global([data-theme="dark"]) .play-create-trigger,
-:global([data-theme="dark"]) .play-session-card:hover,
-:global([data-theme="dark"]) .play-session-card-active {
-  border-color: rgb(83 70 58);
-  background: rgb(38 32 28);
-}
-</style>

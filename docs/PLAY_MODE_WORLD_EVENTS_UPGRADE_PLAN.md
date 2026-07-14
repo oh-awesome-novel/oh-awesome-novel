@@ -52,15 +52,17 @@ Play Mode
 - Play 已成为与 Writing 同层级的顶级工作区，并从 Writing right tabs 移除。
 - session schema v3 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`，并以 `turns/*.yaml` 保存结构化回合事实、以 `selectedTurnIds` 选择 transcript projection 路径。
 - client / backend 已接通真实 world-referee turn；referee 只使用 read tools。
+- Play turn 已升级为专用 SSE：正文以 provisional delta 输出，中间 read-tool loop 通过 `play.narrative.reset` 清除旧 provisional block，结构化 settlement fence 保留在服务端；响应头预先提供 turn id，显式 Stop 与断流恢复通过 turn registry、cancel endpoint 与 commit barrier 确认 cancelled 或 committed truth。
 - prompt 已加载最近 transcript、Play-local state、既有事件和 activated source 实际内容。
 - narrative + 必需的 `oan-play-settlement` 通过宿主的 schema、事件预算和 cause reference 校验后才写入；无效 settlement 不产生部分回合。
 - session 已采用 staged directory snapshot、ready marker、swap 与读取恢复；同 session 的所有 Play-local mutation 共享锁和 revision conflict 检查。
 - hidden event 的 state、observation 与 adoption provenance 已统一标记，spoiler 关闭时不会从 HUD / adoption 旁路泄露。
 - activated sources 与 referee read tools 已增加 realpath workspace containment，重复 session id 与未来 schema 会被拒绝。
 - v1 / v2 -> v3 的 Core migration preview、原始 snapshot 备份、未知顶层 session metadata 保留和 migration history 延续已落地。
-- UI 已提供 transcript、action kind、suggestions、HUD、visible / hidden event feed、source/state、observation 和 adoption candidate 表单。
+- UI 已提供 committed transcript、真实 provisional block、Stop / cancel / failed / conflict / indeterminate 状态、action kind、suggestions、HUD、visible / hidden event feed、source/state、observation 和 adoption candidate 表单；Play 组件统一使用共享黑白中性设计 token。
+- 根目录 `__test__/desktop-ui` 已建立，首批覆盖 stream reducer、terminal 幂等、cancel / commit race 与中性设计契约；组件级和浏览器级覆盖仍需扩展。
 
-尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：流式 provisional turn 与 cancel、产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant，以及 canonical drift / context trace。
+尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
 
 ## 2. 规划依据与参考边界
 
@@ -478,6 +480,7 @@ flowchart TD
 
 - `messages[].content` 可以向 UI 发送 provisional delta，提升沉浸感。
 - provisional 内容不等于已提交 transcript。
+- 同一 turn 在中间 read-tool loop 后重新开始正文时，服务端发送 `play.narrative.reset`；UI 清空此前全部 provisional 文本，后续 delta 构造替代正文。reset 本身不产生事实、不推进 revision。
 - 完整 `PlayTurnDraft` 到达并通过验证后，才生成 committed turn。
 - UI 需要区分 `streaming` 与 `committed`；失败时撤回或标记未提交的 provisional block。
 - 取消、provider error、schema error、revision conflict 都不得留下 transcript-only 或 state-only 的半回合。
@@ -705,17 +708,20 @@ POST /api/workspace/play-sessions/:id/events/:eventId/adoption-candidates
 play.turn.started
 play.context.ready
 play.narrative.delta
+play.narrative.reset
 play.turn.prepared
-play.event.occurred
 play.turn.committed
+play.event.occurred
 play.turn.failed
 play.turn.cancelled
 ```
 
 约束：
 
-- `play.event.occurred` 只在 transaction committed 后发布，不能把 draft 事件冒充已发生。
 - `play.narrative.delta` 明确标记 provisional。
+- `play.narrative.reset` 清除同一 turn 此前全部 provisional 正文；它不撤销 committed turn，也不推进 revision。
+- 当前实现以 `play.turn.committed.session` 作为 transcript、world state、observation 与 event feed 的权威刷新载荷。
+- 独立 `play.event.occurred` 属于 schedule / pressure / agenda evaluator 的后续交付，不是当前 UI 的事件刷新事实源；实现后也只能在 transaction 持久化 committed 后发布，不能把 draft 事件冒充已发生。
 - event payload 只包含 UI 所需结构化 trace，不包含 provider secret 或私有 reasoning。
 - 复用已有 RuntimeEvent / SSE / AI SDK UI stream 基础设施，不新建第二套通用 runtime。
 
@@ -834,6 +840,8 @@ Play observation / event
 约束：不修改 `packages/runtime` 让它理解 Play 领域，不增加多 Agent coordinator。
 
 ### Phase 3：Backend 与 client 闭环
+
+当前状态：**部分完成**。turn stream、cancel、commit barrier 与类型安全 client adapter 已落地；retry、checkpoint / restore、独立 event / trace 查询及旧 endpoint deprecation 仍待完成。在 evaluator 与独立事件通知落地前，committed session 继续承担事件 feed 的权威刷新载荷。
 
 建议范围：
 
@@ -978,7 +986,7 @@ PlayAdoptionDrawer.vue
 - [ ] event origin、cause、visibility、world time、delta refs 为必需字段。
 - [ ] hidden event 的保存、投影、揭示与 adoption 规则明确。
 - [ ] PlayTurnTransaction 的失败恢复和 revision conflict 行为明确。
-- [ ] provisional stream 与 committed turn 在 UI 上有清晰区别。
+- [x] provisional stream 与 committed turn 在 UI 上有清晰区别；Stop 通过服务端 cancel confirmation 与 commit barrier 处理。
 - [ ] checkpoint / variant 覆盖状态、事件、计划、知识与 source refs。
 - [ ] canonical adoption 继续经过 PendingAction / diff / human approval。
 

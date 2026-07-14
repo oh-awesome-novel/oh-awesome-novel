@@ -1,0 +1,603 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it, vi } from 'vitest';
+
+import type {
+  PlaySession,
+  PlayTurnCancelResult,
+  PlayTurnStreamEvent,
+} from '@oh-awesome-novel/client';
+import {
+  usePlayTurnStream,
+  type PlayTurnStreamClient,
+} from '../../../apps/desktop-ui/src/composables/usePlayTurnStream';
+
+describe('usePlayTurnStream', () => {
+  it('keeps deltas provisional and applies a committed session exactly once', async () => {
+    const committedSession = createSession(1);
+    const onCommitted = vi.fn();
+    const client = createClient(async function* () {
+      yield startedEvent();
+      yield deltaEvent('雨声靠近。');
+      yield deltaEvent('duplicate ignored');
+      yield committedEvent(committedSession);
+      yield { ...deltaEvent('late delta'), eventId: 'run-1:4', sequence: 4 };
+    });
+    const flow = usePlayTurnStream({ client, onCommitted });
+
+    const outcome = await flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+
+    expect(outcome).toBe('committed');
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+    expect(onCommitted).toHaveBeenCalledWith(committedSession);
+    expect(flow.run.value).toBeUndefined();
+  });
+
+  it('waits for server cancellation and never promotes provisional text', async () => {
+    let releaseCancellation: (() => void) | undefined;
+    const cancellation = new Promise<void>((resolve) => {
+      releaseCancellation = resolve;
+    });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const onCommitted = vi.fn();
+    const client = createClient(
+      async function* () {
+        yield startedEvent();
+        markStarted?.();
+        yield deltaEvent('尚未提交的正文');
+        await cancellation;
+        yield cancelledEvent();
+      },
+      async () => {
+        releaseCancellation?.();
+        return { status: 'cancelling', committed: false, turnId: 'run-1' };
+      },
+    );
+    const flow = usePlayTurnStream({ client, onCommitted });
+    const submit = flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await started;
+
+    await flow.stop();
+    await expect(submit).resolves.toBe('cancelled');
+
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(flow.run.value).toMatchObject({
+      phase: 'cancelled',
+      provisionalText: '尚未提交的正文',
+      statusMessage: expect.stringContaining('not committed'),
+    });
+  });
+
+  it('accepts committed server truth when stop loses the commit race', async () => {
+    const committedSession = createSession(1);
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const onCommitted = vi.fn();
+    const client = createClient(
+      async function* (_id, _input, options) {
+        yield startedEvent();
+        markStarted?.();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+      async () => ({
+        status: 'committed',
+        committed: true,
+        turnId: 'run-1',
+        session: committedSession,
+      }),
+    );
+    const flow = usePlayTurnStream({ client, onCommitted });
+    const submit = flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await started;
+
+    await flow.stop();
+    await expect(submit).resolves.toBe('committed');
+
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+    expect(onCommitted).toHaveBeenCalledWith(committedSession);
+  });
+
+  it('polls a half-open stream after Stop reports that commit already started', async () => {
+    const committedSession = createSession(1);
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let statusCalls = 0;
+    const client = createClient(
+      async function* (_id, _input, options) {
+        yield startedEvent();
+        markStarted?.();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+      async () => {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? {
+              status: 'committing',
+              committed: false,
+              tooLateToCancel: true,
+              turnId: 'run-1',
+            }
+          : {
+              status: 'committed',
+              committed: true,
+              turnId: 'run-1',
+              session: committedSession,
+            };
+      },
+    );
+    const onCommitted = vi.fn();
+    const flow = usePlayTurnStream({ client, onCommitted });
+    const submit = flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await started;
+
+    await flow.stop();
+    await expect(submit).resolves.toBe('committed');
+    expect(statusCalls).toBe(2);
+    expect(onCommitted).toHaveBeenCalledWith(committedSession);
+  });
+
+  it('keeps a terminal cancellation monotonic when the stop request fails late', async () => {
+    let releaseTerminal: (() => void) | undefined;
+    const terminalGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve;
+    });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let markTerminalApplied: (() => void) | undefined;
+    const terminalApplied = new Promise<void>((resolve) => {
+      markTerminalApplied = resolve;
+    });
+    let rejectStop: ((error: Error) => void) | undefined;
+    const stopResponse = new Promise<PlayTurnCancelResult>((_resolve, reject) => {
+      rejectStop = reject;
+    });
+    const client = createClient(
+      async function* () {
+        yield startedEvent();
+        markStarted?.();
+        await terminalGate;
+        yield cancelledEvent();
+        markTerminalApplied?.();
+      },
+      async () => stopResponse,
+    );
+    const flow = usePlayTurnStream({ client, onCommitted: vi.fn() });
+    const submit = flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await started;
+
+    const stop = flow.stop();
+    releaseTerminal?.();
+    await terminalApplied;
+    rejectStop?.(new Error('late stop transport error'));
+
+    await stop;
+    await expect(submit).resolves.toBe('cancelled');
+    expect(flow.run.value).toMatchObject({ phase: 'cancelled' });
+    expect(flow.busy.value).toBe(false);
+  });
+
+  it('does not let late stream progress resurrect a stop requested before the first event', async () => {
+    let markHeaderReady: (() => void) | undefined;
+    const headerReady = new Promise<void>((resolve) => {
+      markHeaderReady = resolve;
+    });
+    let releaseProgress: (() => void) | undefined;
+    const progressGate = new Promise<void>((resolve) => {
+      releaseProgress = resolve;
+    });
+    let markProgressApplied: (() => void) | undefined;
+    const progressApplied = new Promise<void>((resolve) => {
+      markProgressApplied = resolve;
+    });
+    let releaseCancelResponse: (() => void) | undefined;
+    const cancelResponseGate = new Promise<void>((resolve) => {
+      releaseCancelResponse = resolve;
+    });
+    let releaseTerminal: (() => void) | undefined;
+    const terminalGate = new Promise<void>((resolve) => {
+      releaseTerminal = resolve;
+    });
+    const client = createClient(
+      async function* (_id, _input, options) {
+        options?.onTurnId?.('run-1');
+        markHeaderReady?.();
+        await progressGate;
+        yield startedEvent();
+        yield deltaEvent('取消确认前到达的 provisional');
+        markProgressApplied?.();
+        await terminalGate;
+        yield cancelledEvent();
+      },
+      async () => {
+        await cancelResponseGate;
+        return { status: 'cancelling', committed: false, turnId: 'run-1' };
+      },
+    );
+    const flow = usePlayTurnStream({ client, onCommitted: vi.fn() });
+    const submit = flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await headerReady;
+    expect(flow.canStop.value).toBe(true);
+
+    const stop = flow.stop();
+    releaseProgress?.();
+    await progressApplied;
+
+    expect(flow.run.value).toMatchObject({
+      phase: 'stopping',
+      provisionalText: '取消确认前到达的 provisional',
+    });
+
+    releaseCancelResponse?.();
+    releaseTerminal?.();
+    await stop;
+    await expect(submit).resolves.toBe('cancelled');
+  });
+
+  it('keeps the active lock until a terminal stream iterator actually closes', async () => {
+    const committedSession = createSession(1);
+    let releaseFirstStream: (() => void) | undefined;
+    const firstStreamGate = new Promise<void>((resolve) => {
+      releaseFirstStream = resolve;
+    });
+    let markCommittedApplied: (() => void) | undefined;
+    const committedApplied = new Promise<void>((resolve) => {
+      markCommittedApplied = resolve;
+    });
+    let streamCall = 0;
+    const client = createClient(async function* () {
+      streamCall += 1;
+      const turnId = `run-${streamCall}`;
+      yield { ...startedEvent(), turnId, eventId: `${turnId}:1` };
+      yield {
+        ...committedEvent(createSession(streamCall)),
+        turnId,
+        eventId: `${turnId}:2`,
+        sequence: 2,
+      };
+      if (streamCall === 1) {
+        markCommittedApplied?.();
+        await firstStreamGate;
+      }
+    });
+    const onCommitted = vi.fn();
+    const flow = usePlayTurnStream({ client, onCommitted });
+    const input = {
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait' as const,
+    };
+    const first = flow.submit(input);
+    await committedApplied;
+
+    expect(flow.busy.value).toBe(true);
+    await expect(flow.submit(input)).resolves.toBe('ignored');
+
+    releaseFirstStream?.();
+    await expect(first).resolves.toBe('committed');
+    expect(flow.busy.value).toBe(false);
+    await expect(flow.submit({ ...input, baseRevision: 1 })).resolves.toBe('committed');
+    expect(onCommitted).toHaveBeenCalledTimes(2);
+  });
+
+  it('reconciles server truth when the stream drops during the commit barrier', async () => {
+    const committedSession = createSession(1);
+    let cancellationCalls = 0;
+    const client = createClient(
+      async function* () {
+        yield startedEvent();
+        yield {
+          type: 'play.turn.prepared',
+          eventId: 'run-1:2',
+          sequence: 2,
+          sessionId: 'play-1',
+          turnId: 'run-1',
+          baseRevision: 0,
+          targetRevision: 1,
+          artifactId: 'turn-artifact-1',
+        };
+        throw new Error('connection lost after prepare');
+      },
+      async () => {
+        cancellationCalls += 1;
+        return cancellationCalls === 1
+          ? {
+              status: 'committing',
+              committed: false,
+              tooLateToCancel: true,
+              turnId: 'run-1',
+            }
+          : {
+              status: 'committed',
+              committed: true,
+              turnId: 'run-1',
+              session: committedSession,
+            };
+      },
+    );
+    const onCommitted = vi.fn();
+    const flow = usePlayTurnStream({ client, onCommitted });
+
+    await expect(flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    })).resolves.toBe('committed');
+
+    expect(cancellationCalls).toBe(2);
+    expect(onCommitted).toHaveBeenCalledOnce();
+    expect(flow.announcement.value).toBe('Play turn committed.');
+    expect(flow.run.value).toBeUndefined();
+  });
+
+  it('uses the response turn id to reconcile a disconnect before the first SSE event', async () => {
+    const committedSession = createSession(1);
+    const onCommitted = vi.fn();
+    const client = createClient(
+      async function* (_id, _input, options) {
+        options?.onTurnId?.('run-1');
+        throw new Error('connection lost before started event');
+      },
+      async () => ({
+        status: 'committed',
+        committed: true,
+        turnId: 'run-1',
+        session: committedSession,
+      }),
+    );
+    const flow = usePlayTurnStream({ client, onCommitted });
+
+    await expect(flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    })).resolves.toBe('committed');
+
+    expect(onCommitted).toHaveBeenCalledWith(committedSession);
+    expect(flow.announcement.value).toBe('Play turn committed.');
+  });
+
+  it('keeps reconciling while the reachable server remains inside the commit barrier', async () => {
+    vi.useFakeTimers();
+    try {
+      const committedSession = createSession(1);
+      let cancellationCalls = 0;
+      const client = createClient(
+        async function* (_id, _input, options) {
+          options?.onTurnId?.('run-1');
+          throw new Error('stream disconnected');
+        },
+        async () => {
+          cancellationCalls += 1;
+          return cancellationCalls <= 8
+            ? {
+                status: 'committing',
+                committed: false,
+                tooLateToCancel: true,
+                turnId: 'run-1',
+              }
+            : {
+                status: 'committed',
+                committed: true,
+                turnId: 'run-1',
+                session: committedSession,
+              };
+        },
+      );
+      const onCommitted = vi.fn();
+      const flow = usePlayTurnStream({ client, onCommitted });
+      const submit = flow.submit({
+        sessionId: 'play-1',
+        baseRevision: 0,
+        userText: '等待',
+        actionKind: 'wait',
+      });
+
+      await vi.runAllTimersAsync();
+
+      await expect(submit).resolves.toBe('committed');
+      expect(cancellationCalls).toBe(9);
+      expect(onCommitted).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports an indeterminate outcome instead of claiming no commit after status transport loss', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = createClient(
+        async function* (_id, _input, options) {
+          options?.onTurnId?.('run-1');
+          throw new Error('stream disconnected');
+        },
+        async () => {
+          throw new Error('status transport unavailable');
+        },
+      );
+      const flow = usePlayTurnStream({ client, onCommitted: vi.fn() });
+      const submit = flow.submit({
+        sessionId: 'play-1',
+        baseRevision: 0,
+        userText: '等待',
+        actionKind: 'wait',
+      });
+
+      await vi.runAllTimersAsync();
+
+      await expect(submit).resolves.toBe('unknown');
+      expect(flow.run.value).toMatchObject({
+        phase: 'indeterminate',
+        statusMessage: expect.stringContaining('outcome unknown'),
+      });
+      expect(flow.run.value?.statusMessage).not.toContain('not committed');
+      expect(flow.busy.value).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps touched Play components on the neutral shared design tokens', async () => {
+    const componentUrls = [
+      '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayTranscript.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayComposer.vue',
+      '../../../apps/desktop-ui/src/components/play/PlaySessionRail.vue',
+      '../../../apps/desktop-ui/src/components/play/PlaySessionCreateForm.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayWorldHud.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayAdoptionPanel.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayAdoptionDraftForm.vue',
+      '../../../apps/desktop-ui/src/components/play/play-design.css',
+    ].map((path) => new URL(path, import.meta.url));
+    const source = (await Promise.all(componentUrls.map((url) =>
+      readFile(fileURLToPath(url), 'utf-8'),
+    ))).join('\n');
+
+    expect(source).not.toMatch(/Georgia|Times New Roman|linear-gradient/iu);
+    expect(source).not.toMatch(/rgb\(180 83 9|rgb\(217 119 6|rgb\(255 252 247/iu);
+    expect(source).toContain('{{ announcement }}');
+    expect(source).toContain(':busy="interactionBlocked"');
+    expect(source).toContain(':disabled="disabled || Boolean(busyCandidateId)"');
+  });
+});
+
+function createClient(
+  stream: PlayTurnStreamClient['streamPlayWorldRefereeTurn'],
+  cancel: PlayTurnStreamClient['cancelPlayWorldRefereeTurn'] = async () => ({
+    status: 'cancelled',
+    committed: false,
+    turnId: 'run-1',
+  }),
+): PlayTurnStreamClient {
+  return {
+    streamPlayWorldRefereeTurn: stream,
+    cancelPlayWorldRefereeTurn: cancel,
+  };
+}
+
+function startedEvent(): PlayTurnStreamEvent {
+  return {
+    type: 'play.turn.started',
+    eventId: 'run-1:1',
+    sequence: 1,
+    sessionId: 'play-1',
+    turnId: 'run-1',
+    baseRevision: 0,
+    expectedArtifactId: 'turn-artifact-1',
+  };
+}
+
+function deltaEvent(delta: string): PlayTurnStreamEvent {
+  return {
+    type: 'play.narrative.delta',
+    eventId: 'run-1:2',
+    sequence: 2,
+    sessionId: 'play-1',
+    turnId: 'run-1',
+    delta,
+    provisional: true,
+  };
+}
+
+function committedEvent(session: PlaySession): PlayTurnStreamEvent {
+  return {
+    type: 'play.turn.committed',
+    eventId: 'run-1:3',
+    sequence: 3,
+    sessionId: 'play-1',
+    turnId: 'run-1',
+    artifactId: 'turn-artifact-1',
+    revision: 1,
+    session,
+  };
+}
+
+function cancelledEvent(): PlayTurnStreamEvent {
+  return {
+    type: 'play.turn.cancelled',
+    eventId: 'run-1:3',
+    sequence: 3,
+    sessionId: 'play-1',
+    turnId: 'run-1',
+    committed: false,
+    revision: 0,
+    reason: 'user',
+  };
+}
+
+function createSession(revision: number): PlaySession {
+  return {
+    schemaVersion: 3,
+    id: 'play-1',
+    title: 'Play',
+    createdAt: '2026-07-14T00:00:00.000Z',
+    revision,
+    sceneStart: 'Station',
+    characters: [],
+    transcript: [],
+    turnArtifacts: [],
+    selectedTurnIds: [],
+    metadataExtensions: {},
+    playLocalState: {},
+    playLocalStateVisibility: {},
+    worldClock: { turn: revision, revision },
+    eventPolicy: {
+      simulationMode: 'reactiveWorld',
+      density: 'balanced',
+      allowOffscreen: true,
+      allowHidden: true,
+      maxExternalEventsPerTurn: 2,
+    },
+    events: [],
+    suggestedActions: [],
+    activatedSources: [],
+    observations: [],
+    adoptionCandidates: [],
+  };
+}

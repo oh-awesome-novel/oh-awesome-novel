@@ -74,6 +74,7 @@ export interface NovelAgentWorkspaceContextFile {
 export interface NovelAgentMessageInput {
   request: string;
   workspace: NovelAgentWorkspaceSnapshot;
+  abortSignal?: AbortSignal;
   skill?: RuntimeSkill;
   contextPackage?: ContextPackage;
   referenceSelection?: ReferenceContextSelection;
@@ -441,6 +442,7 @@ export const createRuntimeTurnInput = (
     messages: assembly.messages,
     context: assembly.context,
     skill: assembly.skill,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
   };
 };
 

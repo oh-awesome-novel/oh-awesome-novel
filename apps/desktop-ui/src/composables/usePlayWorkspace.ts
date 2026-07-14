@@ -1,6 +1,7 @@
 import { computed, onMounted, shallowRef } from 'vue';
 
 import { useWorkspaceApi } from './useWorkspaceApi';
+import { usePlayTurnStream } from './usePlayTurnStream';
 import type {
   PlayActionKind,
   PlayAdoptionCandidate,
@@ -43,7 +44,6 @@ export function usePlayWorkspace(workspacePath: string) {
   const selectedSessionId = shallowRef(readSelectedSession(workspacePath));
   const loading = shallowRef(false);
   const creating = shallowRef(false);
-  const sending = shallowRef(false);
   const error = shallowRef('');
   const adoptionBusyId = shallowRef('');
   const adoptionCreating = shallowRef(false);
@@ -51,9 +51,28 @@ export function usePlayWorkspace(workspacePath: string) {
   const userText = shallowRef('');
   const actionKind = shallowRef<PlayActionKind>('do');
   const showSpoilers = shallowRef(false);
+  const {
+    run: provisionalTurn,
+    announcement: turnAnnouncement,
+    busy: sending,
+    canStop,
+    submit: submitStreamTurn,
+    stop: stopStreamTurn,
+    clearTerminalRun,
+  } = usePlayTurnStream({
+    client: api,
+    onCommitted(session) {
+      replaceSession(session);
+      userText.value = '';
+      error.value = '';
+    },
+  });
 
   const selectedSession = computed(() =>
     sessions.value.find((session) => session.id === selectedSessionId.value),
+  );
+  const interactionBlocked = computed(() =>
+    sending.value || provisionalTurn.value?.phase === 'indeterminate',
   );
   const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
     (selectedSession.value?.suggestedActions ?? []).map((suggestion, index) => ({
@@ -95,6 +114,10 @@ export function usePlayWorkspace(workspacePath: string) {
   });
 
   async function refreshSessions() {
+    if (sending.value) {
+      return;
+    }
+
     loading.value = true;
     error.value = '';
 
@@ -105,6 +128,7 @@ export function usePlayWorkspace(workspacePath: string) {
       if (!sessions.value.some((session) => session.id === selectedSessionId.value)) {
         rememberSelectedSession(sessions.value[0]?.id ?? '');
       }
+      clearTerminalRun();
     } catch (caught) {
       error.value = toErrorMessage(caught);
     } finally {
@@ -113,7 +137,7 @@ export function usePlayWorkspace(workspacePath: string) {
   }
 
   function selectSession(id: string) {
-    if (sessions.value.some((session) => session.id === id)) {
+    if (!interactionBlocked.value && sessions.value.some((session) => session.id === id)) {
       rememberSelectedSession(id);
       error.value = '';
       adoptionNotice.value = '';
@@ -121,6 +145,10 @@ export function usePlayWorkspace(workspacePath: string) {
   }
 
   async function createSession(input: PlaySessionCreateInput) {
+    if (interactionBlocked.value) {
+      return;
+    }
+
     creating.value = true;
     error.value = '';
 
@@ -142,32 +170,35 @@ export function usePlayWorkspace(workspacePath: string) {
     const session = selectedSession.value;
     const text = userText.value.trim();
 
-    if (!session || !text || sending.value) {
+    if (!session || !text || interactionBlocked.value) {
       return;
     }
 
-    sending.value = true;
     error.value = '';
     adoptionNotice.value = '';
 
-    try {
-      const result = await api.runPlayWorldRefereeTurn(session.id, {
-        userText: text,
-        actionKind: actionKind.value,
-        baseRevision: session.revision,
-      });
-      replaceSession(result.session);
-      userText.value = '';
-    } catch (caught) {
-      error.value = toErrorMessage(caught);
-    } finally {
-      sending.value = false;
+    const outcome = await submitStreamTurn({
+      sessionId: session.id,
+      userText: text,
+      actionKind: actionKind.value,
+      baseRevision: session.revision,
+    });
+
+    if (outcome === 'failed' || outcome === 'unknown') {
+      error.value = provisionalTurn.value?.error ?? 'Play turn failed before commit.';
+    }
+  }
+
+  async function stopTurn() {
+    await stopStreamTurn();
+    if (provisionalTurn.value?.error) {
+      error.value = provisionalTurn.value.error;
     }
   }
 
   async function createPendingAction(candidate: PlayAdoptionCandidate): Promise<boolean> {
     const session = selectedSession.value;
-    if (!session || adoptionBusyId.value) {
+    if (!session || adoptionBusyId.value || interactionBlocked.value) {
       return false;
     }
 
@@ -189,7 +220,7 @@ export function usePlayWorkspace(workspacePath: string) {
 
   async function createAdoptionCandidate(input: PlayAdoptionDraftInput): Promise<boolean> {
     const session = selectedSession.value;
-    if (!session || adoptionCreating.value) {
+    if (!session || adoptionCreating.value || interactionBlocked.value) {
       return false;
     }
 
@@ -215,7 +246,7 @@ export function usePlayWorkspace(workspacePath: string) {
 
   function replaceSession(session: PlaySession) {
     sessions.value = sessions.value.map((item) =>
-      item.id === session.id ? session : item,
+      item.id === session.id && session.revision >= item.revision ? session : item,
     );
   }
 
@@ -238,6 +269,10 @@ export function usePlayWorkspace(workspacePath: string) {
     selectedSession,
     selectedSessionId,
     sending,
+    interactionBlocked,
+    canStop,
+    provisionalTurn,
+    turnAnnouncement,
     showSpoilers,
     sessions,
     sortedEvents,
@@ -251,6 +286,7 @@ export function usePlayWorkspace(workspacePath: string) {
     createSession,
     refreshSessions,
     selectSession,
+    stopTurn,
     submitTurn,
   };
 }

@@ -23,7 +23,9 @@ import {
   initWorkspace,
   importReferenceWork,
   createPlayAdoptionCandidate,
+  createPlayNarrativeStreamFilter,
   createPlaySessionDraft,
+  createPlayTurnArtifactId,
   formatPlayWorldRefereePrompt,
   formatProjectHealthMarkdown,
   formatReferenceContextSelectionMarkdown,
@@ -105,6 +107,9 @@ import {
 } from '@oh-awesome-novel/tools';
 
 const execFileAsync = promisify(execFile);
+const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
+
+class InvalidJsonBodyError extends Error {}
 
 export interface NovelBackendOptions {
   workspaceRoot?: string;
@@ -118,6 +123,7 @@ export interface NovelBackendOptions {
   mode?: 'checkpoint' | 'model';
   runAgent?: (input: NovelBackendAgentInput) => AsyncIterable<RuntimeEvent>;
   runPlayTurn?: (input: NovelBackendPlayTurnInput) => Promise<string>;
+  streamPlayTurn?: (input: NovelBackendPlayTurnInput) => AsyncIterable<string>;
 }
 
 export interface NovelBackendAgentInput {
@@ -132,6 +138,7 @@ export interface NovelBackendPlayTurnInput {
   session: PlaySession;
   userText: string;
   actionKind: 'say' | 'look' | 'move' | 'do' | 'wait';
+  abortSignal?: AbortSignal;
 }
 
 export interface NovelBackendHandle {
@@ -144,9 +151,34 @@ export interface NovelBackendHandle {
 
 interface BackendState {
   activeWorkspaceRoot?: string;
+  workspaceTransitionActive: boolean;
   providerConfigState: LlmProviderConfigState;
   providerConfigLoaded: boolean;
   activePlayTurns: Set<string>;
+  playTurnRuns: Map<string, PlayTurnRunRecord>;
+}
+
+type PlayTurnRunStatus =
+  | 'starting'
+  | 'streaming'
+  | 'validating'
+  | 'prepared'
+  | 'cancelling'
+  | 'committing'
+  | 'committed'
+  | 'cancelled'
+  | 'failed';
+
+interface PlayTurnRunRecord {
+  workspaceRoot: string;
+  sessionId: string;
+  sessionLockKey: string;
+  turnId: string;
+  baseRevision: number;
+  abortController: AbortController;
+  status: PlayTurnRunStatus;
+  committedSession?: PlaySession;
+  failureMessage?: string;
 }
 
 interface LauncherWorkspaceEntry {
@@ -183,11 +215,13 @@ type JsonBody = Record<string, unknown>;
 export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   const state: BackendState = {
     activeWorkspaceRoot: options.workspaceRoot,
+    workspaceTransitionActive: false,
     providerConfigState: options.providerConfig
       ? upsertLlmProviderConfig(createEmptyLlmProviderConfigState(), options.providerConfig)
       : createEmptyLlmProviderConfigState(),
     providerConfigLoaded: Boolean(options.providerConfig),
     activePlayTurns: new Set<string>(),
+    playTurnRuns: new Map<string, PlayTurnRunRecord>(),
   };
   const app = new Hono();
 
@@ -195,11 +229,14 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     origin: '*',
     allowHeaders: ['content-type'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    exposeHeaders: ['X-OAN-Play-Turn-Id'],
   }));
 
-  app.onError((error, context) => jsonResponse(context, 500, {
-    error: error instanceof Error ? error.message : String(error),
-  }));
+  app.onError((error, context) => jsonResponse(
+    context,
+    error instanceof InvalidJsonBodyError ? 400 : 500,
+    { error: error instanceof Error ? error.message : String(error) },
+  ));
 
   app.get('/api/health', (context) => context.json({ ok: true }));
   app.get('/api/app-config', (context) => handleGetAppConfig(options, context));
@@ -255,6 +292,16 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleAddPlayObservation(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/adoption-candidates', (context) =>
     handleAddPlayAdoptionCandidate(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/turns/stream', (context) =>
+    handlePlayWorldRefereeTurnStream(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/turns/:turnId/cancel', (context) =>
+    handleCancelPlayWorldRefereeTurn(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context.req.param('turnId') ?? '',
+      context,
+    ));
   app.post('/api/workspace/play-sessions/:id/world-referee-turn', (context) =>
     handlePlayWorldRefereeTurn(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/adoption-candidates/:candidateId/pending-action', (context) =>
@@ -461,46 +508,55 @@ async function handleCreateWorkspace(
   if (!requestedPath) {
     return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
-
-  const targetPath = resolve(requestedPath);
-
-  if (isInternalWorkspacePath(targetPath)) {
-    return jsonResponse(context, 400, {
-      error: 'Cannot create a workspace inside an internal runtime directory.',
+  if (!tryBeginWorkspaceTransition(state)) {
+    return jsonResponse(context, 409, {
+      error: 'Cannot create or switch workspaces while a Play turn is active.',
     });
   }
 
   try {
-    await mkdir(targetPath, { recursive: true });
-    await initWorkspace(targetPath);
-  } catch (error) {
-    return jsonResponse(context, 400, {
-      error: error instanceof Error ? error.message : String(error),
+    const targetPath = resolve(requestedPath);
+
+    if (isInternalWorkspacePath(targetPath)) {
+      return jsonResponse(context, 400, {
+        error: 'Cannot create a workspace inside an internal runtime directory.',
+      });
+    }
+
+    try {
+      await mkdir(targetPath, { recursive: true });
+      await initWorkspace(targetPath);
+    } catch (error) {
+      return jsonResponse(context, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const validation = await validateOanWorkspace(targetPath);
+    if (!validation.ok) {
+      return jsonResponse(context, 400, {
+        error: validation.reason ?? 'Failed to create an OAN workspace.',
+      });
+    }
+
+    state.activeWorkspaceRoot = validation.path;
+    const now = new Date().toISOString();
+    const workspaces = await upsertLauncherWorkspace(options, {
+      name: validation.name,
+      path: validation.path,
+      novelName: validation.novelName,
+      addedAt: now,
+      lastOpenedAt: now,
     });
-  }
 
-  const validation = await validateOanWorkspace(targetPath);
-  if (!validation.ok) {
-    return jsonResponse(context, 400, {
-      error: validation.reason ?? 'Failed to create an OAN workspace.',
+    return jsonResponse(context, 200, {
+      workspace: workspaces.find((item) => item.path === validation.path),
+      providerConfigured: state.providerConfigState.providers.length > 0,
+      onboarding: { show: true },
     });
+  } finally {
+    state.workspaceTransitionActive = false;
   }
-
-  state.activeWorkspaceRoot = validation.path;
-  const now = new Date().toISOString();
-  const workspaces = await upsertLauncherWorkspace(options, {
-    name: validation.name,
-    path: validation.path,
-    novelName: validation.novelName,
-    addedAt: now,
-    lastOpenedAt: now,
-  });
-
-  return jsonResponse(context, 200, {
-    workspace: workspaces.find((item) => item.path === validation.path),
-    providerConfigured: state.providerConfigState.providers.length > 0,
-    onboarding: { show: true },
-  });
 }
 
 async function handleOpenWorkspace(
@@ -515,24 +571,33 @@ async function handleOpenWorkspace(
   if (!requestedPath) {
     return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
-
-  const validation = await validateOanWorkspace(requestedPath);
-  if (!validation.ok) {
-    return jsonResponse(context, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
+  if (!tryBeginWorkspaceTransition(state)) {
+    return jsonResponse(context, 409, {
+      error: 'Cannot create or switch workspaces while a Play turn is active.',
+    });
   }
 
-  state.activeWorkspaceRoot = validation.path;
-  const workspaces = await upsertLauncherWorkspace(options, {
-    name: validation.name,
-    path: validation.path,
-    novelName: validation.novelName,
-    lastOpenedAt: new Date().toISOString(),
-  }, { preserveName: true });
+  try {
+    const validation = await validateOanWorkspace(requestedPath);
+    if (!validation.ok) {
+      return jsonResponse(context, 400, { error: validation.reason ?? 'Not an OAN workspace.' });
+    }
 
-  return jsonResponse(context, 200, {
-    workspace: workspaces.find((item) => item.path === validation.path),
-    providerConfigured: state.providerConfigState.providers.length > 0,
-  });
+    state.activeWorkspaceRoot = validation.path;
+    const workspaces = await upsertLauncherWorkspace(options, {
+      name: validation.name,
+      path: validation.path,
+      novelName: validation.novelName,
+      lastOpenedAt: new Date().toISOString(),
+    }, { preserveName: true });
+
+    return jsonResponse(context, 200, {
+      workspace: workspaces.find((item) => item.path === validation.path),
+      providerConfigured: state.providerConfigState.providers.length > 0,
+    });
+  } finally {
+    state.workspaceTransitionActive = false;
+  }
 }
 
 async function handleRenameWorkspace(
@@ -568,17 +633,26 @@ async function handleRemoveWorkspace(
   if (!requestedPath) {
     return jsonResponse(context, 400, { error: 'Workspace path is required.' });
   }
-
-  const normalizedPath = resolve(requestedPath);
-  const workspaces = (await loadRawLauncherWorkspaces(options))
-    .filter((workspace) => workspace.path !== normalizedPath);
-  await saveRawLauncherWorkspaces(options, workspaces);
-
-  if (state.activeWorkspaceRoot === normalizedPath) {
-    state.activeWorkspaceRoot = undefined;
+  if (!tryBeginWorkspaceTransition(state)) {
+    return jsonResponse(context, 409, {
+      error: 'Cannot remove workspaces while a Play turn is active.',
+    });
   }
 
-  return jsonResponse(context, 200, { workspaces: await loadLauncherWorkspaces(options) });
+  try {
+    const normalizedPath = resolve(requestedPath);
+    const workspaces = (await loadRawLauncherWorkspaces(options))
+      .filter((workspace) => workspace.path !== normalizedPath);
+    await saveRawLauncherWorkspaces(options, workspaces);
+
+    if (state.activeWorkspaceRoot === normalizedPath) {
+      state.activeWorkspaceRoot = undefined;
+    }
+
+    return jsonResponse(context, 200, { workspaces: await loadLauncherWorkspaces(options) });
+  } finally {
+    state.workspaceTransitionActive = false;
+  }
 }
 
 async function handleGetProviderConfig(
@@ -1351,6 +1425,512 @@ async function handleAddPlayAdoptionCandidate(
   }
 }
 
+async function handlePlayWorldRefereeTurnStream(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const userText = getOptionalString(body, 'userText')?.trim();
+  const actionKind = readPlayActionKind(body, 'actionKind');
+  const revisionCheck = readPlayBaseRevision(body);
+  const baseRevision = revisionCheck.value;
+
+  if (!userText) {
+    return jsonResponse(context, 400, { error: 'Play turn userText is required.' });
+  }
+  if (hasOwn(body, 'actionKind') && !actionKind) {
+    return jsonResponse(context, 400, { error: 'Invalid Play actionKind.' });
+  }
+  if (revisionCheck.error) {
+    return jsonResponse(context, 400, { error: revisionCheck.error });
+  }
+  if (
+    state.workspaceTransitionActive
+    || requireActiveWorkspaceRoot(options, state) !== workspaceRoot
+  ) {
+    return jsonResponse(context, 409, {
+      error: 'The active workspace changed while the Play turn was starting.',
+    });
+  }
+
+  const sessionLockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(sessionLockKey)) {
+    return jsonResponse(context, 409, { error: 'A Play turn is already running for this session.' });
+  }
+
+  state.activePlayTurns.add(sessionLockKey);
+
+  let session: PlaySession;
+  try {
+    session = await readPlaySessionFiles(workspaceRoot, id);
+  } catch (error) {
+    state.activePlayTurns.delete(sessionLockKey);
+    return jsonResponse(context, 422, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  if (baseRevision !== undefined && baseRevision !== session.revision) {
+    state.activePlayTurns.delete(sessionLockKey);
+    return jsonResponse(context, 409, {
+      error: `Play session revision conflict: expected ${baseRevision}, current ${session.revision}.`,
+    });
+  }
+
+  const turnId = `play-turn-${randomUUID()}`;
+  const runKey = createPlayTurnRunKey(workspaceRoot, id, turnId);
+  const run: PlayTurnRunRecord = {
+    workspaceRoot,
+    sessionId: id,
+    sessionLockKey,
+    turnId,
+    baseRevision: session.revision,
+    abortController: new AbortController(),
+    status: 'starting',
+  };
+  state.playTurnRuns.set(runKey, run);
+
+  const requestSignal = context.req.raw.signal;
+  const encoder = new TextEncoder();
+  let streamClosed = false;
+  let sequence = 0;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (type: string, payload: Record<string, unknown> = {}): void => {
+        if (streamClosed) {
+          return;
+        }
+
+        sequence += 1;
+        const event = {
+          type,
+          eventId: `${turnId}:${sequence}`,
+          sequence,
+          sessionId: id,
+          turnId,
+          ...payload,
+        };
+
+        try {
+          controller.enqueue(encoder.encode(
+            `event: ${type}\nid: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`,
+          ));
+        } catch {
+          streamClosed = true;
+        }
+      };
+      const close = (): void => {
+        if (streamClosed) {
+          return;
+        }
+
+        streamClosed = true;
+        try {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        } catch {
+          // The client may already have disconnected after requesting cancel.
+        }
+      };
+      const abortFromDisconnect = (): void => {
+        if (isCancelablePlayTurnStatus(run.status)) {
+          run.status = 'cancelling';
+          run.abortController.abort('client-disconnected');
+        }
+      };
+
+      requestSignal.addEventListener('abort', abortFromDisconnect, { once: true });
+      if (requestSignal.aborted) {
+        abortFromDisconnect();
+      }
+
+      void (async () => {
+        emit('play.turn.started', {
+          baseRevision: session.revision,
+          expectedArtifactId: createPlayTurnArtifactId(
+            session.revision + 1,
+            session.turnArtifacts.map((artifact) => artifact.id),
+          ),
+        });
+
+        try {
+          assertPlayTurnNotCancelled(run);
+          const activatedSourceContext = await loadPlayActivatedSourceContext(
+            workspaceRoot,
+            session,
+          );
+          emit('play.context.ready', {
+            activatedSourceCount: session.activatedSources.length,
+          });
+
+          const request = [
+            formatPlayWorldRefereePrompt(session),
+            ...(activatedSourceContext ? ['', activatedSourceContext] : []),
+            '',
+            `Action kind: ${actionKind ?? 'do'}`,
+            `User turn: ${userText}`,
+          ].join('\n');
+
+          run.status = 'streaming';
+          const refereeText = await rejectPlayTurnGenerationOnAbort(
+            streamPlayRefereeText({
+              options,
+              state,
+              workspaceRoot,
+              session,
+              request,
+              userText,
+              actionKind: actionKind ?? 'do',
+              abortSignal: run.abortController.signal,
+              onNarrativeDelta: (delta) => emit('play.narrative.delta', {
+                delta,
+                provisional: true,
+              }),
+              onNarrativeReset: () => emit('play.narrative.reset', {
+                provisional: true,
+                reason: 'read-tool loop completed',
+              }),
+            }),
+            run.abortController.signal,
+          );
+
+          assertPlayTurnNotCancelled(run);
+          if (!refereeText.trim()) {
+            throw new Error('World referee returned no narrative.');
+          }
+
+          run.status = 'validating';
+          const next = settlePlayWorldRefereeResponse({
+            session,
+            userText,
+            actionKind: actionKind ?? 'do',
+            refereeResponse: refereeText,
+          });
+          const latest = await readPlaySessionFiles(workspaceRoot, id);
+          if (latest.revision !== session.revision) {
+            throw new Error(
+              `Play session changed during the turn; current revision is ${latest.revision}.`,
+            );
+          }
+
+          assertPlayTurnNotCancelled(run);
+          run.status = 'prepared';
+          emit('play.turn.prepared', {
+            baseRevision: session.revision,
+            targetRevision: next.revision,
+            artifactId: next.selectedTurnIds.at(-1),
+          });
+
+          await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+          assertPlayTurnNotCancelled(run);
+          run.status = 'committing';
+          await writePlaySessionFiles(workspaceRoot, next);
+
+          run.status = 'committed';
+          run.committedSession = next;
+          emit('play.turn.committed', {
+            artifactId: next.selectedTurnIds.at(-1),
+            revision: next.revision,
+            session: next,
+          });
+        } catch (error) {
+          if (
+            run.abortController.signal.aborted &&
+            run.status !== 'committing' &&
+            run.status !== 'committed'
+          ) {
+            run.status = 'cancelled';
+            emit('play.turn.cancelled', {
+              committed: false,
+              revision: session.revision,
+              reason: String(run.abortController.signal.reason ?? 'cancelled'),
+            });
+          } else {
+            const failure = classifyPlayTurnStreamFailure(error, run.status);
+            run.status = 'failed';
+            run.failureMessage = failure.message;
+            emit('play.turn.failed', { error: failure });
+          }
+        } finally {
+          requestSignal.removeEventListener('abort', abortFromDisconnect);
+          state.activePlayTurns.delete(sessionLockKey);
+          schedulePlayTurnRunCleanup(state, runKey);
+          close();
+        }
+      })();
+    },
+    cancel() {
+      streamClosed = true;
+      if (isCancelablePlayTurnStatus(run.status)) {
+        run.status = 'cancelling';
+        run.abortController.abort('client-disconnected');
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'X-Accel-Buffering': 'no',
+      'X-OAN-Play-Turn-Id': turnId,
+    },
+  });
+}
+
+async function handleCancelPlayWorldRefereeTurn(
+  _options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  turnId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const run = [...state.playTurnRuns.values()].find((candidate) =>
+    candidate.sessionId === id && candidate.turnId === turnId,
+  );
+
+  if (!run) {
+    return jsonResponse(context, 404, { error: 'Play turn run was not found.' });
+  }
+
+  if (run.status === 'committed') {
+    const session = await readPlaySessionFiles(run.workspaceRoot, id)
+      .then((latest) =>
+        !run.committedSession || latest.revision >= run.committedSession.revision
+          ? latest
+          : run.committedSession)
+      .catch(() => run.committedSession);
+
+    if (!session) {
+      return jsonResponse(context, 500, {
+        error: 'Committed Play turn session could not be recovered.',
+      });
+    }
+
+    return jsonResponse(context, 200, {
+      status: 'committed',
+      committed: true,
+      turnId,
+      session,
+    });
+  }
+  if (run.status === 'committing') {
+    return jsonResponse(context, 200, {
+      status: 'committing',
+      committed: false,
+      tooLateToCancel: true,
+      turnId,
+    });
+  }
+  if (run.status === 'cancelled') {
+    return jsonResponse(context, 200, {
+      status: 'cancelled',
+      committed: false,
+      turnId,
+    });
+  }
+  if (run.status === 'failed') {
+    return jsonResponse(context, 200, {
+      status: 'failed',
+      committed: false,
+      turnId,
+      error: run.failureMessage ?? 'Play turn failed.',
+    });
+  }
+
+  run.status = 'cancelling';
+  run.abortController.abort('user');
+
+  return jsonResponse(context, 202, {
+    status: 'cancelling',
+    committed: false,
+    turnId,
+  });
+}
+
+interface StreamPlayRefereeTextInput {
+  options: NovelBackendOptions;
+  state: BackendState;
+  workspaceRoot: string;
+  session: PlaySession;
+  request: string;
+  userText: string;
+  actionKind: PlayActionKind;
+  abortSignal: AbortSignal;
+  onNarrativeDelta(delta: string): void;
+  onNarrativeReset(): void;
+}
+
+async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise<string> {
+  const turnInput: NovelBackendPlayTurnInput = {
+    request: input.request,
+    workspaceRoot: input.workspaceRoot,
+    session: input.session,
+    userText: input.userText,
+    actionKind: input.actionKind,
+    abortSignal: input.abortSignal,
+  };
+  const filter = createPlayNarrativeStreamFilter();
+  let receivedCharacters = 0;
+  const emitChunk = (chunk: string): void => {
+    receivedCharacters += chunk.length;
+    if (receivedCharacters > MAX_PLAY_REFEREE_RESPONSE_CHARACTERS) {
+      throw new Error(
+        `World referee response exceeded ${MAX_PLAY_REFEREE_RESPONSE_CHARACTERS} characters.`,
+      );
+    }
+    const narrative = filter.push(chunk);
+    if (narrative) {
+      input.onNarrativeDelta(narrative);
+    }
+  };
+  const finishNarrative = (): void => {
+    const narrative = filter.finish();
+    if (narrative) {
+      input.onNarrativeDelta(narrative);
+    }
+  };
+
+  if (input.options.streamPlayTurn) {
+    let text = '';
+    for await (const chunk of input.options.streamPlayTurn(turnInput)) {
+      if (input.abortSignal.aborted) {
+        break;
+      }
+      emitChunk(chunk);
+      text += chunk;
+    }
+    if (!input.abortSignal.aborted) {
+      finishNarrative();
+    }
+    return text;
+  }
+
+  if (input.options.runPlayTurn) {
+    const text = await input.options.runPlayTurn(turnInput);
+    if (!input.abortSignal.aborted) {
+      emitChunk(text);
+      finishNarrative();
+    }
+    return text;
+  }
+
+  await ensureProviderConfigLoaded(input.options, input.state);
+  const providerConfig = input.options.providerConfig
+    ?? getDefaultLlmProviderConfig(input.state.providerConfigState);
+
+  if (!providerConfig) {
+    throw new Error('World referee turn requires model mode with provider config.');
+  }
+
+  let finalText = '';
+  for await (const event of streamNovelAgentTurn({
+    providerConfig,
+    resolveModel: input.options.resolveModel ?? createAiSdkProviderResolver(),
+    workspaceRoot: input.workspaceRoot,
+    workspace: await loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
+    request: input.request,
+    skill: await loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
+    tools: createReadTools({ workspaceRoot: input.workspaceRoot }),
+    abortSignal: input.abortSignal,
+  })) {
+    if (event.type === 'message_delta') {
+      emitChunk(event.text);
+    } else if (event.type === 'tool_call_start') {
+      filter.reset();
+      input.onNarrativeReset();
+    } else if (event.type === 'message_finish') {
+      finalText = event.result.assistantMessage?.content ?? '';
+      if (finalText.length > MAX_PLAY_REFEREE_RESPONSE_CHARACTERS) {
+        throw new Error(
+          `World referee response exceeded ${MAX_PLAY_REFEREE_RESPONSE_CHARACTERS} characters.`,
+        );
+      }
+      if (event.result.stoppedReason === 'aborted') {
+        throw new Error('Play turn was aborted.');
+      }
+      if (event.result.stoppedReason !== 'completed') {
+        throw new Error(`World referee stopped with ${event.result.stoppedReason}.`);
+      }
+    }
+  }
+
+  finishNarrative();
+  return finalText;
+}
+
+async function rejectPlayTurnGenerationOnAbort<T>(
+  generation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) {
+    throw new Error('Play turn was cancelled.');
+  }
+
+  return new Promise<T>((resolveGeneration, rejectGeneration) => {
+    const onAbort = (): void => {
+      rejectGeneration(new Error('Play turn was cancelled.'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    generation.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolveGeneration(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        rejectGeneration(error);
+      },
+    );
+  });
+}
+
+function assertPlayTurnNotCancelled(run: PlayTurnRunRecord): void {
+  if (run.abortController.signal.aborted || run.status === 'cancelling') {
+    throw new Error('Play turn was cancelled.');
+  }
+}
+
+function isCancelablePlayTurnStatus(status: PlayTurnRunStatus): boolean {
+  return status === 'starting'
+    || status === 'streaming'
+    || status === 'validating'
+    || status === 'prepared'
+    || status === 'cancelling';
+}
+
+function classifyPlayTurnStreamFailure(
+  error: unknown,
+  status: PlayTurnRunStatus,
+): { code: string; message: string; retryable: boolean } {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (/revision conflict|changed during the turn/iu.test(message)) {
+    return { code: 'revision_conflict', message, retryable: true };
+  }
+  if (status === 'validating' || status === 'prepared') {
+    return { code: 'invalid_settlement', message, retryable: true };
+  }
+  if (status === 'committing') {
+    return { code: 'commit_failed', message, retryable: true };
+  }
+
+  return { code: 'provider_error', message, retryable: true };
+}
+
+function schedulePlayTurnRunCleanup(state: BackendState, runKey: string): void {
+  const timeout = setTimeout(() => {
+    state.playTurnRuns.delete(runKey);
+  }, 60_000);
+  timeout.unref();
+}
+
 async function handlePlayWorldRefereeTurn(
   options: NovelBackendOptions,
   state: BackendState,
@@ -1361,19 +1941,25 @@ async function handlePlayWorldRefereeTurn(
   const body = await readJsonBody(context);
   const userText = getOptionalString(body, 'userText')?.trim();
   const actionKind = readPlayActionKind(body, 'actionKind');
-  const baseRevision = getOptionalNumber(body, 'baseRevision');
+  const revisionCheck = readPlayBaseRevision(body);
+  const baseRevision = revisionCheck.value;
 
   if (!userText) {
     return jsonResponse(context, 400, { error: 'Play turn userText is required.' });
   }
-  if (getOptionalString(body, 'actionKind') && !actionKind) {
+  if (hasOwn(body, 'actionKind') && !actionKind) {
     return jsonResponse(context, 400, { error: 'Invalid Play actionKind.' });
   }
+  if (revisionCheck.error) {
+    return jsonResponse(context, 400, { error: revisionCheck.error });
+  }
   if (
-    baseRevision !== undefined &&
-    (!Number.isInteger(baseRevision) || baseRevision < 0)
+    state.workspaceTransitionActive
+    || requireActiveWorkspaceRoot(options, state) !== workspaceRoot
   ) {
-    return jsonResponse(context, 400, { error: 'baseRevision must be a non-negative integer.' });
+    return jsonResponse(context, 409, {
+      error: 'The active workspace changed while the Play turn was starting.',
+    });
   }
 
   const lockKey = createPlayTurnLockKey(workspaceRoot, id);
@@ -2544,20 +3130,45 @@ function createPlayTurnLockKey(workspaceRoot: string, sessionId: string): string
   return `${workspaceRoot}:${sessionId}`;
 }
 
+function createPlayTurnRunKey(
+  workspaceRoot: string,
+  sessionId: string,
+  turnId: string,
+): string {
+  return `${createPlayTurnLockKey(workspaceRoot, sessionId)}:${turnId}`;
+}
+
 function hasActivePlayMutation(state: BackendState, workspaceRoot: string): boolean {
   const prefix = `${workspaceRoot}:`;
   return [...state.activePlayTurns].some((key) => key.startsWith(prefix));
+}
+
+function hasAnyActivePlayMutation(state: BackendState): boolean {
+  return state.activePlayTurns.size > 0;
+}
+
+function tryBeginWorkspaceTransition(state: BackendState): boolean {
+  if (state.workspaceTransitionActive || hasAnyActivePlayMutation(state)) {
+    return false;
+  }
+
+  state.workspaceTransitionActive = true;
+  return true;
 }
 
 function readPlayBaseRevision(value: Record<string, unknown>): {
   value?: number;
   error?: string;
 } {
-  const baseRevision = getOptionalNumber(value, 'baseRevision');
-  if (baseRevision === undefined) {
+  if (!hasOwn(value, 'baseRevision')) {
     return {};
   }
-  if (!Number.isInteger(baseRevision) || baseRevision < 0) {
+  const baseRevision = value.baseRevision;
+  if (
+    typeof baseRevision !== 'number'
+    || !Number.isSafeInteger(baseRevision)
+    || baseRevision < 0
+  ) {
     return { error: 'baseRevision must be a non-negative integer.' };
   }
   return { value: baseRevision };
@@ -2919,7 +3530,18 @@ async function readJsonBody(context: NovelBackendContext): Promise<JsonBody> {
     return {};
   }
 
-  return JSON.parse(text) as JsonBody;
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new InvalidJsonBodyError('Request body must contain valid JSON.');
+  }
+
+  if (!isRecord(value)) {
+    throw new InvalidJsonBodyError('Request body must be a JSON object.');
+  }
+
+  return value;
 }
 
 function getOptionalString(value: Record<string, unknown>, key: string): string | undefined {

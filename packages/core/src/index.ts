@@ -285,6 +285,11 @@ export type {
   LegacyPlayTurnArtifactInput,
   PlayTurnArtifact,
 } from './play-turn-artifact.js';
+export {
+  PLAY_SETTLEMENT_FENCE,
+  createPlayNarrativeStreamFilter,
+} from './play-narrative-stream.js';
+export type { PlayNarrativeStreamFilter } from './play-narrative-stream.js';
 export type {
   CreateOanTavernImportPreviewOptions,
   NormalizedTavernCard,

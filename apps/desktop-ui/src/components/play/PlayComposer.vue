@@ -3,18 +3,22 @@ import { computed } from 'vue';
 
 import type { PlayActionKind } from '../../composables/useWorkspaceApi';
 import type { PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
+import type { PlayTurnRunPhase } from '../../composables/usePlayTurnStream';
 
 const userText = defineModel<string>('userText', { required: true });
 const actionKind = defineModel<PlayActionKind>('actionKind', { required: true });
 
 const props = defineProps<{
   disabled: boolean;
-  sending: boolean;
+  busy: boolean;
+  phase?: PlayTurnRunPhase;
+  canStop: boolean;
   suggestions: PlaySuggestedActionView[];
 }>();
 
 const emit = defineEmits<{
   submit: [];
+  stop: [];
 }>();
 
 const actions: Array<{ id: PlayActionKind; label: string }> = [
@@ -25,8 +29,28 @@ const actions: Array<{ id: PlayActionKind; label: string }> = [
   { id: 'wait', label: 'Wait' },
 ];
 const canSubmit = computed(() =>
-  !props.disabled && !props.sending && userText.value.trim().length > 0,
+  !props.disabled && !props.busy && userText.value.trim().length > 0,
 );
+const runStatus = computed(() => {
+  switch (props.phase) {
+    case 'starting': return 'starting world referee';
+    case 'streaming': return 'streaming · not committed';
+    case 'prepared': return 'validated · waiting to commit';
+    case 'stopping': return 'server is cancelling';
+    case 'committing': return 'committing Play truth';
+    case 'cancelled': return 'cancelled · draft preserved';
+    case 'failed': return 'failed · draft preserved';
+    case 'conflict': return 'revision conflict · draft preserved';
+    case 'indeterminate': return 'server outcome unknown · refresh required';
+    default: return 'Cmd/Ctrl + Enter';
+  }
+});
+const stopLabel = computed(() => {
+  if (props.phase === 'stopping') return 'Stopping…';
+  if (props.phase === 'committing') return 'Committing…';
+  if (props.phase === 'starting') return 'Starting…';
+  return 'Stop';
+});
 const placeholder = computed(() =>
   actionKind.value === 'wait'
     ? '例如：等到天亮，留意街区在这段时间发生的变化…'
@@ -40,7 +64,7 @@ function submit() {
 }
 
 function useSuggestion(suggestion: PlaySuggestedActionView) {
-  if (props.disabled || props.sending) {
+  if (props.disabled || props.busy) {
     return;
   }
 
@@ -65,7 +89,7 @@ function handleKeydown(event: KeyboardEvent) {
         v-for="suggestion in suggestions"
         :key="suggestion.id"
         type="button"
-        :disabled="disabled || sending"
+        :disabled="disabled || busy"
         @click="useSuggestion(suggestion)"
       >
         {{ suggestion.label }}
@@ -80,7 +104,7 @@ function handleKeydown(event: KeyboardEvent) {
           type="button"
           :class="{ 'play-action-kind-active': actionKind === action.id }"
           :aria-pressed="actionKind === action.id"
-          :disabled="disabled || sending"
+          :disabled="disabled || busy"
           @click="actionKind = action.id"
         >
           <span v-if="action.id === 'wait'" aria-hidden="true">[~]</span>
@@ -94,147 +118,28 @@ function handleKeydown(event: KeyboardEvent) {
         v-model="userText"
         rows="3"
         :placeholder="placeholder"
-        :disabled="disabled || sending"
+        :disabled="disabled || busy"
         @keydown="handleKeydown"
       ></textarea>
 
       <footer>
-        <span>Play-local · {{ sending ? 'resolving world turn' : 'Cmd/Ctrl + Enter' }}</span>
-        <button type="submit" :disabled="!canSubmit" aria-label="提交 Play 行动">
-          <span>{{ sending ? 'World moving…' : 'Act' }}</span>
+        <span>Play-local · {{ runStatus }}</span>
+        <button
+          v-if="busy"
+          class="play-stop-button"
+          type="button"
+          :disabled="!canStop"
+          aria-label="停止 Play 回合"
+          @click="emit('stop')"
+        >
+          <span>{{ stopLabel }}</span>
+          <span aria-hidden="true">■</span>
+        </button>
+        <button v-else type="submit" :disabled="!canSubmit" aria-label="提交 Play 行动">
+          <span>Act</span>
           <span aria-hidden="true">↵</span>
         </button>
       </footer>
     </div>
   </form>
 </template>
-
-<style scoped>
-.play-composer {
-  display: grid;
-  gap: 9px;
-  padding: 12px 18px 16px;
-  border-top: 1px solid rgb(235 226 212);
-  background: linear-gradient(180deg, rgb(252 248 241 / 75%), rgb(248 242 232));
-}
-
-.play-suggestions {
-  display: flex;
-  gap: 7px;
-  overflow-x: auto;
-}
-
-.play-suggestions button,
-.play-action-kinds button {
-  flex: 0 0 auto;
-  min-height: 28px;
-  border: 1px solid rgb(224 208 185);
-  border-radius: 999px;
-  background: rgb(255 253 249);
-  color: rgb(120 83 51);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.play-suggestions button {
-  max-width: 260px;
-  overflow: hidden;
-  padding: 0 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.play-composer-surface {
-  overflow: hidden;
-  border: 1px solid rgb(214 198 174);
-  border-radius: 11px;
-  background: rgb(255 253 249);
-  box-shadow: 0 10px 30px rgb(91 67 43 / 8%);
-}
-
-.play-action-kinds {
-  display: flex;
-  gap: 5px;
-  padding: 8px 10px 0;
-}
-
-.play-action-kinds button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 25px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-}
-
-.play-action-kinds .play-action-kind-active {
-  border-color: rgb(217 119 6 / 28%);
-  background: rgb(254 243 199);
-  color: rgb(146 64 14);
-}
-
-.play-composer textarea {
-  width: 100%;
-  min-height: 74px;
-  resize: vertical;
-  padding: 10px 13px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: rgb(68 54 43);
-  line-height: 1.55;
-}
-
-.play-composer textarea:focus-visible {
-  outline: 2px solid rgb(180 83 9);
-  outline-offset: -2px;
-}
-
-.play-composer-surface:focus-within {
-  border-color: rgb(180 83 9);
-  box-shadow: 0 0 0 3px rgb(217 119 6 / 16%), 0 10px 30px rgb(91 67 43 / 8%);
-}
-
-.play-composer footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 9px 9px 13px;
-}
-
-.play-composer footer > span {
-  color: rgb(148 119 91);
-  font-size: 10px;
-}
-
-.play-composer footer button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 11px;
-  border: 1px solid rgb(180 83 9);
-  border-radius: 8px;
-  background: rgb(180 83 9);
-  color: white;
-  font-weight: 900;
-}
-
-:global([data-theme="dark"]) .play-composer {
-  border-color: rgb(68 58 49);
-  background: rgb(29 25 22);
-}
-
-:global([data-theme="dark"]) .play-composer-surface,
-:global([data-theme="dark"]) .play-suggestions button {
-  border-color: rgb(83 70 58);
-  background: rgb(38 32 28);
-  color: rgb(245 235 220);
-}
-
-:global([data-theme="dark"]) .play-composer textarea {
-  color: rgb(245 235 220);
-}
-</style>

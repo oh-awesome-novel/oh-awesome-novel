@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOanClient,
   type OanDesktopBridge,
+  type PlayTurnStreamEvent,
 } from '@oh-awesome-novel/client';
 
 describe('createOanClient', () => {
@@ -76,6 +77,164 @@ describe('createOanClient', () => {
     });
 
     await expect(client.getWorkspaceStatus()).rejects.toThrow('Workspace missing.');
+  });
+
+  it('parses typed Play turn SSE events without treating provisional text as a session', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const onTurnId = vi.fn();
+    const encoded = new TextEncoder();
+    const frames = [
+      'event: play.turn.started\n',
+      'data: {"type":"play.turn.started","eventId":"run-1:1","sequence":1,"sessionId":"play-1","turnId":"run-1","baseRevision":0,"expectedArtifactId":"turn-artifact-1"}\n\n',
+      'event: play.narrative.delta\n',
+      'data: {"type":"play.narrative.delta","eventId":"run-1:2","sequence":2,"sessionId":"play-1","turnId":"run-1","delta":"雨声逼近。","provisional":true}\n\n',
+      'event: play.turn.cancelled\n',
+      'data: {"type":"play.turn.cancelled","eventId":"run-1:3","sequence":3,"sessionId":"play-1","turnId":"run-1","committed":false,"revision":0,"reason":"user"}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoded.encode(frames.slice(0, 37)));
+          controller.enqueue(encoded.encode(frames.slice(37, 149)));
+          controller.enqueue(encoded.encode(frames.slice(149)));
+          controller.close();
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'content-type': 'text/event-stream',
+          'X-OAN-Play-Turn-Id': 'run-1',
+        },
+      });
+    }) as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+      systemTheme: () => 'dark',
+    });
+    const events: PlayTurnStreamEvent[] = [];
+
+    for await (const event of client.streamPlayWorldRefereeTurn('play-1', {
+      userText: '等待',
+      actionKind: 'wait',
+      baseRevision: 0,
+    }, { onTurnId })) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.type)).toEqual([
+      'play.turn.started',
+      'play.narrative.delta',
+      'play.turn.cancelled',
+    ]);
+    expect(events[1]).toMatchObject({ delta: '雨声逼近。', provisional: true });
+    expect(onTurnId).toHaveBeenCalledOnce();
+    expect(onTurnId).toHaveBeenCalledWith('run-1');
+    expect(calls[0]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/turns/stream',
+      init: { method: 'POST' },
+    });
+  });
+
+  it('rejects malformed variant payloads in typed Play turn events', async () => {
+    const encoded = new TextEncoder();
+    const client = createOanClient({
+      fetch: (async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoded.encode(
+            'data: {"type":"play.turn.committed","eventId":"run-1:3","sequence":3,"sessionId":"play-1","turnId":"run-1","revision":1}\n\n',
+          ));
+          controller.close();
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+
+    const consume = async () => {
+      for await (const _event of client.streamPlayWorldRefereeTurn('play-1', {
+        userText: '等待',
+        baseRevision: 0,
+      })) {
+        // The parser must reject before yielding the malformed terminal event.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow('invalid play.turn.committed event');
+  });
+
+  it('routes Play stop through the explicit server cancellation endpoint', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: createFetchMock(calls, {
+        status: 'cancelled',
+        committed: false,
+        turnId: 'run-1',
+      }),
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.cancelPlayWorldRefereeTurn('play-1', 'run-1')).resolves.toEqual({
+      status: 'cancelled',
+      committed: false,
+      turnId: 'run-1',
+    });
+    expect(calls[0]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/turns/run-1/cancel',
+      init: { method: 'POST' },
+    });
+  });
+
+  it('rejects malformed Play cancellation results at the network boundary', async () => {
+    const client = createOanClient({
+      fetch: createFetchMock([], {
+        status: 'committed',
+        committed: true,
+        turnId: 'run-1',
+      }),
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.cancelPlayWorldRefereeTurn('play-1', 'run-1'))
+      .rejects
+      .toThrow('invalid result');
+  });
+
+  it('cancels the response body when a Play stream consumer exits early', async () => {
+    let bodyCancelled = false;
+    const encoded = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded.encode(
+          'data: {"type":"play.turn.started","eventId":"run-1:1","sequence":1,"sessionId":"play-1","turnId":"run-1","baseRevision":0,"expectedArtifactId":"turn-artifact-1"}\n\n',
+        ));
+      },
+      cancel() {
+        bodyCancelled = true;
+      },
+    });
+    const client = createOanClient({
+      fetch: (async () => new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+
+    for await (const _event of client.streamPlayWorldRefereeTurn('play-1', {
+      userText: '等待',
+      baseRevision: 0,
+    })) {
+      break;
+    }
+
+    expect(bodyCancelled).toBe(true);
   });
 
   it('uses the desktop bridge for app, theme, directory picker and backend URL', async () => {

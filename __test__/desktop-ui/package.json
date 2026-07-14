@@ -1,0 +1,20 @@
+{
+  "name": "@oh-awesome-novel/test-desktop-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "pretest": "npm run build --workspace @oh-awesome-novel/client",
+    "test": "vitest",
+    "pretest:run": "npm run build --workspace @oh-awesome-novel/client",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@oh-awesome-novel/client": "^0.0.1",
+    "vue": "^3.5.34"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.8"
+  }
+}

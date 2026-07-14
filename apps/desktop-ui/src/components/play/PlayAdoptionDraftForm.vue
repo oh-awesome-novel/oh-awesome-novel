@@ -10,6 +10,7 @@ import type { PlayAdoptionDraftInput } from '../../composables/usePlayWorkspace'
 const props = defineProps<{
   observations: PlayObservation[];
   creating: boolean;
+  disabled: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -39,6 +40,7 @@ const destinationRequired = computed(() =>
   target.value === 'chapterDraft' || target.value === 'state',
 );
 const canSubmit = computed(() => Boolean(
+  !props.disabled &&
   selectedObservation.value &&
   content.value.trim() &&
   (!destinationRequired.value || destination.value.trim()) &&
@@ -102,7 +104,7 @@ function createPayload(observation: PlayObservation): Record<string, unknown> {
   <form class="play-adoption-draft" @submit.prevent="submit">
     <label>
       <span>Observation</span>
-      <select v-model="observationId" :disabled="creating">
+      <select v-model="observationId" :disabled="creating || disabled">
         <option v-for="observation in observations" :key="observation.id" :value="observation.id">
           {{ observation.summary }}
         </option>
@@ -110,7 +112,7 @@ function createPayload(observation: PlayObservation): Record<string, unknown> {
     </label>
     <label>
       <span>采纳目标</span>
-      <select v-model="target" :disabled="creating">
+      <select v-model="target" :disabled="creating || disabled">
         <option value="chapterDraft">Chapter draft</option>
         <option value="state">State</option>
         <option value="timeline">Timeline</option>
@@ -124,70 +126,19 @@ function createPayload(observation: PlayObservation): Record<string, unknown> {
         type="text"
         :required="destinationRequired"
         :placeholder="destinationPlaceholder"
-        :disabled="creating"
+        :disabled="creating || disabled"
       >
     </label>
     <label v-if="target === 'state'">
       <span>YAML path</span>
-      <input v-model="statePath" type="text" required placeholder="characters.heroine.mood" :disabled="creating">
+      <input v-model="statePath" type="text" required placeholder="characters.heroine.mood" :disabled="creating || disabled">
     </label>
     <label class="play-adoption-draft-wide">
       <span>候选内容</span>
-      <textarea v-model="content" rows="3" :disabled="creating"></textarea>
+      <textarea v-model="content" rows="3" :disabled="creating || disabled"></textarea>
     </label>
-    <button class="ghost-button tight-button" type="submit" :disabled="creating || !canSubmit">
+    <button class="ghost-button tight-button" type="submit" :disabled="creating || disabled || !canSubmit">
       {{ creating ? 'Preparing…' : 'Prepare adoption candidate' }}
     </button>
   </form>
 </template>
-
-<style scoped>
-.play-adoption-draft {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 9px;
-  border: 1px solid rgb(235 226 212);
-  border-radius: 8px;
-  background: rgb(255 253 249);
-}
-
-.play-adoption-draft label {
-  display: grid;
-  gap: 4px;
-}
-
-.play-adoption-draft label > span {
-  color: rgb(120 91 67);
-  font-size: 9px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.play-adoption-draft input,
-.play-adoption-draft select,
-.play-adoption-draft textarea {
-  min-width: 0;
-  border: 1px solid rgb(224 208 185);
-  border-radius: 6px;
-  background: rgb(255 252 247);
-  color: rgb(82 60 43);
-  font: inherit;
-  font-size: 10px;
-  padding: 6px 7px;
-}
-
-.play-adoption-draft-wide,
-.play-adoption-draft > button {
-  grid-column: 1 / -1;
-}
-
-:global([data-theme="dark"]) .play-adoption-draft,
-:global([data-theme="dark"]) .play-adoption-draft input,
-:global([data-theme="dark"]) .play-adoption-draft select,
-:global([data-theme="dark"]) .play-adoption-draft textarea {
-  border-color: rgb(83 70 58);
-  background: rgb(38 32 28);
-  color: rgb(245 235 220);
-}
-</style>

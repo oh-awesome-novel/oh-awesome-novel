@@ -669,6 +669,416 @@ describe('novel HTTP backend', () => {
       .toBe(canonicalChapterBefore);
   });
 
+  it('rejects malformed Play stream request bodies before starting a provider', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalled = false;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        providerCalled = true;
+        yield 'should not run';
+      },
+    });
+    servers.push(backend);
+    const endpoint = `${backend.url}/api/workspace/play-sessions/not-needed/turns/stream`;
+    const request = (body: string) => fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+
+    const responses = await Promise.all([
+      request('{'),
+      request('null'),
+      request(JSON.stringify({ userText: '等待', actionKind: 42 })),
+      request(JSON.stringify({ userText: '等待', baseRevision: '0' })),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400, 400, 400]);
+    expect(providerCalled).toBe(false);
+  });
+
+  it('streams provisional Play narrative without exposing the settlement fence, then commits once', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        yield '远处的铁门开始落锁。\n```oan-play-settle';
+        yield 'ment\n';
+        yield JSON.stringify({
+          elapsed: '10 minutes',
+          events: [],
+          stateDelta: { gate: 'locked' },
+          observations: [],
+          suggestedActions: ['检查铁门'],
+        });
+        yield '\n```';
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-stream-success',
+        title: 'Stream success',
+        sceneStart: 'Station',
+      }),
+    });
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-stream-success/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: '等待十分钟',
+          actionKind: 'wait',
+          baseRevision: 0,
+        }),
+      },
+    );
+    const body = await response.text();
+    const events = parseSseDataEvents(body);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    expect(response.headers.get('x-oan-play-turn-id')).toMatch(/^play-turn-/u);
+    expect(events.map((event) => event.type)).toEqual([
+      'play.turn.started',
+      'play.context.ready',
+      'play.narrative.delta',
+      'play.turn.prepared',
+      'play.turn.committed',
+    ]);
+    expect(events
+      .filter((event) => event.type === 'play.narrative.delta')
+      .map((event) => event.delta)
+      .join('')).toBe('远处的铁门开始落锁。\n');
+    expect(body).not.toContain('oan-play-settlement');
+
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-stream-success`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: 1,
+        worldClock: { turn: 1, revision: 1, elapsed: '10 minutes' },
+        transcript: [
+          expect.objectContaining({ speaker: 'user', content: '等待十分钟' }),
+          expect.objectContaining({
+            speaker: 'world-referee',
+            content: '远处的铁门开始落锁。',
+          }),
+        ],
+        playLocalState: { gate: 'locked' },
+      },
+    });
+  });
+
+  it('confirms a mid-stream Play cancellation without committing provisional facts', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let markStreaming: (() => void) | undefined;
+    const streaming = new Promise<void>((resolve) => {
+      markStreaming = resolve;
+    });
+    let providerSignal: AbortSignal | undefined;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* (input) {
+        providerSignal = input.abortSignal;
+        markStreaming?.();
+        yield '这段文字仍然只是 provisional。';
+        await new Promise<void>((resolve) => {
+          input.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-stream-cancel',
+        title: 'Stream cancel',
+        sceneStart: 'Station',
+      }),
+    });
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-stream-cancel/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+      },
+    );
+    await streaming;
+    const turnId = response.headers.get('x-oan-play-turn-id');
+    expect(turnId).toBeTruthy();
+
+    const cancellation = await fetchJson<{
+      status: string;
+      committed: boolean;
+    }>(
+      `${backend.url}/api/workspace/play-sessions/play-stream-cancel/turns/${turnId}/cancel`,
+      { method: 'POST' },
+    );
+    const events = parseSseDataEvents(await response.text());
+
+    expect(cancellation).toMatchObject({ status: 'cancelling', committed: false });
+    expect(providerSignal?.aborted).toBe(true);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'play.narrative.delta', provisional: true }),
+      expect.objectContaining({
+        type: 'play.turn.cancelled',
+        committed: false,
+        revision: 0,
+      }),
+    ]));
+    expect(events.some((event) => event.type === 'play.turn.committed')).toBe(false);
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-stream-cancel`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: 0,
+        transcript: [],
+        events: [],
+        observations: [],
+        playLocalState: {},
+      },
+    });
+  });
+
+  it('blocks workspace switching and removal while a Play turn is active', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const otherWorkspaceRoot = await createOanWorkspace();
+    const globalConfigDir = await createTempWorkspace();
+    let markStreaming: (() => void) | undefined;
+    const streaming = new Promise<void>((resolve) => {
+      markStreaming = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      globalConfigDir,
+      streamPlayTurn: async function* (input) {
+        yield '仍在生成的 provisional。';
+        markStreaming?.();
+        await new Promise<void>((resolve) => {
+          input.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-workspace-transition',
+        title: 'Workspace transition',
+        sceneStart: 'Station',
+      }),
+    });
+    const streamResponse = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-workspace-transition/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '等待', baseRevision: 0 }),
+      },
+    );
+    const turnId = streamResponse.headers.get('x-oan-play-turn-id');
+    expect(turnId).toMatch(/^play-turn-/u);
+    await streaming;
+
+    const openResponse = await fetch(`${backend.url}/api/workspaces/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: otherWorkspaceRoot }),
+    });
+    expect(openResponse.status).toBe(409);
+
+    const removeResponse = await fetch(`${backend.url}/api/workspaces`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: workspaceRoot }),
+    });
+    expect(removeResponse.status).toBe(409);
+
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-workspace-transition/turns/${turnId}/cancel`,
+      { method: 'POST' },
+    )).resolves.toMatchObject({ status: 'cancelling', committed: false });
+    expect(await streamResponse.text()).toContain('play.turn.cancelled');
+  });
+
+  it('reconciles an old committed turn from its immutable workspace without rolling back revision', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const otherWorkspaceRoot = await createOanWorkspace();
+    const globalConfigDir = await createTempWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      globalConfigDir,
+      streamPlayTurn: async function* () {
+        yield [
+          '第一回合已经提交。',
+          '```oan-play-settlement',
+          JSON.stringify({
+            events: [],
+            stateDelta: {},
+            observations: [],
+            suggestedActions: [],
+          }),
+          '```',
+        ].join('\n');
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-delayed-reconcile',
+        title: 'Delayed reconcile',
+        sceneStart: 'Station',
+      }),
+    });
+    const streamResponse = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-delayed-reconcile/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '行动', baseRevision: 0 }),
+      },
+    );
+    const turnId = streamResponse.headers.get('x-oan-play-turn-id');
+    expect(turnId).toMatch(/^play-turn-/u);
+    expect(await streamResponse.text()).toContain('play.turn.committed');
+
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-delayed-reconcile/transcript`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          speaker: 'narrator',
+          content: '第二次 mutation。',
+          baseRevision: 1,
+        }),
+      },
+    );
+    await fetchJson(`${backend.url}/api/workspaces/open`, {
+      method: 'POST',
+      body: JSON.stringify({ path: otherWorkspaceRoot }),
+    });
+
+    await expect(fetchJson<{
+      status: string;
+      session: { revision: number; transcript: Array<{ content: string }> };
+    }>(
+      `${backend.url}/api/workspace/play-sessions/play-delayed-reconcile/turns/${turnId}/cancel`,
+      { method: 'POST' },
+    )).resolves.toMatchObject({
+      status: 'committed',
+      session: {
+        revision: 2,
+        transcript: expect.arrayContaining([
+          expect.objectContaining({ content: '第二次 mutation。' }),
+        ]),
+      },
+    });
+  });
+
+  it('releases the Play session after cancel even when an injected provider ignores abort', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let markBlocked: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      markBlocked = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        yield 'provider 已输出一部分内容。';
+        markBlocked?.();
+        await new Promise<void>(() => undefined);
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-stream-stubborn-provider',
+        title: 'Stubborn provider',
+        sceneStart: 'Station',
+      }),
+    });
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-stream-stubborn-provider/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+      },
+    );
+    await blocked;
+    const turnId = response.headers.get('x-oan-play-turn-id');
+
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-stream-stubborn-provider/turns/${turnId}/cancel`,
+      { method: 'POST' },
+    );
+    const events = parseSseDataEvents(await response.text());
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'play.turn.cancelled', committed: false }),
+    ]));
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-stream-stubborn-provider`,
+    )).resolves.toMatchObject({
+      session: { revision: 0, transcript: [], events: [], playLocalState: {} },
+    });
+  });
+
+  it('marks an invalid streamed settlement as failed and leaves the session unchanged', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        yield '只有 provisional 叙事，没有 settlement。';
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-stream-invalid',
+        title: 'Invalid stream',
+        sceneStart: 'Station',
+      }),
+    });
+    const response = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-stream-invalid/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '观察', actionKind: 'look', baseRevision: 0 }),
+      },
+    );
+    const events = parseSseDataEvents(await response.text());
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'play.narrative.delta', provisional: true }),
+      expect.objectContaining({
+        type: 'play.turn.failed',
+        error: expect.objectContaining({ code: 'invalid_settlement' }),
+      }),
+    ]));
+    expect(events.some((event) => event.type === 'play.turn.committed')).toBe(false);
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-stream-invalid`,
+    )).resolves.toMatchObject({
+      session: { revision: 0, transcript: [], events: [], playLocalState: {} },
+    });
+  });
+
   it('rejects a referee response without the structured settlement block', async () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startNovelHttpBackend({
@@ -1497,6 +1907,18 @@ async function fetchJson<T = unknown>(
   }
 
   return data;
+}
+
+function parseSseDataEvents(body: string): Array<Record<string, unknown>> {
+  return body
+    .split(/\r?\n\r?\n/u)
+    .map((block) => block
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n'))
+    .filter((data) => data && data !== '[DONE]')
+    .map((data) => JSON.parse(data) as Record<string, unknown>);
 }
 
 async function executeTool(

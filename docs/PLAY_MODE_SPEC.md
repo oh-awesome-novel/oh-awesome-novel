@@ -89,6 +89,20 @@ single world referee
 
 不引入重型多 agent runtime。多角色效果优先通过明确的角色 voice/state module 和世界裁判 prompt 达成。
 
+Play turn transport 使用专用 typed SSE，而不是把 Play transcript 伪装为普通聊天消息。生命周期为 `started -> context.ready -> narrative.delta* -> (narrative.reset -> narrative.delta*)* -> prepared -> committed | cancelled | failed`：
+
+- `narrative.delta` 永远是 provisional，不能写入 `turns/*.yaml`、`transcript.md`、state 或 event ledger。
+- `narrative.reset` 表示同一 turn 在完成中间 read-tool loop 后开始生成替代正文；UI 必须丢弃该 turn 此前的全部 provisional 文本，再从后续 `narrative.delta` 重新构造 provisional block。它不表示回合已提交，也不推进 revision。
+- `oan-play-settlement` fence 与其 JSON 仅在服务端缓冲和校验，不进入 provisional UI。
+- Stop 通过服务端 turn registry 和显式 cancel endpoint 执行；响应头会在首个 SSE event 前提供 turn id，使首帧前断流也能查询服务端终态；浏览器仅停止读取流不能单独证明回合已取消。
+- `prepared` 后、commit barrier 前仍可取消；进入 staged snapshot commit 后不再用 AbortSignal 中断文件交换，晚到取消必须返回 committing / committed truth。
+- UI 只有收到 `play.turn.committed` 或 cancel 查询返回 committed session 时才替换 authoritative Play session；cancel / provider / schema failure 不推进 revision。
+- 若 stream 与终态查询同时不可达，UI 必须进入 indeterminate / refresh-required 状态，不得声称“未提交”；刷新成功前禁止发起新的 Play-local mutation。
+- turn registry 绑定启动时的不可变 workspace；活跃 Play turn 期间不得切换或移除 active workspace，迟到的 committed 对账也不得用旧 revision 回滚 UI。
+- 当前 `play.turn.committed.session` 是 transcript、world state、observation 和 event feed 的权威刷新载荷。独立 `play.event.occurred` 尚未作为当前实现的刷新事实源；它留给 schedule / pressure / agenda evaluator 的后续交付，并且将来只能在对应 transaction 已持久化提交后发布。
+
+当前该协议保证单 backend 进程内的 stop / commit 一致性；跨进程锁、fsync、可重启 terminal registry、graceful shutdown、SSE backpressure 和逐故障点耐久性仍由 task 1120 后续范围追踪。provisional narrative 仍依赖 referee 遵守 hidden-information 叙事约束，结构化 fence filter 本身不能证明模型没有在自然语言中提前泄露隐藏事实。
+
 ## Activated Sources
 
 Play session 可激活：

@@ -131,12 +131,17 @@ describe('Novel agent message assembly', () => {
   });
 
   it('creates Runtime turn input without tools or filesystem access', () => {
-    const turnInput = createRuntimeTurnInput(baseInput);
+    const abortController = new AbortController();
+    const turnInput = createRuntimeTurnInput({
+      ...baseInput,
+      abortSignal: abortController.signal,
+    });
 
     expect(turnInput.messages?.at(0)).toMatchObject({
       role: 'system',
     });
     expect(turnInput.context?.map((item) => item.kind)).toContain('state');
+    expect(turnInput.abortSignal).toBe(abortController.signal);
     expect(turnInput).not.toHaveProperty('tools');
   });
 

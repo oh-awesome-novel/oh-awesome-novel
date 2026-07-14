@@ -97,36 +97,3 @@ function splitCharacters(value: string): string[] {
     </div>
   </form>
 </template>
-
-<style scoped>
-.play-create-form,
-.play-create-form label {
-  display: grid;
-  gap: 6px;
-}
-
-.play-create-form {
-  padding: 12px;
-  border: 1px solid rgb(231 220 202);
-  border-radius: 8px;
-  background: rgb(255 252 247);
-}
-
-.play-create-form label span {
-  color: rgb(120 91 67);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.play-policy-fields,
-.play-create-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px;
-}
-
-:global([data-theme="dark"]) .play-create-form {
-  border-color: rgb(83 70 58);
-  background: rgb(38 32 28);
-}
-</style>

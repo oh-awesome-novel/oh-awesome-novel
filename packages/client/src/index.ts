@@ -406,6 +406,79 @@ export interface PlaySession {
   adoptionCandidates: PlayAdoptionCandidate[];
 }
 
+export interface PlayTurnStreamEventBase {
+  eventId: string;
+  sequence: number;
+  sessionId: string;
+  turnId: string;
+}
+
+export interface PlayTurnStreamError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export type PlayTurnStreamEvent =
+  | (PlayTurnStreamEventBase & {
+      type: 'play.turn.started';
+      baseRevision: number;
+      expectedArtifactId: string;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.context.ready';
+      activatedSourceCount: number;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.narrative.delta';
+      delta: string;
+      provisional: true;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.narrative.reset';
+      provisional: true;
+      reason: string;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.turn.prepared';
+      baseRevision: number;
+      targetRevision: number;
+      artifactId?: string;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.turn.committed';
+      artifactId?: string;
+      revision: number;
+      session: PlaySession;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.turn.cancelled';
+      committed: false;
+      revision: number;
+      reason: string;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.turn.failed';
+      error: PlayTurnStreamError;
+    });
+
+export type PlayTurnCancelResult =
+  | { status: 'cancelling'; committed: false; turnId: string }
+  | { status: 'cancelled'; committed: false; turnId: string }
+  | {
+      status: 'committing';
+      committed: false;
+      tooLateToCancel: true;
+      turnId: string;
+    }
+  | { status: 'committed'; committed: true; turnId: string; session: PlaySession }
+  | { status: 'failed'; committed: false; turnId: string; error: string };
+
+export interface PlayTurnStreamOptions {
+  signal?: AbortSignal;
+  onTurnId?(turnId: string): void;
+}
+
 export interface GitCommandError {
   code:
     | 'git_unavailable'
@@ -626,6 +699,16 @@ export interface OanClient {
       assistantMessage?: { role: 'assistant'; content: string };
     };
   }>;
+  streamPlayWorldRefereeTurn(
+    id: string,
+    input: {
+      userText: string;
+      actionKind?: PlayActionKind;
+      baseRevision?: number;
+    },
+    options?: PlayTurnStreamOptions,
+  ): AsyncIterable<PlayTurnStreamEvent>;
+  cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
   appendPlayTranscript(id: string, turn: {
     speaker: string;
     content: string;
@@ -679,6 +762,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     requestOptions: {
       method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
       body?: unknown;
+      signal?: AbortSignal;
     } = {},
   ) => requestJsonWith<T>(fetcher, backendBaseUrl, path, requestOptions);
   const getAppConfig = async (): Promise<AppConfigState> => {
@@ -876,6 +960,19 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
           body: input,
         },
       ),
+    streamPlayWorldRefereeTurn: (id, input, streamOptions) =>
+      streamPlayWorldRefereeTurnWith(
+        fetcher,
+        backendBaseUrl,
+        id,
+        input,
+        streamOptions,
+      ),
+    cancelPlayWorldRefereeTurn: (id, turnId) =>
+      requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/cancel`,
+        { method: 'POST' },
+      ).then((value) => parsePlayTurnCancelResult(value, id, turnId)),
     appendPlayTranscript: (id, turn) =>
       requestJson<{ session: PlaySession }>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/transcript`,
@@ -941,6 +1038,399 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   };
 }
 
+async function* streamPlayWorldRefereeTurnWith(
+  fetcher: typeof fetch,
+  backendBaseUrl: string,
+  id: string,
+  input: {
+    userText: string;
+    actionKind?: PlayActionKind;
+    baseRevision?: number;
+  },
+  options: PlayTurnStreamOptions = {},
+): AsyncIterable<PlayTurnStreamEvent> {
+  const response = await fetcher(
+    joinUrl(
+      backendBaseUrl,
+      `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/stream`,
+    ),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: options.signal,
+    },
+  );
+
+  if (!response.ok) {
+    const data = await parseJsonResponse(response);
+    const message = isRecord(data) && typeof data.error === 'string'
+      ? data.error
+      : 'Play turn stream request failed.';
+    throw new Error(message);
+  }
+  if (!response.body) {
+    throw new Error('Play turn stream returned no response body.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let streamCompleted = false;
+
+  try {
+    const responseTurnId = response.headers.get('X-OAN-Play-Turn-Id');
+    if (responseTurnId) {
+      options.onTurnId?.(responseTurnId);
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+
+      while (true) {
+        const boundary = /\r?\n\r?\n/u.exec(buffer);
+        if (!boundary || boundary.index === undefined) {
+          break;
+        }
+
+        const block = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const parsed = parsePlayTurnSseBlock(block);
+
+        if (parsed.done) {
+          streamCompleted = true;
+          return;
+        }
+        if (parsed.event) {
+          yield parsed.event;
+        }
+      }
+
+      if (done) {
+        streamCompleted = true;
+        break;
+      }
+    }
+
+    if (buffer.trim()) {
+      const parsed = parsePlayTurnSseBlock(buffer);
+      if (parsed.event) {
+        yield parsed.event;
+      }
+    }
+  } finally {
+    if (!streamCompleted) {
+      await reader.cancel().catch(() => undefined);
+    }
+    reader.releaseLock();
+  }
+}
+
+function parsePlayTurnSseBlock(block: string): {
+  done: boolean;
+  event?: PlayTurnStreamEvent;
+} {
+  const data = block
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
+
+  if (!data) {
+    return { done: false };
+  }
+  if (data === '[DONE]') {
+    return { done: true };
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(data) as unknown;
+  } catch {
+    throw new Error('Play turn stream returned invalid JSON.');
+  }
+
+  if (
+    !isRecord(value) ||
+    typeof value.type !== 'string' ||
+    !isNonEmptyString(value.eventId) ||
+    !Number.isSafeInteger(value.sequence) ||
+    (value.sequence as number) < 1 ||
+    !isNonEmptyString(value.sessionId) ||
+    !isNonEmptyString(value.turnId) ||
+    !isPlayTurnStreamEventType(value.type)
+  ) {
+    throw new Error('Play turn stream returned an invalid event.');
+  }
+
+  const event = parsePlayTurnStreamEventPayload(value);
+  if (!event) {
+    throw new Error(`Play turn stream returned an invalid ${value.type} event.`);
+  }
+
+  return { done: false, event };
+}
+
+function parsePlayTurnStreamEventPayload(
+  value: Record<string, unknown>,
+): PlayTurnStreamEvent | undefined {
+  const hasOptionalArtifactId = value.artifactId === undefined || isNonEmptyString(value.artifactId);
+
+  switch (value.type) {
+    case 'play.turn.started':
+      return isNonNegativeSafeInteger(value.baseRevision) && isNonEmptyString(value.expectedArtifactId)
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.context.ready':
+      return isNonNegativeSafeInteger(value.activatedSourceCount)
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.narrative.delta':
+      return typeof value.delta === 'string' && value.provisional === true
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.narrative.reset':
+      return isNonEmptyString(value.reason) && value.provisional === true
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.turn.prepared':
+      return isNonNegativeSafeInteger(value.baseRevision)
+        && isNonNegativeSafeInteger(value.targetRevision)
+        && hasOptionalArtifactId
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.turn.committed':
+      return isNonNegativeSafeInteger(value.revision)
+        && hasOptionalArtifactId
+        && isPlaySessionEnvelope(value.session, value.sessionId, value.revision as number)
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.turn.cancelled':
+      return value.committed === false
+        && isNonNegativeSafeInteger(value.revision)
+        && isNonEmptyString(value.reason)
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+    case 'play.turn.failed':
+      return isPlayTurnStreamError(value.error)
+        ? value as unknown as PlayTurnStreamEvent
+        : undefined;
+  }
+}
+
+function parsePlayTurnCancelResult(
+  value: unknown,
+  sessionId: string,
+  turnId: string,
+): PlayTurnCancelResult {
+  if (!isRecord(value) || value.turnId !== turnId) {
+    throw new Error('Play turn cancellation returned an invalid result.');
+  }
+
+  if (
+    (value.status === 'cancelling' || value.status === 'cancelled')
+    && value.committed === false
+  ) {
+    return value as unknown as PlayTurnCancelResult;
+  }
+  if (
+    value.status === 'committing'
+    && value.committed === false
+    && value.tooLateToCancel === true
+  ) {
+    return value as unknown as PlayTurnCancelResult;
+  }
+  if (
+    value.status === 'committed'
+    && value.committed === true
+    && isPlaySessionEnvelope(value.session, sessionId)
+  ) {
+    return value as unknown as PlayTurnCancelResult;
+  }
+  if (
+    value.status === 'failed'
+    && value.committed === false
+    && isNonEmptyString(value.error)
+  ) {
+    return value as unknown as PlayTurnCancelResult;
+  }
+
+  throw new Error('Play turn cancellation returned an invalid result.');
+}
+
+function isPlayTurnStreamError(value: unknown): value is PlayTurnStreamError {
+  return isRecord(value)
+    && isNonEmptyString(value.code)
+    && isNonEmptyString(value.message)
+    && typeof value.retryable === 'boolean';
+}
+
+function isPlaySessionEnvelope(
+  value: unknown,
+  sessionId: unknown,
+  revision?: number,
+): value is PlaySession {
+  if (!isRecord(value) || value.schemaVersion !== 3) {
+    return false;
+  }
+
+  return value.id === sessionId
+    && (revision === undefined || value.revision === revision)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.title)
+    && isNonEmptyString(value.createdAt)
+    && isNonEmptyString(value.sceneStart)
+    && isNonNegativeSafeInteger(value.revision)
+    && isStringArray(value.characters)
+    && Array.isArray(value.transcript)
+    && value.transcript.every(isPlayTranscriptTurn)
+    && Array.isArray(value.turnArtifacts)
+    && value.turnArtifacts.every(isRecord)
+    && isStringArray(value.selectedTurnIds)
+    && isRecord(value.metadataExtensions)
+    && isRecord(value.playLocalState)
+    && isPlayVisibilityMap(value.playLocalStateVisibility)
+    && isPlayWorldClock(value.worldClock)
+    && isPlayEventPolicy(value.eventPolicy)
+    && Array.isArray(value.events)
+    && value.events.every(isPlayWorldEventEnvelope)
+    && isStringArray(value.suggestedActions)
+    && Array.isArray(value.activatedSources)
+    && value.activatedSources.every(isPlayActivatedSourceEnvelope)
+    && Array.isArray(value.observations)
+    && value.observations.every(isPlayObservationEnvelope)
+    && Array.isArray(value.adoptionCandidates)
+    && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope);
+}
+
+function isPlayWorldClock(value: unknown): value is PlayWorldClock {
+  return isRecord(value)
+    && isNonNegativeSafeInteger(value.turn)
+    && isNonNegativeSafeInteger(value.revision)
+    && (value.anchor === undefined || typeof value.anchor === 'string')
+    && (value.elapsed === undefined || typeof value.elapsed === 'string');
+}
+
+function isPlayTranscriptTurn(value: unknown): value is PlayTranscriptTurn {
+  return isRecord(value)
+    && (value.id === undefined || isNonEmptyString(value.id))
+    && isNonEmptyString(value.speaker)
+    && typeof value.content === 'string'
+    && isNonEmptyString(value.createdAt)
+    && (value.actionKind === undefined
+      || value.actionKind === 'say'
+      || value.actionKind === 'look'
+      || value.actionKind === 'move'
+      || value.actionKind === 'do'
+      || value.actionKind === 'wait');
+}
+
+function isPlayWorldEventEnvelope(value: unknown): value is PlayWorldEvent {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.turnId)
+    && isNonNegativeSafeInteger(value.sequence)
+    && isNonEmptyString(value.kind)
+    && isNonEmptyString(value.origin)
+    && isNonEmptyString(value.title)
+    && typeof value.summary === 'string'
+    && isPlayVisibility(value.visibility)
+    && isRecord(value.cause)
+    && isNonEmptyString(value.cause.reason)
+    && isPlayWorldClock(value.worldClock)
+    && isNonEmptyString(value.createdAt)
+    && value.canonical === false;
+}
+
+function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSource {
+  return isRecord(value)
+    && isNonEmptyString(value.sourceId)
+    && (value.path === undefined || isNonEmptyString(value.path))
+    && isNonEmptyString(value.reason)
+    && (value.budgetLayer === 'L0'
+      || value.budgetLayer === 'L1'
+      || value.budgetLayer === 'L2'
+      || value.budgetLayer === 'L3')
+    && (value.semanticBoundary === 'protected'
+      || value.semanticBoundary === 'compressible'
+      || value.semanticBoundary === 'excluded')
+    && (value.trust === 'canonical'
+      || value.trust === 'interactionHint'
+      || value.trust === 'playLocal'
+      || value.trust === 'modelImprovisation');
+}
+
+function isPlayObservationEnvelope(value: unknown): value is PlayObservation {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.summary)
+    && typeof value.evidence === 'string'
+    && isPlayVisibility(value.visibility)
+    && isStringArray(value.sourceTurnIds)
+    && isStringArray(value.sourceEventIds)
+    && value.canonical === false;
+}
+
+function isPlayAdoptionCandidateEnvelope(value: unknown): value is PlayAdoptionCandidate {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && (value.target === 'chapterDraft'
+      || value.target === 'state'
+      || value.target === 'timeline'
+      || value.target === 'foreshadow')
+    && isNonEmptyString(value.summary)
+    && typeof value.evidence === 'string'
+    && (value.payload === undefined || isRecord(value.payload))
+    && isPlayVisibility(value.visibility)
+    && isStringArray(value.sourceObservationIds)
+    && isStringArray(value.sourceTurnIds)
+    && isStringArray(value.sourceEventIds)
+    && value.requiresPendingAction === true;
+}
+
+function isPlayVisibilityMap(value: unknown): value is Record<string, PlayEventVisibility> {
+  return isRecord(value) && Object.values(value).every(isPlayVisibility);
+}
+
+function isPlayVisibility(value: unknown): value is PlayEventVisibility {
+  return value === 'playerVisible' || value === 'rumor' || value === 'playerUnknown';
+}
+
+function isPlayEventPolicy(value: unknown): value is PlayEventPolicy {
+  return isRecord(value)
+    && (value.simulationMode === 'conversation'
+      || value.simulationMode === 'reactiveWorld'
+      || value.simulationMode === 'activeWorld')
+    && (value.density === 'quiet' || value.density === 'balanced' || value.density === 'volatile')
+    && typeof value.allowOffscreen === 'boolean'
+    && typeof value.allowHidden === 'boolean'
+    && isNonNegativeSafeInteger(value.maxExternalEventsPerTurn);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isPlayTurnStreamEventType(value: string): value is PlayTurnStreamEvent['type'] {
+  return value === 'play.turn.started'
+    || value === 'play.context.ready'
+    || value === 'play.narrative.delta'
+    || value === 'play.narrative.reset'
+    || value === 'play.turn.prepared'
+    || value === 'play.turn.committed'
+    || value === 'play.turn.cancelled'
+    || value === 'play.turn.failed';
+}
+
 async function requestJsonWith<T>(
   fetcher: typeof fetch,
   backendBaseUrl: string,
@@ -948,12 +1438,14 @@ async function requestJsonWith<T>(
   options: {
     method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
     body?: unknown;
+    signal?: AbortSignal;
   },
 ): Promise<T> {
   const response = await fetcher(joinUrl(backendBaseUrl, path), {
     method: options.method ?? 'GET',
     headers: options.body ? { 'content-type': 'application/json' } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
   });
   const data = await parseJsonResponse(response);
 

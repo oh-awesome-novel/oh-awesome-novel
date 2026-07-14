@@ -9,6 +9,7 @@ import {
   addPlayTranscriptTurn,
   createPlayAdoptionCandidate,
   createLegacyPlayTurnArtifacts,
+  createPlayNarrativeStreamFilter,
   createPlaySessionDraft,
   formatPlayWorldRefereePrompt,
   listPlaySessions,
@@ -21,6 +22,41 @@ import {
 } from '@oh-awesome-novel/core';
 
 describe('Play session filesystem slice', () => {
+  it('keeps the settlement fence out of provisional narrative across every chunk boundary', () => {
+    const expected = '雨声压低了站台上的谈话。\n';
+    for (const fence of ['```oan-play-settlement', '```OAN-PLAY-SETTLEMENT']) {
+      const raw = [
+        expected,
+        fence,
+        '\n{"events":[]}\n```',
+      ].join('');
+
+      for (let split = 0; split <= raw.length; split += 1) {
+        const filter = createPlayNarrativeStreamFilter();
+        const narrative = [
+          filter.push(raw.slice(0, split)),
+          filter.push(raw.slice(split)),
+          filter.finish(),
+        ].join('');
+
+        expect(narrative).toBe(expected);
+        expect(filter.settlementStarted).toBe(true);
+      }
+    }
+  });
+
+  it('can reset provisional narrative after an intermediate tool response', () => {
+    const filter = createPlayNarrativeStreamFilter();
+
+    filter.push('I will inspect the source first.');
+    filter.reset();
+
+    expect([
+      filter.push('门外传来脚步声。\n```oan-play-settlement'),
+      filter.finish(),
+    ].join('')).toBe('门外传来脚步声。\n');
+  });
+
   it('normalizes irregular legacy transcript groups to a monotonic artifact chain', () => {
     const artifacts = createLegacyPlayTurnArtifacts({
       transcript: [
