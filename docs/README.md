@@ -26,6 +26,8 @@
 - [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
 - [PLAY_MODE_SPEC.md](PLAY_MODE_SPEC.md): Play Mode / Roleplay Sandbox 的模式边界、session 文件布局和 adoption 边界。
 - [PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md): 将 Play 提升为与 Writing 同层级的顶级工作区，并引入世界时间、外部事件、回合事务和 HUD 的升级计划。
+- [MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md](MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md): MuseAI 的穿书装配、入场设计、场景推进、分层记忆与角色复盘对 Play Mode 的可吸收点分析。
+- [PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md](PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md): 结合 MuseAI 世界入场闭环与 awesome-novel-skill 角色推演沙盘的 Play 引导开局、导演控制、原子推演和写作回流升级计划。
 - [APPLY_ENGINE.md](APPLY_ENGINE.md): SemanticPatch 与 OAN Apply Engine 设计。
 - [HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md): 写入确认、Git diff、commit 和回滚。
 - [NOVEL_CONSTITUTION.md](NOVEL_CONSTITUTION.md): 小说创作宪法规格。
