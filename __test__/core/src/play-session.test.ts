@@ -8,16 +8,52 @@ import {
   addPlayObservation,
   addPlayTranscriptTurn,
   createPlayAdoptionCandidate,
+  createLegacyPlayTurnArtifacts,
   createPlaySessionDraft,
   formatPlayWorldRefereePrompt,
   listPlaySessions,
+  previewPlaySessionMigration,
   readPlaySessionFiles,
   resolvePlaySessionPath,
+  resolvePlayTurnArtifactPath,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
 } from '@oh-awesome-novel/core';
 
 describe('Play session filesystem slice', () => {
+  it('normalizes irregular legacy transcript groups to a monotonic artifact chain', () => {
+    const artifacts = createLegacyPlayTurnArtifacts({
+      transcript: [
+        {
+          id: 'turn-4-user',
+          speaker: 'user',
+          content: 'First.',
+          createdAt: '2026-06-19T00:00:01.000Z',
+        },
+        {
+          id: 'turn-4-referee',
+          speaker: 'world-referee',
+          content: 'Second.',
+          createdAt: '2026-06-19T00:00:02.000Z',
+        },
+        {
+          speaker: 'narrator',
+          content: 'Bridge.',
+          createdAt: '2026-06-19T00:00:03.000Z',
+        },
+        {
+          id: 'turn-2-user',
+          speaker: 'user',
+          content: 'Out of order.',
+          createdAt: '2026-06-19T00:00:04.000Z',
+        },
+      ],
+    });
+
+    expect(artifacts.map((artifact) => artifact.revision)).toEqual([4, 5, 6]);
+    expect(artifacts[1]?.messages[0]?.id).toBe('legacy-turn-0002-message-1');
+  });
+
   it('creates play sessions separate from canonical truth', () => {
     const session = createPlaySessionDraft({
       id: 'play-1',
@@ -39,7 +75,7 @@ describe('Play session filesystem slice', () => {
     });
 
     expect(session).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: 'play-1',
       revision: 0,
       sceneStart: '港口雨夜',
@@ -107,6 +143,7 @@ describe('Play session filesystem slice', () => {
         join('.workspace', 'play-sessions', 'play-write', 'play-local-state.yaml'),
         join('.workspace', 'play-sessions', 'play-write', 'session.yaml'),
         join('.workspace', 'play-sessions', 'play-write', 'transcript.md'),
+        join('.workspace', 'play-sessions', 'play-write', 'turns', 'turn-artifact-1.yaml'),
       ].sort());
       await expect(readFile(paths.find((path) => path.endsWith('transcript.md')) ?? '', 'utf-8'))
         .resolves
@@ -114,6 +151,14 @@ describe('Play session filesystem slice', () => {
       await expect(readFile(paths.find((path) => path.endsWith('adoption-candidates.yaml')) ?? '', 'utf-8'))
         .resolves
         .toContain('requiresPendingAction: true');
+      await expect(readFile(join(
+        workspaceRoot,
+        '.workspace/play-sessions/play-write/session.yaml',
+      ), 'utf-8')).resolves.not.toContain('transcript:');
+      await expect(readFile(join(
+        workspaceRoot,
+        '.workspace/play-sessions/play-write/turns/turn-artifact-1.yaml',
+      ), 'utf-8')).resolves.toContain('她没有立刻回答。');
       await expect(readPlaySessionFiles(workspaceRoot, 'play-write'))
         .resolves
         .toMatchObject({
@@ -130,6 +175,59 @@ describe('Play session filesystem slice', () => {
         .toEqual([
           expect.objectContaining({ id: 'play-write' }),
         ]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('projects transcript.md and in-memory transcript only from the selected turn path', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-projection-'));
+
+    try {
+      const first = addPlayTranscriptTurn(createPlaySessionDraft({
+        id: 'play-projection',
+        title: 'Projection',
+        sceneStart: 'Scene',
+        characters: [],
+      }), {
+        id: 'message-a',
+        speaker: 'narrator',
+        content: 'Selected branch.',
+        createdAt: '2026-06-19T00:00:01.000Z',
+      });
+      const second = addPlayTranscriptTurn(first, {
+        id: 'message-b',
+        speaker: 'narrator',
+        content: 'Unselected branch tail.',
+        createdAt: '2026-06-19T00:00:02.000Z',
+      });
+      second.selectedTurnIds = [first.turnArtifacts[0]?.id ?? ''];
+      second.transcript = [{
+        speaker: 'tampered',
+        content: 'This must never become truth.',
+        createdAt: '2026-06-19T00:00:03.000Z',
+      }];
+
+      await writePlaySessionFiles(workspaceRoot, second);
+      const sessionRoot = join(
+        workspaceRoot,
+        '.workspace/play-sessions/play-projection',
+      );
+      await writeFile(
+        join(sessionRoot, 'transcript.md'),
+        '# Tampered projection\n\nThis file is not a fact source.\n',
+        'utf-8',
+      );
+
+      const restored = await readPlaySessionFiles(workspaceRoot, 'play-projection');
+      expect(restored.transcript).toEqual([
+        expect.objectContaining({ id: 'message-a', content: 'Selected branch.' }),
+      ]);
+      expect(restored.turnArtifacts).toHaveLength(2);
+      expect(restored.selectedTurnIds).toEqual(['turn-artifact-1']);
+      expect(restored.transcript.map((turn) => turn.content)).not.toContain(
+        'This file is not a fact source.',
+      );
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -183,7 +281,7 @@ describe('Play session filesystem slice', () => {
     });
 
     expect(next).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       revision: 1,
       worldClock: {
         turn: 1,
@@ -216,6 +314,24 @@ describe('Play session filesystem slice', () => {
           sourceTurnIds: ['turn-1-user'],
         }),
       }),
+    ]);
+    expect(next.turnArtifacts).toEqual([
+      expect.objectContaining({
+        id: 'legacy-turn-0001',
+        messages: [expect.objectContaining({ id: 'opening' })],
+      }),
+      expect.objectContaining({
+        id: 'turn-artifact-1',
+        parentTurnId: 'legacy-turn-0001',
+        input: { kind: 'wait', raw: '等待并观察。' },
+        eventIds: ['turn-1-event-1'],
+        observationIds: ['obs-1-1'],
+        stateDelta: { stationStatus: 'blocked' },
+      }),
+    ]);
+    expect(next.selectedTurnIds).toEqual([
+      'legacy-turn-0001',
+      'turn-artifact-1',
     ]);
   });
 
@@ -373,7 +489,7 @@ describe('Play session filesystem slice', () => {
     expect(next.suggestedActions).toEqual([]);
   });
 
-  it('reads legacy Play sessions with v2 defaults', async () => {
+  it('previews and preserves a legacy Play session while projecting v3 turn facts', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-legacy-'));
     const sessionRoot = join(workspaceRoot, '.workspace/play-sessions/legacy-play');
 
@@ -385,20 +501,223 @@ describe('Play session filesystem slice', () => {
         'createdAt: 2026-06-19T00:00:00.000Z',
         'sceneStart: Old scene',
         'characters: []',
-        'transcript: []',
+        'customLegacyField: preserve-me',
+        'transcript:',
+        '  - speaker: narrator',
+        '    content: Old opening',
+        '    createdAt: 2026-06-19T00:00:01.000Z',
         '',
       ].join('\n'), 'utf-8');
 
-      await expect(readPlaySessionFiles(workspaceRoot, 'legacy-play'))
+      await expect(previewPlaySessionMigration(workspaceRoot, 'legacy-play'))
         .resolves
         .toMatchObject({
-          schemaVersion: 2,
-          revision: 0,
-          worldClock: { turn: 0, revision: 0 },
-          eventPolicy: { simulationMode: 'reactiveWorld', density: 'balanced' },
-          events: [],
-          suggestedActions: [],
+          fromSchemaVersion: 1,
+          toSchemaVersion: 3,
+          unknownMetadataKeys: ['customLegacyField'],
+          legacyTranscriptCount: 1,
+          projectedTurnCount: 1,
+          generatedTurnIds: ['legacy-turn-0001'],
         });
+
+      const migrated = await readPlaySessionFiles(workspaceRoot, 'legacy-play');
+      expect(migrated).toMatchObject({
+        schemaVersion: 3,
+        revision: 0,
+        metadataExtensions: { customLegacyField: 'preserve-me' },
+        transcript: [expect.objectContaining({ content: 'Old opening' })],
+        turnArtifacts: [expect.objectContaining({ id: 'legacy-turn-0001' })],
+        selectedTurnIds: ['legacy-turn-0001'],
+        worldClock: { turn: 0, revision: 0 },
+        eventPolicy: { simulationMode: 'reactiveWorld', density: 'balanced' },
+        events: [],
+        suggestedActions: [],
+      });
+
+      await writePlaySessionFiles(workspaceRoot, migrated);
+      await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
+        .resolves
+        .toContain('customLegacyField: preserve-me');
+      await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
+        .resolves
+        .not.toContain('transcript:');
+      await expect(readFile(join(
+        sessionRoot,
+        '.migrations/v1-to-v3/original/session.yaml',
+      ), 'utf-8')).resolves.toContain('transcript:');
+      await expect(readFile(join(
+        sessionRoot,
+        '.migrations/v1-to-v3/preview.yaml',
+      ), 'utf-8')).resolves.toContain('customLegacyField');
+      await writePlaySessionFiles(
+        workspaceRoot,
+        await readPlaySessionFiles(workspaceRoot, 'legacy-play'),
+      );
+      await expect(readFile(join(
+        sessionRoot,
+        '.migrations/v1-to-v3/original/session.yaml',
+      ), 'utf-8')).resolves.toContain('transcript:');
+      await expect(previewPlaySessionMigration(workspaceRoot, 'legacy-play'))
+        .resolves
+        .toBeUndefined();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('backs up schema v2 and preserves object-valued top-level metadata', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-v2-migration-'));
+    const sessionRoot = join(workspaceRoot, '.workspace/play-sessions/v2-play');
+
+    try {
+      await mkdir(sessionRoot, { recursive: true });
+      await writeFile(join(sessionRoot, 'session.yaml'), [
+        'schemaVersion: 2',
+        'id: v2-play',
+        'title: V2 Play',
+        'createdAt: 2026-06-19T00:00:00.000Z',
+        'revision: 2',
+        'sceneStart: Old scene',
+        'characters: []',
+        'transcript: []',
+        'extensionPayload:',
+        '  mode: preserve',
+        '  count: 2',
+        '',
+      ].join('\n'), 'utf-8');
+
+      await expect(previewPlaySessionMigration(workspaceRoot, 'v2-play'))
+        .resolves
+        .toMatchObject({
+          fromSchemaVersion: 2,
+          toSchemaVersion: 3,
+          unknownMetadataKeys: ['extensionPayload'],
+        });
+
+      const session = await readPlaySessionFiles(workspaceRoot, 'v2-play');
+      await writePlaySessionFiles(workspaceRoot, session);
+
+      await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
+        .resolves
+        .toContain('mode: preserve');
+      await expect(readFile(join(
+        sessionRoot,
+        '.migrations/v2-to-v3/original/session.yaml',
+      ), 'utf-8')).resolves.toContain('schemaVersion: 2');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('advances beyond legacy turn ids when stored revision metadata is missing', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-legacy-revision-'));
+    const sessionRoot = join(
+      workspaceRoot,
+      '.workspace/play-sessions/legacy-revision',
+    );
+
+    try {
+      await mkdir(sessionRoot, { recursive: true });
+      await writeFile(join(sessionRoot, 'session.yaml'), [
+        'schemaVersion: 2',
+        'id: legacy-revision',
+        'title: Legacy revision',
+        'createdAt: 2026-06-19T00:00:00.000Z',
+        'sceneStart: Old scene',
+        'characters: []',
+        'transcript:',
+        '  - id: turn-1-user',
+        '    speaker: user',
+        '    content: Wait.',
+        '    createdAt: 2026-06-19T00:00:01.000Z',
+        '  - id: turn-1-referee',
+        '    speaker: world-referee',
+        '    content: Time passes.',
+        '    createdAt: 2026-06-19T00:00:02.000Z',
+        '',
+      ].join('\n'), 'utf-8');
+
+      const migrated = await readPlaySessionFiles(workspaceRoot, 'legacy-revision');
+      expect(migrated.revision).toBe(1);
+
+      const next = settlePlayWorldRefereeResponse({
+        session: migrated,
+        userText: 'Look around.',
+        actionKind: 'look',
+        createdAt: '2026-06-19T00:00:03.000Z',
+        refereeResponse: [
+          'Nothing else moves.',
+          '```oan-play-settlement',
+          JSON.stringify({
+            events: [],
+            stateDelta: {},
+            observations: [],
+            suggestedActions: [],
+          }),
+          '```',
+        ].join('\n'),
+      });
+
+      expect(next.revision).toBe(2);
+      expect(next.turnArtifacts.map((artifact) => artifact.revision)).toEqual([1, 2]);
+      expect(next.transcript.map((turn) => turn.id)).toEqual([
+        'turn-1-user',
+        'turn-1-referee',
+        'turn-2-user',
+        'turn-2-referee',
+      ]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('assigns a cross-turn legacy observation to its latest source artifact', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-legacy-observation-'));
+    const sessionRoot = join(
+      workspaceRoot,
+      '.workspace/play-sessions/legacy-observation',
+    );
+
+    try {
+      await mkdir(sessionRoot, { recursive: true });
+      await writeFile(join(sessionRoot, 'session.yaml'), [
+        'schemaVersion: 2',
+        'id: legacy-observation',
+        'title: Legacy observation',
+        'createdAt: 2026-06-19T00:00:00.000Z',
+        'sceneStart: Old scene',
+        'characters: []',
+        'transcript:',
+        '  - { id: turn-1-user, speaker: user, content: First, createdAt: 2026-06-19T00:00:01.000Z }',
+        '  - { id: turn-1-referee, speaker: world-referee, content: One, createdAt: 2026-06-19T00:00:02.000Z }',
+        '  - { id: turn-2-user, speaker: user, content: Second, createdAt: 2026-06-19T00:00:03.000Z }',
+        '  - { id: turn-2-referee, speaker: world-referee, content: Two, createdAt: 2026-06-19T00:00:04.000Z }',
+        '',
+      ].join('\n'), 'utf-8');
+      await writeFile(join(sessionRoot, 'observations.yaml'), [
+        'observations:',
+        '  - id: obs-cross',
+        '    summary: Cross-turn pattern',
+        '    evidence: Both referee turns',
+        '    visibility: playerVisible',
+        '    sourceTurnIds: [turn-1-referee, turn-2-referee]',
+        '    sourceEventIds: []',
+        '    canonical: false',
+        '',
+      ].join('\n'), 'utf-8');
+
+      const session = await readPlaySessionFiles(
+        workspaceRoot,
+        'legacy-observation',
+      );
+
+      expect(session.turnArtifacts.map((artifact) => artifact.observationIds))
+        .toEqual([[], ['obs-cross']]);
+      expect(session.observations[0]?.sourceTurnIds).toEqual([
+        'turn-1-referee',
+        'turn-2-referee',
+      ]);
+      await expect(writePlaySessionFiles(workspaceRoot, session)).resolves.toBeTruthy();
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -428,7 +747,7 @@ describe('Play session filesystem slice', () => {
         .toMatchObject({ id: 'play-recovery', revision: 0 });
       await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
         .resolves
-        .toContain('schemaVersion: 2');
+        .toContain('schemaVersion: 3');
 
       await writeFile(
         join(sessionRoot, 'session.yaml'),
@@ -450,6 +769,233 @@ describe('Play session filesystem slice', () => {
     }
   });
 
+  it('rejects a future turn artifact schema without falling back to transcript.md', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-turn-schema-'));
+
+    try {
+      const session = addPlayTranscriptTurn(createPlaySessionDraft({
+        id: 'play-turn-schema',
+        title: 'Turn schema',
+        sceneStart: 'Scene',
+        characters: [],
+      }), {
+        speaker: 'narrator',
+        content: 'Committed fact.',
+        createdAt: '2026-06-19T00:00:01.000Z',
+      });
+      await writePlaySessionFiles(workspaceRoot, session);
+      const artifactPath = resolvePlayTurnArtifactPath(
+        workspaceRoot,
+        session.id,
+        session.turnArtifacts[0]?.id ?? '',
+      );
+      const stored = await readFile(artifactPath, 'utf-8');
+      await writeFile(
+        artifactPath,
+        stored.replace('schemaVersion: 1', 'schemaVersion: 999'),
+        'utf-8',
+      );
+
+      await expect(readPlaySessionFiles(workspaceRoot, session.id))
+        .rejects
+        .toThrow('Unsupported Play turn artifact schemaVersion');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate artifacts and a selected path that skips its parent', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-turn-integrity-'));
+
+    try {
+      const first = addPlayTranscriptTurn(createPlaySessionDraft({
+        id: 'play-turn-integrity',
+        title: 'Turn integrity',
+        sceneStart: 'Scene',
+        characters: [],
+      }), {
+        id: 'message-1',
+        speaker: 'narrator',
+        content: 'First.',
+        createdAt: '2026-06-19T00:00:01.000Z',
+      });
+      const second = addPlayTranscriptTurn(first, {
+        id: 'message-2',
+        speaker: 'narrator',
+        content: 'Second.',
+        createdAt: '2026-06-19T00:00:02.000Z',
+      });
+      second.selectedTurnIds = [second.turnArtifacts[1]?.id ?? ''];
+
+      await expect(writePlaySessionFiles(workspaceRoot, second))
+        .rejects
+        .toThrow('breaks parent chain');
+
+      second.selectedTurnIds = second.turnArtifacts.map((artifact) => artifact.id);
+      second.turnArtifacts[1]!.revision = second.turnArtifacts[0]!.revision;
+      await expect(writePlaySessionFiles(workspaceRoot, second))
+        .rejects
+        .toThrow('must advance its parent revision');
+
+      first.turnArtifacts.push({ ...first.turnArtifacts[0]! });
+      await expect(writePlaySessionFiles(workspaceRoot, first))
+        .rejects
+        .toThrow('duplicate id');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects missing ledger references before staging turn facts', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-ledger-refs-'));
+
+    try {
+      const session = settlePlayWorldRefereeResponse({
+        session: createPlaySessionDraft({
+          id: 'play-ledger-refs',
+          title: 'Ledger refs',
+          sceneStart: 'Scene',
+          characters: [],
+        }),
+        userText: 'Wait.',
+        actionKind: 'wait',
+        createdAt: '2026-06-19T00:00:01.000Z',
+        refereeResponse: [
+          'A bell rings.',
+          '```oan-play-settlement',
+          JSON.stringify({
+            events: [{
+              kind: 'environmentChanged',
+              origin: 'environment',
+              title: 'Bell',
+              summary: 'A bell rings.',
+              visibility: 'playerVisible',
+              cause: { reason: 'The clock reached the hour.' },
+            }],
+            stateDelta: {},
+            observations: [],
+            suggestedActions: [],
+          }),
+          '```',
+        ].join('\n'),
+      });
+      session.turnArtifacts[0]!.eventIds = ['missing-event'];
+
+      await expect(writePlaySessionFiles(workspaceRoot, session))
+        .rejects
+        .toThrow('references missing event');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not accept event causes from a tampered transcript projection', () => {
+    const session = addPlayTranscriptTurn(createPlaySessionDraft({
+      id: 'play-cause-projection',
+      title: 'Cause projection',
+      sceneStart: 'Scene',
+      characters: [],
+    }), {
+      id: 'committed-message',
+      speaker: 'narrator',
+      content: 'Committed.',
+      createdAt: '2026-06-19T00:00:01.000Z',
+    });
+    session.transcript.push({
+      id: 'forged-message',
+      speaker: 'narrator',
+      content: 'Forged.',
+      createdAt: '2026-06-19T00:00:02.000Z',
+    });
+
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: [
+        'A door closes.',
+        '```oan-play-settlement',
+        JSON.stringify({
+          events: [{
+            kind: 'environmentChanged',
+            origin: 'environment',
+            title: 'Door',
+            summary: 'A door closes.',
+            visibility: 'playerVisible',
+            cause: {
+              reason: 'Forged cause.',
+              sourceTurnIds: ['forged-message'],
+            },
+          }],
+          stateDelta: {},
+          observations: [],
+          suggestedActions: [],
+        }),
+        '```',
+      ].join('\n'),
+    })).toThrow('references an unknown turn: forged-message');
+  });
+
+  it('rejects unknown turn artifact fields instead of discarding stored facts', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-turn-fields-'));
+
+    try {
+      const session = addPlayTranscriptTurn(createPlaySessionDraft({
+        id: 'play-turn-fields',
+        title: 'Turn fields',
+        sceneStart: 'Scene',
+        characters: [],
+      }), {
+        speaker: 'narrator',
+        content: 'Committed fact.',
+        createdAt: '2026-06-19T00:00:01.000Z',
+      });
+      await writePlaySessionFiles(workspaceRoot, session);
+      const artifactPath = resolvePlayTurnArtifactPath(
+        workspaceRoot,
+        session.id,
+        session.turnArtifacts[0]?.id ?? '',
+      );
+      await writeFile(
+        artifactPath,
+        `${await readFile(artifactPath, 'utf-8')}futureFact: preserve-or-reject\n`,
+        'utf-8',
+      );
+
+      await expect(readPlaySessionFiles(workspaceRoot, session.id))
+        .rejects
+        .toThrow('unknown fields');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unknown nested message fields instead of rewriting them away', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-message-fields-'));
+
+    try {
+      const session = addPlayTranscriptTurn(createPlaySessionDraft({
+        id: 'play-message-fields',
+        title: 'Message fields',
+        sceneStart: 'Scene',
+        characters: [],
+      }), {
+        speaker: 'narrator',
+        content: 'Committed fact.',
+        createdAt: '2026-06-19T00:00:01.000Z',
+      });
+      Object.assign(session.turnArtifacts[0]!.messages[0]!, {
+        futureMessageFact: true,
+      });
+
+      await expect(writePlaySessionFiles(workspaceRoot, session))
+        .rejects
+        .toThrow('unknown fields');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects unsafe play session ids', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-safe-'));
 
@@ -465,6 +1011,9 @@ describe('Play session filesystem slice', () => {
           characters: [],
         }),
       ).toThrow('Invalid Play session id');
+      expect(() =>
+        resolvePlayTurnArtifactPath(workspaceRoot, 'safe-session', '../turn'),
+      ).toThrow('Invalid Play turn artifact id');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

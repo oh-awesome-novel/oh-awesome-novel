@@ -1,10 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { access, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
 
 import type { ContextBudgetLayer, SemanticBoundary } from './agent-context-package.js';
+import {
+  PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+  assertSafePlayTurnArtifactId,
+  createLegacyPlayTurnArtifacts,
+  createPlayTurnArtifactId,
+  normalizePlayTurnArtifact,
+  projectPlayTranscript,
+  selectDefaultPlayTurnPath,
+} from './play-turn-artifact.js';
+import type { PlayTurnArtifact } from './play-turn-artifact.js';
 
 export const PLAY_SESSION_FILES = [
   'session.yaml',
@@ -16,7 +26,8 @@ export const PLAY_SESSION_FILES = [
   'adoption-candidates.yaml',
 ] as const;
 
-export const PLAY_SESSION_SCHEMA_VERSION = 2 as const;
+export const PLAY_SESSION_SCHEMA_VERSION = 3 as const;
+export const PLAY_TURNS_DIRECTORY = 'turns' as const;
 
 export type PlaySessionFile = typeof PLAY_SESSION_FILES[number];
 
@@ -188,6 +199,9 @@ export interface PlaySession {
   sceneStart: string;
   characters: string[];
   transcript: PlayTranscriptTurn[];
+  turnArtifacts: PlayTurnArtifact[];
+  selectedTurnIds: string[];
+  metadataExtensions: Record<string, unknown>;
   playLocalState: Record<string, unknown>;
   playLocalStateVisibility: Record<string, PlayEventVisibility>;
   worldClock: PlayWorldClock;
@@ -197,6 +211,17 @@ export interface PlaySession {
   activatedSources: PlayActivatedSource[];
   observations: PlayObservation[];
   adoptionCandidates: PlayAdoptionCandidate[];
+}
+
+export interface PlaySessionMigrationPreview {
+  sessionId: string;
+  fromSchemaVersion: 1 | 2;
+  toSchemaVersion: typeof PLAY_SESSION_SCHEMA_VERSION;
+  unknownMetadataKeys: string[];
+  legacyTranscriptCount: number;
+  projectedTurnCount: number;
+  generatedTurnIds: string[];
+  backupRelativePath: string;
 }
 
 export interface CreatePlaySessionInput {
@@ -222,6 +247,9 @@ export const createPlaySessionDraft = (
   sceneStart: input.sceneStart,
   characters: [...input.characters],
   transcript: [],
+  turnArtifacts: [],
+  selectedTurnIds: [],
+  metadataExtensions: {},
   playLocalState: {},
   playLocalStateVisibility: {},
   worldClock: createDefaultPlayWorldClock(),
@@ -283,20 +311,71 @@ export const resolvePlaySessionPath = (
   return filePath;
 };
 
+export const resolvePlayTurnArtifactPath = (
+  workspaceRoot: string,
+  sessionId: string,
+  artifactId: string,
+): string => {
+  assertSafePlaySessionId(sessionId);
+  const safeArtifactId = assertSafePlayTurnArtifactId(artifactId);
+  const sessionRoot = dirname(resolvePlaySessionPath(
+    workspaceRoot,
+    sessionId,
+    'session.yaml',
+  ));
+  const artifactPath = resolve(
+    sessionRoot,
+    PLAY_TURNS_DIRECTORY,
+    `${safeArtifactId}.yaml`,
+  );
+  const artifactRelativePath = relative(sessionRoot, artifactPath);
+
+  if (
+    artifactRelativePath.startsWith('..') ||
+    artifactRelativePath === '' ||
+    artifactRelativePath.includes(`..${sep}`)
+  ) {
+    throw new Error('Play turn artifact path must stay inside session.');
+  }
+
+  return artifactPath;
+};
+
 export const writePlaySessionFiles = async (
   workspaceRoot: string,
   session: PlaySession,
 ): Promise<string[]> => {
   await recoverPlaySessionDirectory(workspaceRoot, session.id);
 
-  const files: Array<[PlaySessionFile, string]> = [
-    ['session.yaml', stringify(formatSessionMetadata(session))],
-    ['transcript.md', formatTranscript(session)],
-    ['play-local-state.yaml', stringify(session.playLocalState)],
-    ['activated-sources.yaml', stringify({ activatedSources: session.activatedSources })],
-    ['events.yaml', stringify({ events: session.events })],
-    ['observations.yaml', stringify({ observations: session.observations })],
-    ['adoption-candidates.yaml', stringify({ adoptionCandidates: session.adoptionCandidates })],
+  const normalizedFacts = materializePlayTurnFacts(session);
+  const revision = resolvePlaySessionRevision(session, normalizedFacts.turnArtifacts);
+  const sessionForWrite: PlaySession = {
+    ...session,
+    revision,
+    transcript: normalizedFacts.transcript,
+    turnArtifacts: normalizedFacts.turnArtifacts,
+    selectedTurnIds: normalizedFacts.selectedTurnIds,
+    worldClock: {
+      ...session.worldClock,
+      revision,
+    },
+  };
+  const files: Array<[string, string]> = [
+    ['session.yaml', stringify(formatSessionMetadata(sessionForWrite))],
+    ['transcript.md', formatTranscript(sessionForWrite)],
+    ['play-local-state.yaml', stringify(sessionForWrite.playLocalState)],
+    ['activated-sources.yaml', stringify({
+      activatedSources: sessionForWrite.activatedSources,
+    })],
+    ['events.yaml', stringify({ events: sessionForWrite.events })],
+    ['observations.yaml', stringify({ observations: sessionForWrite.observations })],
+    ['adoption-candidates.yaml', stringify({
+      adoptionCandidates: sessionForWrite.adoptionCandidates,
+    })],
+    ...sessionForWrite.turnArtifacts.map((artifact) => [
+      join(PLAY_TURNS_DIRECTORY, `${assertSafePlayTurnArtifactId(artifact.id)}.yaml`),
+      stringify(artifact),
+    ] as [string, string]),
   ];
   const sessionsRoot = resolvePlaySessionsRoot(workspaceRoot);
   const sessionRoot = dirname(resolvePlaySessionPath(
@@ -307,19 +386,29 @@ export const writePlaySessionFiles = async (
   const transactionId = `${Date.now()}-${randomUUID()}`;
   const stageRoot = join(sessionsRoot, `.${session.id}.stage.${transactionId}`);
   const backupRoot = join(sessionsRoot, `.${session.id}.backup.${transactionId}`);
+  const migrationPreview = await readStoredPlaySessionMigrationPreview(sessionRoot);
 
   await mkdir(sessionsRoot, { recursive: true });
   await mkdir(stageRoot, { recursive: false });
 
   try {
+    await copyPlaySessionMigrationHistory(sessionRoot, stageRoot);
+    if (migrationPreview) {
+      await writePlaySessionMigrationBackup({
+        sessionRoot,
+        stageRoot,
+        preview: migrationPreview,
+      });
+    }
     await Promise.all(files.map(async ([file, content]) => {
+      await mkdir(dirname(join(stageRoot, file)), { recursive: true });
       await writeFile(
         join(stageRoot, file),
         content.endsWith('\n') ? content : `${content}\n`,
         'utf-8',
       );
     }));
-    await writeFile(join(stageRoot, '.ready'), `${session.revision}\n`, 'utf-8');
+    await writeFile(join(stageRoot, '.ready'), `${sessionForWrite.revision}\n`, 'utf-8');
   } catch (error) {
     await rm(stageRoot, { recursive: true, force: true });
     throw error;
@@ -353,7 +442,7 @@ export const writePlaySessionFiles = async (
       : Promise.resolve(),
   ]);
 
-  return files.map(([file]) => resolvePlaySessionPath(workspaceRoot, session.id, file));
+  return files.map(([file]) => join(sessionRoot, file));
 };
 
 export const readPlaySessionFiles = async (
@@ -362,7 +451,7 @@ export const readPlaySessionFiles = async (
 ): Promise<PlaySession> => {
   await recoverPlaySessionDirectory(workspaceRoot, sessionId);
 
-  const metadata = await readPlayYaml<{
+  const metadata = await readPlayYaml<Record<string, unknown> & {
     schemaVersion?: number;
     id: string;
     title: string;
@@ -376,8 +465,12 @@ export const readPlaySessionFiles = async (
     eventPolicy?: Partial<PlayEventPolicy>;
     suggestedActions?: string[];
     playLocalStateVisibility?: Record<string, PlayEventVisibility>;
+    selectedTurnIds?: string[];
   }>(workspaceRoot, sessionId, 'session.yaml');
   assertSupportedPlaySessionSchemaVersion(metadata.schemaVersion);
+  const sourceSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
+    metadata.schemaVersion,
+  );
   if (metadata.id !== sessionId) {
     throw new Error(`Play session metadata id mismatch: expected ${sessionId}.`);
   }
@@ -411,17 +504,43 @@ export const readPlaySessionFiles = async (
     'adoption-candidates.yaml',
     {},
   );
+  const normalizedEvents = (events.events ?? []).map(assertPlayWorldEvent);
+  const normalizedObservations = (observations.observations ?? []).map(assertPlayObservation);
+  const turnArtifacts = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+    ? await readPlayTurnArtifacts(workspaceRoot, sessionId)
+    : createLegacyPlayTurnArtifacts({
+        transcript: metadata.transcript ?? [],
+        events: normalizedEvents,
+        observations: normalizedObservations,
+      });
+  const selectedTurnIds = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+    ? normalizeSelectedTurnIds(metadata.selectedTurnIds, turnArtifacts)
+    : turnArtifacts.map((artifact) => artifact.id);
+  const validatedFacts = validatePlayTurnFacts({
+    turnArtifacts,
+    selectedTurnIds,
+    events: normalizedEvents,
+    observations: normalizedObservations,
+  });
+  const transcript = validatedFacts.transcript;
+  const revision = Math.max(
+    normalizeNonNegativeInteger(metadata.revision ?? metadata.worldClock?.revision),
+    ...turnArtifacts.map((artifact) => artifact.revision),
+  );
 
   return {
     schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
     id: assertSafePlaySessionId(metadata.id),
     title: metadata.title,
     createdAt: metadata.createdAt,
-    revision: normalizeNonNegativeInteger(metadata.revision ?? metadata.worldClock?.revision),
+    revision,
     userPersona: metadata.userPersona,
     sceneStart: metadata.sceneStart,
     characters: metadata.characters ?? [],
-    transcript: metadata.transcript ?? [],
+    transcript,
+    turnArtifacts,
+    selectedTurnIds,
+    metadataExtensions: readPlaySessionMetadataExtensions(metadata),
     playLocalState,
     playLocalStateVisibility: normalizePlayLocalStateVisibility(
       playLocalState,
@@ -429,16 +548,29 @@ export const readPlaySessionFiles = async (
     ),
     worldClock: normalizePlayWorldClock(
       metadata.worldClock,
-      metadata.revision ?? metadata.worldClock?.revision,
+      revision,
     ),
     eventPolicy: normalizePlayEventPolicy(metadata.eventPolicy),
-    events: (events.events ?? []).map(assertPlayWorldEvent),
+    events: normalizedEvents,
     suggestedActions: normalizeStringList(metadata.suggestedActions, 6),
     activatedSources: (activatedSources.activatedSources ?? []).map(assertActivatedSource),
-    observations: (observations.observations ?? []).map(assertPlayObservation),
+    observations: normalizedObservations,
     adoptionCandidates: (adoptionCandidates.adoptionCandidates ?? [])
       .map(assertPlayAdoptionCandidate),
   };
+};
+
+export const previewPlaySessionMigration = async (
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<PlaySessionMigrationPreview | undefined> => {
+  await recoverPlaySessionDirectory(workspaceRoot, sessionId);
+  const sessionRoot = dirname(resolvePlaySessionPath(
+    workspaceRoot,
+    sessionId,
+    'session.yaml',
+  ));
+  return readStoredPlaySessionMigrationPreview(sessionRoot);
 };
 
 export const listPlaySessions = async (
@@ -467,58 +599,65 @@ export const listPlaySessions = async (
   }
 };
 
-export const formatPlayWorldRefereePrompt = (session: PlaySession): string => [
-  '# Play Mode World Referee',
-  '',
-  'Run a roleplay sandbox turn inside the OAN novel world.',
-  'Use one world referee with character voice/state modules; do not spawn a multi-agent runtime.',
-  'Play-local state and transcript are not canonical truth.',
-  'The world is not inert: resolve consequences that follow from time, prior events, NPC intent, and world rules.',
-  'Every external event requires a concise causal reason. Do not invent unrelated drama.',
-  'Do not call canonical write tools. Return Play-local narrative and settlement only.',
-  '',
-  `Session: ${session.id}`,
-  `Scene start: ${session.sceneStart}`,
-  `User persona: ${session.userPersona ?? 'unspecified'}`,
-  `Characters: ${session.characters.join(', ') || 'none'}`,
-  `Revision: ${session.revision}`,
-  `World clock: turn ${session.worldClock.turn}; anchor ${session.worldClock.anchor ?? 'unspecified'}; last elapsed ${session.worldClock.elapsed ?? 'none'}`,
-  `World activity: ${session.eventPolicy.simulationMode}/${session.eventPolicy.density}; max external events ${session.eventPolicy.maxExternalEventsPerTurn}`,
-  '',
-  'Current Play-local state:',
-  formatPromptJson(session.playLocalState),
-  '',
-  'Recent committed transcript:',
-  ...(session.transcript.length
-    ? session.transcript.slice(-20).map((turn) =>
-        `- [${turn.id ?? turn.createdAt}] ${turn.speaker}${turn.actionKind ? `/${turn.actionKind}` : ''}: ${turn.content}`,
-      )
-    : ['- none']),
-  '',
-  'Recent world events (referee knowledge; respect visibility in player-facing prose):',
-  ...(session.events.length
-    ? session.events.slice(-12).map((event) =>
-        `- ${event.id} [${event.visibility}/${event.kind}] ${event.summary}; cause: ${event.cause.reason}`,
-      )
-    : ['- none']),
-  '',
-  'Activated sources:',
-  ...(
-    session.activatedSources.length
-      ? session.activatedSources.map((source) =>
-          `- ${source.sourceId} [${source.trust}/${source.budgetLayer}/${source.semanticBoundary}]: ${source.reason}`,
+export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
+  const facts = materializePlayTurnFacts(session);
+  const selectedEvents = session.events.filter((event) =>
+    facts.selectedEventIds.has(event.id));
+  const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
+
+  return [
+    '# Play Mode World Referee',
+    '',
+    'Run a roleplay sandbox turn inside the OAN novel world.',
+    'Use one world referee with character voice/state modules; do not spawn a multi-agent runtime.',
+    'Play-local state and transcript are not canonical truth.',
+    'The world is not inert: resolve consequences that follow from time, prior events, NPC intent, and world rules.',
+    'Every external event requires a concise causal reason. Do not invent unrelated drama.',
+    'Do not call canonical write tools. Return Play-local narrative and settlement only.',
+    '',
+    `Session: ${session.id}`,
+    `Scene start: ${session.sceneStart}`,
+    `User persona: ${session.userPersona ?? 'unspecified'}`,
+    `Characters: ${session.characters.join(', ') || 'none'}`,
+    `Revision: ${revision}`,
+    `World clock: turn ${session.worldClock.turn}; anchor ${session.worldClock.anchor ?? 'unspecified'}; last elapsed ${session.worldClock.elapsed ?? 'none'}`,
+    `World activity: ${session.eventPolicy.simulationMode}/${session.eventPolicy.density}; max external events ${session.eventPolicy.maxExternalEventsPerTurn}`,
+    '',
+    'Current Play-local state:',
+    formatPromptJson(session.playLocalState),
+    '',
+    'Recent committed transcript:',
+    ...(facts.transcript.length
+      ? facts.transcript.slice(-20).map((turn) =>
+          `- [${turn.id ?? turn.createdAt}] ${turn.speaker}${turn.actionKind ? `/${turn.actionKind}` : ''}: ${turn.content}`,
         )
-      : ['- none']
-  ),
-  '',
-  'Output protocol:',
-  '1. Write only the player-visible narrative first. Never leak playerUnknown events.',
-  '2. End with exactly one fenced `oan-play-settlement` JSON object.',
-  '3. The JSON fields are: elapsed, worldTimeAnchor, events, stateDelta, observations, suggestedActions.',
-  '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason }.',
-  '5. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
-  '6. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
-].join('\n');
+      : ['- none']),
+    '',
+    'Recent world events (referee knowledge; respect visibility in player-facing prose):',
+    ...(selectedEvents.length
+      ? selectedEvents.slice(-12).map((event) =>
+          `- ${event.id} [${event.visibility}/${event.kind}] ${event.summary}; cause: ${event.cause.reason}`,
+        )
+      : ['- none']),
+    '',
+    'Activated sources:',
+    ...(
+      session.activatedSources.length
+        ? session.activatedSources.map((source) =>
+            `- ${source.sourceId} [${source.trust}/${source.budgetLayer}/${source.semanticBoundary}]: ${source.reason}`,
+          )
+        : ['- none']
+    ),
+    '',
+    'Output protocol:',
+    '1. Write only the player-visible narrative first. Never leak playerUnknown events.',
+    '2. End with exactly one fenced `oan-play-settlement` JSON object.',
+    '3. The JSON fields are: elapsed, worldTimeAnchor, events, stateDelta, observations, suggestedActions.',
+    '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason }.',
+    '5. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
+    '6. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
+  ].join('\n');
+};
 
 export const parsePlayWorldRefereeResponse = (
   response: string,
@@ -567,13 +706,17 @@ export const settlePlayWorldRefereeResponse = (
 
   const parsed = parsePlayWorldRefereeResponse(input.refereeResponse);
   const createdAt = input.createdAt ?? new Date().toISOString();
-  const revision = input.session.revision + 1;
+  const existingFacts = materializePlayTurnFacts(input.session);
+  const revision = resolvePlaySessionRevision(
+    input.session,
+    existingFacts.turnArtifacts,
+  ) + 1;
   const turnId = `turn-${revision}`;
   const userTurnId = `${turnId}-user`;
   const refereeTurnId = `${turnId}-referee`;
   assertSettlementMatchesEventPolicy(input.session, parsed.settlement);
   assertSettlementCauseReferences(
-    input.session,
+    existingFacts,
     parsed.settlement,
     userTurnId,
   );
@@ -629,26 +772,55 @@ export const settlePlayWorldRefereeResponse = (
     playLocalStateVisibility[key] = settlementVisibility;
   }
 
+  const messages: PlayTranscriptTurn[] = [
+    {
+      id: userTurnId,
+      speaker: 'user',
+      content: userText,
+      createdAt,
+      actionKind: input.actionKind,
+    },
+    {
+      id: refereeTurnId,
+      speaker: 'world-referee',
+      content: parsed.narrative,
+      createdAt,
+    },
+  ];
+  const artifactId = createPlayTurnArtifactId(
+    revision,
+    existingFacts.turnArtifacts.map((artifact) => artifact.id),
+  );
+  const parentTurnId = existingFacts.selectedTurnIds.at(-1);
+  const artifact: PlayTurnArtifact = {
+    schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    id: artifactId,
+    revision,
+    ...(parentTurnId ? { parentTurnId } : {}),
+    input: {
+      kind: input.actionKind,
+      raw: userText,
+    },
+    messages,
+    worldClock: { ...worldClock },
+    eventIds: events.map((event) => event.id),
+    observationIds: observations.map((observation) => observation.id),
+    stateDelta: { ...parsed.settlement.stateDelta },
+    suggestedActions: [...parsed.settlement.suggestedActions],
+    committedAt: createdAt,
+    canonical: false,
+  };
+  const turnArtifacts = [...existingFacts.turnArtifacts, artifact];
+  const selectedTurnIds = [...existingFacts.selectedTurnIds, artifact.id];
+
   return {
     ...input.session,
     schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
     revision,
-    transcript: [
-      ...input.session.transcript,
-      {
-        id: userTurnId,
-        speaker: 'user',
-        content: userText,
-        createdAt,
-        actionKind: input.actionKind,
-      },
-      {
-        id: refereeTurnId,
-        speaker: 'world-referee',
-        content: parsed.narrative,
-        createdAt,
-      },
-    ],
+    transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
+    turnArtifacts,
+    selectedTurnIds,
+    metadataExtensions: { ...(input.session.metadataExtensions ?? {}) },
     playLocalState: {
       ...input.session.playLocalState,
       ...parsed.settlement.stateDelta,
@@ -667,10 +839,37 @@ export const addPlayTranscriptTurn = (
   session: PlaySession,
   turn: PlayTranscriptTurn,
 ): PlaySession => {
-  const next = advancePlaySessionRevision(session);
+  const existingFacts = materializePlayTurnFacts(session);
+  const next = advancePlaySessionRevision(session, existingFacts.turnArtifacts);
+  const artifactId = createPlayTurnArtifactId(
+    next.revision,
+    existingFacts.turnArtifacts.map((artifact) => artifact.id),
+  );
+  const parentTurnId = existingFacts.selectedTurnIds.at(-1);
+  const artifact: PlayTurnArtifact = {
+    schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    id: artifactId,
+    revision: next.revision,
+    ...(parentTurnId ? { parentTurnId } : {}),
+    messages: [{
+      ...turn,
+      id: turn.id ?? `${artifactId}-message-1`,
+    }],
+    eventIds: [],
+    observationIds: [],
+    stateDelta: {},
+    suggestedActions: [],
+    committedAt: turn.createdAt,
+    canonical: false,
+  };
+  const turnArtifacts = [...existingFacts.turnArtifacts, artifact];
+  const selectedTurnIds = [...existingFacts.selectedTurnIds, artifact.id];
   return {
     ...next,
-    transcript: [...session.transcript, turn],
+    transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
+    turnArtifacts,
+    selectedTurnIds,
+    metadataExtensions: { ...(session.metadataExtensions ?? {}) },
   };
 };
 
@@ -717,6 +916,7 @@ function formatTranscript(session: PlaySession): string {
 
 function formatSessionMetadata(session: PlaySession): Record<string, unknown> {
   return {
+    ...session.metadataExtensions,
     schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
     id: session.id,
     title: session.title,
@@ -725,7 +925,7 @@ function formatSessionMetadata(session: PlaySession): Record<string, unknown> {
     userPersona: session.userPersona,
     sceneStart: session.sceneStart,
     characters: session.characters,
-    transcript: session.transcript,
+    selectedTurnIds: session.selectedTurnIds,
     playLocalStateVisibility: session.playLocalStateVisibility,
     worldClock: session.worldClock,
     eventPolicy: session.eventPolicy,
@@ -749,6 +949,431 @@ async function readPlayYaml<T>(
     }
 
     throw error;
+  }
+}
+
+async function readPlayTurnArtifacts(
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<PlayTurnArtifact[]> {
+  const sessionRoot = dirname(resolvePlaySessionPath(
+    workspaceRoot,
+    sessionId,
+    'session.yaml',
+  ));
+  const turnsRoot = join(sessionRoot, PLAY_TURNS_DIRECTORY);
+  let entries: Dirent[];
+
+  try {
+    entries = await readdir(turnsRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const artifacts = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.yaml'))
+      .map(async (entry) => {
+        const artifactId = assertSafePlayTurnArtifactId(entry.name.slice(0, -5));
+        const artifact = normalizePlayTurnArtifact(
+          parse(await readFile(join(turnsRoot, entry.name), 'utf-8')),
+        );
+        if (artifact.id !== artifactId) {
+          throw new Error(
+            `Play turn artifact id mismatch: expected ${artifactId}, found ${artifact.id}.`,
+          );
+        }
+        return artifact;
+      }),
+  );
+
+  return artifacts.toSorted((left, right) =>
+    left.revision - right.revision || left.committedAt.localeCompare(right.committedAt),
+  );
+}
+
+function materializePlayTurnFacts(session: PlaySession): {
+  transcript: PlayTranscriptTurn[];
+  turnArtifacts: PlayTurnArtifact[];
+  selectedTurnIds: string[];
+  selectedMessageIds: Set<string>;
+  selectedEventIds: Set<string>;
+  selectedObservationIds: Set<string>;
+} {
+  const storedArtifacts = Array.isArray(session.turnArtifacts)
+    ? session.turnArtifacts.map(normalizePlayTurnArtifact)
+    : [];
+  const usesStoredArtifacts = storedArtifacts.length > 0;
+  const turnArtifacts = usesStoredArtifacts
+    ? storedArtifacts
+    : createLegacyPlayTurnArtifacts({
+        transcript: session.transcript ?? [],
+        events: session.events,
+        observations: session.observations,
+      });
+  const selectedTurnIds = usesStoredArtifacts && Array.isArray(session.selectedTurnIds)
+    ? session.selectedTurnIds.map(assertSafePlayTurnArtifactId)
+    : selectDefaultPlayTurnPath(turnArtifacts);
+
+  const validated = validatePlayTurnFacts({
+    turnArtifacts,
+    selectedTurnIds,
+    events: session.events,
+    observations: session.observations,
+  });
+
+  return {
+    ...validated,
+    turnArtifacts,
+    selectedTurnIds,
+  };
+}
+
+interface ValidatePlayTurnFactsInput {
+  turnArtifacts: PlayTurnArtifact[];
+  selectedTurnIds: string[];
+  events: PlayWorldEvent[];
+  observations: PlayObservation[];
+}
+
+interface ValidatedPlayTurnFacts {
+  transcript: PlayTranscriptTurn[];
+  selectedMessageIds: Set<string>;
+  selectedEventIds: Set<string>;
+  selectedObservationIds: Set<string>;
+}
+
+function validatePlayTurnFacts(
+  input: ValidatePlayTurnFactsInput,
+): ValidatedPlayTurnFacts {
+  if (input.turnArtifacts.length && !input.selectedTurnIds.length) {
+    throw new Error('Play turn artifacts require a selected root-to-head path.');
+  }
+  const transcript = projectPlayTranscript(
+    input.turnArtifacts,
+    input.selectedTurnIds,
+  );
+  const artifactsById = new Map(
+    input.turnArtifacts.map((artifact) => [artifact.id, artifact]),
+  );
+  const messagesById = new Map<string, PlayTranscriptTurn>();
+  for (const artifact of input.turnArtifacts) {
+    for (const message of artifact.messages) {
+      if (!message.id) {
+        throw new Error(`Play turn artifact ${artifact.id} contains a message without id.`);
+      }
+      if (messagesById.has(message.id)) {
+        throw new Error(`Play turn artifacts contain duplicate message id: ${message.id}.`);
+      }
+      messagesById.set(message.id, message);
+    }
+  }
+
+  const eventsById = indexUniquePlayFacts(input.events, 'event');
+  const observationsById = indexUniquePlayFacts(input.observations, 'observation');
+  const eventOwners = new Map<string, string>();
+  const observationOwners = new Map<string, string>();
+
+  for (const event of input.events) {
+    if (!messagesById.has(event.turnId)) {
+      throw new Error(`Play event ${event.id} references unknown turn: ${event.turnId}.`);
+    }
+    assertKnownPlayFactReferences(
+      `Play event ${event.id}`,
+      event.cause.sourceTurnIds ?? [],
+      event.cause.sourceEventIds ?? [],
+      messagesById,
+      eventsById,
+    );
+  }
+  for (const observation of input.observations) {
+    assertKnownPlayFactReferences(
+      `Play observation ${observation.id}`,
+      observation.sourceTurnIds,
+      observation.sourceEventIds,
+      messagesById,
+      eventsById,
+    );
+  }
+
+  for (const artifact of input.turnArtifacts) {
+    const ownMessageIds = new Set(artifact.messages.map((message) => message.id!));
+    const allowedArtifactIds: string[] = [];
+    let current: PlayTurnArtifact | undefined = artifact;
+    while (current) {
+      allowedArtifactIds.push(current.id);
+      current = current.parentTurnId
+        ? artifactsById.get(current.parentTurnId)
+        : undefined;
+    }
+    const allowedMessageIds = new Set(
+      allowedArtifactIds.flatMap((artifactId) =>
+        artifactsById.get(artifactId)!.messages.map((message) => message.id!)),
+    );
+    const allowedEventIds = new Set(
+      allowedArtifactIds.flatMap((artifactId) =>
+        artifactsById.get(artifactId)!.eventIds),
+    );
+
+    for (const eventId of artifact.eventIds) {
+      const event = eventsById.get(eventId);
+      if (!event) {
+        throw new Error(`Play turn artifact ${artifact.id} references missing event: ${eventId}.`);
+      }
+      const existingOwner = eventOwners.get(eventId);
+      if (existingOwner) {
+        throw new Error(
+          `Play event ${eventId} belongs to multiple artifacts: ${existingOwner}, ${artifact.id}.`,
+        );
+      }
+      eventOwners.set(eventId, artifact.id);
+      if (!ownMessageIds.has(event.turnId)) {
+        throw new Error(
+          `Play event ${eventId} turnId does not belong to artifact ${artifact.id}.`,
+        );
+      }
+      assertScopedPlayFactReferences(
+        `Play event ${eventId}`,
+        event.cause.sourceTurnIds ?? [],
+        event.cause.sourceEventIds ?? [],
+        allowedMessageIds,
+        allowedEventIds,
+      );
+    }
+
+    for (const observationId of artifact.observationIds) {
+      const observation = observationsById.get(observationId);
+      if (!observation) {
+        throw new Error(
+          `Play turn artifact ${artifact.id} references missing observation: ${observationId}.`,
+        );
+      }
+      const existingOwner = observationOwners.get(observationId);
+      if (existingOwner) {
+        throw new Error(
+          `Play observation ${observationId} belongs to multiple artifacts: ${existingOwner}, ${artifact.id}.`,
+        );
+      }
+      observationOwners.set(observationId, artifact.id);
+      assertScopedPlayFactReferences(
+        `Play observation ${observationId}`,
+        observation.sourceTurnIds,
+        observation.sourceEventIds,
+        allowedMessageIds,
+        allowedEventIds,
+      );
+    }
+  }
+
+  for (const event of input.events) {
+    if (!eventOwners.has(event.id)) {
+      throw new Error(`Play event ${event.id} is not owned by a turn artifact.`);
+    }
+  }
+
+  const selectedArtifacts = input.selectedTurnIds.map((id) => artifactsById.get(id)!);
+  return {
+    transcript,
+    selectedMessageIds: new Set(
+      selectedArtifacts.flatMap((artifact) =>
+        artifact.messages.map((message) => message.id!)),
+    ),
+    selectedEventIds: new Set(
+      selectedArtifacts.flatMap((artifact) => artifact.eventIds),
+    ),
+    selectedObservationIds: new Set(
+      selectedArtifacts.flatMap((artifact) => artifact.observationIds),
+    ),
+  };
+}
+
+function indexUniquePlayFacts<T extends { id: string }>(
+  facts: T[],
+  label: 'event' | 'observation',
+): Map<string, T> {
+  const indexed = new Map<string, T>();
+  for (const fact of facts) {
+    if (indexed.has(fact.id)) {
+      throw new Error(`Play ${label} ledger contains duplicate id: ${fact.id}.`);
+    }
+    indexed.set(fact.id, fact);
+  }
+  return indexed;
+}
+
+function assertKnownPlayFactReferences(
+  label: string,
+  sourceTurnIds: string[],
+  sourceEventIds: string[],
+  messagesById: Map<string, PlayTranscriptTurn>,
+  eventsById: Map<string, PlayWorldEvent>,
+): void {
+  const unknownTurnId = sourceTurnIds.find((id) => !messagesById.has(id));
+  if (unknownTurnId) {
+    throw new Error(`${label} references unknown turn: ${unknownTurnId}.`);
+  }
+  const unknownEventId = sourceEventIds.find((id) => !eventsById.has(id));
+  if (unknownEventId) {
+    throw new Error(`${label} references unknown event: ${unknownEventId}.`);
+  }
+}
+
+function assertScopedPlayFactReferences(
+  label: string,
+  sourceTurnIds: string[],
+  sourceEventIds: string[],
+  allowedMessageIds: Set<string>,
+  allowedEventIds: Set<string>,
+): void {
+  const outOfBranchTurnId = sourceTurnIds.find((id) => !allowedMessageIds.has(id));
+  if (outOfBranchTurnId) {
+    throw new Error(`${label} references out-of-branch turn: ${outOfBranchTurnId}.`);
+  }
+  const outOfBranchEventId = sourceEventIds.find((id) => !allowedEventIds.has(id));
+  if (outOfBranchEventId) {
+    throw new Error(`${label} references out-of-branch event: ${outOfBranchEventId}.`);
+  }
+}
+
+function normalizeSelectedTurnIds(
+  value: unknown,
+  artifacts: PlayTurnArtifact[],
+): string[] {
+  if (!Array.isArray(value)) {
+    if (artifacts.length) {
+      throw new Error('Play session with turn artifacts requires selectedTurnIds.');
+    }
+    return [];
+  }
+  const selectedTurnIds = value.map(assertSafePlayTurnArtifactId);
+  projectPlayTranscript(artifacts, selectedTurnIds);
+  return selectedTurnIds;
+}
+
+const PLAY_SESSION_METADATA_KEYS = new Set([
+  'schemaVersion',
+  'id',
+  'title',
+  'createdAt',
+  'revision',
+  'userPersona',
+  'sceneStart',
+  'characters',
+  'transcript',
+  'selectedTurnIds',
+  'playLocalStateVisibility',
+  'worldClock',
+  'eventPolicy',
+  'suggestedActions',
+]);
+
+function readPlaySessionMetadataExtensions(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => !PLAY_SESSION_METADATA_KEYS.has(key)),
+  );
+}
+
+function normalizeStoredPlaySessionSchemaVersion(value: unknown): 1 | 2 | 3 {
+  if (value === undefined || value === 1) {
+    return 1;
+  }
+  if (value === 2 || value === PLAY_SESSION_SCHEMA_VERSION) {
+    return value;
+  }
+  throw new Error(`Unsupported Play session schemaVersion: ${String(value)}.`);
+}
+
+async function readStoredPlaySessionMigrationPreview(
+  sessionRoot: string,
+): Promise<PlaySessionMigrationPreview | undefined> {
+  let metadata: unknown;
+  try {
+    metadata = parse(await readFile(join(sessionRoot, 'session.yaml'), 'utf-8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+
+  if (!isRecord(metadata)) {
+    throw new Error('Play session metadata must be an object.');
+  }
+  const fromSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
+    metadata.schemaVersion,
+  );
+  if (fromSchemaVersion === PLAY_SESSION_SCHEMA_VERSION) {
+    return undefined;
+  }
+
+  const sessionId = assertSafePlaySessionId(normalizeOptionalString(metadata.id) ?? '');
+  const transcript = Array.isArray(metadata.transcript)
+    ? metadata.transcript as PlayTranscriptTurn[]
+    : [];
+  const projectedArtifacts = createLegacyPlayTurnArtifacts({ transcript });
+  const migrationName = `v${fromSchemaVersion}-to-v${PLAY_SESSION_SCHEMA_VERSION}`;
+
+  return {
+    sessionId,
+    fromSchemaVersion,
+    toSchemaVersion: PLAY_SESSION_SCHEMA_VERSION,
+    unknownMetadataKeys: Object.keys(readPlaySessionMetadataExtensions(metadata)).sort(),
+    legacyTranscriptCount: transcript.length,
+    projectedTurnCount: projectedArtifacts.length,
+    generatedTurnIds: projectedArtifacts.map((artifact) => artifact.id),
+    backupRelativePath: ['.migrations', migrationName, 'original'].join('/'),
+  };
+}
+
+async function writePlaySessionMigrationBackup(input: {
+  sessionRoot: string;
+  stageRoot: string;
+  preview: PlaySessionMigrationPreview;
+}): Promise<void> {
+  const migrationRoot = join(
+    input.stageRoot,
+    '.migrations',
+    `v${input.preview.fromSchemaVersion}-to-v${input.preview.toSchemaVersion}`,
+  );
+  const originalRoot = join(migrationRoot, 'original');
+  await mkdir(migrationRoot, { recursive: true });
+  await cp(input.sessionRoot, originalRoot, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+  });
+  await writeFile(
+    join(migrationRoot, 'preview.yaml'),
+    stringify(input.preview),
+    'utf-8',
+  );
+}
+
+async function copyPlaySessionMigrationHistory(
+  sessionRoot: string,
+  stageRoot: string,
+): Promise<void> {
+  try {
+    await cp(
+      join(sessionRoot, '.migrations'),
+      join(stageRoot, '.migrations'),
+      {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
   }
 }
 
@@ -890,8 +1515,11 @@ function readTransactionSessionId(name: string): string | undefined {
   }
 }
 
-function advancePlaySessionRevision(session: PlaySession): PlaySession {
-  const revision = session.revision + 1;
+function advancePlaySessionRevision(
+  session: PlaySession,
+  artifacts = materializePlayTurnFacts(session).turnArtifacts,
+): PlaySession {
+  const revision = resolvePlaySessionRevision(session, artifacts) + 1;
   return {
     ...session,
     revision,
@@ -900,6 +1528,17 @@ function advancePlaySessionRevision(session: PlaySession): PlaySession {
       revision,
     },
   };
+}
+
+function resolvePlaySessionRevision(
+  session: Pick<PlaySession, 'revision' | 'worldClock'>,
+  artifacts: PlayTurnArtifact[],
+): number {
+  return Math.max(
+    normalizeNonNegativeInteger(session.revision),
+    normalizeNonNegativeInteger(session.worldClock.revision),
+    ...artifacts.map((artifact) => artifact.revision),
+  );
 }
 
 const PLAY_SIMULATION_MODES: readonly PlaySimulationMode[] = [
@@ -994,7 +1633,12 @@ function normalizePlayWorldClock(
 }
 
 function assertSupportedPlaySessionSchemaVersion(value: unknown): void {
-  if (value === undefined || value === 1 || value === PLAY_SESSION_SCHEMA_VERSION) {
+  if (
+    value === undefined ||
+    value === 1 ||
+    value === 2 ||
+    value === PLAY_SESSION_SCHEMA_VERSION
+  ) {
     return;
   }
 
@@ -1067,17 +1711,13 @@ function assertSettlementMatchesEventPolicy(
 }
 
 function assertSettlementCauseReferences(
-  session: PlaySession,
+  facts: Pick<ValidatedPlayTurnFacts, 'selectedMessageIds' | 'selectedEventIds'>,
   settlement: PlayWorldRefereeSettlement,
   currentUserTurnId: string,
 ): void {
-  const knownTurnIds = new Set(
-    session.transcript
-      .map((turn) => turn.id)
-      .filter((id): id is string => Boolean(id)),
-  );
+  const knownTurnIds = new Set(facts.selectedMessageIds);
   knownTurnIds.add(currentUserTurnId);
-  const knownEventIds = new Set(session.events.map((event) => event.id));
+  const knownEventIds = facts.selectedEventIds;
 
   for (const event of settlement.events) {
     const unknownTurnId = event.cause.sourceTurnIds?.find(

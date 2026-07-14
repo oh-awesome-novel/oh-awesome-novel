@@ -50,16 +50,17 @@ Play Mode
 第一阶段纵向切片已经落地：
 
 - Play 已成为与 Writing 同层级的顶级工作区，并从 Writing right tabs 移除。
-- session schema v2 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`。
+- session schema v3 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`，并以 `turns/*.yaml` 保存结构化回合事实、以 `selectedTurnIds` 选择 transcript projection 路径。
 - client / backend 已接通真实 world-referee turn；referee 只使用 read tools。
 - prompt 已加载最近 transcript、Play-local state、既有事件和 activated source 实际内容。
 - narrative + 必需的 `oan-play-settlement` 通过宿主的 schema、事件预算和 cause reference 校验后才写入；无效 settlement 不产生部分回合。
 - session 已采用 staged directory snapshot、ready marker、swap 与读取恢复；同 session 的所有 Play-local mutation 共享锁和 revision conflict 检查。
 - hidden event 的 state、observation 与 adoption provenance 已统一标记，spoiler 关闭时不会从 HUD / adoption 旁路泄露。
 - activated sources 与 referee read tools 已增加 realpath workspace containment，重复 session id 与未来 schema 会被拒绝。
+- v1 / v2 -> v3 的 Core migration preview、原始 snapshot 备份、未知顶层 session metadata 保留和 migration history 延续已落地。
 - UI 已提供 transcript、action kind、suggestions、HUD、visible / hidden event feed、source/state、observation 和 adoption candidate 表单。
 
-尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：流式 provisional turn 与 cancel、turn artifacts / transcript projection、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant，以及 canonical drift / context trace。
+尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：流式 provisional turn 与 cancel、产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant，以及 canonical drift / context trace。
 
 ## 2. 规划依据与参考边界
 
@@ -771,14 +772,14 @@ Play observation / event
 
 ## 15. 兼容与迁移
 
-建议新增 `schemaVersion: 2`：
+当前已落地 `schemaVersion: 3` 的 turn fact 与迁移基础：
 
 1. 旧 session 继续可读。
-2. 第一次执行新式 turn 前生成内部 migration preview 和备份。
+2. Core 可在写入前生成 migration preview；第一次写入 v3 staged snapshot 时保存原始备份和 preview。backend / client / UI 的显式确认仍待实现。
 3. 把旧 `session.yaml.transcript` 转换为 legacy turn artifacts。
 4. 重新生成 `transcript.md` projection。
-5. 把旧自由形态 local state 保存在 `legacy` namespace，再逐步归一化；不丢弃未知字段。
-6. migration 失败时保留旧 session 可读，禁止半迁移。
+5. 保留未知顶层 session metadata，并让 `.migrations/` 历史跨后续保存延续；旧自由形态 local state 的进一步归一化仍待后续 schema 完成。
+6. migration 与 v3 snapshot 在同一个 staged directory swap 中提交；更完整的 fsync、跨进程锁和逐故障点验证仍待实现。
 
 不应在应用升级时批量静默重写全部 Play session。
 
@@ -791,7 +792,7 @@ Play observation / event
 - 对照代码复核 `docs/tasks/1090.md` 的 client、stream、UI 和 adoption done criteria。
 - 新建独立 Planned task，例如 `1120 Play World Events And Turn Transactions`。
 - 将本计划链接为 Related Plan；不要直接改写旧任务历史。
-- 更新 `docs/PLAY_MODE_SPEC.md`，冻结 v2 术语、事实边界和非目标。
+- 更新 `docs/PLAY_MODE_SPEC.md`，冻结 v3 turn fact / projection 术语、事实边界和非目标。
 - 把 `Writing | Play` 顶级模式导航和移除 `rightTab: 'play'` 写入 UI scope；不允许只升级现有 `PlayModeTab.vue`。
 
 完成标准：实现团队知道哪些是旧 Play 缺口，哪些是本次 world-event 新能力。
@@ -808,7 +809,7 @@ Play observation / event
 
 交付：
 
-- session v2 schema。
+- session v3 schema（turn artifact / selected path 基础；其余 world simulation schema 按后续阶段增量交付）。
 - WorldEvent / Schedule / Pressure / Agenda / TurnArtifact schema。
 - trigger evaluator、领域 validator、state reducer。
 - legacy session reader / migrator。
@@ -969,7 +970,7 @@ PlayAdoptionDrawer.vue
 
 开始写代码前必须确认以下决策已进入稳定规格：
 
-- [ ] `turns/*.yaml` 是结构化回合事实，`transcript.md` 是 projection。
+- [x] `turns/*.yaml` 是结构化回合事实，`transcript.md` 是 projection。
 - [ ] `play-local-state.yaml` 是当前 snapshot，events 不是唯一状态源。
 - [ ] 外部世界只在显式 Play turn / time advance 时结算。
 - [ ] 单 world referee，不引入 character agents 或 background agents。

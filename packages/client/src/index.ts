@@ -340,6 +340,25 @@ export interface PlayTranscriptTurn {
   actionKind?: PlayActionKind;
 }
 
+export interface PlayTurnArtifact {
+  schemaVersion: 1;
+  id: string;
+  revision: number;
+  parentTurnId?: string;
+  input?: {
+    kind: PlayActionKind;
+    raw: string;
+  };
+  messages: PlayTranscriptTurn[];
+  worldClock?: PlayWorldClock;
+  eventIds: string[];
+  observationIds: string[];
+  stateDelta: Record<string, unknown>;
+  suggestedActions: string[];
+  committedAt: string;
+  canonical: false;
+}
+
 export interface PlayObservation {
   id: string;
   summary: string;
@@ -364,7 +383,7 @@ export interface PlayAdoptionCandidate {
 }
 
 export interface PlaySession {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
   title: string;
   createdAt: string;
@@ -373,6 +392,9 @@ export interface PlaySession {
   sceneStart: string;
   characters: string[];
   transcript: PlayTranscriptTurn[];
+  turnArtifacts: PlayTurnArtifact[];
+  selectedTurnIds: string[];
+  metadataExtensions: Record<string, unknown>;
   playLocalState: Record<string, unknown>;
   playLocalStateVisibility: Record<string, PlayEventVisibility>;
   worldClock: PlayWorldClock;

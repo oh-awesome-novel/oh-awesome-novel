@@ -222,6 +222,7 @@ export {
   DEFAULT_PLAY_EVENT_POLICY,
   PLAY_SESSION_SCHEMA_VERSION,
   PLAY_SESSION_FILES,
+  PLAY_TURNS_DIRECTORY,
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
@@ -230,8 +231,10 @@ export {
   createDefaultPlayWorldClock,
   formatPlayWorldRefereePrompt,
   listPlaySessions,
+  previewPlaySessionMigration,
   readPlaySessionFiles,
   resolvePlaySessionPath,
+  resolvePlayTurnArtifactPath,
   parsePlayWorldRefereeResponse,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
@@ -267,7 +270,21 @@ export type {
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
   SettlePlayWorldRefereeResponseInput,
+  PlaySessionMigrationPreview,
 } from './play-session.js';
+export {
+  PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+  assertSafePlayTurnArtifactId,
+  createLegacyPlayTurnArtifacts,
+  createPlayTurnArtifactId,
+  normalizePlayTurnArtifact,
+  projectPlayTranscript,
+  selectDefaultPlayTurnPath,
+} from './play-turn-artifact.js';
+export type {
+  LegacyPlayTurnArtifactInput,
+  PlayTurnArtifact,
+} from './play-turn-artifact.js';
 export type {
   CreateOanTavernImportPreviewOptions,
   NormalizedTavernCard,
