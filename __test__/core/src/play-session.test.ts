@@ -1,9 +1,18 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PLAY_WORLD_MOMENTUM_STATE_KEY,
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
@@ -13,14 +22,70 @@ import {
   createPlaySessionDraft,
   evaluatePlaySessionDueEvents,
   formatPlayWorldRefereePrompt,
+  listPlaySessionCheckpoints,
   listPlaySessions,
   previewPlaySessionMigration,
   readPlaySessionFiles,
+  readPlayWorldMomentum,
   resolvePlaySessionPath,
   resolvePlayTurnArtifactPath,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
 } from '@oh-awesome-novel/core';
+import type {
+  PlayWorldMomentum,
+} from '@oh-awesome-novel/core';
+
+const createWorldMomentumFixture = (): PlayWorldMomentum => ({
+  pressures: [{
+    id: 'deadline-1',
+    kind: 'deadline',
+    label: 'The last train departs',
+    status: 'active',
+    level: 1,
+    threshold: 2,
+    causeRefs: ['seed-event'],
+    nextConsequence: 'The station gates close.',
+    visibility: 'playerVisible',
+  }, {
+    id: 'latent-rumor',
+    kind: 'rumor',
+    label: 'A rumor has not started spreading',
+    status: 'latent',
+    causeRefs: ['seed-event'],
+    nextConsequence: 'The rumor reaches the platform.',
+    visibility: 'rumor',
+  }],
+  agendas: [{
+    id: 'inspector-search',
+    ownerEntityId: 'inspector',
+    goal: 'Find the missing passenger.',
+    nextMove: 'Search the east platform.',
+    blockers: [],
+    status: 'active',
+    visibility: 'playerVisible',
+    updatedAtTurnId: 'seed-turn',
+  }],
+});
+
+const momentumSettlementResponse = (
+  settlement: Record<string, unknown> = {},
+  narrative = 'The station changes while time passes.',
+): string => [
+  narrative,
+  '```oan-play-settlement',
+  JSON.stringify({
+    events: [],
+    pressureChanges: [],
+    agendaChanges: [],
+    scheduledEventChanges: [],
+    stateDelta: {},
+    observations: [],
+    suggestedActions: [],
+    ...settlement,
+  }),
+  '```',
+].join('\n');
 
 describe('Play session filesystem slice', () => {
   it('keeps the settlement fence out of provisional narrative across every chunk boundary', () => {
@@ -566,6 +631,285 @@ describe('Play session filesystem slice', () => {
       'legacy-turn-0001',
       'turn-artifact-1',
     ]);
+  });
+
+  it('persists seeded world momentum and exposes it to the referee prompt', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-momentum-seed-'));
+    try {
+      const worldMomentum = createWorldMomentumFixture();
+      const session = createPlaySessionDraft({
+        id: 'play-momentum-seed',
+        title: 'Momentum seed',
+        sceneStart: 'A station before closing time',
+        characters: ['inspector'],
+        eventPolicy: {
+          density: 'volatile',
+          maxExternalEventsPerTurn: 2,
+        },
+        worldMomentum,
+      });
+
+      expect(session.playLocalState).toEqual({
+        [PLAY_WORLD_MOMENTUM_STATE_KEY]: worldMomentum,
+      });
+      expect(session.playLocalStateVisibility).toEqual({
+        [PLAY_WORLD_MOMENTUM_STATE_KEY]: 'playerUnknown',
+      });
+      expect(session.branchBaseSnapshot.playLocalState).toEqual(
+        session.playLocalState,
+      );
+
+      const prompt = formatPlayWorldRefereePrompt(session, {
+        actionKind: 'wait',
+        userText: 'Wait two hours.',
+        timeAdvance: { amount: 2, unit: 'hour' },
+      });
+      expect(prompt).toContain('requested elapsed PT2H');
+      expect(prompt).toContain('pressure deadline-1');
+      expect(prompt).toContain('agenda inspector-search');
+      expect(prompt).toContain('pressure.deadline-1');
+      expect(prompt).toContain('agenda.inspector-search');
+
+      await writePlaySessionFiles(workspaceRoot, session);
+      const reread = await readPlaySessionFiles(workspaceRoot, session.id);
+      expect(readPlayWorldMomentum(reread.playLocalState)).toEqual(worldMomentum);
+      expect(reread.branchBaseSnapshot.playLocalState).toEqual(
+        session.branchBaseSnapshot.playLocalState,
+      );
+      expect(reread.playLocalStateVisibility[PLAY_WORLD_MOMENTUM_STATE_KEY])
+        .toBe('playerUnknown');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('commits a typed wait with host-normalized elapsed evidence', () => {
+    const session = createPlaySessionDraft({
+      id: 'play-typed-wait',
+      title: 'Typed wait',
+      sceneStart: 'A quiet platform',
+      characters: [],
+    });
+    const snapshot = structuredClone(session);
+    const next = settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait for two hours.',
+      actionKind: 'wait',
+      timeAdvance: { amount: 2, unit: 'hour' },
+      createdAt: '2026-07-15T02:00:00.000Z',
+      refereeResponse: momentumSettlementResponse({ elapsed: 'PT2H' }),
+    });
+
+    expect(session).toEqual(snapshot);
+    expect(next.worldClock).toMatchObject({
+      turn: 1,
+      revision: 1,
+      elapsed: 'PT2H',
+    });
+    expect(next.turnArtifacts[0]).toMatchObject({
+      input: {
+        kind: 'wait',
+        raw: 'Wait for two hours.',
+        timeAdvance: { amount: 2, unit: 'hour' },
+      },
+      worldClock: { elapsed: 'PT2H' },
+    });
+    const tampered = structuredClone(next);
+    tampered.worldClock.elapsed = 'PT3H';
+    tampered.turnArtifacts[0]!.worldClock!.elapsed = 'PT3H';
+    expect(() => listPlaySessionCheckpoints(tampered))
+      .toThrow('typed wait does not match its world clock elapsed');
+
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait for two hours.',
+      actionKind: 'wait',
+      timeAdvance: { amount: 2, unit: 'hour' },
+      refereeResponse: momentumSettlementResponse({ elapsed: '120 minutes' }),
+    })).toThrow('requires settlement.elapsed PT2H');
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Walk for two hours.',
+      actionKind: 'move',
+      timeAdvance: { amount: 2, unit: 'hour' },
+      refereeResponse: momentumSettlementResponse({ elapsed: 'PT2H' }),
+    })).toThrow('time advance requires a wait action');
+    expect(session).toEqual(snapshot);
+  });
+
+  it('settles eligible pressure and agenda events through typed changes', () => {
+    const session = createPlaySessionDraft({
+      id: 'play-momentum-settlement',
+      title: 'Momentum settlement',
+      sceneStart: 'A station before closing time',
+      characters: ['inspector'],
+      eventPolicy: {
+        simulationMode: 'reactiveWorld',
+        density: 'volatile',
+        maxExternalEventsPerTurn: 3,
+      },
+      worldMomentum: createWorldMomentumFixture(),
+    });
+    const next = settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait for an hour.',
+      actionKind: 'wait',
+      timeAdvance: { amount: 1, unit: 'hour' },
+      createdAt: '2026-07-15T01:00:00.000Z',
+      refereeResponse: momentumSettlementResponse({
+        elapsed: 'PT1H',
+        events: [{
+          kind: 'deadlineAdvanced',
+          origin: 'clock',
+          title: 'The gates close',
+          summary: 'The station gates close at the existing deadline.',
+          visibility: 'playerVisible',
+          cause: {
+            reason: 'The active closing pressure advances while time passes.',
+            pressureId: 'deadline-1',
+          },
+        }, {
+          kind: 'npcActed',
+          origin: 'npc',
+          title: 'The inspector searches',
+          summary: 'The inspector completes a search of the east platform.',
+          visibility: 'playerVisible',
+          cause: {
+            reason: 'The inspector has an active unblocked agenda.',
+            agendaId: 'inspector-search',
+          },
+        }],
+        pressureChanges: [{
+          pressureId: 'deadline-1',
+          reason: 'The deadline consequence occurred.',
+          status: 'resolved',
+          level: 2,
+          nextConsequence: null,
+        }],
+        agendaChanges: [{
+          agendaId: 'inspector-search',
+          reason: 'The planned search is complete.',
+          status: 'completed',
+          nextMove: null,
+        }],
+      }),
+    });
+
+    expect(next.events).toEqual([
+      expect.objectContaining({
+        id: 'turn-1-event-1',
+        cause: expect.objectContaining({ pressureId: 'deadline-1' }),
+      }),
+      expect.objectContaining({
+        id: 'turn-1-event-2',
+        cause: expect.objectContaining({ agendaId: 'inspector-search' }),
+      }),
+    ]);
+    const momentum = readPlayWorldMomentum(next.playLocalState);
+    expect(momentum.pressures[0]).toMatchObject({
+      id: 'deadline-1',
+      status: 'resolved',
+      level: 2,
+      causeRefs: ['seed-event', 'turn-1-event-1'],
+    });
+    expect(momentum.pressures[0]).not.toHaveProperty('nextConsequence');
+    expect(momentum.agendas[0]).toMatchObject({
+      id: 'inspector-search',
+      status: 'completed',
+      updatedAtTurnId: 'turn-1-referee',
+    });
+    expect(momentum.agendas[0]).not.toHaveProperty('nextMove');
+    expect(next.turnArtifacts[0]!.stateDelta).toEqual({
+      [PLAY_WORLD_MOMENTUM_STATE_KEY]: momentum,
+    });
+    expect(next.turnArtifacts[0]!.playLocalStateVisibilitySnapshot)
+      .toMatchObject({ [PLAY_WORLD_MOMENTUM_STATE_KEY]: 'playerUnknown' });
+  });
+
+  it('rejects forged, ineligible, and unadvanced momentum references atomically', () => {
+    const session = createPlaySessionDraft({
+      id: 'play-invalid-momentum-reference',
+      title: 'Invalid momentum reference',
+      sceneStart: 'A station before closing time',
+      characters: ['inspector'],
+      eventPolicy: {
+        simulationMode: 'reactiveWorld',
+        density: 'volatile',
+        maxExternalEventsPerTurn: 3,
+      },
+      worldMomentum: createWorldMomentumFixture(),
+    });
+    const snapshot = structuredClone(session);
+    const eventWithCause = (cause: Record<string, unknown>) => ({
+      kind: 'deadlineAdvanced',
+      origin: 'clock',
+      title: 'Momentum advances',
+      summary: 'A claimed momentum consequence occurs.',
+      visibility: 'playerVisible',
+      cause: { reason: 'Claimed momentum cause.', ...cause },
+    });
+
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: momentumSettlementResponse({
+        events: [eventWithCause({ pressureId: 'forged-pressure' })],
+      }),
+    })).toThrow('references ineligible pressure: forged-pressure');
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: momentumSettlementResponse({
+        events: [eventWithCause({ pressureId: 'latent-rumor' })],
+        pressureChanges: [{
+          pressureId: 'latent-rumor',
+          reason: 'Forged activation.',
+          status: 'active',
+        }],
+      }),
+    })).toThrow('references ineligible pressure: latent-rumor');
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: momentumSettlementResponse({
+        events: [eventWithCause({ pressureId: 'deadline-1' })],
+      }),
+    })).toThrow('must advance referenced pressure: deadline-1');
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: momentumSettlementResponse({
+        events: [eventWithCause({ agendaId: 'inspector-search' })],
+      }),
+    })).toThrow('must advance referenced agenda: inspector-search');
+    expect(session).toEqual(snapshot);
+  });
+
+  it('rejects raw stateDelta writes to the reserved world momentum key', () => {
+    const session = createPlaySessionDraft({
+      id: 'play-reserved-momentum-state',
+      title: 'Reserved momentum state',
+      sceneStart: 'A station',
+      characters: [],
+      worldMomentum: createWorldMomentumFixture(),
+    });
+    const snapshot = structuredClone(session);
+
+    expect(() => settlePlayWorldRefereeResponse({
+      session,
+      userText: 'Wait.',
+      actionKind: 'wait',
+      refereeResponse: momentumSettlementResponse({
+        stateDelta: {
+          [PLAY_WORLD_MOMENTUM_STATE_KEY]: { pressures: [], agendas: [] },
+        },
+      }),
+    })).toThrow('typed changes, not stateDelta');
+    expect(session).toEqual(snapshot);
   });
 
   it('forces hard-due events outside the spontaneous budget and persists schedule truth', async () => {
@@ -2281,6 +2625,53 @@ describe('Play session filesystem slice', () => {
       await expect(readPlaySessionFiles(workspaceRoot, 'play-recovery'))
         .rejects
         .toThrow('Unsupported Play session schemaVersion');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('copies only durable attempt recovery state during a staged session swap', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-recovery-copy-'));
+    const session = createPlaySessionDraft({
+      id: 'play-recovery-copy',
+      title: 'Recovery copy',
+      sceneStart: 'Scene',
+      characters: [],
+    });
+    const attemptsRoot = join(
+      workspaceRoot,
+      '.workspace/play-sessions/play-recovery-copy/.recovery/turn-attempts',
+    );
+    const durableRoot = join(attemptsRoot, 'attempt-durable');
+
+    try {
+      await writePlaySessionFiles(workspaceRoot, session);
+      await mkdir(durableRoot, { recursive: true });
+      await writeFile(join(durableRoot, 'attempt.yaml'), 'durable: true\n', 'utf-8');
+      await writeFile(join(durableRoot, '.attempt.crash.tmp'), 'temporary\n', 'utf-8');
+      await writeFile(join(attemptsRoot, '.active-attempt'), 'attempt-durable\n', 'utf-8');
+      await mkdir(join(attemptsRoot, '.attempt-stage.ignored'), { recursive: true });
+      await writeFile(
+        join(attemptsRoot, '.attempt-stage.ignored/attempt.yaml'),
+        'staged: true\n',
+        'utf-8',
+      );
+      await mkdir(join(attemptsRoot, '.coordination.lock'), { recursive: true });
+      await writeFile(
+        join(attemptsRoot, '.coordination.lock/owner.json'),
+        '{}\n',
+        'utf-8',
+      );
+
+      await writePlaySessionFiles(workspaceRoot, session);
+
+      expect((await readdir(attemptsRoot)).sort()).toEqual([
+        '.active-attempt',
+        'attempt-durable',
+      ]);
+      expect((await readdir(durableRoot)).sort()).toEqual(['attempt.yaml']);
+      await expect(readFile(join(durableRoot, 'attempt.yaml'), 'utf-8'))
+        .resolves.toBe('durable: true\n');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

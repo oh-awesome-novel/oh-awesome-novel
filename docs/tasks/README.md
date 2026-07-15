@@ -55,6 +55,7 @@
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
 - [1100 Project Health Guardrails And Projection Refresh](1100.md)
+- [1130 First Playable Scene Rehearsal](1130.md)
 
 ## Needs Review Tasks
 

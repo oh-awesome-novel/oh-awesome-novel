@@ -223,12 +223,15 @@ export {
   PLAY_SESSION_SCHEMA_VERSION,
   PLAY_SESSION_FILES,
   PLAY_TURNS_DIRECTORY,
+  PlaySessionWriteConflictError,
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
   createPlayAdoptionCandidate,
+  createPlaySceneRehearsalSessionDraft,
   createPlaySessionDraft,
   createDefaultPlayWorldClock,
+  evaluatePlaySessionEligibleEvents,
   evaluatePlaySessionDueEvents,
   formatPlayWorldRefereePrompt,
   listPlaySessionCheckpoints,
@@ -239,6 +242,8 @@ export {
   resolvePlayTurnArtifactPath,
   restorePlaySessionCheckpoint,
   parsePlayWorldRefereeResponse,
+  normalizePlayWorldRefereeSettlement,
+  settlePlayWorldRefereeSettlement,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
 } from './play-session.js';
@@ -251,15 +256,23 @@ export {
 } from './tavern-card.js';
 export type {
   CreatePlaySessionInput,
+  CreatePlaySceneRehearsalSessionInput,
   ParsedPlayWorldRefereeResponse,
   PlayActionKind,
   PlayActivatedSource,
+  PlayAgenda,
+  PlayAgendaStatus,
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
   PlayBranchBaseSnapshot,
   PlayCheckpointStatus,
   PlayCheckpointSummary,
   PlayObservation,
+  PlayPressure,
+  PlayPressureKind,
+  PlayPressureStatus,
+  PlayRelativeTimeAdvance,
+  PlayTimeAdvanceUnit,
   PlayEventDensity,
   PlayEventOrigin,
   PlayEventPolicy,
@@ -276,11 +289,37 @@ export type {
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
   PlayWorldRefereeScheduledEventChange,
+  PlayWorldMomentum,
+  PlayWorldRefereeTurnContext,
   SettlePlayWorldRefereeResponseInput,
+  SettlePlayWorldRefereeSettlementInput,
   PlaySessionMigrationPreview,
+  WritePlaySessionFilesOptions,
 } from './play-session.js';
 export {
+  PLAY_WORLD_MOMENTUM_STATE_KEY,
+  applyPlayWorldMomentumChanges,
+  assertPlayWorldMomentumTransition,
+  createEmptyPlayWorldMomentum,
+  evaluatePlayEligibleWorldEvents,
+  formatPlayRelativeTimeAdvance,
+  normalizePlayAgendaChanges,
+  normalizePlayPressureChanges,
+  normalizePlayRelativeTimeAdvance,
+  normalizePlayWorldMomentum,
+  readPlayWorldMomentum,
+} from './play-world-momentum.js';
+export type {
+  ApplyPlayWorldMomentumChangesInput,
+  EvaluatePlayEligibleWorldEventsInput,
+  PlayAgendaChange,
+  PlayEligibleWorldEventCandidate,
+  PlayEligibleWorldEventEvaluation,
+  PlayPressureChange,
+} from './play-world-momentum.js';
+export {
   LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+  PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION,
   PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
   assertSafePlayTurnArtifactId,
   createLegacyPlayTurnArtifacts,
@@ -296,10 +335,106 @@ export type {
   PlayTurnArtifact,
 } from './play-turn-artifact.js';
 export {
+  PlayWorldSettlementRetryError,
+  preparePlayWorldSettlementRetry,
+  settlePlayWorldSettlementRetry,
+} from './play-turn-retry.js';
+export type {
+  PlayWorldSettlementRetryErrorCode,
+  PlayWorldSettlementRetryPreparation,
+  SettlePlayWorldSettlementRetryInput,
+  SettledPlayWorldSettlementRetry,
+} from './play-turn-retry.js';
+export {
   PLAY_SETTLEMENT_FENCE,
   createPlayNarrativeStreamFilter,
 } from './play-narrative-stream.js';
 export type { PlayNarrativeStreamFilter } from './play-narrative-stream.js';
+export {
+  PLAY_REHEARSAL_SCENES_DIRECTORY,
+  PLAY_REHEARSAL_SCENE_SCHEMA_VERSION,
+  PLAY_REHEARSAL_SIDECAR_FILE,
+  PLAY_REHEARSAL_SIDECAR_SCHEMA_VERSION,
+  PLAY_REHEARSAL_SESSION_SCHEMA_VERSION,
+  assertNarrativeBlocksWithinPerception,
+  assertSafePlayRehearsalId,
+  createCharacterPerceptionPackage,
+  createPlayParticipantRef,
+  listForbiddenPlayKnowledgeEvidenceRefs,
+  normalizeCharacterPerceptionPackage,
+  normalizeNarrativeBlock,
+  normalizePlayCommittedSceneEvidence,
+  normalizePlaySceneContract,
+  normalizePlaySceneRehearsalSidecar,
+  projectSelectedPlayRehearsalEvidence,
+} from './play-rehearsal.js';
+export type {
+  CharacterPerceptionPackage,
+  NarrativeBlock,
+  NarrativeBlockKind,
+  PlayCommittedCharacterStepEvidence,
+  PlayCommittedSceneEvidence,
+  PlayRehearsalParticipant,
+  PlayRehearsalTurnEvidence,
+  PlaySceneContract,
+  PlaySceneKnowledgeEvidence,
+  PlaySceneRehearsalSidecar,
+  PlaySceneValue,
+  PlaySessionPurpose,
+  PlayStartMode,
+} from './play-rehearsal.js';
+export {
+  PlayTurnAttemptError,
+  acceptPlayTurnAttemptStep,
+  addPlayTurnAttemptStep,
+  assertPlayTurnAttemptFinalizable,
+  cancelPlayTurnAttempt,
+  createPlayTurnAttempt,
+  findPlayAttemptMutationReceipt,
+  fingerprintPlayAttemptRequest,
+  fingerprintPlayTurnAttemptStepOperation,
+  markPlayTurnAttemptCommitted,
+  normalizePlayTurnAttempt,
+  preparePlayTurnAttemptRetry,
+} from './play-turn-attempt.js';
+export type {
+  CharacterStepDraft,
+  CharacterStepDraftStatus,
+  PlayAttemptMutationInput,
+  PlayAttemptMutationReceipt,
+  PlayAttemptMutationResult,
+  PlayTurnAttempt,
+  PlayTurnAttemptErrorCode,
+  PlayTurnAttemptStatus,
+} from './play-turn-attempt.js';
+export {
+  PLAY_ATTEMPT_RECOVERY_DIRECTORY,
+  PLAY_ATTEMPT_RECOVERY_FILE,
+  PLAY_ATTEMPT_ACTIVE_MARKER_FILE,
+  createPlayTurnAttemptRecovery,
+  listPlayTurnAttemptRecoveries,
+  readPlayTurnAttemptRecovery,
+  removePlayTurnAttemptRecovery,
+  resolvePlayAttemptRecoveryPath,
+  withPlayTurnAttemptRecoveryTransaction,
+  writePlayTurnAttemptRecovery,
+} from './play-attempt-recovery.js';
+export type {
+  PlayAttemptRecoveryClassification,
+  PlayAttemptRecoverySummary,
+  PlayTurnAttemptRecoveryTransaction,
+  WritePlayTurnAttemptRecoveryOptions,
+} from './play-attempt-recovery.js';
+export {
+  aggregatePlayTurnAttemptSettlement,
+  finalizePlaySceneRehearsalAttempt,
+  startPlaySceneRehearsalAttempt,
+} from './play-rehearsal-turn.js';
+export type {
+  FinalizePlaySceneRehearsalAttemptInput,
+  FinalizedPlaySceneRehearsalAttempt,
+  StartPlaySceneRehearsalAttemptInput,
+} from './play-rehearsal-turn.js';
 export {
   assertPlayScheduledEvent,
   assertPlayScheduledEvents,

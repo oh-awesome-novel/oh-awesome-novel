@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { Dirent } from 'node:fs';
-import { access, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import type { Dirent, Stats } from 'node:fs';
+import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'yaml';
 
 import { assertSafePlayNarrativePrefix } from './play-narrative-stream.js';
@@ -29,6 +30,22 @@ import {
   projectPlayTranscript,
 } from './play-turn-artifact.js';
 import type { PlayTurnArtifact } from './play-turn-artifact.js';
+import {
+  PLAY_WORLD_MOMENTUM_STATE_KEY,
+  applyPlayWorldMomentumChanges,
+  evaluatePlayEligibleWorldEvents,
+  formatPlayRelativeTimeAdvance,
+  normalizePlayAgendaChanges,
+  normalizePlayPressureChanges,
+  normalizePlayRelativeTimeAdvance,
+  normalizePlayWorldMomentum,
+  readPlayWorldMomentum,
+} from './play-world-momentum.js';
+import type {
+  PlayAgendaChange,
+  PlayEligibleWorldEventEvaluation,
+  PlayPressureChange,
+} from './play-world-momentum.js';
 import {
   assertPlayAdoptionCandidate,
   assertPlayObservation,
@@ -63,6 +80,7 @@ import type {
   PlayEventPolicy,
   PlayEventVisibility,
   PlayObservation,
+  PlayRelativeTimeAdvance,
   PlaySimulationMode,
   PlaySourceTrust,
   PlayTranscriptTurn,
@@ -70,7 +88,26 @@ import type {
   PlayWorldEvent,
   PlayWorldEventCause,
   PlayWorldRefereeSettlementEvent,
+  PlayWorldMomentum,
 } from './play-types.js';
+import {
+  PLAY_REHEARSAL_SCENES_DIRECTORY,
+  PLAY_REHEARSAL_SCENE_SCHEMA_VERSION,
+  PLAY_REHEARSAL_SIDECAR_FILE,
+  PLAY_REHEARSAL_SIDECAR_SCHEMA_VERSION,
+  PLAY_REHEARSAL_SESSION_SCHEMA_VERSION,
+  assertSafePlayRehearsalId,
+  normalizePlayCommittedSceneEvidence,
+  normalizePlaySceneRehearsalSidecar,
+} from './play-rehearsal.js';
+import type {
+  PlayCommittedSceneEvidence,
+  PlayRehearsalParticipant,
+  PlaySceneContract,
+  PlaySceneKnowledgeEvidence,
+  PlaySceneRehearsalSidecar,
+  PlayStartMode,
+} from './play-rehearsal.js';
 
 export { createPlayAdoptionCandidate } from './play-session-facts.js';
 export type { PlayBranchBaseSnapshot } from './play-session-facts.js';
@@ -86,6 +123,8 @@ export type {
 export type {
   PlayActionKind,
   PlayActivatedSource,
+  PlayAgenda,
+  PlayAgendaStatus,
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
   PlayEventDensity,
@@ -93,6 +132,11 @@ export type {
   PlayEventPolicy,
   PlayEventVisibility,
   PlayObservation,
+  PlayPressure,
+  PlayPressureKind,
+  PlayPressureStatus,
+  PlayRelativeTimeAdvance,
+  PlayTimeAdvanceUnit,
   PlaySimulationMode,
   PlaySourceTrust,
   PlayTranscriptTurn,
@@ -101,6 +145,7 @@ export type {
   PlayWorldEventCause,
   PlayWorldEventKind,
   PlayWorldRefereeSettlementEvent,
+  PlayWorldMomentum,
 } from './play-types.js';
 
 export const PLAY_SESSION_FILES = [
@@ -112,6 +157,7 @@ export const PLAY_SESSION_FILES = [
   'event-schedule.yaml',
   'observations.yaml',
   'adoption-candidates.yaml',
+  PLAY_REHEARSAL_SIDECAR_FILE,
 ] as const;
 
 export const PLAY_SESSION_SCHEMA_VERSION = 4 as const;
@@ -123,6 +169,8 @@ export interface PlayWorldRefereeSettlement {
   elapsed?: string;
   worldTimeAnchor?: string;
   events: PlayWorldRefereeSettlementEvent[];
+  pressureChanges: PlayPressureChange[];
+  agendaChanges: PlayAgendaChange[];
   scheduledEventChanges: PlayWorldRefereeScheduledEventChange[];
   stateDelta: Record<string, unknown>;
   observations: Array<{ summary: string; evidence: string }>;
@@ -160,7 +208,18 @@ export interface SettlePlayWorldRefereeResponseInput {
   session: PlaySession;
   userText: string;
   actionKind: PlayActionKind;
+  timeAdvance?: PlayRelativeTimeAdvance;
   refereeResponse: string;
+  createdAt?: string;
+}
+
+export interface SettlePlayWorldRefereeSettlementInput {
+  session: PlaySession;
+  userText: string;
+  actionKind: PlayActionKind;
+  timeAdvance?: PlayRelativeTimeAdvance;
+  narrative: string;
+  settlement: PlayWorldRefereeSettlement;
   createdAt?: string;
 }
 
@@ -178,7 +237,9 @@ export const createDefaultPlayWorldClock = (): PlayWorldClock => ({
 });
 
 export interface PlaySession {
-  schemaVersion: typeof PLAY_SESSION_SCHEMA_VERSION;
+  schemaVersion:
+    | typeof PLAY_SESSION_SCHEMA_VERSION
+    | typeof PLAY_REHEARSAL_SESSION_SCHEMA_VERSION;
   id: string;
   title: string;
   createdAt: string;
@@ -202,6 +263,8 @@ export interface PlaySession {
   activatedSources: PlayActivatedSource[];
   observations: PlayObservation[];
   adoptionCandidates: PlayAdoptionCandidate[];
+  sceneRehearsal?: PlaySceneRehearsalSidecar;
+  rehearsalScenes?: PlayCommittedSceneEvidence[];
 }
 
 export interface PlaySessionMigrationPreview {
@@ -215,6 +278,27 @@ export interface PlaySessionMigrationPreview {
   backupRelativePath: string;
 }
 
+export interface WritePlaySessionFilesOptions {
+  /**
+   * Optional compare-and-swap guard for a staged write. The authoritative
+   * session is re-read after the cross-process write lock is acquired, and the
+   * same lock is held through the staged directory swap.
+   */
+  expectedCurrentSession?: PlaySession;
+}
+
+export interface PlaySessionFileTransaction {
+  read(): Promise<PlaySession>;
+  write(
+    session: PlaySession,
+    options?: WritePlaySessionFilesOptions,
+  ): Promise<string[]>;
+}
+
+export class PlaySessionWriteConflictError extends Error {
+  readonly name = 'PlaySessionWriteConflictError';
+}
+
 export interface CreatePlaySessionInput {
   id: string;
   title: string;
@@ -225,6 +309,16 @@ export interface CreatePlaySessionInput {
   activatedSources?: PlayActivatedSource[];
   eventPolicy?: Partial<PlayEventPolicy>;
   scheduledEvents?: PlayScheduledEvent[];
+  worldMomentum?: PlayWorldMomentum;
+}
+
+export interface CreatePlaySceneRehearsalSessionInput
+  extends Omit<CreatePlaySessionInput, 'worldMomentum'> {
+  startMode?: PlayStartMode;
+  sceneContract: PlaySceneContract;
+  participants: PlayRehearsalParticipant[];
+  initialKnowledgeEvidence: PlaySceneKnowledgeEvidence[];
+  worldMomentum?: PlayWorldMomentum;
 }
 
 export const createPlaySessionDraft = (
@@ -235,6 +329,15 @@ export const createPlaySessionDraft = (
     input.scheduledEvents ?? [],
     worldClock,
   );
+  const worldMomentum = input.worldMomentum === undefined
+    ? undefined
+    : normalizePlayWorldMomentum(input.worldMomentum);
+  const playLocalState = worldMomentum
+    ? { [PLAY_WORLD_MOMENTUM_STATE_KEY]: worldMomentum }
+    : {};
+  const playLocalStateVisibility: Record<string, PlayEventVisibility> = worldMomentum
+    ? { [PLAY_WORLD_MOMENTUM_STATE_KEY]: 'playerUnknown' }
+    : {};
   return {
     schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
     id: assertSafePlaySessionId(input.id),
@@ -250,14 +353,14 @@ export const createPlaySessionDraft = (
     branchSnapshotRequiredFromRevision: 0,
     branchBaseSnapshot: {
       worldClock: { ...worldClock },
-      playLocalState: {},
-      playLocalStateVisibility: {},
+      playLocalState: clonePlayLocalState(playLocalState),
+      playLocalStateVisibility: { ...playLocalStateVisibility },
       scheduledEvents: scheduledEvents.map(clonePlayScheduledEvent),
       suggestedActions: [],
     },
     metadataExtensions: {},
-    playLocalState: {},
-    playLocalStateVisibility: {},
+    playLocalState,
+    playLocalStateVisibility,
     worldClock,
     eventPolicy: normalizePlayEventPolicy(input.eventPolicy),
     events: [],
@@ -266,6 +369,43 @@ export const createPlaySessionDraft = (
     activatedSources: input.activatedSources?.map(assertActivatedSource) ?? [],
     observations: [],
     adoptionCandidates: [],
+  };
+};
+
+export const createPlaySceneRehearsalSessionDraft = (
+  input: CreatePlaySceneRehearsalSessionInput,
+): PlaySession => {
+  const ordinary = createPlaySessionDraft(input);
+  const sceneRehearsal = normalizePlaySceneRehearsalSidecar({
+    schemaVersion: PLAY_REHEARSAL_SIDECAR_SCHEMA_VERSION,
+    sessionId: ordinary.id,
+    purpose: 'sceneRehearsal',
+    startMode: input.startMode ?? 'quick',
+    activeSceneRef: input.sceneContract.sceneId,
+    sceneContract: input.sceneContract,
+    participants: input.participants,
+    initialKnowledgeEvidence: input.initialKnowledgeEvidence,
+  });
+  if (
+    sceneRehearsal.sceneContract.worldClock.turn !== ordinary.worldClock.turn ||
+    sceneRehearsal.sceneContract.worldClock.revision !== ordinary.worldClock.revision
+  ) {
+    throw new Error(
+      'A new Play rehearsal Scene Contract must use the initial session world clock.',
+    );
+  }
+  return {
+    ...ordinary,
+    schemaVersion: PLAY_REHEARSAL_SESSION_SCHEMA_VERSION,
+    characters: sceneRehearsal.participants.map((participant) =>
+      participant.displayName),
+    sceneRehearsal,
+    rehearsalScenes: [{
+      schemaVersion: PLAY_REHEARSAL_SCENE_SCHEMA_VERSION,
+      sessionId: ordinary.id,
+      sceneId: sceneRehearsal.activeSceneRef,
+      turns: [],
+    }],
   };
 };
 
@@ -328,8 +468,55 @@ export const resolvePlayTurnArtifactPath = (
 export const writePlaySessionFiles = async (
   workspaceRoot: string,
   session: PlaySession,
+  options: WritePlaySessionFilesOptions = {},
+): Promise<string[]> => withPlaySessionFileTransaction(
+  workspaceRoot,
+  session.id,
+  (transaction) => transaction.write(session, options),
+);
+
+export const withPlaySessionFileTransaction = async <T>(
+  workspaceRoot: string,
+  sessionIdValue: string,
+  operation: (transaction: PlaySessionFileTransaction) => Promise<T>,
+): Promise<T> => {
+  const sessionId = assertSafePlaySessionId(sessionIdValue);
+  const releaseWriteLock = await acquirePlaySessionWriteLock(
+    workspaceRoot,
+    sessionId,
+  );
+  try {
+    await recoverPlaySessionDirectoryWithLock(workspaceRoot, sessionId);
+    return await operation({
+      read: () => readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId),
+      write: async (session, options = {}) => {
+        if (session.id !== sessionId) {
+          throw new Error('Play session transaction cannot cross sessions.');
+        }
+        if (options.expectedCurrentSession) {
+          const authoritative = await readPlaySessionFilesWithoutRecovery(
+            workspaceRoot,
+            sessionId,
+          );
+          if (!isDeepStrictEqual(authoritative, options.expectedCurrentSession)) {
+            throw new PlaySessionWriteConflictError(
+              `Play session ${sessionId} changed before the staged write could commit.`,
+            );
+          }
+        }
+        return writePlaySessionFilesWithLock(workspaceRoot, session);
+      },
+    });
+  } finally {
+    await releaseWriteLock();
+  }
+};
+
+const writePlaySessionFilesWithLock = async (
+  workspaceRoot: string,
+  session: PlaySession,
 ): Promise<string[]> => {
-  await recoverPlaySessionDirectory(workspaceRoot, session.id);
+  const rehearsalState = normalizePlaySessionRehearsalState(session);
 
   const normalizedObservations = session.observations.map((observation) =>
     assertPlayObservation(observation, { strict: true }));
@@ -339,6 +526,12 @@ export const writePlaySessionFiles = async (
     ...session,
     observations: normalizedObservations,
     adoptionCandidates: normalizedAdoptionCandidates,
+    ...(rehearsalState
+      ? {
+          sceneRehearsal: rehearsalState.sidecar,
+          rehearsalScenes: rehearsalState.scenes,
+        }
+      : {}),
   };
   const normalizedFacts = materializePlayTurnFacts(normalizedSession);
   const revision = resolvePlaySessionRevision(
@@ -376,6 +569,18 @@ export const writePlaySessionFiles = async (
     ['adoption-candidates.yaml', stringify({
       adoptionCandidates: sessionForWrite.adoptionCandidates,
     })],
+    ...(rehearsalState
+      ? [
+          [
+            PLAY_REHEARSAL_SIDECAR_FILE,
+            stringify(rehearsalState.sidecar),
+          ] as [string, string],
+          ...rehearsalState.scenes.map((scene) => [
+            join(PLAY_REHEARSAL_SCENES_DIRECTORY, `${scene.sceneId}.yaml`),
+            stringify(scene),
+          ] as [string, string]),
+        ]
+      : []),
     ...sessionForWrite.turnArtifacts.map((artifact) => [
       join(PLAY_TURNS_DIRECTORY, `${assertSafePlayTurnArtifactId(artifact.id)}.yaml`),
       stringify(artifact),
@@ -397,6 +602,7 @@ export const writePlaySessionFiles = async (
 
   try {
     await copyPlaySessionMigrationHistory(sessionRoot, stageRoot);
+    await copyPlaySessionRecoveryState(sessionRoot, stageRoot);
     if (migrationPreview) {
       await writePlaySessionMigrationBackup({
         sessionRoot,
@@ -452,9 +658,16 @@ export const writePlaySessionFiles = async (
 export const readPlaySessionFiles = async (
   workspaceRoot: string,
   sessionId: string,
-): Promise<PlaySession> => {
-  await recoverPlaySessionDirectory(workspaceRoot, sessionId);
+): Promise<PlaySession> => withPlaySessionFileTransaction(
+  workspaceRoot,
+  sessionId,
+  (transaction) => transaction.read(),
+);
 
+const readPlaySessionFilesWithoutRecovery = async (
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<PlaySession> => {
   const metadata = await readPlayYaml<Record<string, unknown> & {
     schemaVersion?: number;
     id: string;
@@ -472,6 +685,7 @@ export const readPlaySessionFiles = async (
     selectedTurnIds?: string[];
     branchSnapshotRequiredFromRevision?: number;
     branchBaseSnapshot?: unknown;
+    sceneRehearsalSidecarVersion?: number;
   }>(workspaceRoot, sessionId, 'session.yaml');
   assertSupportedPlaySessionSchemaVersion(metadata.schemaVersion);
   const sourceSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
@@ -479,6 +693,41 @@ export const readPlaySessionFiles = async (
   );
   if (metadata.id !== sessionId) {
     throw new Error(`Play session metadata id mismatch: expected ${sessionId}.`);
+  }
+  const sessionRoot = dirname(resolvePlaySessionPath(
+    workspaceRoot,
+    sessionId,
+    'session.yaml',
+  ));
+  const rehearsalSidecarPath = join(sessionRoot, PLAY_REHEARSAL_SIDECAR_FILE);
+  const rehearsalScenesRoot = join(sessionRoot, PLAY_REHEARSAL_SCENES_DIRECTORY);
+  const hasRehearsalSidecar = await pathExists(rehearsalSidecarPath);
+  const hasRehearsalScenes = await pathExists(rehearsalScenesRoot);
+  let sceneRehearsal: PlaySceneRehearsalSidecar | undefined;
+  let rehearsalScenes: PlayCommittedSceneEvidence[] | undefined;
+  if (sourceSchemaVersion === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION) {
+    if (
+      metadata.sceneRehearsalSidecarVersion !==
+        PLAY_REHEARSAL_SIDECAR_SCHEMA_VERSION ||
+      !hasRehearsalSidecar ||
+      !hasRehearsalScenes
+    ) {
+      throw new Error(
+        'Play session v5 requires a matching scene rehearsal sidecar and scenes directory.',
+      );
+    }
+    sceneRehearsal = normalizePlaySceneRehearsalSidecar(
+      parse(await readFile(rehearsalSidecarPath, 'utf-8')),
+    );
+    rehearsalScenes = await readPlayCommittedScenesFromSessionRoot(sessionRoot);
+  } else if (
+    metadata.sceneRehearsalSidecarVersion !== undefined ||
+    hasRehearsalSidecar ||
+    hasRehearsalScenes
+  ) {
+    throw new Error(
+      'Play session v1-v4 cannot contain orphan scene rehearsal files.',
+    );
   }
   const playLocalState = await readPlayYaml<Record<string, unknown>>(
     workspaceRoot,
@@ -516,7 +765,7 @@ export const readPlaySessionFiles = async (
     'adoption-candidates.yaml',
     {},
   );
-  const requireStoredVisibility = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION;
+  const requireStoredVisibility = sourceSchemaVersion >= PLAY_SESSION_SCHEMA_VERSION;
   const normalizedEvents = (events.events ?? []).map((event) =>
     assertPlayWorldEvent(event, { strict: requireStoredVisibility }));
   const normalizedScheduledEvents = normalizePlayScheduledEvents(
@@ -565,12 +814,12 @@ export const readPlaySessionFiles = async (
     throw new Error('Play session v3 cannot contain unverifiable v2 branch snapshots.');
   }
   const branchSnapshotRequiredFromRevision =
-    sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+    sourceSchemaVersion >= PLAY_SESSION_SCHEMA_VERSION
       ? requirePlayBranchSnapshotWatermark(
           metadata.branchSnapshotRequiredFromRevision,
         )
       : revision;
-  const branchBaseSnapshot = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+  const branchBaseSnapshot = sourceSchemaVersion >= PLAY_SESSION_SCHEMA_VERSION
     ? normalizePlayBranchBaseSnapshot(metadata.branchBaseSnapshot)
     : normalizePlayBranchBaseSnapshot({
         ...(selectedTurnIds.at(-1)
@@ -597,11 +846,15 @@ export const readPlaySessionFiles = async (
     branchSnapshotRequiredFromRevision,
     branchBaseSnapshot,
     sessionSuggestedActions,
+    sceneRehearsal,
+    rehearsalScenes,
   });
   const transcript = validatedFacts.transcript;
 
-  return {
-    schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
+  const restoredSession: PlaySession = {
+    schemaVersion: sourceSchemaVersion === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
+      ? PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
+      : PLAY_SESSION_SCHEMA_VERSION,
     id: assertSafePlaySessionId(metadata.id),
     title: metadata.title,
     createdAt: metadata.createdAt,
@@ -625,20 +878,33 @@ export const readPlaySessionFiles = async (
     activatedSources: (activatedSources.activatedSources ?? []).map(assertActivatedSource),
     observations: normalizedObservations,
     adoptionCandidates: normalizedAdoptionCandidates,
+    ...(sceneRehearsal && rehearsalScenes
+      ? { sceneRehearsal, rehearsalScenes }
+      : {}),
   };
+  normalizePlaySessionRehearsalState(restoredSession);
+  return restoredSession;
 };
 
 export const previewPlaySessionMigration = async (
   workspaceRoot: string,
   sessionId: string,
 ): Promise<PlaySessionMigrationPreview | undefined> => {
-  await recoverPlaySessionDirectory(workspaceRoot, sessionId);
-  const sessionRoot = dirname(resolvePlaySessionPath(
+  const releaseReadLock = await acquirePlaySessionWriteLock(
     workspaceRoot,
     sessionId,
-    'session.yaml',
-  ));
-  return readStoredPlaySessionMigrationPreview(sessionRoot);
+  );
+  try {
+    await recoverPlaySessionDirectoryWithLock(workspaceRoot, sessionId);
+    const sessionRoot = dirname(resolvePlaySessionPath(
+      workspaceRoot,
+      sessionId,
+      'session.yaml',
+    ));
+    return await readStoredPlaySessionMigrationPreview(sessionRoot);
+  } finally {
+    await releaseReadLock();
+  }
 };
 
 export const listPlaySessions = async (
@@ -682,12 +948,45 @@ export const evaluatePlaySessionDueEvents = (
   });
 };
 
-export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
+export interface PlayWorldRefereeTurnContext {
+  actionKind?: PlayActionKind;
+  userText?: string;
+  timeAdvance?: PlayRelativeTimeAdvance;
+}
+
+export const evaluatePlaySessionEligibleEvents = (
+  session: PlaySession,
+  turn: PlayWorldRefereeTurnContext = {},
+): PlayEligibleWorldEventEvaluation => {
+  const actionKind = turn.actionKind ?? 'do';
+  const timeAdvance = turn.timeAdvance === undefined
+    ? undefined
+    : normalizePlayRelativeTimeAdvance(turn.timeAdvance);
+  assertPlayTimeAdvanceMatchesAction(actionKind, timeAdvance);
+  const facts = materializePlayTurnFacts(session);
+  return evaluatePlayEligibleWorldEvents({
+    momentum: readPlayWorldMomentum(facts.selectedPlayLocalState),
+    eventPolicy: session.eventPolicy,
+    actionKind,
+    ...(timeAdvance ? { timeAdvance } : {}),
+    sceneEntityIds: session.characters,
+  });
+};
+
+export const formatPlayWorldRefereePrompt = (
+  session: PlaySession,
+  turn: PlayWorldRefereeTurnContext = {},
+): string => {
   const facts = materializePlayTurnFacts(session);
   const selectedEvents = session.events.filter((event) =>
     facts.selectedEventIds.has(event.id));
   const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
   const scheduleEvaluation = evaluatePlaySessionDueEvents(session);
+  const momentum = readPlayWorldMomentum(facts.selectedPlayLocalState);
+  const eligibleEvaluation = evaluatePlaySessionEligibleEvents(session, turn);
+  const timeAdvance = turn.timeAdvance === undefined
+    ? undefined
+    : normalizePlayRelativeTimeAdvance(turn.timeAdvance);
 
   return [
     '# Play Mode World Referee',
@@ -706,6 +1005,7 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
     `Revision: ${revision}`,
     `World clock: turn ${session.worldClock.turn}; anchor ${session.worldClock.anchor ?? 'unspecified'}; last elapsed ${session.worldClock.elapsed ?? 'none'}`,
     `World activity: ${session.eventPolicy.simulationMode}/${session.eventPolicy.density}; max external events ${session.eventPolicy.maxExternalEventsPerTurn}`,
+    `Turn action: ${turn.actionKind ?? 'do'}; requested elapsed ${timeAdvance ? formatPlayRelativeTimeAdvance(timeAdvance) : 'unspecified'}`,
     '',
     'Current Play-local state:',
     formatPromptJson(facts.selectedPlayLocalState),
@@ -723,6 +1023,26 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
           `- ${event.id} [${event.visibility}/${event.kind}] ${event.summary}; cause: ${event.cause.reason}`,
         )
       : ['- none']),
+    '',
+    'World momentum records (referee knowledge; never leak playerUnknown entries):',
+    ...(momentum.pressures.length
+      ? momentum.pressures.map((pressure) =>
+          `- pressure ${pressure.id} [${pressure.status}/${pressure.kind}/${pressure.visibility}] ${pressure.label}; next: ${pressure.nextConsequence ?? 'none'}`,
+        )
+      : ['- pressures: none']),
+    ...(momentum.agendas.length
+      ? momentum.agendas.map((agenda) =>
+          `- agenda ${agenda.id} [${agenda.status}/${agenda.visibility}] ${agenda.ownerEntityId}: ${agenda.goal}; next: ${agenda.nextMove ?? 'none'}; blockers: ${agenda.blockers.join(', ') || 'none'}`,
+        )
+      : ['- agendas: none']),
+    '',
+    `Host-eligible world-motion cues (budget ${eligibleEvaluation.effectiveBudget}):`,
+    ...(eligibleEvaluation.candidates.length
+      ? eligibleEvaluation.candidates.map((candidate) =>
+          `- ${candidate.id} [${candidate.visibility}] ${candidate.consequence}; ${candidate.reason}`,
+        )
+      : ['- none']),
+    'A settlement event that realizes one of these cues must set its listed cause.pressureId or cause.agendaId. Do not invent momentum ids. A cue may be realized at most once this turn.',
     '',
     'Host-enforced hard-due events for this turn:',
     ...(scheduleEvaluation.dueEvents.length
@@ -751,12 +1071,16 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
     'Output protocol:',
     '1. Write only the player-visible narrative first. Never leak playerUnknown events.',
     '2. End with exactly one fenced `oan-play-settlement` JSON object.',
-    '3. The JSON fields are: elapsed, worldTimeAnchor, events, scheduledEventChanges, stateDelta, observations, suggestedActions.',
-    '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason }.',
+    '3. The JSON fields are: elapsed, worldTimeAnchor, events, pressureChanges, agendaChanges, scheduledEventChanges, stateDelta, observations, suggestedActions.',
+    '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason, optional pressureId or agendaId }. Momentum ids must come from the host-eligible list.',
     '5. To create a future consequence, add a scheduledEventChanges item with type schedule, label, trigger, template, reason, and optional priority. To cancel or reschedule a pending item, reference its scheduledEventId and provide a reason.',
-    '6. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
-    '7. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
-    '8. Player-visible or rumor summaries and observation evidence may describe only perceivable consequences. Keep hidden causal reasoning in event cause and mark truly secret facts playerUnknown.',
+    '6. Update an existing pressure or agenda only through pressureChanges / agendaChanges. Each change needs its id, reason, and at least one changed field; every event that cites a pressureId or agendaId must include the matching change. Never write worldMomentum through stateDelta and never invent a new momentum id.',
+    '7. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
+    '8. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
+    '9. Player-visible or rumor summaries and observation evidence may describe only perceivable consequences. Keep hidden causal reasoning in event cause and mark truly secret facts playerUnknown.',
+    ...(timeAdvance
+      ? [`10. This is a typed wait. settlement.elapsed must equal ${formatPlayRelativeTimeAdvance(timeAdvance)} exactly.`]
+      : []),
   ].join('\n');
 };
 
@@ -801,12 +1125,42 @@ export const parsePlayWorldRefereeResponse = (
 export const settlePlayWorldRefereeResponse = (
   input: SettlePlayWorldRefereeResponseInput,
 ): PlaySession => {
+  const parsed = parsePlayWorldRefereeResponse(input.refereeResponse);
+  return settlePlayWorldRefereeSettlement({
+    session: input.session,
+    userText: input.userText,
+    actionKind: input.actionKind,
+    ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
+    narrative: parsed.narrative,
+    settlement: parsed.settlement,
+    ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+  });
+};
+
+export const settlePlayWorldRefereeSettlement = (
+  input: SettlePlayWorldRefereeSettlementInput,
+): PlaySession => {
   const userText = input.userText.trim();
   if (!userText) {
     throw new Error('Play turn requires user text.');
   }
-
-  const parsed = parsePlayWorldRefereeResponse(input.refereeResponse);
+  const narrative = input.narrative.trim();
+  if (!narrative) {
+    throw new Error('Play world referee settlement requires player-visible narrative.');
+  }
+  const settlement = normalizePlayWorldRefereeSettlement(input.settlement);
+  const timeAdvance = input.timeAdvance === undefined
+    ? undefined
+    : normalizePlayRelativeTimeAdvance(input.timeAdvance);
+  assertPlayTimeAdvanceMatchesAction(input.actionKind, timeAdvance);
+  if (timeAdvance) {
+    const expectedElapsed = formatPlayRelativeTimeAdvance(timeAdvance);
+    if (settlement.elapsed !== expectedElapsed) {
+      throw new Error(
+        `Typed Play wait requires settlement.elapsed ${expectedElapsed}.`,
+      );
+    }
+  }
   const createdAt = input.createdAt ?? new Date().toISOString();
   const existingFacts = materializePlayTurnFacts(input.session);
   const revision = resolvePlaySessionRevision(
@@ -817,34 +1171,46 @@ export const settlePlayWorldRefereeResponse = (
   const userTurnId = `${turnId}-user`;
   const refereeTurnId = `${turnId}-referee`;
   const scheduleEvaluation = evaluatePlaySessionDueEvents(input.session);
+  const eligibleEvaluation = evaluatePlaySessionEligibleEvents(input.session, {
+    actionKind: input.actionKind,
+    userText,
+    ...(timeAdvance ? { timeAdvance } : {}),
+  });
   assertSettlementMatchesEventPolicy(
     input.session,
-    parsed.settlement,
+    settlement,
     scheduleEvaluation.dueEvents,
+    eligibleEvaluation,
+  );
+  assertSettlementMomentumReferences(
+    settlement,
+    eligibleEvaluation,
   );
   assertSettlementScheduleReferences(
     input.session,
-    parsed.settlement,
+    settlement,
     scheduleEvaluation.dueEvents,
   );
   assertSettlementCauseReferences(
     existingFacts,
-    parsed.settlement,
+    settlement,
     userTurnId,
   );
   const worldClock: PlayWorldClock = {
     turn: input.session.worldClock.turn + 1,
     revision,
-    ...(parsed.settlement.worldTimeAnchor
-      ? { anchor: parsed.settlement.worldTimeAnchor }
+    ...(settlement.worldTimeAnchor
+      ? { anchor: settlement.worldTimeAnchor }
       : input.session.worldClock.anchor
         ? { anchor: input.session.worldClock.anchor }
         : {}),
-    ...(parsed.settlement.elapsed
-      ? { elapsed: parsed.settlement.elapsed }
+    ...(timeAdvance
+      ? { elapsed: formatPlayRelativeTimeAdvance(timeAdvance) }
+      : settlement.elapsed
+        ? { elapsed: settlement.elapsed }
       : {}),
   };
-  const events: PlayWorldEvent[] = parsed.settlement.events.map((event, index) => ({
+  const events: PlayWorldEvent[] = settlement.events.map((event, index) => ({
     id: `${turnId}-event-${index + 1}`,
     turnId: refereeTurnId,
     sequence: index + 1,
@@ -866,7 +1232,7 @@ export const settlePlayWorldRefereeResponse = (
       ? 'rumor'
       : 'playerVisible';
   const sourceEventIds = events.map((event) => event.id);
-  const observations: PlayObservation[] = parsed.settlement.observations.map(
+  const observations: PlayObservation[] = settlement.observations.map(
     (observation, index) => ({
       id: `obs-${revision}-${index + 1}`,
       summary: observation.summary,
@@ -879,25 +1245,55 @@ export const settlePlayWorldRefereeResponse = (
   );
   const scheduledEvents = materializePlayScheduledEvents({
     session: input.session,
-    settlement: parsed.settlement,
+    settlement,
     events,
     revision,
     worldTurn: worldClock.turn,
     refereeTurnId,
   });
+  const previousMomentum = readPlayWorldMomentum(
+    existingFacts.selectedPlayLocalState,
+  );
+  const pressureEventIds = new Map<string, string[]>();
+  for (const event of events) {
+    const pressureId = event.cause.pressureId;
+    if (!pressureId) continue;
+    pressureEventIds.set(pressureId, [
+      ...(pressureEventIds.get(pressureId) ?? []),
+      event.id,
+    ]);
+  }
+  const momentumChanged = settlement.pressureChanges.length > 0 ||
+    settlement.agendaChanges.length > 0;
+  const nextMomentum = momentumChanged
+    ? applyPlayWorldMomentumChanges({
+        momentum: previousMomentum,
+        pressureChanges: settlement.pressureChanges,
+        agendaChanges: settlement.agendaChanges,
+        refereeTurnId,
+        pressureEventIds,
+      })
+    : previousMomentum;
+  const stateDelta = clonePlayLocalState(settlement.stateDelta);
+  if (momentumChanged) {
+    stateDelta[PLAY_WORLD_MOMENTUM_STATE_KEY] = nextMomentum;
+  }
   const playLocalStateVisibility = {
     ...existingFacts.selectedPlayLocalStateVisibility,
   };
-  for (const key of Object.keys(parsed.settlement.stateDelta)) {
-    playLocalStateVisibility[key] = settlementVisibility;
+  for (const key of Object.keys(stateDelta)) {
+    playLocalStateVisibility[key] = key === PLAY_WORLD_MOMENTUM_STATE_KEY
+      ? 'playerUnknown'
+      : settlementVisibility;
   }
   const playLocalState = mergePlayLocalState(
     existingFacts.selectedPlayLocalState,
-    parsed.settlement.stateDelta,
+    stateDelta,
   );
+  readPlayWorldMomentum(playLocalState);
   const suggestedActions = settlementVisibility === 'playerUnknown'
     ? []
-    : [...parsed.settlement.suggestedActions];
+    : [...settlement.suggestedActions];
 
   const messages: PlayTranscriptTurn[] = [
     {
@@ -910,7 +1306,7 @@ export const settlePlayWorldRefereeResponse = (
     {
       id: refereeTurnId,
       speaker: 'world-referee',
-      content: parsed.narrative,
+      content: narrative,
       createdAt,
     },
   ];
@@ -929,6 +1325,7 @@ export const settlePlayWorldRefereeResponse = (
     input: {
       kind: input.actionKind,
       raw: userText,
+      ...(timeAdvance ? { timeAdvance } : {}),
     },
     messages,
     worldClock: { ...worldClock },
@@ -939,7 +1336,7 @@ export const settlePlayWorldRefereeResponse = (
     playLocalStateSnapshot: clonePlayLocalState(playLocalState),
     playLocalStateVisibilitySnapshot: { ...playLocalStateVisibility },
     observationIds: observations.map((observation) => observation.id),
-    stateDelta: clonePlayLocalState(parsed.settlement.stateDelta),
+    stateDelta,
     suggestedActions,
     committedAt: createdAt,
     canonical: false,
@@ -949,7 +1346,7 @@ export const settlePlayWorldRefereeResponse = (
 
   return {
     ...input.session,
-    schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
+    schemaVersion: input.session.schemaVersion,
     revision,
     transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
     turnArtifacts,
@@ -1111,7 +1508,13 @@ function formatTranscript(session: PlaySession): string {
 function formatSessionMetadata(session: PlaySession): Record<string, unknown> {
   return {
     ...session.metadataExtensions,
-    schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
+    schemaVersion: session.schemaVersion,
+    ...(session.schemaVersion === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
+      ? {
+          sceneRehearsalSidecarVersion:
+            PLAY_REHEARSAL_SIDECAR_SCHEMA_VERSION,
+        }
+      : {}),
     id: session.id,
     title: session.title,
     createdAt: session.createdAt,
@@ -1198,6 +1601,90 @@ async function readPlayTurnArtifactsFromSessionRoot(
   );
 }
 
+async function readPlayCommittedScenesFromSessionRoot(
+  sessionRoot: string,
+): Promise<PlayCommittedSceneEvidence[]> {
+  const scenesRoot = join(sessionRoot, PLAY_REHEARSAL_SCENES_DIRECTORY);
+  const entries = await readdir(scenesRoot, { withFileTypes: true });
+  const unsupportedEntry = entries.find((entry) =>
+    !entry.isFile() || !entry.name.endsWith('.yaml'));
+  if (unsupportedEntry) {
+    throw new Error(
+      `Play committed scenes directory contains an unsupported entry: ${unsupportedEntry.name}.`,
+    );
+  }
+  const scenes = await Promise.all(entries
+    .map(async (entry) => {
+      const sceneId = assertSafePlayRehearsalId(
+        entry.name.slice(0, -5),
+        'scene file id',
+      );
+      const scene = normalizePlayCommittedSceneEvidence(
+        parse(await readFile(join(scenesRoot, entry.name), 'utf-8')),
+      );
+      if (scene.sceneId !== sceneId) {
+        throw new Error(
+          `Play committed scene id mismatch: expected ${sceneId}, found ${scene.sceneId}.`,
+        );
+      }
+      return scene;
+    }));
+  return scenes.toSorted((left, right) =>
+    left.sceneId.localeCompare(right.sceneId));
+}
+
+function normalizePlaySessionRehearsalState(
+  session: PlaySession,
+): {
+  sidecar: PlaySceneRehearsalSidecar;
+  scenes: PlayCommittedSceneEvidence[];
+} | undefined {
+  if (session.schemaVersion === PLAY_SESSION_SCHEMA_VERSION) {
+    if (session.sceneRehearsal !== undefined || session.rehearsalScenes !== undefined) {
+      throw new Error('Play session v4 cannot contain scene rehearsal state.');
+    }
+    return undefined;
+  }
+  if (session.schemaVersion !== PLAY_REHEARSAL_SESSION_SCHEMA_VERSION) {
+    throw new Error(`Unsupported Play session schemaVersion: ${String(session.schemaVersion)}.`);
+  }
+  if (!session.sceneRehearsal || !session.rehearsalScenes) {
+    throw new Error('Play session v5 requires scene rehearsal state.');
+  }
+  const sidecar = normalizePlaySceneRehearsalSidecar(session.sceneRehearsal);
+  const scenes = session.rehearsalScenes.map(normalizePlayCommittedSceneEvidence);
+  if (sidecar.sessionId !== session.id) {
+    throw new Error('Play scene rehearsal sidecar belongs to another session.');
+  }
+  if (scenes.length !== 1 || scenes[0]?.sceneId !== sidecar.activeSceneRef) {
+    throw new Error('F1 Play rehearsal requires exactly one matching active scene evidence file.');
+  }
+  if (scenes[0].sessionId !== session.id) {
+    throw new Error('Play committed scene evidence belongs to another session.');
+  }
+  if (
+    sidecar.sceneContract.worldClock.turn !== session.branchBaseSnapshot.worldClock.turn ||
+    sidecar.sceneContract.worldClock.revision !==
+      session.branchBaseSnapshot.worldClock.revision
+  ) {
+    throw new Error('Play Scene Contract clock must match the immutable branch base.');
+  }
+  if (
+    sidecar.sceneContract.clockProvenance.kind === 'sessionRevision' &&
+    (
+      sidecar.sceneContract.clockProvenance.sessionId !== session.id ||
+      sidecar.sceneContract.clockProvenance.revision !==
+        sidecar.sceneContract.worldClock.revision
+    )
+  ) {
+    throw new Error('Play Scene Contract clock provenance does not match its session.');
+  }
+  return {
+    sidecar,
+    scenes,
+  };
+}
+
 function normalizeSelectedTurnIds(
   value: unknown,
   artifacts: PlayTurnArtifact[],
@@ -1230,6 +1717,7 @@ const PLAY_SESSION_METADATA_KEYS = new Set([
   'worldClock',
   'eventPolicy',
   'suggestedActions',
+  'sceneRehearsalSidecarVersion',
 ]);
 
 function readPlaySessionMetadataExtensions(
@@ -1240,11 +1728,18 @@ function readPlaySessionMetadataExtensions(
   );
 }
 
-function normalizeStoredPlaySessionSchemaVersion(value: unknown): 1 | 2 | 3 | 4 {
+function normalizeStoredPlaySessionSchemaVersion(
+  value: unknown,
+): 1 | 2 | 3 | 4 | 5 {
   if (value === undefined || value === 1) {
     return 1;
   }
-  if (value === 2 || value === 3 || value === PLAY_SESSION_SCHEMA_VERSION) {
+  if (
+    value === 2 ||
+    value === 3 ||
+    value === PLAY_SESSION_SCHEMA_VERSION ||
+    value === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
+  ) {
     return value;
   }
   throw new Error(`Unsupported Play session schemaVersion: ${String(value)}.`);
@@ -1269,7 +1764,10 @@ async function readStoredPlaySessionMigrationPreview(
   const fromSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
     metadata.schemaVersion,
   );
-  if (fromSchemaVersion === PLAY_SESSION_SCHEMA_VERSION) {
+  if (
+    fromSchemaVersion === PLAY_SESSION_SCHEMA_VERSION ||
+    fromSchemaVersion === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
+  ) {
     return undefined;
   }
 
@@ -1341,6 +1839,45 @@ async function copyPlaySessionMigrationHistory(
   }
 }
 
+async function copyPlaySessionRecoveryState(
+  sessionRoot: string,
+  stageRoot: string,
+): Promise<void> {
+  const recoveryRoot = join(sessionRoot, '.recovery');
+  try {
+    await cp(
+      recoveryRoot,
+      join(stageRoot, '.recovery'),
+      {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+        filter: (source) => isDurablePlaySessionRecoveryPath(
+          recoveryRoot,
+          source,
+        ),
+      },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+function isDurablePlaySessionRecoveryPath(
+  recoveryRoot: string,
+  source: string,
+): boolean {
+  if (source === recoveryRoot) return true;
+  const name = basename(source);
+  return name !== '.coordination.lock' &&
+    !name.startsWith('.coordination.lock.stale.') &&
+    !name.startsWith('.attempt-stage.') &&
+    !/^\.attempt\.[^.]+\.tmp$/u.test(name);
+}
+
 function resolvePlaySessionsRoot(workspaceRoot: string): string {
   const workspace = resolve(workspaceRoot);
   const root = resolve(workspace, '.workspace', 'play-sessions');
@@ -1389,6 +1926,21 @@ async function recoverPlaySessionsRoot(workspaceRoot: string): Promise<void> {
 }
 
 async function recoverPlaySessionDirectory(
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<void> {
+  const releaseRecoveryLock = await acquirePlaySessionWriteLock(
+    workspaceRoot,
+    sessionId,
+  );
+  try {
+    await recoverPlaySessionDirectoryWithLock(workspaceRoot, sessionId);
+  } finally {
+    await releaseRecoveryLock();
+  }
+}
+
+async function recoverPlaySessionDirectoryWithLock(
   workspaceRoot: string,
   sessionId: string,
 ): Promise<void> {
@@ -1459,6 +2011,193 @@ async function pathExists(path: string): Promise<boolean> {
       return false;
     }
     throw error;
+  }
+}
+
+const PLAY_SESSION_WRITE_LOCKS_DIRECTORY = '.write-locks';
+const PLAY_SESSION_WRITE_LOCK_OWNER_FILE = 'owner.json';
+const PLAY_SESSION_INCOMPLETE_LOCK_STALE_MS = 30_000;
+
+interface PlaySessionWriteLockOwner {
+  token: string;
+  pid: number;
+  createdAt: string;
+}
+
+function resolvePlaySessionWriteLockRoot(
+  workspaceRoot: string,
+  sessionId: string,
+): string {
+  return join(
+    resolvePlaySessionsRoot(workspaceRoot),
+    PLAY_SESSION_WRITE_LOCKS_DIRECTORY,
+    `${assertSafePlaySessionId(sessionId)}.lock`,
+  );
+}
+
+async function acquirePlaySessionWriteLock(
+  workspaceRoot: string,
+  sessionIdValue: string,
+): Promise<() => Promise<void>> {
+  const sessionId = assertSafePlaySessionId(sessionIdValue);
+  const sessionsRoot = resolvePlaySessionsRoot(workspaceRoot);
+  const locksRoot = join(sessionsRoot, PLAY_SESSION_WRITE_LOCKS_DIRECTORY);
+  const lockRoot = resolvePlaySessionWriteLockRoot(workspaceRoot, sessionId);
+  const ownerPath = join(lockRoot, PLAY_SESSION_WRITE_LOCK_OWNER_FILE);
+  const owner: PlaySessionWriteLockOwner = {
+    token: randomUUID(),
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  };
+  await mkdir(locksRoot, { recursive: true });
+
+  for (let iteration = 0; iteration < 250; iteration += 1) {
+    try {
+      await mkdir(lockRoot, { recursive: false });
+      try {
+        await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, {
+          encoding: 'utf-8',
+          flag: 'wx',
+        });
+      } catch (error) {
+        await rm(lockRoot, { recursive: true, force: true });
+        throw error;
+      }
+      return async () => {
+        await removePlaySessionWriteLockIfOwned(lockRoot, owner.token);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (await removeStalePlaySessionWriteLock(lockRoot)) continue;
+      await new Promise<void>((resolveWait) => setTimeout(resolveWait, 10));
+    }
+  }
+
+  throw new PlaySessionWriteConflictError(
+    `Play session ${sessionId} write lock did not stabilize.`,
+  );
+}
+
+async function removePlaySessionWriteLockIfOwned(
+  lockRoot: string,
+  token: string,
+): Promise<void> {
+  try {
+    const raw = await readFile(
+      join(lockRoot, PLAY_SESSION_WRITE_LOCK_OWNER_FILE),
+      'utf-8',
+    );
+    if (parsePlaySessionWriteLockOwner(raw)?.token === token) {
+      await rm(lockRoot, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+async function removeStalePlaySessionWriteLock(
+  lockRoot: string,
+): Promise<boolean> {
+  let raw: string | undefined;
+  let lockStat: Stats | undefined;
+  try {
+    lockStat = await stat(lockRoot);
+    raw = await readFile(
+      join(lockRoot, PLAY_SESSION_WRITE_LOCK_OWNER_FILE),
+      'utf-8',
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      try {
+        lockStat = await stat(lockRoot);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        throw statError;
+      }
+    } else {
+      throw error;
+    }
+  }
+  if (!lockStat) return true;
+  let owner = raw ? parsePlaySessionWriteLockOwner(raw) : undefined;
+  if (owner && isProcessAlive(owner.pid)) return false;
+  if (
+    !owner &&
+    Date.now() - lockStat.mtimeMs < PLAY_SESSION_INCOMPLETE_LOCK_STALE_MS
+  ) {
+    return false;
+  }
+  if (raw === undefined) {
+    const staleClaim: PlaySessionWriteLockOwner = {
+      token: randomUUID(),
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      raw = `${JSON.stringify(staleClaim)}\n`;
+      await writeFile(
+        join(lockRoot, PLAY_SESSION_WRITE_LOCK_OWNER_FILE),
+        raw,
+        { encoding: 'utf-8', flag: 'wx' },
+      );
+      owner = staleClaim;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw error;
+    }
+  }
+
+  try {
+    const current = await readFile(
+      join(lockRoot, PLAY_SESSION_WRITE_LOCK_OWNER_FILE),
+      'utf-8',
+    );
+    if (current !== raw) return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return false;
+  }
+  const observedIdentity = owner?.token ?? [
+    lockStat.dev,
+    lockStat.ino,
+    Math.trunc(lockStat.mtimeMs),
+  ].join('-');
+  const quarantineRoot = `${lockRoot}.stale.${observedIdentity}`;
+  try {
+    // Every contender that observed this owner uses the same destination.
+    // Keeping the quarantine directory prevents a delayed contender from
+    // renaming (and thereby stealing) the replacement live lock.
+    await rename(lockRoot, quarantineRoot);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return true;
+    if (code === 'EEXIST' || code === 'ENOTEMPTY') return false;
+    throw error;
+  }
+}
+
+function parsePlaySessionWriteLockOwner(
+  raw: string,
+): PlaySessionWriteLockOwner | undefined {
+  try {
+    const value = JSON.parse(raw) as Partial<PlaySessionWriteLockOwner>;
+    return typeof value.token === 'string' && value.token.length > 0 &&
+      Number.isSafeInteger(value.pid) && (value.pid as number) > 0 &&
+      typeof value.createdAt === 'string' && value.createdAt.length > 0
+      ? value as PlaySessionWriteLockOwner
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
 
@@ -1541,7 +2280,8 @@ function assertSupportedPlaySessionSchemaVersion(value: unknown): void {
     value === 1 ||
     value === 2 ||
     value === 3 ||
-    value === PLAY_SESSION_SCHEMA_VERSION
+    value === PLAY_SESSION_SCHEMA_VERSION ||
+    value === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION
   ) {
     return;
   }
@@ -1549,13 +2289,21 @@ function assertSupportedPlaySessionSchemaVersion(value: unknown): void {
   throw new Error(`Unsupported Play session schemaVersion: ${String(value)}.`);
 }
 
-function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSettlement {
+export function normalizePlayWorldRefereeSettlement(
+  value: unknown,
+): PlayWorldRefereeSettlement {
   if (!isRecord(value)) {
     throw new Error('Play settlement must be a JSON object.');
   }
 
   if (value.events !== undefined && !Array.isArray(value.events)) {
     throw new Error('Play settlement events must be an array.');
+  }
+  if (value.pressureChanges !== undefined && !Array.isArray(value.pressureChanges)) {
+    throw new Error('Play settlement pressureChanges must be an array.');
+  }
+  if (value.agendaChanges !== undefined && !Array.isArray(value.agendaChanges)) {
+    throw new Error('Play settlement agendaChanges must be an array.');
   }
   if (
     value.scheduledEventChanges !== undefined &&
@@ -1572,6 +2320,14 @@ function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSe
   if (value.stateDelta !== undefined && !isRecord(value.stateDelta)) {
     throw new Error('Play settlement stateDelta must be an object.');
   }
+  if (
+    isRecord(value.stateDelta) &&
+    Object.hasOwn(value.stateDelta, PLAY_WORLD_MOMENTUM_STATE_KEY)
+  ) {
+    throw new Error(
+      'Play settlement must update world momentum through typed changes, not stateDelta.',
+    );
+  }
   if (value.observations !== undefined && !Array.isArray(value.observations)) {
     throw new Error('Play settlement observations must be an array.');
   }
@@ -1587,6 +2343,8 @@ function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSe
       ? { worldTimeAnchor: normalizeOptionalString(value.worldTimeAnchor) }
       : {}),
     events: (value.events ?? []).map(normalizePlayWorldRefereeEvent),
+    pressureChanges: normalizePlayPressureChanges(value.pressureChanges),
+    agendaChanges: normalizePlayAgendaChanges(value.agendaChanges),
     scheduledEventChanges: (value.scheduledEventChanges ?? [])
       .map(normalizePlayWorldRefereeScheduledEventChange),
     stateDelta: isRecord(value.stateDelta)
@@ -1700,6 +2458,7 @@ function assertSettlementMatchesEventPolicy(
   session: PlaySession,
   settlement: PlayWorldRefereeSettlement,
   dueEvents: readonly PlayScheduledEvent[],
+  eligibleEvaluation: PlayEligibleWorldEventEvaluation,
 ): void {
   const dueIds = new Set(dueEvents.map((event) => event.id));
   const budgetedEvents = settlement.events.filter((event) =>
@@ -1707,6 +2466,13 @@ function assertSettlementMatchesEventPolicy(
   if (budgetedEvents.length > session.eventPolicy.maxExternalEventsPerTurn) {
     throw new Error(
       `Play settlement exceeds the event budget of ${session.eventPolicy.maxExternalEventsPerTurn}.`,
+    );
+  }
+  const momentumLinkedEvents = budgetedEvents.filter((event) =>
+    event.cause.pressureId || event.cause.agendaId);
+  if (momentumLinkedEvents.length > eligibleEvaluation.effectiveBudget) {
+    throw new Error(
+      `Play settlement exceeds the eligible world-motion budget of ${eligibleEvaluation.effectiveBudget}.`,
     );
   }
 
@@ -1728,6 +2494,68 @@ function assertSettlementMatchesEventPolicy(
   }
   if (hasHiddenSchedule && !session.eventPolicy.allowOffscreen) {
     throw new Error('Play settlement schedules an offscreen event while offscreen events are disabled.');
+  }
+}
+
+function assertSettlementMomentumReferences(
+  settlement: PlayWorldRefereeSettlement,
+  evaluation: PlayEligibleWorldEventEvaluation,
+): void {
+  const eligiblePressureIds = new Set(
+    evaluation.candidates
+      .map((candidate) => candidate.pressureId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const eligibleAgendaIds = new Set(
+    evaluation.candidates
+      .map((candidate) => candidate.agendaId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const changedPressureIds = new Set(
+    settlement.pressureChanges.map((change) => change.pressureId),
+  );
+  const changedAgendaIds = new Set(
+    settlement.agendaChanges.map((change) => change.agendaId),
+  );
+  const usedPressureIds = new Set<string>();
+  const usedAgendaIds = new Set<string>();
+
+  for (const event of settlement.events) {
+    const pressureId = event.cause.pressureId;
+    const agendaId = event.cause.agendaId;
+    if (pressureId) {
+      if (!eligiblePressureIds.has(pressureId)) {
+        throw new Error(`Play event references ineligible pressure: ${pressureId}.`);
+      }
+      if (usedPressureIds.has(pressureId)) {
+        throw new Error(`Play settlement realizes pressure more than once: ${pressureId}.`);
+      }
+      if (!changedPressureIds.has(pressureId)) {
+        throw new Error(`Play event must advance referenced pressure: ${pressureId}.`);
+      }
+      usedPressureIds.add(pressureId);
+    }
+    if (agendaId) {
+      if (!eligibleAgendaIds.has(agendaId)) {
+        throw new Error(`Play event references ineligible agenda: ${agendaId}.`);
+      }
+      if (usedAgendaIds.has(agendaId)) {
+        throw new Error(`Play settlement realizes agenda more than once: ${agendaId}.`);
+      }
+      if (!changedAgendaIds.has(agendaId)) {
+        throw new Error(`Play event must advance referenced agenda: ${agendaId}.`);
+      }
+      usedAgendaIds.add(agendaId);
+    }
+  }
+}
+
+function assertPlayTimeAdvanceMatchesAction(
+  actionKind: PlayActionKind,
+  timeAdvance?: PlayRelativeTimeAdvance,
+): void {
+  if (timeAdvance && actionKind !== 'wait') {
+    throw new Error('Play time advance requires a wait action.');
   }
 }
 

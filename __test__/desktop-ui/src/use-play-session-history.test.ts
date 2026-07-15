@@ -214,6 +214,7 @@ function createCheckpoint(
     preview: artifactId,
     status,
     restorable,
+    retryable: false,
     canonical: false,
   };
 }

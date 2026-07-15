@@ -1,6 +1,6 @@
 # Play Mode 世界事件升级计划
 
-> 状态：Planned
+> 状态：Functional Delivery In Progress / Needs Review
 >
 > 文档目标：把 Play Mode 从“角色对话沙盒”升级为“角色、时间、场景与外部世界共同推进的互动小说沙盒”。
 >
@@ -9,6 +9,10 @@
 > 适用范围：OAN 顶级模式导航、Play session、world referee、Play-local state、桌面端 Play 工作区、checkpoint / variant、observation / adoption；不改变 canonical truth 的审批边界。
 >
 > 分析日期：2026-07-10。
+>
+> 执行顺序调整：2026-07-15。
+>
+> 当前执行原则：现有 session / artifact / staged snapshot、专用 SSE、checkpoint / restore / Retry 与顶级 Play 工作区已经满足继续交付产品功能的门槛。M1 的 Pressure / Agenda、eligible evaluator、typed 相对时间推进与 HUD，以及跨计划 F1 Scene Rehearsal 均已于 2026-07-15 落地；下一功能可以从世界事件 M2 或角色推演 F2 继续。事务耐久性、迁移 UI 或长列表性能工作仍作为并行 correctness lane，不再充当全部功能的全局前置 Gate。
 
 ## 1. 结论摘要
 
@@ -22,7 +26,7 @@ Play Mode
 单一 World Referee
   + Character Voice / State Modules
   + 确定性的到期事件与压力评估
-  + 结构化 PlayTurnDraft
+  + 结构化 PlayWorldRefereeSettlement
   + Play-local Turn Transaction
   + 可见的世界状态、事件与来源
   + Observation -> PendingAction Adoption
@@ -30,7 +34,7 @@ Play Mode
 
 这里的“世界会自己变化”不等于后台常驻 Agent 或按现实时间偷偷运行：
 
-- 世界只在用户提交行动、明确等待、推进时间或恢复一个 session 时结算。
+- 世界只在用户提交行动、明确等待或推进时间时结算。恢复 checkpoint、切换 variant 或重开 session 只重建既有 snapshot；继续推进仍需用户显式行动或等待。
 - NPC 与组织的自主性表达为 agenda、pressure、scheduled event 和 world rule，不表达为长期运行的独立 Agent。
 - 模型负责理解、叙述与提出结构化变化；宿主负责触发评估、校验、排序、事务提交和恢复。
 - 所有变化先属于 Play-local truth；只有用户选择 adoption，并通过现有 PendingAction / diff 审批后，才可进入真实小说文件树。
@@ -40,12 +44,12 @@ Play Mode
 - Workspace 顶级导航提供 `Writing | Play`。
 - Writing 进入现有 Novel Agent / files / diff / approval 工作台。
 - Play 进入独立的 session / transcript / world HUD / event / adoption 工作台。
-- 当前右侧 `Play` tab 只是待迁移的过渡实现，不是后续扩展容器。
+- 早期右侧 `Play` tab 是已经结束的过渡实现；当前顶级 Play 工作区才是后续扩展容器。
 - Play 内部仍可有右侧 inspector，但关闭 inspector 不等于退出 Play。
 
-本升级由 `docs/tasks/1120.md` 独立追踪，不把世界事件范围悄悄并入原 `1090` 历史。`1090` 保留 UI / adoption 复核记录，`1120` 记录已落地纵向切片与后续事务、stream、checkpoint 范围。
+本升级由 `docs/tasks/1120.md` 独立追踪，不把世界事件范围悄悄并入原 `1090` 历史。`1090` 保留 UI / adoption 复核记录；`1120` 记录已落地纵向切片，以及后续 reveal / knowledge、branch UX、长篇体验和并行 correctness 范围。
 
-### 1.1 当前实施进度
+### 1.1 当前实施进度与执行判断
 
 第一阶段纵向切片已经落地：
 
@@ -59,13 +63,27 @@ Play Mode
 - v4 state / observation / adoption visibility 与 provenance 已严格校验；兄弟分支历史可保留但当前 UI 只投影 selected branch。spoiler 关闭时 hidden facts 和 `cause.reason` 不会从 HUD / event feed / adoption 旁路泄露，同时允许隐藏原因产生公开可感知的后果。
 - activated sources 与 referee read tools 已增加 realpath workspace containment，重复 session id 与未来 schema 会被拒绝。
 - v1 / v2 / v3 -> v4 的 Core migration preview、原始 snapshot 备份、未知顶层 session metadata 保留和 migration history 延续已落地。v3 仅在为空 session 或其 structured turns 仍为 legacy artifact v1 时可迁移；内含 artifact v2 但缺少 branch base / cutoff 的 v3 session 仍 fail closed。升级后会以当前 revision 作为 `branchSnapshotRequiredFromRevision` cutoff，并用 `branchBaseSnapshot` 封存 selected legacy head 的 clock / state / visibility / schedule / suggestions。
-- typed `event-schedule.yaml`、`nextTurn` / `afterTurns` / `flagEquals` evaluator 与 hard-due settlement 已落地；到期事件必须用 `triggerId` 恰好结算一次且不占 spontaneous event budget。artifact schema v2 以版本化 branch snapshot 保存 world clock、Play-local state value / visibility、suggested actions、完整 schedule head 和 pre-turn hard-due evidence；完整 parent 或 v4 branch base 上会重跑 evaluator，selected path 与当前 projection 不一致时 fail closed，避免 root / legacy bridge 无前驱校验或 sibling branch 污染 evaluator / prompt / HUD。`atWorldTime` 在没有规范化 comparator 时保持 pending，Pressure / Agenda 与 eligible evaluator 仍待完成。
-- `play.event.occurred` 只在 staged snapshot durable write 成功后发布，terminal committed session 继续作为 UI 权威事实；cancel / provider / validation / commit failure 不发布 occurred。
+- typed `event-schedule.yaml`、`nextTurn` / `afterTurns` / `flagEquals` evaluator 与 hard-due settlement 已落地；到期事件必须用 `triggerId` 恰好结算一次且不占 spontaneous event budget。artifact schema v2 以版本化 branch snapshot 保存 world clock、Play-local state value / visibility、suggested actions、完整 schedule head 和 pre-turn hard-due evidence；完整 parent 或 v4 branch base 上会重跑 evaluator，selected path 与当前 projection 不一致时 fail closed，避免 root / legacy bridge 无前驱校验或 sibling branch 污染 evaluator / prompt / HUD。`atWorldTime` 在没有规范化 comparator 时继续保持 pending。
+- M1 已增加 strict Pressure / Agenda schema、selected before-state 上的 deterministic eligible evaluator、simulation mode / density budget、wait action 的 typed relative time advance，以及 settlement 中只能推进 eligible pressure / agenda 的 typed change。world momentum 随 branch snapshot、Restore 与 Retry 一致恢复；非法 raw `stateDelta` 不能绕过 typed momentum contract。
+- 跨计划 F1 已增加 parent v5 Scene Rehearsal、frozen participant perception、fixed actor queue、attempt-local Accept / Retry、零提交 Cancel 与一次原子 Finish；committed step 以 `settlementEventRefs` 精确拥有自己的 contribution events，公开 hard-due 进入独立 `hostNarrativeBlocks` 并同时进入主 transcript。turn artifact v3 与 `scenes/*.yaml` evidence 双向拥有这些 blocks，重开与 Restore 只投影 selected branch。
+- F1 notice 只把显式 `playerVisible` 变化提升为角色已观察事实：provisional notice 没有伪造 event id，Finish 后 step / host notice 的 refs、顺序与 `title: summary` 由 owning artifact 精确派生；Core / Client 对 aggregate deep equality、visibility widening、跨 step / host 归属和遗漏覆盖 fail closed。referee prompt 同时携带 visibility map 与 anti-leak 规则，Player result 对 nested state、`directorOnly` / `playerUnknown` 与 `worldMomentum` fail closed。
+- F1 correctness gate 同时补齐 cooperative cross-process session / attempt filesystem lock、authoritative revision CAS、attempt staged publish、active marker self-healing 和独立 step-run terminal reconciliation；这些能力复用既有 staged session writer，没有建立第二套 transaction / variant 事实源。
+- Desktop Composer 已提供等待预设和自定义相对时间入口；HUD 以黑白中性样式展示 active pressure、deadline、agenda owner / next move，Event Feed 以安全 cause label 关联对应动力，spoiler gate 继续保护 `playerUnknown` 内容。
+- `play.event.occurred` 只在 staged snapshot swap 写入成功后发布，terminal committed session 继续作为 UI 权威事实；cancel / provider / validation / commit failure 不发布 occurred。
 - UI 已提供 committed transcript、真实 provisional block、Stop / cancel / failed / conflict / indeterminate 状态、action kind、suggestions、HUD、spoiler-aware pending schedule、visible / hidden event feed、source/state、observation 和 adoption candidate 表单；Play 组件统一使用共享黑白中性设计 token。
 - workspace mode 与布局偏好按 workspace 恢复，session rail 具备明确 ARIA 状态。根目录 `__test__/desktop-ui` 已覆盖 stream reducer、terminal 幂等、cancel / commit race、中性设计、router 恢复与 mounted session rail；完整键盘旅程和浏览器级覆盖仍需扩展。
-- committed turn artifact 已作为隐式 checkpoint 提供 list / restore 纵向能力；恢复会以 mandatory revision CAS 重新投影 transcript、world state、event refs、schedule 与 suggestions，保留全部 ledger，并让下一回合自然形成 sibling variant。Desktop 以文本状态和 inline confirmation 呈现恢复，不把 variant 误报为已删除历史。
+- committed turn artifact 已作为隐式 checkpoint 提供 list / restore 纵向能力；恢复会在 session reservation 与 cooperative filesystem lock 下用 mandatory `baseRevision` 检查重新投影 transcript、world state、event refs、schedule 与 suggestions，保留全部 ledger，并让下一回合自然形成 sibling variant。Desktop 以文本状态和 inline confirmation 呈现恢复，不把 variant 误报为已删除历史。
+- 完整 `worldSettlement` artifact 已提供原子 Retry：独立 SSE route 从 source artifact 读取不可变行动，在同一 before-turn projection 上重新生成 sibling；旧结果和后续 ledger 保留。首回合使用共享虚拟 branch base 的完整 v2 root forest；Desktop 生成期间显示 before-state、原始行动、provisional 状态与 variant 保留事实。commit barrier 前确认取消、provider / validation failure 或检测到 revision drift 时不改变权威 session；晚到 Stop 会明确返回 `committing / committed`，不能再阻止已经开始的提交。
 
-尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、pressure / agenda / eligible evaluator、typed state-delta refs、命名 / 初始 checkpoint、原子 retry、branch-local knowledge、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
+执行判断：上述底座已经能够安全支撑新的 Play 功能，不需要等 `docs/tasks/1120.md` 的所有 Remaining Review Scope 全部关闭后再继续。接下来的主线按用户价值排序：
+
+1. 已完成角色推演计划 F1：复用世界动力与相对时间能力形成第一个可玩的 Scene Rehearsal。
+2. 回到 M2，让事件原因、影响、隐藏变化与后续 reveal 在 HUD / Event Feed 中更易理解；或按角色推演计划进入 F2 Source-backed Guided Start。
+3. 让命名 checkpoint、初始世界入口、variant timeline 与 Retry / Restore 形成非技术化的分支探索体验。
+4. 让 Play 结果更容易生成带证据的 observation / adoption candidate，并进入现有人工审批链路。
+5. 再按真实长篇使用压力补 context trace、source drift、summary / windowing 与完整旅程自动化。
+
+F1 已因实际并发边界补入 cooperative cross-process session / attempt filesystem lock、持锁 CAS、staged attempt publish 与 crash self-healing。产品层 migration confirmation、fsync、完整跨进程故障矩阵、可重启 terminal registry、deadline / backpressure 等仍由 `docs/tasks/1120.md` 追踪，并保持为并行 correctness lane。
 
 ## 2. 规划依据与参考边界
 
@@ -110,21 +128,18 @@ OAN：变化怎样保持 filesystem-first、可追溯，并在人工审批后进
 
 SillyTavern 与本地 InkOS 参考均按 AGPL 项目对待。本计划只吸收产品模式、领域概念、状态机思想和测试场景。实现时必须独立命名、独立建模、独立编写代码与 prompt，不复制源文件、prompt 片段、UI 文案或视觉资产。
 
-## 3. 当前问题
+## 3. 当前产品缺口
 
-OAN 已经具备正确的 Play / canonical 边界，但当前模型仍接近“在一个 session 中追加角色消息”：
+最初的结构化事实、回合事务、流式结算、HUD 与 checkpoint 基础已经解决；当前缺口不再是“Play 能否安全提交一个世界回合”，而是这些能力是否形成了足够有生命力、可理解、可控制的产品体验：
 
-1. transcript 是主要体验，外部世界变化没有一等数据模型。
-2. `play-local-state.yaml` 是自由形态对象，缺少事件原因、世界时间、可见性和变更证据。
-3. world referee prompt 没有形成完整的 transcript、state、activated source、due event 上下文包。
-4. backend 虽有 world-referee endpoint，client 与 UI 没有接通真正的流式生成闭环。
-5. 回合结果没有统一的“正文 + 时间 + 事件 + 状态变化 + observation”结构。
-6. 多个 session 文件直接写入，失败时缺少 Play 回合级事务与恢复机制。
-7. checkpoint / variant 尚不足以同时回退世界状态、事件计划、隐藏变化与 transcript 路径。
-8. UI 没有世界时钟、事件流、压力、NPC / 组织 agenda、来源与 spoiler 控制。
-9. `session.yaml.transcript` 与 `transcript.md` 存在双表示风险，需要明确一个结构化事实源和一个展示投影。
+1. hard-due 与 M1 eligible event 已能推进世界，但 Event Feed 对 pressure、agenda、玩家行动与 source 的完整因果解释仍需继续收口。
+2. typed 相对等待已有一等入口；绝对 `atWorldTime` 仍需和规范化 comparator 一起交付，宿主继续拒绝猜测自然语言时间顺序。
+3. hidden event 已能安全保存和投影，但缺少 branch-local knowledge / reveal store 与正式的 `playerUnknown -> rumor / playerVisible` 因果揭示链。
+4. checkpoint / restore / Retry 已经正确保留分支事实，但命名 checkpoint、可见初始世界入口与 branch timeline 仍偏技术化。
+5. observation / adoption 已有正确审批边界，但从“值得采用的事件或结果”到可审阅 candidate 的路径仍可更短、更清楚。
+6. context trace、omitted source、canonical drift 与长 session windowing 尚未形成面向用户的诊断和长篇使用体验。
 
-如果只在现有 prompt 中增加一句“让世界更有活力”，模型会制造不可复现、不可解释、无法回退的随机变化。升级必须同时覆盖领域模型、回合协议、事务、界面与测试。
+因此，下一阶段不再默认扩建通用基础设施；新增 schema、store 或 endpoint 必须直接服务于可玩的行为、可见反馈、分支控制或可采纳结果。
 
 ## 4. 产品目标与非目标
 
@@ -271,6 +286,7 @@ interface PlayEventKnowledge {
 - `rumor`：玩家知道有信息流动，但其真实性可以不确定。
 - `playerUnknown`：只进入 referee context 和作者 spoiler inspector，不能泄露到沉浸视角。
 - hidden event 后续被揭示时，必须记录 `revealedByEventId`，不能直接修改旧记录伪装成一直可见。
+- Rehearsal F1 的 actor observed-event 链更严格：一般 Event Feed 可以保留 `rumor`，但 `rumor` / `playerUnknown` 不生成确定性的 rehearsal `worldNotice`；只有 selected block 显式引用的 `playerVisible` event 才进入后续角色 perception。
 
 ### 6.5 世界时间
 
@@ -372,40 +388,28 @@ interface PlayWorldEvent {
 }
 ```
 
-### 6.9 PlayTurnDraft 与 PlayTurnArtifact
+### 6.9 PlayWorldRefereeSettlement 与 PlayTurnArtifact
 
-模型提出 `PlayTurnDraft`，宿主校验并提交后生成 `PlayTurnArtifact`：
+当前真实实现 seam 是 narrative + `PlayWorldRefereeSettlement`；宿主解析、校验并提交后生成 `artifactKind: worldSettlement` 的 `PlayTurnArtifact`：
 
 ```ts
-interface PlayTurnDraft {
-  baseRevision: number;
-  messages: Array<{
-    role: 'narrator' | 'character';
-    speakerEntityId?: string;
-    content: string;
-  }>;
-  timeAdvance: PlayTimeAdvance;
-  events: PlayWorldEvent[];
-  scheduledEventChanges: unknown[];
-  pressureChanges: unknown[];
-  agendaChanges: unknown[];
-  stateDeltas: unknown[];
-  observations: unknown[];
-  suggestedActions: string[];
-  contextTraceId: string;
+interface ParsedPlayWorldRefereeResponse {
+  narrative: string;
+  settlement: PlayWorldRefereeSettlement;
 }
 
-interface PlayTurnArtifact extends PlayTurnDraft {
-  id: string;
-  revision: number;
-  input: { kind: 'say' | 'look' | 'move' | 'do' | 'wait'; raw: string };
-  committedAt: string;
-  validationSummary: string[];
-  canonical: false;
+interface PlayWorldRefereeSettlement {
+  elapsed?: string;
+  worldTimeAnchor?: string;
+  events: PlayWorldRefereeSettlementEvent[];
+  scheduledEventChanges: PlayWorldRefereeScheduledEventChange[];
+  stateDelta: Record<string, unknown>;
+  observations: Array<{ summary: string; evidence: string }>;
+  suggestedActions: string[];
 }
 ```
 
-实际实现必须用 Zod / JSON Schema 收紧 `unknown` 部分；此处只保留规划层级，避免提前冻结全部 patch 细节。
+Pressure / Agenda、typed delta refs 与 context trace 应作为这一 settlement / validation 管线的增量能力，或由独立深模块提供宿主输入；不再新建第二套 `PlayTurnDraft`、reducer 或 commit framework。artifact 继续保存 host-owned id、revision、typed input、parent、branch snapshot、event / schedule refs 与 `canonical: false` 证据。
 
 ## 7. 三层事件结算机制
 
@@ -413,13 +417,18 @@ interface PlayTurnArtifact extends PlayTurnDraft {
 
 ### 7.1 第一层：Hard Due Event
 
+当前状态：**已完成基础闭环**。`nextTurn`、`afterTurns`、`flagEquals` 的宿主 evaluator、hard-due skeleton、唯一 `triggerId` 结算和预算豁免已经落地；`atWorldTime` 仍只在存在规范化 comparator 时启用。
+
 满足确定触发条件的 scheduled event：
 
 - 必须进入当前回合结算。
 - 宿主先生成 due event skeleton，再交给 referee 结合场景叙述与补全影响。
 - referee 若遗漏、取消或改期，必须提供符合规则的结构化原因；否则 draft 校验失败。
+- Scene Rehearsal actor step 禁止携带 `triggerId` 或提前结算 hard-due；Finish 在 base-session skeleton 上只结算一次，公开结果进入独立 host notice，不归因给固定队列中的最后一个角色。
 
 ### 7.2 第二层：Eligible Pressure Event
+
+当前状态：**M1 已完成基础可玩闭环**。宿主会从 selected before-state、active pressure / agenda、用户行动、typed wait、simulation mode 与 density 生成稳定候选；settlement 只能引用并实际推进 eligible 动力。
 
 由 active pressure、agenda、时间推进和世界模式共同决定的候选事件：
 
@@ -428,6 +437,8 @@ interface PlayTurnArtifact extends PlayTurnDraft {
 - `conversation` 通常只处理强制后果；`reactiveWorld` 处理紧密相关候选；`activeWorld` 可处理更多场外候选。
 
 ### 7.3 第三层：Immediate Consequence
+
+当前状态：**已有 typed event / cause 基础，继续提升因果质量与 UI 可解释性**。不为这一层新增第二套结算引擎。
 
 由玩家本回合行为直接产生的即时结果：
 
@@ -460,7 +471,7 @@ flowchart TD
   B --> C["解析 action 与时间意图"]
   C --> D["宿主计算 hard-due / eligible pressure / agenda cues"]
   D --> E["组装 PlayContextPackage"]
-  E --> F["单一 World Referee 流式生成 PlayTurnDraft"]
+  E --> F["单一 World Referee 生成 narrative + settlement"]
   F --> G["Schema、因果、时间、可见性与预算校验"]
   G -->|失败| H["可见错误 / 一次受控修正；不提交"]
   G -->|通过| I["构建 staged PlayTurnTransaction"]
@@ -484,37 +495,31 @@ flowchart TD
 - `messages[].content` 可以向 UI 发送 provisional delta，提升沉浸感。
 - provisional 内容不等于已提交 transcript。
 - 同一 turn 在中间 read-tool loop 后重新开始正文时，服务端发送 `play.narrative.reset`；UI 清空此前全部 provisional 文本，后续 delta 构造替代正文。reset 本身不产生事实、不推进 revision。
-- 完整 `PlayTurnDraft` 到达并通过验证后，才生成 committed turn。
+- 完整 narrative + `PlayWorldRefereeSettlement` 到达并通过验证后，才生成 committed turn。
+- Scene Rehearsal 中，referee contribution 的公开变化先形成 `eventRefs: []` 的 provisional notice；Finish 分配宿主 event ids 后按 `steps[].settlementEventRefs` 重绑，并把公开 hard-due 追加为 evidence-level host block。三类 notice 都只是 transcript projection，结构化 settlement / artifact 才是事件事实。
 - UI 需要区分 `streaming` 与 `committed`；失败时撤回或标记未提交的 provisional block。
 - 取消、provider error、schema error、revision conflict 都不得留下 transcript-only 或 state-only 的半回合。
 
 具体 AI SDK 输出方式可以在实施计划中根据当前依赖版本选择，但必须保持同一个 turn id、同一个结构化 draft 和一次最终提交，不能让第二次模型调用偷偷重写第一次叙事的事实。
 
-### 8.4 PlayTurnTransaction
+### 8.4 已落地的 PlayTurnTransaction 基线
 
-当前多个 Play 文件的直接写入必须升级为回合级 staged transaction：
+当前实现已经具备继续交付产品功能所需的回合级事务语义，不再计划另建一套 `.transactions/<id>/` manifest 框架：
 
-1. 获取 session 级互斥锁，确认 `baseRevision` 未变化。
-2. 在 `.transactions/<transaction-id>/` 写入 manifest 和全部候选文件。
-3. 校验 staged 文件可重新解析，且引用完整。
-4. manifest 标记 `prepared`。
-5. 用可恢复的替换过程 materialize 新 snapshot、turn artifact 和 projections。
-6. manifest 标记 `committed`，再发布 `play.turn.committed`。
-7. 启动或打开 session 时扫描未完成 transaction，按 manifest 回滚或补完。
+1. 同一 session 的 Play-local mutation 共用进程内互斥锁；staged session writer、reader / recovery 与 rehearsal attempt recovery 还使用 cooperative cross-process filesystem lock。F1 Finish 在持锁 attempt transaction 内执行 session CAS 与 swap；普通 turn 与其它既有 mutation继续按各 route 的 `baseRevision` 契约执行冲突检查。
+2. 候选 turn、state、event、schedule 与 projection 先在内存中完成结构化校验。
+3. 完整 snapshot 写入 sibling staging directory，并使用 ready marker 与 directory swap 一次提交。
+4. 读取器能够恢复带 ready marker 的中断 stage，避免把部分文件当成一个新 revision。
+5. terminal committed event 只在 staged snapshot swap 写入成功后发布；取消、provider / validation failure 或 commit 前 drift 保持零写入。
+6. Retry 与普通流式 turn 复用 run registry / commit barrier；Restore 复用权威 ledger、session lock 与 staged writer，但不进入流式 commit barrier。
 
-必须覆盖的故障点：
+cooperative cross-process session / attempt lock 与当前触发的 stage / marker crash recovery 已落地。fsync、逐故障点注入矩阵、长期 quarantine / stage 清理、可重启 terminal registry 与 graceful shutdown 继续作为并行 correctness lane；在完成这些项目之前不宣称断电级强耐久保证。
 
-- narrative 已流式显示但结构化 draft 未完成。
-- turn artifact 写入成功而 state snapshot 失败。
-- event ledger 更新成功而 transcript projection 失败。
-- 应用在 `prepared` 与 `committed` 之间退出。
-- 两个窗口对同一 session 同时提交。
-
-由于这些文件都位于 `.workspace/play-sessions/`，Play-local 提交不需要 canonical PendingAction；但它仍必须是可观察、可恢复的内部写入。
+由于这些文件都位于 `.workspace/play-sessions/`，Play-local 提交不需要 canonical PendingAction；但它仍必须保持可观察、可恢复，并通过现有 Human Approval 边界与 canonical truth 隔离。
 
 ## 9. Filesystem-first 存储设计
 
-### 9.1 建议布局
+### 9.1 当前布局与按需扩展
 
 ```text
 .workspace/play-sessions/<session-id>/
@@ -526,31 +531,26 @@ flowchart TD
 ├── event-schedule.yaml
 ├── observations.yaml
 ├── adoption-candidates.yaml
-├── summaries.yaml
-├── steering.md
 ├── turns/
 │   └── <turn-id>.yaml
-├── checkpoints/
-│   └── <checkpoint-id>/...
-├── variants/
-│   └── <parent-turn-id>/...
-├── traces/
-│   └── <turn-id>.context.yaml
-└── .transactions/
-    └── <transaction-id>/...
+└── .migrations/                 # 仅 legacy upgrade 后存在
+    └── v1-to-v4/ | v2-to-v4/ | v3-to-v4/
 ```
+
+checkpoint、variant 与 Retry 已由 `turns/*.yaml` ledger、parent link、branch snapshot 和 `selectedTurnIds` 表达，不新增平行事实目录。`traces/`、summary 或 branch-local knowledge 文件只在对应用户功能进入实施时按稳定 schema 增加；Core 使用的 sibling stage / backup 是内部提交机制，不作为 session 内长期产品数据布局。
 
 ### 9.2 事实与投影边界
 
 | 文件 | 角色 |
 |---|---|
-| `session.yaml` | session metadata、schema version、revision、policy、canonical base refs、selected branch head |
+| `session.yaml` | session metadata、schema version、revision、world clock、event policy、branch base / cutoff 与 selected path |
 | `turns/*.yaml` | 已提交回合的结构化事实与证据 |
-| `play-local-state.yaml` | 当前可恢复 snapshot；实体状态、clock、pressure、agenda、knowledge 等 |
+| `play-local-state.yaml` | 当前可恢复的 Play-local state value；M1 / M3 再按稳定 schema 增加 pressure、agenda、knowledge 投影，world clock 继续由 session / branch snapshot 持有 |
 | `events.yaml` | 按 turn / sequence 排列的事件 ledger，用于审计和 UI；不是重建全部状态的唯一来源 |
 | `event-schedule.yaml` | 尚未发生、已取消或已改期的计划事件 |
 | `transcript.md` | 从 selected turn path 生成的人类可读 projection，不是第二份可独立修改的 transcript truth |
-| `traces/*.context.yaml` | source 选择、预算、omission 与规则来源；不保存私有 reasoning |
+
+M5 若交付持久化 context trace，可按需增加 `traces/*.context.yaml`，只记录 source 选择、预算、omission 与规则来源，不保存私有 reasoning；在 schema 冻结前它不是当前事实布局。
 
 必须消除 `session.yaml.transcript` 与 `transcript.md` 的双写歧义：
 
@@ -613,9 +613,9 @@ Novel Constitution / explicit world contract
 
 隐藏事件可以进入 referee-only context，但不得进入 player-visible transcript。context inspector 在作者 spoiler 模式下可以查看其结构化摘要与来源。
 
-## 11. UI / UX 升级
+## 11. 已冻结的顶级 Play 工作区与后续 UI / UX
 
-Play 必须从狭窄的右侧 tab 提升为与 Writing 同层级的顶级主工作区。这不是“把右侧面板做宽”，而是改变 workspace 的一级信息架构。
+Play 已经从早期狭窄右侧 tab 提升为与 Writing 同层级的顶级主工作区。后续 UI 不再重复迁移一级信息架构，而是在这条已冻结基线上交付 Pressure / Agenda、推进时间、事件原因、branch timeline 与 Adoption 等实际交互。
 
 ### 11.1 顶级模式导航
 
@@ -695,9 +695,9 @@ Workspace
 
 ```text
 POST /api/workspace/play-sessions/:id/turns/stream
-POST /api/workspace/play-sessions/:id/turns/:turnId/retry
-POST /api/workspace/play-sessions/:id/checkpoints
-POST /api/workspace/play-sessions/:id/checkpoints/:checkpointId/restore
+POST /api/workspace/play-sessions/:id/turns/:artifactId/retry/stream
+GET  /api/workspace/play-sessions/:id/checkpoints
+POST /api/workspace/play-sessions/:id/checkpoints/:artifactId/restore
 GET  /api/workspace/play-sessions/:id/events
 GET  /api/workspace/play-sessions/:id/context-traces/:turnId
 POST /api/workspace/play-sessions/:id/events/:eventId/adoption-candidates
@@ -713,8 +713,8 @@ play.context.ready
 play.narrative.delta
 play.narrative.reset
 play.turn.prepared
-play.turn.committed
 play.event.occurred
+play.turn.committed
 play.turn.failed
 play.turn.cancelled
 ```
@@ -724,7 +724,7 @@ play.turn.cancelled
 - `play.narrative.delta` 明确标记 provisional。
 - `play.narrative.reset` 清除同一 turn 此前全部 provisional 正文；它不撤销 committed turn，也不推进 revision。
 - 当前实现以 `play.turn.committed.session` 作为 transcript、world state、observation 与 event feed 的权威刷新载荷。
-- 独立 `play.event.occurred` 属于 schedule / pressure / agenda evaluator 的后续交付，不是当前 UI 的事件刷新事实源；实现后也只能在 transaction 持久化 committed 后发布，不能把 draft 事件冒充已发生。
+- 独立 `play.event.occurred` 已在 staged snapshot swap 写入成功后、terminal `play.turn.committed` 前发布；它提供逐事件 committed 通知，但当前 UI 仍以随后到达的 committed session 作为 transcript、state、schedule 与 event feed 的权威刷新载荷。
 - event payload 只包含 UI 所需结构化 trace，不包含 provider secret 或私有 reasoning。
 - 复用已有 RuntimeEvent / SSE / AI SDK UI stream 基础设施，不新建第二套通用 runtime。
 
@@ -746,7 +746,7 @@ checkpoint 必须覆盖：
 - restore checkpoint 必须回退事件计划和隐藏知识，不能只截断聊天文本。
 - checkpoint / variant 是 Play-local 分支，不自动创建 Git branch。
 
-当前已落地 committed-turn 隐式 checkpoint：任意带完整 branch snapshot 的 artifact 都可作为 selected path 恢复目标，legacy 仅允许恢复到 branch base head。restore 后 session revision 单调推进，目标之后的 ledger 保留并标记为 variant；再次选择旧 variant 或从恢复点继续推进都不需要复制或删除历史。尚未落地命名 / 初始 checkpoint、自动 provider retry，以及独立 knowledge / reveal snapshot，因此本节完整验收仍是部分完成。
+当前已落地 committed-turn 隐式 checkpoint：任意带完整 branch snapshot 的 artifact 都可作为 selected path 恢复目标，legacy 仅允许恢复到 branch base head。restore 后 session revision 单调推进，目标之后的 ledger 保留并标记为 variant；再次选择旧 variant 或从恢复点继续推进都不需要复制或删除历史。完整 `worldSettlement` 还可直接发起原子 provider Retry：宿主从 source artifact 读取 typed action，在同一 before-turn projection 上生成 sibling，旧结果不覆盖；首回合以共享虚拟 branch base 的完整 v2 roots 表达。尚未落地命名 / 可见初始 checkpoint 与独立 knowledge / reveal snapshot，因此本节完整验收仍是部分完成。
 
 ## 14. Observation 与 Canonical Adoption
 
@@ -791,114 +791,86 @@ Play observation / event
 4. 重新生成 `transcript.md` projection。
 5. 保留未知顶层 session metadata，并让 `.migrations/` 历史跨后续保存延续；升级时用 `branchBaseSnapshot` 封存当前 selected legacy projection，以当前 revision 作为 cutoff。
 6. v4 中 cutoff 与 branch base 都是必需证据，不得删除或静默重算；watermark 必须等于 base revision，revision 高于 cutoff 的 artifact 必须有完整 v2 snapshot，前驱、selected projection 或 schedule 不连续时 fail closed。
-7. migration 与 v4 snapshot 在同一个 staged directory swap 中提交；更完整的 fsync、跨进程锁和逐故障点验证仍待实现。
+7. migration 与 v4 snapshot 在同一个持 filesystem lock 的 staged directory swap 中提交；更完整的 fsync 和逐故障点验证仍待实现。
 
 不应在应用升级时批量静默重写全部 Play session。
 
-## 16. 实施阶段
+## 16. 当前实施顺序：产品纵向切片优先
 
-### Phase 0：现状复核与任务化
+原 Phase 0–4 中的 session v4、structured settlement、staged snapshot、typed SSE、顶级 Play workspace、HUD、checkpoint / restore 与 Retry 已形成可复用底座。它们不再作为下一轮顺序执行的基础设施阶段，也不要求 `docs/tasks/1120.md` 先转为 `Completed`。
 
-目标：先把已声明完成但实际未闭环的部分分开。
+新的实现原则是：每个里程碑都要同时交付最小 Core 规则、referee context、Backend / Client 契约、Desktop UI 反馈和用户旅程测试；不先堆一批没有可玩入口的 schema。
 
-- 对照代码复核 `docs/tasks/1090.md` 的 client、stream、UI 和 adoption done criteria。
-- 新建独立 Planned task，例如 `1120 Play World Events And Turn Transactions`。
-- 将本计划链接为 Related Plan；不要直接改写旧任务历史。
-- 更新 `docs/PLAY_MODE_SPEC.md`，冻结 v4 turn fact / projection / branch base 术语、事实边界和非目标。
-- 把 `Writing | Play` 顶级模式导航和移除 `rightTab: 'play'` 写入 UI scope；不允许只升级现有 `PlayModeTab.vue`。
+### M1：让世界真正持续变化
 
-完成标准：实现团队知道哪些是旧 Play 缺口，哪些是本次 world-event 新能力。
+状态：**Completed（2026-07-15）**。绝对 `atWorldTime` comparator 未被伪造；当前用户入口只提交可规范化的相对 elapsed，无法比较的绝对世界时间触发仍保持 pending。
 
-### Phase 1：Core schema 与 migration
+范围：
 
-建议范围：
+- 最小可解释的 Pressure / Agenda schema 与 branch snapshot。
+- eligible evaluator：结合 active pressure、agenda、时间推进、玩家行动和 simulation mode 生成稳定候选。
+- `conversation | reactiveWorld | activeWorld` 与 density 真正影响 eligible budget。
+- Composer 提供明确的“等待 / 推进时间”入口；相对 elapsed 先使用稳定规范化表示，`atWorldTime` / “等到天亮”必须同时交付 world contract comparator，宿主不得猜测自然语言时间顺序。
+- HUD 展示 active pressure、deadline、NPC / 组织下一步倾向；Event Feed 展示对应 cause。
 
-- 修改 `packages/core/src/play-session.ts`。
-- 新增 `packages/core/src/play-world-event.ts`。
-- 新增 `packages/core/src/play-event-trigger.ts`。
-- 新增 `packages/core/src/play-turn-transaction.ts`。
-- 从 `packages/core` 包入口导出稳定类型与 API。
+完成标准：玩家只聊天或等待时，外部世界仍能基于已有 agenda、pressure 或期限推进；相同 before-turn snapshot 产生稳定候选，事件不是随机插曲；任何绝对世界时间触发都有明确 comparator，无法规范化的值继续保持 pending。
 
-交付：
+### M2：让用户看懂并控制世界线
 
-- session v4 schema（turn artifact / selected path / branch base 基础；其余 world simulation schema 按后续阶段增量交付）。
-- WorldEvent / Schedule / Pressure / Agenda / TurnArtifact schema。
-- trigger evaluator、领域 validator、state reducer。
-- legacy session reader / migrator。
-- staged transaction 与 recovery。
+范围：
 
-### Phase 2：Play context 与单裁判回合
+- 事件卡显示原因、影响、世界时间、相关实体与 pressure / agenda / action refs。
+- 可见的初始世界 checkpoint、命名 checkpoint 与清晰的 branch timeline。
+- Retry、Restore、选择 variant 使用统一的“从哪里重演 / 当前选择哪条世界线”交互。
+- artifact id、revision 和图结构退到可展开的技术详情，不作为主要文案。
 
-建议范围：
+完成标准：用户无需理解 turn graph，也能试验不同选择、返回初始世界，并清楚旧结果仍被保留。
 
-- 新增 `packages/agent/src/play-context.ts`。
-- 新增 `packages/agent/src/play-turn.ts`。
-- 复用现有 context package、source trace、agent stream 与 tool calling。
+### M3：隐藏变化与因果揭示
 
-交付：
+范围：
 
-- PlayContextAssembler 加载实际 transcript / summary / state / event / source 内容。
-- host-side due / eligible evaluator。
-- 单 world referee 的结构化 PlayTurnDraft。
-- provisional narrative stream + validated final draft。
-- 一次受控 correction 与清晰失败状态。
+- 最小 branch-local knowledge / reveal store，并随 selected branch 恢复。
+- `playerUnknown -> rumor / playerVisible` 的显式 reveal link；旧 hidden event 不被原地篡改。
+- Player / Author projection 继续服从 spoiler gate。
 
-约束：不修改 `packages/runtime` 让它理解 Play 领域，不增加多 Agent coordinator。
+完成标准：场外事件可以先发生、后被有因果地揭示；Restore / Retry 后不会串用其他分支知识。context trace / source drift 不阻塞这一可玩闭环。
 
-### Phase 3：Backend 与 client 闭环
+### M4：把 Play 结果带回创作流程
 
-当前状态：**部分完成**。turn stream、cancel、commit barrier、committed-turn checkpoint list / restore 与类型安全 client adapter 已落地；命名 / 初始 checkpoint、原子 retry、独立 event / trace 查询及旧 endpoint deprecation 仍待完成。在 evaluator 与独立事件通知落地前，committed session 继续承担事件 feed 的权威刷新载荷。
+范围：
 
-建议范围：
+- event / observation 一键形成带 turn / event / source evidence 的 adoption candidate。
+- 为 `chapterDraft | state | timeline | foreshadow` 提供合法目标建议和可编辑预览。
+- PendingAction 前清楚展示将进入 canonical truth 的内容与差异。
+- discarded / unselected variant 不进入 candidate，hidden provenance 不从 label 或 preview 泄漏。
 
-- `packages/backend/src/index.ts`
-- `packages/client/src/index.ts`
-- 对应 backend / client 测试 workspace
+完成标准：一次有价值的 Play 结果能用少量操作进入现有 Human Approval 流程，但永远不会因“在 Play 中发生过”而自动成为小说事实。
 
-交付：
+### M5：长篇使用与体验收口
 
-- turn stream、cancel、retry、checkpoint、restore、event / trace 查询。
-- revision conflict 与 transaction recovery 响应。
-- client stream adapter 和类型安全 API。
-- 旧 world-referee API 的兼容 / deprecation 路径。
+范围：
 
-### Phase 4：独立 Play 工作区与 HUD
+- session summary + selected detail、transcript / event feed windowing。
+- 完整键盘、screen reader 与浏览器级 Play journey。
+- turn-scoped context trace 记录实际使用、遗漏和发生漂移的 source。
+- canonical source drift 提供继续当前内容、重新装配或 fork 的明确选择。
+- context / source 状态的简洁诊断，以及旧 endpoint / migration 入口收口。
 
-建议组件：
+完成标准：长 session 不需要一次加载全部事实，核心旅程在桌面真实交互中可回归验证。
 
-```text
-WorkspaceModeNavigation.vue
-WritingWorkspace.vue
-PlayWorkspace.vue
-PlayTranscript.vue
-PlayComposer.vue
-PlayWorldHud.vue
-PlayEventFeed.vue
-PlayContextInspector.vue
-PlayAdoptionDrawer.vue
-```
+### 并行 correctness lane：不作为全局 Gate
 
-交付：
+- cooperative cross-process session / attempt lock 已落地；fsync、ready / stage / backup 完整故障点注入、quarantine / 残留清理仍待完成。
+- 可重启 terminal registry、graceful shutdown、provider / source deadline、bounded read 与 SSE backpressure。
+- legacy migration confirmation、取消与错误恢复。
+- 与正在交付功能直接相关的 typed delta / provenance 加固。
 
-- `Writing | Play` 顶级模式导航、可恢复的 `workspaceMode` 和独立主工作区布局。
-- `WorkspaceToolbar` 的 Play 操作从 `openRightTab('play')` 改为切换顶级 mode。
-- 从 `WorkspaceRightTab` / `WorkspaceRightPanel` 移除完整 Play Mode；共享 review panel 继续服务 Writing 与 adoption review。
-- streaming / stop / error / committed 状态。
-- 世界时钟、事件流、pressure、agenda、source trace。
-- speaker strategy、wait / advance time。
-- spoiler toggle、variant / checkpoint。
-
-### Phase 5：Adoption、健壮性与文档收口
-
-- event / observation 一键生成 adoption candidate。
-- semantic target mapping 与 PendingAction evidence。
-- canonical drift 提示与 session fork / rebase。
-- recovery、并发、长 transcript 性能和 accessibility 测试。
-- 更新 `docs/PLAY_MODE_SPEC.md`、任务状态、Implementation Notes 和 `docs/README.md` 索引。
+这条并行轨不能因为追求更完整的通用事务框架而暂停 M1–M4。只有可复现的数据丢失、历史覆盖、安全边界破坏，或某个里程碑直接需要改变对应持久化 / 并发保证时，相关项才成为该里程碑的局部 correctness gate。新增领域能力继续拆为独立深模块，由现有 facade 组合，不把新状态机堆回单个 `play-session.ts`。
 
 ## 17. 测试计划
 
-测试继续放在仓库根目录 `__test__/<module>/`，通过包入口导入。
+测试继续放在仓库根目录 `__test__/<module>/`，通过包入口导入，并随 M1–M5 纵向增加。每个功能里程碑必须包含对应 Core invariant、transport contract、Desktop 交互与用户旅程；不要求 M1 开发前先完成 fsync、跨进程故障矩阵、windowing 或全部 browser smoke。
 
 ### 17.1 Core
 
@@ -910,19 +882,19 @@ PlayAdoptionDrawer.vue
 - hidden event reveal 保留原事件与 reveal link。
 - trigger evaluator 对同一 snapshot 输出一致。
 - invalid delta 不改变任何文件。
-- staged transaction 在每个故障点可恢复 / 回滚。
+- 并行 correctness lane：staged transaction 在每个故障点可恢复 / 回滚。
 - 两个相同 baseRevision 中只有一个可提交。
 - checkpoint restore 同时恢复 state、events、schedule 与 knowledge。
-- legacy session migration 保留未知字段和原始备份。
+- 条件式 migration slice：legacy session migration 保留未知字段和原始备份。
 
 ### 17.2 Agent
 
-- context 包含真实 transcript window、summary、current state、due events 与 source 内容。
-- omitted source 有预算原因。
+- M5：context 包含真实 transcript window、summary、current state、due events 与 source 内容。
+- M5：omitted source 有预算原因。
 - Tavern imported hint 不能覆盖 constitution / canonical rule。
 - referee 输出必须引用宿主提供的 hard-due event。
 - 场外事件不泄露到 player-visible narrative。
-- 一次 turn 只有一个 final PlayTurnDraft。
+- 一次 turn 只有一份 final `PlayWorldRefereeSettlement`。
 
 ### 17.3 Backend / Client
 
@@ -930,7 +902,7 @@ PlayAdoptionDrawer.vue
 - cancel 后没有 committed turn 或部分文件。
 - provider error / parse error 不追加 transcript。
 - revision conflict 返回可处理的冲突。
-- 应用重开后能恢复 prepared transaction。
+- 并行 correctness lane：应用重开后能恢复 prepared transaction。
 - client 能消费 provisional delta、committed artifact 与 world events。
 
 ### 17.4 UI
@@ -970,7 +942,7 @@ PlayAdoptionDrawer.vue
 | 风险 | 控制方式 |
 |---|---|
 | 模型滥造戏剧性事件 | cause 引用、三层结算、event budget、host validator |
-| 状态与叙事矛盾 | 单一 PlayTurnDraft、render / validate before commit、state delta refs |
+| 状态与叙事矛盾 | 单一 settlement、render / validate before commit、state delta refs |
 | 隐藏信息泄露 | knowledge projection 分层、player / referee context 分离、UI spoiler gate |
 | 多文件半写入 | PlayTurnTransaction、revision lock、startup recovery |
 | 事件系统演变为 event sourcing | snapshot 明确为恢复事实；ledger 只做审计、UI 与证据 |
@@ -980,31 +952,36 @@ PlayAdoptionDrawer.vue
 | Play 结果污染 canonical truth | `.workspace` 隔离、adoption candidate、PendingAction / diff |
 | 参考代码许可证污染 | 只学模式；独立实现、独立 prompt、保留来源说明 |
 
-## 20. 实施决策清单
+## 20. 已冻结底座与下一功能缺口
 
-开始写代码前必须确认以下决策已进入稳定规格：
+以下清单用于防止把已完成的基础设施重新立项，也用于明确真正尚未交付的产品能力：
 
 - [x] `turns/*.yaml` 是结构化回合事实，`transcript.md` 是 projection。
 - [x] `play-local-state.yaml` 是当前 snapshot，events 不是唯一状态源。
 - [x] 外部世界只在显式 Play turn / time advance 时结算。
 - [x] 单 world referee，不引入 character agents 或 background agents。
-- [ ] hard due / eligible pressure / immediate consequence 三层机制成立。
-- [ ] event origin、cause、visibility、world time、delta refs 为必需字段。
-- [ ] hidden event 的保存、投影、揭示与 adoption 规则明确。
-- [ ] PlayTurnTransaction 的失败恢复和 revision conflict 行为明确。
+- [x] hard-due evaluator 与 immediate consequence 的 typed event / cause 基础已落地。
+- [x] Pressure / Agenda 与 eligible event evaluator 形成可玩的世界推进闭环。
+- [x] event origin、cause、visibility 与 world time 已进入结构化结算和投影校验。
+- [ ] 更严格的 typed state-delta refs 与事件原因 UI 解释完成。
+- [x] hidden event 的保存、Player / Author 投影与 adoption 防泄漏规则已明确。
+- [x] Scene Rehearsal 的 per-step event partition、独立 host hard-due notice、exact derived content、selected aggregate projection 与 Client strict guard 已落地；`rumor` / hidden 不会被 notice 意外升级。
+- [ ] branch-local knowledge、显式 reveal link 与随分支恢复完成。
+- [x] PlayTurnTransaction、失败零写入、revision conflict、中断 stage 恢复，以及 cooperative cross-process session / attempt lock 与持锁 CAS 已明确。
+- [ ] fsync、完整跨进程故障注入矩阵与可重启 terminal truth 作为并行加固闭环。
 - [x] provisional stream 与 committed turn 在 UI 上有清晰区别；Stop 通过服务端 cancel confirmation 与 commit barrier 处理。
-- [ ] checkpoint / variant 覆盖状态、事件、计划、知识与 source refs。
+- [x] checkpoint / variant / Retry 已覆盖 transcript、state、events、schedule 与 suggestions。
+- [ ] 命名 / 可见初始 checkpoint，以及 knowledge / reveal / source trace 的分支语义完成。
 - [x] canonical adoption 继续经过 PendingAction / diff / human approval。
 
 ## 21. 最终建议
 
-第一版优先完成“可解释、可回退、可提交的事件世界”，不要追求复杂模拟。最小但完整的交付应包含：
+“可解释、可回退、可提交”的底座已经成立，下一轮不再优先扩建通用基础设施。最小但完整的功能交付顺序是：
 
-1. 世界时间、scheduled event、pressure / agenda 和 typed WorldEvent。
-2. 一个加载真实 Play 上下文的单 world referee 回合。
-3. provisional narrative + structured settlement + atomic Play-local commit。
-4. 独立 Play 工作区中的世界时钟、事件流和 spoiler 控制。
-5. 覆盖 turn、state、events、schedule 的 checkpoint / variant。
-6. 带 event evidence 的 observation / adoption workflow。
+1. 已完成：Pressure / Agenda + eligible evaluator + 明确的相对等待 / 推进时间，让世界确实会继续变化。
+2. 已完成：F1 Scene Rehearsal，让角色受限感知、导演控制与一次原子 Finish 成为可玩的纵向功能。
+3. 下一候选：世界事件 M2 的原因 / 影响 / branch timeline，或角色推演 F2 Source-backed Guided Start。
+4. branch-local knowledge 与 reveal link，让隐藏变化可以安全地先发生、后揭示。
+5. 更短的 evidence-backed adoption 路径，让值得保留的 Play 结果进入人工审批。
 
-做到这六点后，Play Mode 才真正从“角色在说话”升级为“一个故事世界在回应玩家，并且它发生过的变化都能被作者理解、试验、回退和采纳”。
+这五项按纵向切片交付时，Play Mode 才会从“已经具备正确底座”继续成长为“世界会回应、作者能控制、结果可用于写作”的顶级功能。耐久性和规模化加固保持并行推进，但不再默认抢占功能主线。

@@ -16,13 +16,14 @@ describe('usePlayTurnStream', () => {
   it('keeps deltas provisional and applies a committed session exactly once', async () => {
     const committedSession = createSession(1);
     const onCommitted = vi.fn();
-    const client = createClient(async function* () {
+    const stream = vi.fn(async function* () {
       yield startedEvent();
       yield deltaEvent('雨声靠近。');
       yield deltaEvent('duplicate ignored');
       yield committedEvent(committedSession);
       yield { ...deltaEvent('late delta'), eventId: 'run-1:4', sequence: 4 };
     });
+    const client = createClient(stream);
     const flow = usePlayTurnStream({ client, onCommitted });
 
     const outcome = await flow.submit({
@@ -30,11 +31,22 @@ describe('usePlayTurnStream', () => {
       baseRevision: 0,
       userText: '等待',
       actionKind: 'wait',
+      timeAdvance: { amount: 1, unit: 'hour' },
     });
 
     expect(outcome).toBe('committed');
     expect(onCommitted).toHaveBeenCalledTimes(1);
     expect(onCommitted).toHaveBeenCalledWith(committedSession);
+    expect(stream).toHaveBeenCalledWith(
+      'play-1',
+      {
+        userText: '等待',
+        actionKind: 'wait',
+        timeAdvance: { amount: 1, unit: 'hour' },
+        baseRevision: 0,
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(flow.run.value).toBeUndefined();
   });
 
@@ -504,15 +516,151 @@ describe('usePlayTurnStream', () => {
     }
   });
 
+  it('reconciles an indeterminate run when the user explicitly refreshes truth', async () => {
+    vi.useFakeTimers();
+    try {
+      let statusAvailable = false;
+      const client = createClient(
+        async function* (_id, _input, options) {
+          options?.onTurnId?.('run-1');
+          throw new Error('stream disconnected');
+        },
+        async () => {
+          if (!statusAvailable) {
+            throw new Error('status transport unavailable');
+          }
+          return {
+            status: 'cancelled',
+            committed: false,
+            turnId: 'run-1',
+          };
+        },
+      );
+      const flow = usePlayTurnStream({ client, onCommitted: vi.fn() });
+      const submit = flow.submit({
+        sessionId: 'play-1',
+        baseRevision: 0,
+        userText: '等待',
+        actionKind: 'wait',
+      });
+
+      await vi.runAllTimersAsync();
+      await expect(submit).resolves.toBe('unknown');
+      expect(flow.run.value?.phase).toBe('indeterminate');
+
+      statusAvailable = true;
+      const reconcile = flow.reconcile();
+      await vi.runAllTimersAsync();
+
+      await expect(reconcile).resolves.toBe('cancelled');
+      expect(flow.run.value?.phase).toBe('cancelled');
+      expect(flow.busy.value).toBe(false);
+
+      flow.clearTerminalRun();
+      expect(flow.run.value).toBeUndefined();
+      expect(flow.announcement.value).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs Retry through the same provisional, cancellation, and commit state machine', async () => {
+    const committedSession = createSession(1);
+    let releaseCommit: (() => void) | undefined;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const submitStream = vi.fn(async function* () {
+      throw new Error('ordinary submit must not be opened for Retry');
+    });
+    const retryStream = vi.fn(async function* (
+      _id: string,
+      _artifactId: string,
+      _input: { baseRevision: number },
+      options?: Parameters<PlayTurnStreamClient['retryPlayWorldRefereeTurn']>[3],
+    ) {
+      options?.onTurnId?.('retry-run-1');
+      yield {
+        ...startedEvent(),
+        eventId: 'retry-run-1:1',
+        turnId: 'retry-run-1',
+        expectedArtifactId: 'turn-artifact-2',
+        retry: {
+          sourceArtifactId: 'turn-artifact-1',
+          parentArtifactId: 'turn-artifact-root',
+        },
+      } satisfies PlayTurnStreamEvent;
+      yield {
+        ...deltaEvent('新的分支结果'),
+        eventId: 'retry-run-1:2',
+        turnId: 'retry-run-1',
+      } satisfies PlayTurnStreamEvent;
+      markStarted?.();
+      await commitGate;
+      yield {
+        ...committedEvent(committedSession),
+        eventId: 'retry-run-1:3',
+        turnId: 'retry-run-1',
+        artifactId: 'turn-artifact-2',
+      } satisfies PlayTurnStreamEvent;
+    });
+    const client = createClient(submitStream, undefined, retryStream);
+    const onCommitted = vi.fn();
+    const flow = usePlayTurnStream({ client, onCommitted });
+
+    const retry = flow.retry({
+      sessionId: 'play-1',
+      artifactId: 'turn-artifact-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    });
+    await started;
+
+    expect(submitStream).not.toHaveBeenCalled();
+    expect(retryStream).toHaveBeenCalledWith(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 0 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(flow.run.value).toMatchObject({
+      intent: 'retry',
+      retrySourceArtifactId: 'turn-artifact-1',
+      retryParentArtifactId: 'turn-artifact-root',
+      phase: 'streaming',
+      provisionalText: '新的分支结果',
+      statusMessage: 'Retry streaming · not committed',
+    });
+    await expect(flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '另一个动作',
+      actionKind: 'do',
+    })).resolves.toBe('ignored');
+
+    releaseCommit?.();
+    await expect(retry).resolves.toBe('committed');
+    expect(onCommitted).toHaveBeenCalledOnce();
+    expect(onCommitted).toHaveBeenCalledWith(committedSession);
+    expect(flow.run.value).toBeUndefined();
+  });
+
   it('keeps touched Play components on the neutral shared design tokens', async () => {
     const componentUrls = [
       '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue',
       '../../../apps/desktop-ui/src/components/play/PlayTranscript.vue',
       '../../../apps/desktop-ui/src/components/play/PlayComposer.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayTimeAdvanceControl.vue',
       '../../../apps/desktop-ui/src/components/play/PlaySessionRail.vue',
       '../../../apps/desktop-ui/src/components/play/PlaySessionCreateForm.vue',
       '../../../apps/desktop-ui/src/components/play/PlayHistoryControls.vue',
       '../../../apps/desktop-ui/src/components/play/PlayWorldHud.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayWorldMomentum.vue',
       '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue',
       '../../../apps/desktop-ui/src/components/play/PlayAdoptionPanel.vue',
       '../../../apps/desktop-ui/src/components/play/PlayAdoptionDraftForm.vue',
@@ -538,9 +686,13 @@ function createClient(
     committed: false,
     turnId: 'run-1',
   }),
+  retry: PlayTurnStreamClient['retryPlayWorldRefereeTurn'] = async function* () {
+    throw new Error('Retry stream was not configured for this test.');
+  },
 ): PlayTurnStreamClient {
   return {
     streamPlayWorldRefereeTurn: stream,
+    retryPlayWorldRefereeTurn: retry,
     cancelPlayWorldRefereeTurn: cancel,
   };
 }

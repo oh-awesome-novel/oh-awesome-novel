@@ -5,6 +5,7 @@ import type { PlayWorldEvent } from '../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   events: PlayWorldEvent[];
+  causeLabelsByEventId: Record<string, string[]>;
   hasHiddenPlayContent: boolean;
 }>();
 
@@ -17,6 +18,10 @@ const visibleEvents = computed(() =>
 
 function eventKindLabel(value: string): string {
   return value.replace(/([a-z])([A-Z])/gu, '$1 $2');
+}
+
+function causeLabels(eventId: string): string[] {
+  return props.causeLabelsByEventId[eventId] ?? [];
 }
 </script>
 
@@ -58,8 +63,14 @@ function eventKindLabel(value: string): string {
           </div>
           <h3>{{ event.title }}</h3>
           <p>{{ event.summary }}</p>
+          <div v-if="causeLabels(event.id).length" class="play-event-cause">
+            <span>Caused by</span>
+            <ul>
+              <li v-for="label in causeLabels(event.id)" :key="label">{{ label }}</li>
+            </ul>
+          </div>
           <details v-if="showSpoilers">
-            <summary>Cause</summary>
+            <summary>Author cause detail</summary>
             <p>{{ event.cause.reason }}</p>
           </details>
         </div>

@@ -1,6 +1,63 @@
 import { DefaultChatTransport } from 'ai';
 import type { ChatTransport, UIMessage } from 'ai';
 
+import {
+  createOanRequestError,
+  createPlayRehearsalClientMethods,
+  isPlayRehearsalSessionEnvelope,
+} from './play-rehearsal.js';
+import type {
+  CreatePlaySceneRehearsalSessionInput,
+  PlayRehearsalClientMethods,
+  PlayRehearsalSessionV5,
+} from './play-rehearsal.js';
+
+export {
+  OanRequestError,
+  isPlayRehearsalSessionEnvelope,
+} from './play-rehearsal.js';
+export type {
+  CharacterStepDraft,
+  CharacterStepDraftStatus,
+  CreatePlaySceneRehearsalSessionInput,
+  NarrativeBlock,
+  NarrativeBlockKind,
+  PlayActorStepCancelResult,
+  PlayActorStepStreamEvent,
+  PlayActorStepStreamInput,
+  PlayActorStepStreamOptions,
+  PlayAgendaChange,
+  PlayAttemptMutationInput,
+  PlayAttemptMutationReceipt,
+  PlayAttemptMutationResult,
+  PlayCommittedCharacterStepEvidence,
+  PlayCommittedSceneEvidence,
+  PlayRehearsalClientMethods,
+  PlayRehearsalFinalizeReceipt,
+  PlayRehearsalFinalizeResult,
+  PlayRehearsalParticipant,
+  PlayRehearsalAttempt,
+  PlayRehearsalSessionV5,
+  PlayRehearsalStepStopResult,
+  PlayRehearsalStepStreamError,
+  PlayRehearsalStepStreamEvent,
+  PlayRehearsalStepStreamInput,
+  PlayRehearsalStepStreamOptions,
+  PlayRehearsalTurnEvidence,
+  PlayRehearsalTurnArtifactV3,
+  PlaySceneContract,
+  PlaySceneKnowledgeEvidence,
+  PlaySceneRehearsalSidecar,
+  PlaySceneValue,
+  PlaySessionPurpose,
+  PlayStartMode,
+  PlayTurnAttempt,
+  PlayTurnAttemptStatus,
+  PlayWorldRefereeScheduledEventChange,
+  PlayWorldRefereeSettlement,
+  PlayWorldRefereeSettlementEvent,
+} from './play-rehearsal.js';
+
 export type ThemeMode = 'light' | 'dark';
 export type ComposerSubmitShortcutPreference = 'enter' | 'meta-enter' | 'ctrl-enter';
 
@@ -260,6 +317,45 @@ export type PlayActionKind = 'say' | 'look' | 'move' | 'do' | 'wait';
 export type PlaySimulationMode = 'conversation' | 'reactiveWorld' | 'activeWorld';
 export type PlayEventDensity = 'quiet' | 'balanced' | 'volatile';
 export type PlayEventVisibility = 'playerVisible' | 'rumor' | 'playerUnknown';
+export type PlayTimeAdvanceUnit = 'minute' | 'hour' | 'day';
+export interface PlayRelativeTimeAdvance {
+  amount: number;
+  unit: PlayTimeAdvanceUnit;
+}
+export type PlayPressureKind =
+  | 'deadline'
+  | 'pursuit'
+  | 'factionProject'
+  | 'environment'
+  | 'rumor'
+  | 'relationship';
+export type PlayPressureStatus = 'latent' | 'active' | 'resolved';
+export interface PlayPressure {
+  id: string;
+  kind: PlayPressureKind;
+  label: string;
+  status: PlayPressureStatus;
+  level?: number;
+  threshold?: number;
+  causeRefs: string[];
+  nextConsequence?: string;
+  visibility: PlayEventVisibility;
+}
+export type PlayAgendaStatus = 'active' | 'blocked' | 'completed' | 'abandoned';
+export interface PlayAgenda {
+  id: string;
+  ownerEntityId: string;
+  goal: string;
+  nextMove?: string;
+  blockers: string[];
+  status: PlayAgendaStatus;
+  visibility: PlayEventVisibility;
+  updatedAtTurnId: string;
+}
+export interface PlayWorldMomentum {
+  pressures: PlayPressure[];
+  agendas: PlayAgenda[];
+}
 export type PlayEventOrigin =
   | 'player'
   | 'npc'
@@ -385,7 +481,7 @@ export interface PlayTranscriptTurn {
 }
 
 export interface PlayTurnArtifact {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   artifactKind?: 'worldSettlement' | 'transcriptAppend';
   branchSnapshotVersion?: 1;
   id: string;
@@ -394,6 +490,7 @@ export interface PlayTurnArtifact {
   input?: {
     kind: PlayActionKind;
     raw: string;
+    timeAdvance?: PlayRelativeTimeAdvance;
   };
   messages: PlayTranscriptTurn[];
   worldClock?: PlayWorldClock;
@@ -404,6 +501,7 @@ export interface PlayTurnArtifact {
   playLocalStateSnapshot?: Record<string, unknown>;
   playLocalStateVisibilitySnapshot?: Record<string, PlayEventVisibility>;
   observationIds: string[];
+  rehearsalEvidenceRefs?: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
   committedAt: string;
@@ -433,7 +531,7 @@ export interface PlayAdoptionCandidate {
   requiresPendingAction: true;
 }
 
-export interface PlaySession {
+export interface PlaySessionV4 {
   schemaVersion: 4;
   id: string;
   title: string;
@@ -460,6 +558,8 @@ export interface PlaySession {
   adoptionCandidates: PlayAdoptionCandidate[];
 }
 
+export type PlaySession = PlaySessionV4 | PlayRehearsalSessionV5;
+
 export type PlayCheckpointStatus = 'current' | 'selectedAncestor' | 'variant';
 
 export interface PlayCheckpointSummary {
@@ -472,6 +572,7 @@ export interface PlayCheckpointSummary {
   preview: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
+  retryable: boolean;
   canonical: false;
 }
 
@@ -494,11 +595,17 @@ export interface PlayTurnStreamError {
   retryable: boolean;
 }
 
+export interface PlayTurnRetryStreamMetadata {
+  sourceArtifactId: string;
+  parentArtifactId?: string;
+}
+
 export type PlayTurnStreamEvent =
   | (PlayTurnStreamEventBase & {
       type: 'play.turn.started';
       baseRevision: number;
       expectedArtifactId: string;
+      retry?: PlayTurnRetryStreamMetadata;
     })
   | (PlayTurnStreamEventBase & {
       type: 'play.context.ready';
@@ -691,7 +798,7 @@ export interface RejectedPendingAction {
   refresh?: WorkspaceDecisionRefresh;
 }
 
-export interface OanClient {
+export interface OanClient extends PlayRehearsalClientMethods {
   readonly backendBaseUrl: string;
   getAgentChatApi(): string;
   createAgentChatTransport(): ChatTransport<UIMessage>;
@@ -767,7 +874,11 @@ export interface OanClient {
     characters?: string[];
     activatedSources?: PlayActivatedSource[];
     eventPolicy?: Partial<PlayEventPolicy>;
-  }): Promise<{ session: PlaySession; files: string[] }>;
+    worldMomentum?: PlayWorldMomentum;
+  } | CreatePlaySceneRehearsalSessionInput): Promise<{
+    session: PlaySession;
+    files: string[];
+  }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
   listPlayCheckpoints(id: string): Promise<{ checkpoints: PlayCheckpointSummary[] }>;
   restorePlayCheckpoint(
@@ -779,6 +890,7 @@ export interface OanClient {
     userText: string;
     actionKind?: PlayActionKind;
     baseRevision?: number;
+    timeAdvance?: PlayRelativeTimeAdvance;
   }): Promise<{
     session: PlaySession;
     result?: {
@@ -791,7 +903,14 @@ export interface OanClient {
       userText: string;
       actionKind?: PlayActionKind;
       baseRevision?: number;
+      timeAdvance?: PlayRelativeTimeAdvance;
     },
+    options?: PlayTurnStreamOptions,
+  ): AsyncIterable<PlayTurnStreamEvent>;
+  retryPlayWorldRefereeTurn(
+    id: string,
+    artifactId: string,
+    input: { baseRevision: number },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
@@ -876,8 +995,21 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       return normalizeAppConfig(config);
     }
   };
+  const playRehearsalClient = createPlayRehearsalClientMethods({
+    fetcher,
+    backendBaseUrl,
+    requestJson,
+    isRehearsalSession: (
+      value,
+      sessionId,
+      revision,
+    ): value is PlayRehearsalSessionV5 =>
+      isPlaySessionEnvelope(value, sessionId, revision)
+      && value.schemaVersion === 5,
+  });
 
   return {
+    ...playRehearsalClient,
     backendBaseUrl,
     getAgentChatApi: () => joinUrl(backendBaseUrl, '/api/agent/chat'),
     createAgentChatTransport: () =>
@@ -1025,11 +1157,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     listPlaySessions: () =>
       requestJson<unknown>('/api/workspace/play-sessions')
         .then(parsePlaySessionListResponse),
-    createPlaySession: (input) =>
-      requestJson<unknown>('/api/workspace/play-sessions', {
+    createPlaySession: (input) => {
+      const normalized = normalizePlaySessionCreateRequest(input);
+      return requestJson<unknown>('/api/workspace/play-sessions', {
         method: 'POST',
-        body: input,
-      }).then((value) => parsePlaySessionCreateResponse(value, input.id)),
+        body: normalized.body,
+      }).then((value) => parsePlaySessionCreateResponse(
+        value,
+        normalized.requestedSessionId,
+      ));
+    },
     getPlaySession: (id) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
@@ -1065,6 +1202,15 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         id,
         input,
         streamOptions,
+      ),
+    retryPlayWorldRefereeTurn: (id, artifactId, input, streamOptions) =>
+      streamPlayWorldRefereeTurnWith(
+        fetcher,
+        backendBaseUrl,
+        id,
+        input,
+        streamOptions,
+        artifactId,
       ),
     cancelPlayWorldRefereeTurn: (id, turnId) =>
       requestJson<unknown>(
@@ -1144,13 +1290,18 @@ async function* streamPlayWorldRefereeTurnWith(
     userText: string;
     actionKind?: PlayActionKind;
     baseRevision?: number;
-  },
+    timeAdvance?: PlayRelativeTimeAdvance;
+  } | { baseRevision: number },
   options: PlayTurnStreamOptions = {},
+  retrySourceArtifactId?: string,
 ): AsyncIterable<PlayTurnStreamEvent> {
+  const path = retrySourceArtifactId !== undefined
+    ? `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(retrySourceArtifactId)}/retry/stream`
+    : `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/stream`;
   const response = await fetcher(
     joinUrl(
       backendBaseUrl,
-      `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/stream`,
+      path,
     ),
     {
       method: 'POST',
@@ -1162,10 +1313,11 @@ async function* streamPlayWorldRefereeTurnWith(
 
   if (!response.ok) {
     const data = await parseJsonResponse(response);
-    const message = isRecord(data) && typeof data.error === 'string'
-      ? data.error
-      : 'Play turn stream request failed.';
-    throw new Error(message);
+    throw createOanRequestError(
+      response,
+      data,
+      'Play turn stream request failed.',
+    );
   }
   if (!response.body) {
     throw new Error('Play turn stream returned no response body.');
@@ -1175,9 +1327,16 @@ async function* streamPlayWorldRefereeTurnWith(
   const decoder = new TextDecoder();
   let buffer = '';
   let streamCompleted = false;
+  let responseTurnId: string | undefined;
+  let streamTurnId: string | undefined;
+  let retryStartedEvent: Extract<
+    PlayTurnStreamEvent,
+    { type: 'play.turn.started' }
+  > | undefined;
+  let retryPreparedArtifactId: string | undefined;
 
   try {
-    const responseTurnId = response.headers.get('X-OAN-Play-Turn-Id');
+    responseTurnId = response.headers.get('X-OAN-Play-Turn-Id') ?? undefined;
     if (responseTurnId) {
       options.onTurnId?.(responseTurnId);
     }
@@ -1201,6 +1360,21 @@ async function* streamPlayWorldRefereeTurnWith(
           return;
         }
         if (parsed.event) {
+          streamTurnId = validatePlayTurnStreamRequestContext({
+            event: parsed.event,
+            expectedSessionId: id,
+            responseTurnId,
+            streamTurnId,
+            retrySourceArtifactId,
+            retryBaseRevision: 'baseRevision' in input ? input.baseRevision : undefined,
+            retryStartedEvent,
+            retryPreparedArtifactId,
+          });
+          if (parsed.event.type === 'play.turn.started') {
+            retryStartedEvent = parsed.event;
+          } else if (parsed.event.type === 'play.turn.prepared') {
+            retryPreparedArtifactId = parsed.event.artifactId;
+          }
           yield parsed.event;
         }
       }
@@ -1214,6 +1388,16 @@ async function* streamPlayWorldRefereeTurnWith(
     if (buffer.trim()) {
       const parsed = parsePlayTurnSseBlock(buffer);
       if (parsed.event) {
+        validatePlayTurnStreamRequestContext({
+          event: parsed.event,
+          expectedSessionId: id,
+          responseTurnId,
+          streamTurnId,
+          retrySourceArtifactId,
+          retryBaseRevision: 'baseRevision' in input ? input.baseRevision : undefined,
+          retryStartedEvent,
+          retryPreparedArtifactId,
+        });
         yield parsed.event;
       }
     }
@@ -1223,6 +1407,134 @@ async function* streamPlayWorldRefereeTurnWith(
     }
     reader.releaseLock();
   }
+}
+
+function validatePlayTurnStreamRequestContext(input: {
+  event: PlayTurnStreamEvent;
+  expectedSessionId: string;
+  responseTurnId?: string;
+  streamTurnId?: string;
+  retrySourceArtifactId?: string;
+  retryBaseRevision?: number;
+  retryStartedEvent?: Extract<
+    PlayTurnStreamEvent,
+    { type: 'play.turn.started' }
+  >;
+  retryPreparedArtifactId?: string;
+}): string {
+  const { event } = input;
+  if (event.sessionId !== input.expectedSessionId) {
+    throw new Error('Play turn stream changed session identity.');
+  }
+  if (
+    (input.responseTurnId && event.turnId !== input.responseTurnId) ||
+    (input.streamTurnId && event.turnId !== input.streamTurnId)
+  ) {
+    throw new Error('Play turn stream changed turn identity.');
+  }
+
+  if (input.retrySourceArtifactId === undefined) {
+    if (event.type === 'play.turn.started' && event.retry !== undefined) {
+      throw new Error('Play turn stream returned unexpected retry metadata.');
+    }
+    return event.turnId;
+  }
+
+  if (event.type === 'play.turn.started') {
+    if (
+      input.retryStartedEvent ||
+      event.baseRevision !== input.retryBaseRevision ||
+      event.retry?.sourceArtifactId !== input.retrySourceArtifactId
+    ) {
+      throw new Error('Play turn retry stream returned inconsistent start metadata.');
+    }
+    return event.turnId;
+  }
+  if (!input.retryStartedEvent) {
+    throw new Error('Play turn retry stream emitted data before its start event.');
+  }
+  if (
+    event.type === 'play.turn.prepared' &&
+    event.artifactId !== input.retryStartedEvent.expectedArtifactId
+  ) {
+    throw new Error('Play turn retry stream prepared an unexpected artifact.');
+  }
+  if (event.type === 'play.turn.committed') {
+    assertConsistentPlayTurnRetryCommit({
+      event,
+      sourceArtifactId: input.retrySourceArtifactId,
+      baseRevision: input.retryBaseRevision!,
+      startedEvent: input.retryStartedEvent,
+      preparedArtifactId: input.retryPreparedArtifactId,
+    });
+  }
+
+  return event.turnId;
+}
+
+function assertConsistentPlayTurnRetryCommit(input: {
+  event: Extract<PlayTurnStreamEvent, { type: 'play.turn.committed' }>;
+  sourceArtifactId: string;
+  baseRevision: number;
+  startedEvent: Extract<PlayTurnStreamEvent, { type: 'play.turn.started' }>;
+  preparedArtifactId?: string;
+}): void {
+  const committedArtifactId = input.event.artifactId;
+  const session = input.event.session;
+  const sourceArtifact = session.turnArtifacts.find((artifact) =>
+    artifact.id === input.sourceArtifactId);
+  const committedArtifact = committedArtifactId
+    ? session.turnArtifacts.find((artifact) => artifact.id === committedArtifactId)
+    : undefined;
+  const sourcePath = sourceArtifact
+    ? resolvePlayArtifactPath(sourceArtifact, session.turnArtifacts)
+    : undefined;
+  const expectedSelectedPath = sourcePath && committedArtifactId
+    ? [...sourcePath.slice(0, -1), committedArtifactId]
+    : undefined;
+
+  if (
+    !committedArtifactId ||
+    !sourceArtifact ||
+    !sourceArtifact.input ||
+    sourceArtifact.artifactKind !== 'worldSettlement' ||
+    !committedArtifact ||
+    !committedArtifact.input ||
+    committedArtifact.artifactKind !== 'worldSettlement' ||
+    committedArtifactId === input.sourceArtifactId ||
+    input.startedEvent.expectedArtifactId !== committedArtifactId ||
+    input.preparedArtifactId !== committedArtifactId ||
+    input.startedEvent.retry?.sourceArtifactId !== input.sourceArtifactId ||
+    input.startedEvent.retry.parentArtifactId !== sourceArtifact.parentTurnId ||
+    committedArtifact.parentTurnId !== sourceArtifact.parentTurnId ||
+    !isDeepEqualJson(committedArtifact.input, sourceArtifact.input) ||
+    committedArtifact.revision !== session.revision ||
+    input.event.revision !== session.revision ||
+    session.revision !== input.baseRevision + 1 ||
+    !expectedSelectedPath ||
+    !isDeepEqualJson(session.selectedTurnIds, expectedSelectedPath)
+  ) {
+    throw new Error('Play turn retry stream returned an inconsistent committed session.');
+  }
+}
+
+function resolvePlayArtifactPath(
+  artifact: PlayTurnArtifact,
+  artifacts: PlayTurnArtifact[],
+): string[] | undefined {
+  const byId = new Map(artifacts.map((item) => [item.id, item]));
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let current: PlayTurnArtifact | undefined = artifact;
+  while (current) {
+    if (seen.has(current.id)) {
+      return undefined;
+    }
+    seen.add(current.id);
+    path.push(current.id);
+    current = current.parentTurnId ? byId.get(current.parentTurnId) : undefined;
+  }
+  return path.reverse();
 }
 
 function parsePlayTurnSseBlock(block: string): {
@@ -1273,11 +1585,23 @@ function parsePlayTurnSseBlock(block: string): {
 function parsePlayTurnStreamEventPayload(
   value: Record<string, unknown>,
 ): PlayTurnStreamEvent | undefined {
-  const hasOptionalArtifactId = value.artifactId === undefined || isNonEmptyString(value.artifactId);
+  const hasOptionalArtifactId = value.artifactId === undefined || isSafePlayFactId(value.artifactId);
 
   switch (value.type) {
     case 'play.turn.started':
-      return isNonNegativeSafeInteger(value.baseRevision) && isNonEmptyString(value.expectedArtifactId)
+      return hasOnlyKnownFields(value, [
+        'type',
+        'eventId',
+        'sequence',
+        'sessionId',
+        'turnId',
+        'baseRevision',
+        'expectedArtifactId',
+        'retry',
+      ])
+        && isNonNegativeSafeInteger(value.baseRevision)
+        && isSafePlayFactId(value.expectedArtifactId)
+        && (value.retry === undefined || isPlayTurnRetryStreamMetadata(value.retry))
         ? value as unknown as PlayTurnStreamEvent
         : undefined;
     case 'play.context.ready':
@@ -1446,7 +1770,7 @@ function isPlayCheckpointSummaryList(
 
   const currentCheckpoints = value.filter((checkpoint) =>
     checkpoint.status === 'current');
-  return currentCheckpoints.length === (value.length ? 1 : 0) &&
+  return currentCheckpoints.length <= 1 &&
     currentCheckpoints.every((checkpoint) => !checkpoint.restorable);
 }
 
@@ -1465,6 +1789,7 @@ function isPlayCheckpointSummaryEnvelope(
       'preview',
       'status',
       'restorable',
+      'retryable',
       'canonical',
     ]) ||
     !isSafePlayFactId(value.artifactId) ||
@@ -1483,6 +1808,7 @@ function isPlayCheckpointSummaryEnvelope(
       value.status !== 'variant'
     ) ||
     typeof value.restorable !== 'boolean' ||
+    typeof value.retryable !== 'boolean' ||
     value.canonical !== false
   ) {
     return false;
@@ -1537,6 +1863,22 @@ function parsePlaySessionCreateResponse(
     throw new Error('Play session creation returned an invalid payload.');
   }
   return value as unknown as { session: PlaySession; files: string[] };
+}
+
+function normalizePlaySessionCreateRequest(
+  input: Parameters<OanClient['createPlaySession']>[0],
+): {
+  body: Parameters<OanClient['createPlaySession']>[0];
+  requestedSessionId?: string;
+} {
+  const body = { ...input };
+  const requestedSessionId = input.id?.trim();
+  if (requestedSessionId) body.id = requestedSessionId;
+  else delete body.id;
+  return {
+    body,
+    ...(requestedSessionId ? { requestedSessionId } : {}),
+  };
 }
 
 function parsePlayWorldRefereeTurnResponse(
@@ -1598,11 +1940,42 @@ function isPlayTurnStreamError(value: unknown): value is PlayTurnStreamError {
     && typeof value.retryable === 'boolean';
 }
 
+function isPlayTurnRetryStreamMetadata(
+  value: unknown,
+): value is PlayTurnRetryStreamMetadata {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['sourceArtifactId', 'parentArtifactId'])
+    && isSafePlayFactId(value.sourceArtifactId)
+    && (
+      value.parentArtifactId === undefined ||
+      isSafePlayFactId(value.parentArtifactId)
+    );
+}
+
 function isPlaySessionEnvelope(
   value: unknown,
   sessionId: unknown,
   revision?: number,
 ): value is PlaySession {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.schemaVersion === 5) {
+    return isPlayRehearsalSessionEnvelope(
+      value,
+      sessionId,
+      revision,
+      isPlaySessionV4Envelope,
+    );
+  }
+  return isPlaySessionV4Envelope(value, sessionId, revision);
+}
+
+function isPlaySessionV4Envelope(
+  value: unknown,
+  sessionId: unknown,
+  revision?: number,
+): value is PlaySessionV4 {
   if (!isRecord(value) || value.schemaVersion !== 4) {
     return false;
   }
@@ -1645,12 +2018,17 @@ function isPlaySessionEnvelope(
     && value.transcript.every(isPlayTranscriptTurn)
     && Array.isArray(value.turnArtifacts)
     && value.turnArtifacts.every(isPlayTurnArtifactEnvelope)
+    && value.turnArtifacts.every((artifact) => artifact.schemaVersion !== 3)
     && isUniqueSafePlayIdArray(value.selectedTurnIds)
     && isNonNegativeSafeInteger(value.branchSnapshotRequiredFromRevision)
     && isPlayBranchBaseSnapshotEnvelope(value.branchBaseSnapshot)
     && isRecord(value.metadataExtensions)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
+    && hasValidPlayWorldMomentumState(
+      value.playLocalState,
+      value.playLocalStateVisibility,
+    )
     && isPlayWorldClock(value.worldClock)
     && isPlayEventPolicy(value.eventPolicy)
     && isPlayWorldEventList(value.events)
@@ -1664,7 +2042,7 @@ function isPlaySessionEnvelope(
     && Array.isArray(value.adoptionCandidates)
     && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope)
     && hasUniqueEntityIds(value.adoptionCandidates)
-    && hasConsistentPlaySessionFacts(value as unknown as PlaySession);
+    && hasConsistentPlaySessionFacts(value as unknown as PlaySessionV4);
 }
 
 function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
@@ -1682,7 +2060,23 @@ function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
     session.turnArtifacts.map((artifact) => [artifact.id, artifact]),
   );
   const roots = session.turnArtifacts.filter((artifact) => !artifact.parentTurnId);
-  if (session.turnArtifacts.length > 0 && roots.length !== 1) {
+  if (
+    roots.length > 1 &&
+    (
+      session.branchBaseSnapshot.parentTurnId !== undefined ||
+      roots.some((artifact) => artifact.schemaVersion !== 2)
+    )
+  ) {
+    return false;
+  }
+  if (
+    session.turnArtifacts.length > 0 &&
+    session.selectedTurnIds.length === 0 &&
+    (
+      session.branchBaseSnapshot.parentTurnId !== undefined ||
+      roots.some((artifact) => artifact.schemaVersion !== 2)
+    )
+  ) {
     return false;
   }
   const eventsById = new Map(session.events.map((event) => [event.id, event]));
@@ -1834,9 +2228,6 @@ function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
     }
     selectedArtifacts.push(artifact);
     expectedParentId = artifact.id;
-  }
-  if (session.turnArtifacts.length > 0 && selectedArtifacts.length === 0) {
-    return false;
   }
   if (!isDeepEqualJson(
     session.transcript,
@@ -2045,7 +2436,9 @@ function hasConsistentPlayV2Artifact(
         ? 'rumor'
         : 'playerVisible';
   for (const key of Object.keys(artifact.stateDelta)) {
-    expectedVisibility[key] = settlementVisibility;
+    expectedVisibility[key] = key === 'worldMomentum'
+      ? 'playerUnknown'
+      : settlementVisibility;
   }
   const expectedDueIds = artifact.artifactKind === 'worldSettlement'
     ? predecessorSchedules
@@ -2066,6 +2459,13 @@ function hasConsistentPlayV2Artifact(
   );
   if (
     artifactWorldClock.turn !== expectedTurn ||
+    (
+      artifact.artifactKind === 'worldSettlement' &&
+      artifact.input?.timeAdvance !== undefined &&
+      artifactWorldClock.elapsed !== formatPlayRelativeTimeAdvance(
+        artifact.input.timeAdvance,
+      )
+    ) ||
     (artifact.artifactKind === 'transcriptAppend' &&
       (
         artifactWorldClock.anchor !== predecessorClock.anchor ||
@@ -2410,6 +2810,10 @@ function isPlayBranchBaseSnapshotEnvelope(
     && isPlayWorldClock(value.worldClock)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
+    && hasValidPlayWorldMomentumState(
+      value.playLocalState,
+      value.playLocalStateVisibility,
+    )
     && isDeepEqualJson(
       Object.keys(value.playLocalState).sort(),
       Object.keys(value.playLocalStateVisibility).sort(),
@@ -2486,6 +2890,19 @@ function isPlayEventCauseEnvelope(value: unknown): value is PlayEventCause {
     && (value.agendaId === undefined || isSafePlayFactId(value.agendaId));
 }
 
+function isPlayTurnArtifactInput(
+  value: unknown,
+): value is NonNullable<PlayTurnArtifact['input']> {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['kind', 'raw', 'timeAdvance'])
+    && isPlayActionKind(value.kind)
+    && isNonEmptyString(value.raw)
+    && (
+      value.timeAdvance === undefined ||
+      (value.kind === 'wait' && isPlayRelativeTimeAdvance(value.timeAdvance))
+    );
+}
+
 function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
   return isRecord(value)
     && hasOnlyKnownFields(value, [
@@ -2505,12 +2922,17 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
       'playLocalStateSnapshot',
       'playLocalStateVisibilitySnapshot',
       'observationIds',
+      'rehearsalEvidenceRefs',
       'stateDelta',
       'suggestedActions',
       'committedAt',
       'canonical',
     ])
-    && (value.schemaVersion === 1 || value.schemaVersion === 2)
+    && (
+      value.schemaVersion === 1 ||
+      value.schemaVersion === 2 ||
+      value.schemaVersion === 3
+    )
     && (value.artifactKind === undefined
       || value.artifactKind === 'worldSettlement'
       || value.artifactKind === 'transcriptAppend')
@@ -2519,10 +2941,7 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
     && isNonNegativeSafeInteger(value.revision)
     && (value.parentTurnId === undefined || isSafePlayFactId(value.parentTurnId))
     && (value.input === undefined || (
-      isRecord(value.input)
-      && hasOnlyKnownFields(value.input, ['kind', 'raw'])
-      && isPlayActionKind(value.input.kind)
-      && isNonEmptyString(value.input.raw)
+      isPlayTurnArtifactInput(value.input)
     ))
     && Array.isArray(value.messages)
     && value.messages.length > 0
@@ -2537,7 +2956,14 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
     && (value.playLocalStateSnapshot === undefined || isRecord(value.playLocalStateSnapshot))
     && (value.playLocalStateVisibilitySnapshot === undefined
       || isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot))
-    && (value.schemaVersion !== 2 || (
+    && (
+      value.playLocalStateSnapshot === undefined ||
+      hasValidPlayWorldMomentumState(
+        value.playLocalStateSnapshot,
+        value.playLocalStateVisibilitySnapshot,
+      )
+    )
+    && ((value.schemaVersion !== 2 && value.schemaVersion !== 3) || (
       (value.artifactKind === 'worldSettlement'
         || value.artifactKind === 'transcriptAppend')
       && value.branchSnapshotVersion === 1
@@ -2546,7 +2972,15 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
       && isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot)
     ))
     && isUniqueSafePlayIdArray(value.observationIds)
+    && (
+      value.schemaVersion === 3
+        ? value.artifactKind === 'worldSettlement'
+          && isUniqueSafePlayIdArray(value.rehearsalEvidenceRefs)
+          && value.rehearsalEvidenceRefs.length > 0
+        : value.rehearsalEvidenceRefs === undefined
+    )
     && isRecord(value.stateDelta)
+    && hasValidPlayWorldMomentumDelta(value.stateDelta)
     && isUniqueNonEmptyStringArray(value.suggestedActions)
     && isNonEmptyString(value.committedAt)
     && value.canonical === false;
@@ -2727,6 +3161,160 @@ function isPlayVisibility(value: unknown): value is PlayEventVisibility {
   return value === 'playerVisible' || value === 'rumor' || value === 'playerUnknown';
 }
 
+function isPlayRelativeTimeAdvance(
+  value: unknown,
+): value is PlayRelativeTimeAdvance {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['amount', 'unit']) ||
+    !isPositiveSafeInteger(value.amount) ||
+    (value.unit !== 'minute' && value.unit !== 'hour' && value.unit !== 'day')
+  ) {
+    return false;
+  }
+
+  const multiplier = value.unit === 'minute' ? 1 : value.unit === 'hour' ? 60 : 1_440;
+  return value.amount * multiplier <= 525_600;
+}
+
+function formatPlayRelativeTimeAdvance(value: PlayRelativeTimeAdvance): string {
+  if (value.unit === 'minute') return `PT${value.amount}M`;
+  if (value.unit === 'hour') return `PT${value.amount}H`;
+  return `P${value.amount}D`;
+}
+
+function hasValidPlayWorldMomentumState(
+  state: Record<string, unknown>,
+  visibility: unknown,
+): boolean {
+  const hasMomentum = Object.prototype.hasOwnProperty.call(state, 'worldMomentum');
+  const visibilityHasMomentum = isRecord(visibility) &&
+    Object.prototype.hasOwnProperty.call(visibility, 'worldMomentum');
+  if (!hasMomentum) {
+    return !visibilityHasMomentum;
+  }
+
+  return isPlayWorldMomentum(state.worldMomentum)
+    && isRecord(visibility)
+    && visibility.worldMomentum === 'playerUnknown';
+}
+
+function hasValidPlayWorldMomentumDelta(stateDelta: Record<string, unknown>): boolean {
+  return !Object.prototype.hasOwnProperty.call(stateDelta, 'worldMomentum')
+    || isPlayWorldMomentum(stateDelta.worldMomentum);
+}
+
+function isPlayWorldMomentum(value: unknown): value is PlayWorldMomentum {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['pressures', 'agendas'])
+    && Array.isArray(value.pressures)
+    && value.pressures.length <= 24
+    && value.pressures.every(isPlayPressureEnvelope)
+    && hasUniqueMomentumIds(value.pressures)
+    && Array.isArray(value.agendas)
+    && value.agendas.length <= 24
+    && value.agendas.every(isPlayAgendaEnvelope)
+    && hasUniqueMomentumIds(value.agendas);
+}
+
+function isPlayPressureEnvelope(value: unknown): value is PlayPressure {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'kind',
+      'label',
+      'status',
+      'level',
+      'threshold',
+      'causeRefs',
+      'nextConsequence',
+      'visibility',
+    ]) ||
+    !isSafePlayMomentumId(value.id) ||
+    (value.kind !== 'deadline' &&
+      value.kind !== 'pursuit' &&
+      value.kind !== 'factionProject' &&
+      value.kind !== 'environment' &&
+      value.kind !== 'rumor' &&
+      value.kind !== 'relationship') ||
+    !isPlayMomentumText(value.label) ||
+    (value.status !== 'latent' && value.status !== 'active' && value.status !== 'resolved') ||
+    !Array.isArray(value.causeRefs) ||
+    value.causeRefs.length > 24 ||
+    !value.causeRefs.every(isSafePlayMomentumId) ||
+    new Set(value.causeRefs).size !== value.causeRefs.length ||
+    (value.nextConsequence !== undefined && !isPlayMomentumText(value.nextConsequence)) ||
+    !isPlayVisibility(value.visibility)
+  ) {
+    return false;
+  }
+
+  const hasLevel = value.level !== undefined;
+  const hasThreshold = value.threshold !== undefined;
+  return hasLevel === hasThreshold
+    && (!hasLevel || (
+      isNonNegativeSafeInteger(value.level)
+      && isPositiveSafeInteger(value.threshold)
+      && value.level <= value.threshold
+    ));
+}
+
+function isPlayAgendaEnvelope(value: unknown): value is PlayAgenda {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'ownerEntityId',
+      'goal',
+      'nextMove',
+      'blockers',
+      'status',
+      'visibility',
+      'updatedAtTurnId',
+    ])
+    && isSafePlayMomentumId(value.id)
+    && isPlayMomentumText(value.ownerEntityId)
+    && isPlayMomentumText(value.goal)
+    && (value.nextMove === undefined || isPlayMomentumText(value.nextMove))
+    && isUniquePlayMomentumTextArray(value.blockers, 12)
+    && (value.status === 'active'
+      || value.status === 'blocked'
+      || value.status === 'completed'
+      || value.status === 'abandoned')
+    && isPlayVisibility(value.visibility)
+    && isSafePlayMomentumId(value.updatedAtTurnId);
+}
+
+function isSafePlayMomentumId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length <= 160
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
+    && !value.includes('..');
+}
+
+function isPlayMomentumText(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.trim().length >= 1
+    && value.trim().length <= 500;
+}
+
+function isUniquePlayMomentumTextArray(value: unknown, maximum: number): value is string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > maximum ||
+    !value.every(isPlayMomentumText)
+  ) {
+    return false;
+  }
+  const normalized = value.map((item) => item.trim());
+  return new Set(normalized).size === normalized.length;
+}
+
+function hasUniqueMomentumIds(value: readonly unknown[]): boolean {
+  const ids = value.map((item) => isRecord(item) ? item.id : undefined);
+  return ids.every(isSafePlayMomentumId) && new Set(ids).size === ids.length;
+}
+
 function isPlayActionKind(value: unknown): value is PlayActionKind {
   return value === 'say'
     || value === 'look'
@@ -2897,10 +3485,7 @@ async function requestJsonWith<T>(
   const data = await parseJsonResponse(response);
 
   if (!response.ok) {
-    const errorMessage = isRecord(data) && typeof data.error === 'string'
-      ? data.error
-      : 'Request failed.';
-    throw new Error(errorMessage);
+    throw createOanRequestError(response, data);
   }
 
   return data as T;

@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { shallowRef, useId, watch } from 'vue';
+import { nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue';
 
 import PlaySessionCreateForm from './PlaySessionCreateForm.vue';
+import PlayRehearsalSetup from './rehearsal/PlayRehearsalSetup.vue';
+import PlaySessionPurposePicker from './rehearsal/PlaySessionPurposePicker.vue';
+import type {
+  PlayRehearsalSetupSubmission,
+  PlaySessionPurposeChoice,
+} from './rehearsal/types';
+import { buildPlayRehearsalSessionInput } from '../../composables/playRehearsalPresentation';
 import type { PlaySession } from '../../composables/useWorkspaceApi';
-import type { PlaySessionCreateInput } from '../../composables/usePlayWorkspace';
+import type { PlaySessionCreateRequest } from '../../composables/usePlayWorkspace';
 
 const props = defineProps<{
   sessions: PlaySession[];
@@ -16,21 +23,58 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectSession: [id: string];
-  createSession: [input: PlaySessionCreateInput];
+  createSession: [input: PlaySessionCreateRequest];
   refresh: [];
 }>();
 
 const createOpen = shallowRef(false);
-const createFormId = `${useId()}-play-session-create-form`;
+const createPurpose = shallowRef<PlaySessionPurposeChoice>();
+const createTrigger = useTemplateRef<HTMLButtonElement>('createTrigger');
+const createFlow = useTemplateRef<HTMLDivElement>('createFlow');
+const createPanelId = `${useId()}-play-session-create-panel`;
 
 watch(
   () => props.selectedSessionId,
   (nextId, previousId) => {
     if (nextId && nextId !== previousId) {
-      createOpen.value = false;
+      void closeCreate(true);
     }
   },
 );
+
+function toggleCreate(): void {
+  if (createOpen.value) {
+    void closeCreate(true);
+    return;
+  }
+  createOpen.value = true;
+  createPurpose.value = undefined;
+}
+
+async function closeCreate(focusTrigger = false): Promise<void> {
+  createOpen.value = false;
+  createPurpose.value = undefined;
+  if (focusTrigger) {
+    await nextTick();
+    createTrigger.value?.focus();
+  }
+}
+
+async function choosePurpose(purpose: PlaySessionPurposeChoice): Promise<void> {
+  createPurpose.value = purpose;
+  await nextTick();
+  createFlow.value?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
+}
+
+async function returnToPurpose(): Promise<void> {
+  createPurpose.value = undefined;
+  await nextTick();
+  createFlow.value?.querySelector<HTMLElement>('.play-purpose-options button')?.focus();
+}
+
+function createRehearsal(submission: PlayRehearsalSetupSubmission): void {
+  emit('createSession', buildPlayRehearsalSessionInput(submission));
+}
 </script>
 
 <template>
@@ -52,24 +96,39 @@ watch(
     </div>
 
     <button
+      ref="createTrigger"
       class="play-create-trigger"
       type="button"
       :disabled="busy"
       :aria-expanded="createOpen"
-      :aria-controls="createFormId"
-      @click="createOpen = !createOpen"
+      :aria-controls="createPanelId"
+      @click="toggleCreate"
     >
       <span aria-hidden="true">[+]</span>
       New session
     </button>
 
-    <PlaySessionCreateForm
-      v-if="createOpen"
-      :id="createFormId"
-      :creating="creating || busy"
-      @cancel="createOpen = false"
-      @create="emit('createSession', $event)"
-    />
+    <div v-if="createOpen" :id="createPanelId" ref="createFlow" class="play-create-flow">
+      <PlaySessionPurposePicker
+        v-if="!createPurpose"
+        :disabled="creating || busy"
+        @choose="choosePurpose"
+        @cancel="closeCreate(true)"
+      />
+      <PlaySessionCreateForm
+        v-else-if="createPurpose === 'immersiveJourney'"
+        :creating="creating || busy"
+        @cancel="returnToPurpose"
+        @create="emit('createSession', $event)"
+      />
+      <PlayRehearsalSetup
+        v-else
+        :creating="creating"
+        :disabled="busy"
+        @cancel="returnToPurpose"
+        @create="createRehearsal"
+      />
+    </div>
 
     <div class="play-session-list">
       <button
@@ -94,3 +153,31 @@ watch(
     </div>
   </aside>
 </template>
+
+<style scoped>
+.play-create-flow {
+  min-width: 0;
+}
+
+.play-create-flow :deep(.play-rehearsal-setup-heading),
+.play-create-flow :deep(.play-rehearsal-review footer),
+.play-create-flow :deep(.play-rehearsal-cast footer) {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.play-create-flow :deep(.play-rehearsal-field-grid),
+.play-create-flow :deep(.play-rehearsal-cast-fields),
+.play-create-flow :deep(.play-rehearsal-review dl) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.play-create-flow :deep(.play-rehearsal-field-wide),
+.play-create-flow :deep(.play-rehearsal-cast-wide) {
+  grid-column: auto;
+}
+
+.play-create-flow :deep(.play-rehearsal-setup-panel) {
+  padding: 12px;
+}
+</style>

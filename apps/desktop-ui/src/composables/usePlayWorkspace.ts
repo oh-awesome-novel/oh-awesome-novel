@@ -1,16 +1,28 @@
-import { computed, onMounted, shallowRef } from 'vue';
+import { computed, onMounted, readonly, shallowRef } from 'vue';
+import type { Ref } from 'vue';
 
 import { useWorkspaceApi } from './useWorkspaceApi';
+import {
+  projectPlaySessionBeforeArtifact,
+  type PlayRetryBeforeTurnProjection,
+} from './usePlayRetryProjection';
 import { usePlaySessionHistory } from './usePlaySessionHistory';
+import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
 import { usePlayTurnStream } from './usePlayTurnStream';
 import type {
+  CreatePlaySceneRehearsalSessionInput,
   PlayActionKind,
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
+  PlayAgenda,
   PlayEventPolicy,
   PlayObservation,
+  PlayPressure,
+  PlayRelativeTimeAdvance,
   PlaySession,
 } from './useWorkspaceApi';
+
+const PLAY_WORLD_MOMENTUM_STATE_KEY = 'worldMomentum';
 
 export interface PlaySessionCreateInput {
   title: string;
@@ -18,6 +30,16 @@ export interface PlaySessionCreateInput {
   userPersona?: string;
   characters?: string[];
   eventPolicy?: Partial<PlayEventPolicy>;
+  worldMomentum?: PlayWorldMomentum;
+}
+
+export type PlaySessionCreateRequest =
+  | PlaySessionCreateInput
+  | CreatePlaySceneRehearsalSessionInput;
+
+export interface PlayWorldMomentum {
+  pressures: PlayPressure[];
+  agendas: PlayAgenda[];
 }
 
 export interface PlaySuggestedActionView {
@@ -40,7 +62,10 @@ export interface PlayAdoptionDraftInput {
   sourceObservationIds: string[];
 }
 
-export function usePlayWorkspace(workspacePath: string) {
+export function usePlayWorkspace(
+  workspacePath: string,
+  providerConfigured: Readonly<Ref<boolean>>,
+) {
   const api = useWorkspaceApi();
   const sessions = shallowRef<PlaySession[]>([]);
   const selectedSessionId = shallowRef(readSelectedSession(workspacePath));
@@ -52,20 +77,33 @@ export function usePlayWorkspace(workspacePath: string) {
   const adoptionNotice = shallowRef('');
   const userText = shallowRef('');
   const actionKind = shallowRef<PlayActionKind>('do');
+  const timeAdvance = shallowRef<PlayRelativeTimeAdvance | undefined>({
+    amount: 10,
+    unit: 'minute',
+  });
   const showSpoilers = shallowRef(false);
+  const historyRetryingArtifactId = shallowRef('');
+  const retryProjection = shallowRef<{
+    sessionId: string;
+    projection: PlayRetryBeforeTurnProjection;
+  }>();
   const {
     run: provisionalTurn,
     announcement: turnAnnouncement,
     busy: sending,
     canStop,
     submit: submitStreamTurn,
+    retry: retryStreamTurn,
     stop: stopStreamTurn,
+    reconcile: reconcileStreamTurn,
     clearTerminalRun,
   } = usePlayTurnStream({
     client: api,
     onCommitted(session) {
       replaceSession(session);
+      clearRetryProjection();
       userText.value = '';
+      resetTimeAdvance();
       error.value = '';
     },
   });
@@ -73,8 +111,46 @@ export function usePlayWorkspace(workspacePath: string) {
   const selectedSession = computed(() =>
     sessions.value.find((session) => session.id === selectedSessionId.value),
   );
+  const selectedJourneySession = computed(() =>
+    selectedSession.value?.schemaVersion === 4 ? selectedSession.value : undefined,
+  );
+  const rehearsalWorkspace = usePlayRehearsalWorkspace({
+    client: api,
+    selectedSession,
+    providerConfigured,
+    onCommitted(session) {
+      replaceSession(session);
+      error.value = '';
+    },
+  });
+  const displaySession = computed<PlaySession | undefined>(() => {
+    const session = selectedSession.value;
+    const activeProjection = retryProjection.value;
+    if (
+      !session ||
+      session.schemaVersion !== 4 ||
+      activeProjection?.sessionId !== session.id
+    ) {
+      return session;
+    }
+
+    const projection = activeProjection.projection;
+    return {
+      ...session,
+      selectedTurnIds: projection.selectedTurnIds,
+      transcript: projection.transcript,
+      playLocalState: projection.playLocalState,
+      playLocalStateVisibility: projection.playLocalStateVisibility,
+      worldClock: projection.worldClock,
+      scheduledEvents: projection.scheduledEvents,
+      suggestedActions: projection.suggestedActions,
+    };
+  });
   const turnInteractionBlocked = computed(() =>
     sending.value || provisionalTurn.value?.phase === 'indeterminate',
+  );
+  const turnTruthIndeterminate = computed(() =>
+    provisionalTurn.value?.phase === 'indeterminate',
   );
   const {
     checkpoints: historyCheckpoints,
@@ -84,12 +160,14 @@ export function usePlayWorkspace(workspacePath: string) {
     restore: restoreCheckpoint,
   } = usePlaySessionHistory({
     client: api,
-    selectedSession,
+    selectedSession: selectedJourneySession,
     blocked: turnInteractionBlocked,
     onRestored(session) {
       replaceSession(session);
+      clearRetryProjection();
       clearTerminalRun();
       userText.value = '';
+      resetTimeAdvance();
       error.value = '';
       adoptionNotice.value = '';
     },
@@ -98,21 +176,56 @@ export function usePlayWorkspace(workspacePath: string) {
     },
   });
   const interactionBlocked = computed(() =>
-    turnInteractionBlocked.value || Boolean(historyBusyArtifactId.value),
+    loading.value ||
+    creating.value ||
+    turnInteractionBlocked.value ||
+    rehearsalWorkspace.interactionBlocked.value ||
+    Boolean(historyBusyArtifactId.value) ||
+    Boolean(historyRetryingArtifactId.value),
+  );
+  const refreshBlocked = computed(() =>
+    loading.value ||
+    creating.value ||
+    sending.value ||
+    rehearsalWorkspace.interactionBlocked.value ||
+    Boolean(historyBusyArtifactId.value) ||
+    Boolean(historyRetryingArtifactId.value),
   );
   const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
-    (selectedSession.value?.suggestedActions ?? []).map((suggestion, index) => ({
-      id: `${selectedSession.value?.id ?? 'play'}-suggestion-${index}`,
+    (displaySession.value?.suggestedActions ?? []).map((suggestion, index) => ({
+      id: `${displaySession.value?.id ?? 'play'}-suggestion-${index}`,
       label: suggestion,
       userText: suggestion,
       actionKind: inferActionKind(suggestion),
     })),
   );
+  const worldMomentum = computed(() =>
+    readPlayWorldMomentum(displaySession.value?.playLocalState),
+  );
+  const spoilerProjectedPressures = computed(() =>
+    worldMomentum.value.pressures.filter((pressure) =>
+      showSpoilers.value || pressure.visibility !== 'playerUnknown',
+    ),
+  );
+  const spoilerProjectedAgendas = computed(() =>
+    worldMomentum.value.agendas.filter((agenda) =>
+      showSpoilers.value || agenda.visibility !== 'playerUnknown',
+    ),
+  );
+  const visiblePressures = computed(() =>
+    spoilerProjectedPressures.value.filter((pressure) => pressure.status === 'active'),
+  );
+  const visibleAgendas = computed(() =>
+    spoilerProjectedAgendas.value.filter((agenda) =>
+      agenda.status === 'active' || agenda.status === 'blocked',
+    ),
+  );
   const stateEntries = computed<PlayStateEntryView[]>(() =>
-    Object.entries(selectedSession.value?.playLocalState ?? {})
+    Object.entries(displaySession.value?.playLocalState ?? {})
+      .filter(([key]) => key !== PLAY_WORLD_MOMENTUM_STATE_KEY)
       .filter(([key]) =>
         showSpoilers.value ||
-        selectedSession.value?.playLocalStateVisibility[key] !== 'playerUnknown',
+        displaySession.value?.playLocalStateVisibility[key] !== 'playerUnknown',
       )
       .map(([key, value]) => ({
         key,
@@ -120,35 +233,35 @@ export function usePlayWorkspace(workspacePath: string) {
       })),
   );
   const selectedArtifactIds = computed(() =>
-    new Set(selectedSession.value?.selectedTurnIds ?? []),
+    new Set(displaySession.value?.selectedTurnIds ?? []),
   );
   const selectedEventIds = computed(() => new Set(
-    (selectedSession.value?.turnArtifacts ?? [])
+    (displaySession.value?.turnArtifacts ?? [])
       .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
       .flatMap((artifact) => artifact.eventIds),
   ));
   const selectedMessageIds = computed(() => new Set(
-    (selectedSession.value?.turnArtifacts ?? [])
+    (displaySession.value?.turnArtifacts ?? [])
       .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
       .flatMap((artifact) => artifact.messages.map((message) => message.id))
       .filter((id): id is string => Boolean(id)),
   ));
   const selectedObservationIds = computed(() => new Set(
-    (selectedSession.value?.turnArtifacts ?? [])
+    (displaySession.value?.turnArtifacts ?? [])
       .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
       .flatMap((artifact) => artifact.observationIds),
   ));
   const artifactOwnedObservationIds = computed(() => new Set(
-    (selectedSession.value?.turnArtifacts ?? [])
+    (displaySession.value?.turnArtifacts ?? [])
       .flatMap((artifact) => artifact.observationIds),
   ));
   const projectedEvents = computed(() =>
-    (selectedSession.value?.events ?? []).filter((event) =>
+    (displaySession.value?.events ?? []).filter((event) =>
       selectedEventIds.value.has(event.id),
     ),
   );
   const projectedObservations = computed(() =>
-    (selectedSession.value?.observations ?? []).filter((observation) =>
+    (displaySession.value?.observations ?? []).filter((observation) =>
       (
         !artifactOwnedObservationIds.value.has(observation.id) ||
         selectedObservationIds.value.has(observation.id)
@@ -163,7 +276,7 @@ export function usePlayWorkspace(workspacePath: string) {
     projectedObservations.value.map((observation) => observation.id),
   ));
   const projectedCandidates = computed(() =>
-    (selectedSession.value?.adoptionCandidates ?? []).filter((candidate) =>
+    (displaySession.value?.adoptionCandidates ?? []).filter((candidate) =>
       candidate.sourceObservationIds.every((id) =>
         projectedObservationIds.value.has(id)) &&
       isPlayProvenanceInSelectedBranch(
@@ -178,6 +291,35 @@ export function usePlayWorkspace(workspacePath: string) {
       right.createdAt.localeCompare(left.createdAt) || right.sequence - left.sequence,
     ),
   );
+  const causeLabelsByEventId = computed<Record<string, string[]>>(() => {
+    const pressuresById = new Map(
+      spoilerProjectedPressures.value.map((pressure) => [pressure.id, pressure]),
+    );
+    const agendasById = new Map(
+      spoilerProjectedAgendas.value.map((agenda) => [agenda.id, agenda]),
+    );
+
+    return Object.fromEntries(projectedEvents.value.map((event) => {
+      const labels: string[] = [];
+      const pressure = event.cause.pressureId
+        ? pressuresById.get(event.cause.pressureId)
+        : undefined;
+      const agenda = event.cause.agendaId
+        ? agendasById.get(event.cause.agendaId)
+        : undefined;
+
+      if (pressure) {
+        labels.push(`Pressure · ${pressure.label}`);
+      }
+      if (agenda) {
+        labels.push(
+          `Agenda · ${agenda.ownerEntityId}: ${agenda.nextMove ?? agenda.goal}`,
+        );
+      }
+
+      return [event.id, [...new Set(labels)]];
+    }));
+  });
   const visibleObservations = computed(() =>
     projectedObservations.value.filter(
       (observation) => showSpoilers.value || observation.visibility !== 'playerUnknown',
@@ -189,7 +331,7 @@ export function usePlayWorkspace(workspacePath: string) {
     ),
   );
   const visibleScheduledEvents = computed(() =>
-    [...(selectedSession.value?.scheduledEvents ?? [])]
+    [...(displaySession.value?.scheduledEvents ?? [])]
       .filter((event) =>
         event.status === 'scheduled' &&
         (showSpoilers.value || event.template.visibility !== 'playerUnknown'),
@@ -201,22 +343,28 @@ export function usePlayWorkspace(workspacePath: string) {
       ),
   );
   const hasHiddenPlayContent = computed(() => {
-    const session = selectedSession.value;
+    const session = displaySession.value;
     if (!session) {
       return false;
     }
 
     return projectedEvents.value.some((event) => Boolean(event.cause.reason)) ||
       Object.keys(session.playLocalStateVisibility).some(
-      (key) => session.playLocalStateVisibility[key] === 'playerUnknown',
-    ) || projectedEvents.value.some((event) => event.visibility === 'playerUnknown')
+        (key) =>
+          key !== PLAY_WORLD_MOMENTUM_STATE_KEY &&
+          session.playLocalStateVisibility[key] === 'playerUnknown',
+      ) || projectedEvents.value.some((event) => event.visibility === 'playerUnknown')
       || projectedObservations.value.some((observation) =>
         observation.visibility === 'playerUnknown')
       || projectedCandidates.value.some((candidate) =>
         candidate.visibility === 'playerUnknown')
       || session.scheduledEvents.some((event) =>
         event.status === 'scheduled' &&
-        event.template.visibility === 'playerUnknown');
+        event.template.visibility === 'playerUnknown')
+      || worldMomentum.value.pressures.some((pressure) =>
+        pressure.visibility === 'playerUnknown')
+      || worldMomentum.value.agendas.some((agenda) =>
+        agenda.visibility === 'playerUnknown');
   });
 
   onMounted(() => {
@@ -224,7 +372,7 @@ export function usePlayWorkspace(workspacePath: string) {
   });
 
   async function refreshSessions() {
-    if (interactionBlocked.value) {
+    if (refreshBlocked.value) {
       return;
     }
 
@@ -232,12 +380,16 @@ export function usePlayWorkspace(workspacePath: string) {
     error.value = '';
 
     try {
+      if (turnTruthIndeterminate.value) {
+        await reconcileStreamTurn();
+      }
       const result = await api.listPlaySessions();
       sessions.value = result.sessions;
 
       if (!sessions.value.some((session) => session.id === selectedSessionId.value)) {
         rememberSelectedSession(sessions.value[0]?.id ?? '');
       }
+      clearRetryProjection();
       clearTerminalRun();
     } catch (caught) {
       error.value = toErrorMessage(caught);
@@ -254,7 +406,7 @@ export function usePlayWorkspace(workspacePath: string) {
     }
   }
 
-  async function createSession(input: PlaySessionCreateInput) {
+  async function createSession(input: PlaySessionCreateRequest) {
     if (interactionBlocked.value) {
       return;
     }
@@ -278,9 +430,20 @@ export function usePlayWorkspace(workspacePath: string) {
 
   async function submitTurn() {
     const session = selectedSession.value;
-    const text = userText.value.trim();
+    const requestedTimeAdvance = actionKind.value === 'wait'
+      ? normalizeRelativeTimeAdvance(timeAdvance.value)
+      : undefined;
+    const text = userText.value.trim() || (
+      requestedTimeAdvance ? formatWaitAction(requestedTimeAdvance) : ''
+    );
 
-    if (!session || !text || interactionBlocked.value) {
+    if (
+      !session ||
+      session.schemaVersion !== 4 ||
+      !text ||
+      interactionBlocked.value ||
+      (actionKind.value === 'wait' && !requestedTimeAdvance)
+    ) {
       return;
     }
 
@@ -292,10 +455,60 @@ export function usePlayWorkspace(workspacePath: string) {
       userText: text,
       actionKind: actionKind.value,
       baseRevision: session.revision,
+      ...(requestedTimeAdvance ? { timeAdvance: requestedTimeAdvance } : {}),
     });
 
     if (outcome === 'failed' || outcome === 'unknown') {
       error.value = provisionalTurn.value?.error ?? 'Play turn failed before commit.';
+    }
+  }
+
+  async function retryCheckpoint(artifactId: string) {
+    const session = selectedSession.value;
+    if (!session || session.schemaVersion !== 4 || interactionBlocked.value) {
+      return;
+    }
+    if (!providerConfigured.value) {
+      error.value = 'Configure a provider before retrying a Play settlement.';
+      return;
+    }
+
+    const checkpoint = historyCheckpoints.value.find(
+      (candidate) => candidate.artifactId === artifactId,
+    );
+    if (!checkpoint?.retryable) {
+      error.value = 'This settlement cannot be retried from its saved history.';
+      return;
+    }
+
+    const artifact = session.turnArtifacts.find((candidate) => candidate.id === artifactId);
+    const projection = projectPlaySessionBeforeArtifact(session, artifactId);
+    if (!artifact?.input || !projection) {
+      error.value = 'The state before this turn cannot be reconstructed safely, so Retry was not started.';
+      return;
+    }
+
+    error.value = '';
+    adoptionNotice.value = '';
+    historyRetryingArtifactId.value = artifactId;
+    retryProjection.value = { sessionId: session.id, projection };
+
+    try {
+      const outcome = await retryStreamTurn({
+        sessionId: session.id,
+        artifactId,
+        baseRevision: session.revision,
+        userText: artifact.input.raw,
+        actionKind: artifact.input.kind,
+      });
+
+      if (outcome === 'failed' || outcome === 'unknown') {
+        error.value = provisionalTurn.value?.error ?? 'Play Retry failed before commit.';
+      }
+    } catch (caught) {
+      error.value = toErrorMessage(caught);
+    } finally {
+      clearRetryProjection();
     }
   }
 
@@ -308,7 +521,12 @@ export function usePlayWorkspace(workspacePath: string) {
 
   async function createPendingAction(candidate: PlayAdoptionCandidate): Promise<boolean> {
     const session = selectedSession.value;
-    if (!session || adoptionBusyId.value || interactionBlocked.value) {
+    if (
+      !session ||
+      session.schemaVersion !== 4 ||
+      adoptionBusyId.value ||
+      interactionBlocked.value
+    ) {
       return false;
     }
 
@@ -330,7 +548,12 @@ export function usePlayWorkspace(workspacePath: string) {
 
   async function createAdoptionCandidate(input: PlayAdoptionDraftInput): Promise<boolean> {
     const session = selectedSession.value;
-    if (!session || adoptionCreating.value || interactionBlocked.value) {
+    if (
+      !session ||
+      session.schemaVersion !== 4 ||
+      adoptionCreating.value ||
+      interactionBlocked.value
+    ) {
       return false;
     }
 
@@ -360,9 +583,19 @@ export function usePlayWorkspace(workspacePath: string) {
     );
   }
 
+  function clearRetryProjection() {
+    historyRetryingArtifactId.value = '';
+    retryProjection.value = undefined;
+  }
+
+  function resetTimeAdvance() {
+    timeAdvance.value = { amount: 10, unit: 'minute' };
+  }
+
   function rememberSelectedSession(id: string) {
     if (selectedSessionId.value !== id) {
       showSpoilers.value = false;
+      resetTimeAdvance();
     }
     selectedSessionId.value = id;
     writeSelectedSession(workspacePath, id);
@@ -376,31 +609,40 @@ export function usePlayWorkspace(workspacePath: string) {
     creating,
     error,
     loading,
+    displaySession,
+    rehearsalWorkspace,
     selectedSession,
     selectedSessionId,
     sending,
     interactionBlocked,
+    refreshBlocked,
     historyCheckpoints,
     historyBusyArtifactId,
+    historyRetryingArtifactId: readonly(historyRetryingArtifactId),
     historyLoading,
     historyNotice,
     canStop,
     provisionalTurn,
     turnAnnouncement,
+    timeAdvance,
     showSpoilers,
     hasHiddenPlayContent,
     sessions,
     sortedEvents,
+    causeLabelsByEventId,
     stateEntries,
     suggestedActions,
     userText,
     visibleCandidates,
     visibleObservations,
     visibleScheduledEvents,
+    visiblePressures,
+    visibleAgendas,
     createPendingAction,
     createAdoptionCandidate,
     createSession,
     refreshSessions,
+    retryCheckpoint,
     restoreCheckpoint,
     selectSession,
     stopTurn,
@@ -415,6 +657,101 @@ export function isPlayProvenanceInSelectedBranch(
 ): boolean {
   return fact.sourceTurnIds.every((id) => selectedMessageIds.has(id)) &&
     fact.sourceEventIds.every((id) => selectedEventIds.has(id));
+}
+
+export function readPlayWorldMomentum(
+  state: Readonly<Record<string, unknown>> | undefined,
+): PlayWorldMomentum {
+  const value = state?.[PLAY_WORLD_MOMENTUM_STATE_KEY];
+  if (!isRecord(value) || !Array.isArray(value.pressures) || !Array.isArray(value.agendas)) {
+    return { pressures: [], agendas: [] };
+  }
+  if (!value.pressures.every(isPlayPressure) || !value.agendas.every(isPlayAgenda)) {
+    return { pressures: [], agendas: [] };
+  }
+
+  return {
+    pressures: value.pressures,
+    agendas: value.agendas,
+  };
+}
+
+export function normalizeRelativeTimeAdvance(
+  value: PlayRelativeTimeAdvance | undefined,
+): PlayRelativeTimeAdvance | undefined {
+  if (
+    !value ||
+    !Number.isSafeInteger(value.amount) ||
+    value.amount <= 0 ||
+    !['minute', 'hour', 'day'].includes(value.unit) ||
+    relativeTimeAdvanceMinutes(value) > 525_600
+  ) {
+    return undefined;
+  }
+
+  return { ...value };
+}
+
+function relativeTimeAdvanceMinutes(value: PlayRelativeTimeAdvance): number {
+  if (value.unit === 'day') return value.amount * 1_440;
+  if (value.unit === 'hour') return value.amount * 60;
+  return value.amount;
+}
+
+function formatWaitAction(value: PlayRelativeTimeAdvance): string {
+  const unit = value.unit === 'minute' ? '分钟' : value.unit === 'hour' ? '小时' : '天';
+  return `等待 ${value.amount} ${unit}，观察世界变化。`;
+}
+
+function isPlayPressure(value: unknown): value is PlayPressure {
+  return isRecord(value) &&
+    isNonEmptyString(value.id) &&
+    typeof value.kind === 'string' &&
+    ['deadline', 'pursuit', 'factionProject', 'environment', 'rumor', 'relationship']
+      .includes(value.kind) &&
+    isNonEmptyString(value.label) &&
+    typeof value.status === 'string' &&
+    ['latent', 'active', 'resolved'].includes(value.status) &&
+    isOptionalFiniteNumber(value.level) &&
+    isOptionalFiniteNumber(value.threshold) &&
+    Array.isArray(value.causeRefs) &&
+    value.causeRefs.every(isNonEmptyString) &&
+    isOptionalNonEmptyString(value.nextConsequence) &&
+    isPlayVisibility(value.visibility);
+}
+
+function isPlayAgenda(value: unknown): value is PlayAgenda {
+  return isRecord(value) &&
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.ownerEntityId) &&
+    isNonEmptyString(value.goal) &&
+    isOptionalNonEmptyString(value.nextMove) &&
+    Array.isArray(value.blockers) &&
+    value.blockers.every(isNonEmptyString) &&
+    typeof value.status === 'string' &&
+    ['active', 'blocked', 'completed', 'abandoned'].includes(value.status) &&
+    isPlayVisibility(value.visibility) &&
+    isNonEmptyString(value.updatedAtTurnId);
+}
+
+function isPlayVisibility(value: unknown): boolean {
+  return value === 'playerVisible' || value === 'rumor' || value === 'playerUnknown';
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function isOptionalNonEmptyString(value: unknown): boolean {
+  return value === undefined || isNonEmptyString(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function inferActionKind(text: string): PlayActionKind {

@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import type { PlayActionKind } from '../../composables/useWorkspaceApi';
+import PlayTimeAdvanceControl from './PlayTimeAdvanceControl.vue';
+import type {
+  PlayActionKind,
+  PlayRelativeTimeAdvance,
+} from '../../composables/useWorkspaceApi';
 import type { PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
 import type { PlayTurnRunPhase } from '../../composables/usePlayTurnStream';
 
 const userText = defineModel<string>('userText', { required: true });
 const actionKind = defineModel<PlayActionKind>('actionKind', { required: true });
+const timeAdvance = defineModel<PlayRelativeTimeAdvance | undefined>('timeAdvance', {
+  required: true,
+});
 
 const props = defineProps<{
   disabled: boolean;
@@ -29,7 +36,11 @@ const actions: Array<{ id: PlayActionKind; label: string }> = [
   { id: 'wait', label: 'Wait' },
 ];
 const canSubmit = computed(() =>
-  !props.disabled && !props.busy && userText.value.trim().length > 0,
+  !props.disabled && !props.busy && (
+    actionKind.value === 'wait'
+      ? isValidTimeAdvance(timeAdvance.value)
+      : userText.value.trim().length > 0
+  ),
 );
 const runStatus = computed(() => {
   switch (props.phase) {
@@ -53,9 +64,10 @@ const stopLabel = computed(() => {
 });
 const placeholder = computed(() =>
   actionKind.value === 'wait'
-    ? '例如：等到天亮，留意街区在这段时间发生的变化…'
+    ? '可选：描述等待期间要做什么、关注什么，或防备什么…'
     : '描述你要说什么、观察什么，或采取什么行动…',
 );
+const submitLabel = computed(() => actionKind.value === 'wait' ? 'Advance' : 'Act');
 
 function submit() {
   if (canSubmit.value) {
@@ -70,6 +82,16 @@ function useSuggestion(suggestion: PlaySuggestedActionView) {
 
   actionKind.value = suggestion.actionKind;
   userText.value = suggestion.userText;
+  if (suggestion.actionKind === 'wait') {
+    timeAdvance.value = undefined;
+  }
+}
+
+function selectActionKind(value: PlayActionKind) {
+  actionKind.value = value;
+  if (value === 'wait' && !isValidTimeAdvance(timeAdvance.value)) {
+    timeAdvance.value = { amount: 10, unit: 'minute' };
+  }
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -79,6 +101,20 @@ function handleKeydown(event: KeyboardEvent) {
 
   event.preventDefault();
   submit();
+}
+
+function isValidTimeAdvance(
+  value: PlayRelativeTimeAdvance | undefined,
+): value is PlayRelativeTimeAdvance {
+  if (!value || !Number.isSafeInteger(value.amount) || value.amount <= 0) {
+    return false;
+  }
+  const minutes = value.unit === 'day'
+    ? value.amount * 1_440
+    : value.unit === 'hour'
+      ? value.amount * 60
+      : value.amount;
+  return minutes <= 525_600;
 }
 </script>
 
@@ -105,12 +141,18 @@ function handleKeydown(event: KeyboardEvent) {
           :class="{ 'play-action-kind-active': actionKind === action.id }"
           :aria-pressed="actionKind === action.id"
           :disabled="disabled || busy"
-          @click="actionKind = action.id"
+          @click="selectActionKind(action.id)"
         >
           <span v-if="action.id === 'wait'" aria-hidden="true">[~]</span>
           {{ action.label }}
         </button>
       </div>
+
+      <PlayTimeAdvanceControl
+        v-if="actionKind === 'wait'"
+        v-model:time-advance="timeAdvance"
+        :disabled="disabled || busy"
+      />
 
       <label class="visually-hidden" for="play-action-input">Play action</label>
       <textarea
@@ -136,7 +178,7 @@ function handleKeydown(event: KeyboardEvent) {
           <span aria-hidden="true">■</span>
         </button>
         <button v-else type="submit" :disabled="!canSubmit" aria-label="提交 Play 行动">
-          <span>Act</span>
+          <span>{{ submitLabel }}</span>
           <span aria-hidden="true">↵</span>
         </button>
       </footer>

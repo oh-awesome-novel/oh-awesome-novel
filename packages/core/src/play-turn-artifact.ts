@@ -2,19 +2,23 @@ import type {
   PlayActionKind,
   PlayEventVisibility,
   PlayObservation,
+  PlayRelativeTimeAdvance,
   PlayTranscriptTurn,
   PlayWorldClock,
   PlayWorldEvent,
 } from './play-types.js';
+import { normalizePlayRelativeTimeAdvance } from './play-world-momentum.js';
 import { normalizePlayScheduledEvents } from './play-event-schedule.js';
 import type { PlayScheduledEvent } from './play-event-schedule.js';
 
 export const PLAY_TURN_ARTIFACT_SCHEMA_VERSION = 2 as const;
+export const PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION = 3 as const;
 export const LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION = 1 as const;
 
 export type PlayTurnArtifactSchemaVersion =
   | typeof LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION
-  | typeof PLAY_TURN_ARTIFACT_SCHEMA_VERSION;
+  | typeof PLAY_TURN_ARTIFACT_SCHEMA_VERSION
+  | typeof PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION;
 export type PlayTurnArtifactKind = 'worldSettlement' | 'transcriptAppend';
 
 export interface PlayTurnArtifact {
@@ -27,6 +31,7 @@ export interface PlayTurnArtifact {
   input?: {
     kind: PlayActionKind;
     raw: string;
+    timeAdvance?: PlayRelativeTimeAdvance;
   };
   messages: PlayTranscriptTurn[];
   worldClock?: PlayWorldClock;
@@ -37,6 +42,7 @@ export interface PlayTurnArtifact {
   playLocalStateSnapshot?: Record<string, unknown>;
   playLocalStateVisibilitySnapshot?: Record<string, PlayEventVisibility>;
   observationIds: string[];
+  rehearsalEvidenceRefs?: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
   committedAt: string;
@@ -145,7 +151,8 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
   }
   if (
     value.schemaVersion !== LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION &&
-    value.schemaVersion !== PLAY_TURN_ARTIFACT_SCHEMA_VERSION
+    value.schemaVersion !== PLAY_TURN_ARTIFACT_SCHEMA_VERSION &&
+    value.schemaVersion !== PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION
   ) {
     throw new Error(
       `Unsupported Play turn artifact schemaVersion: ${String(value.schemaVersion)}.`,
@@ -168,6 +175,7 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     'playLocalStateSnapshot',
     'playLocalStateVisibilitySnapshot',
     'observationIds',
+    'rehearsalEvidenceRefs',
     'stateDelta',
     'suggestedActions',
     'committedAt',
@@ -210,7 +218,7 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     throw new Error(`Play turn artifact ${id} has invalid input.`);
   }
   if (isRecord(value.input)) {
-    assertOnlyKnownFields(value.input, ['kind', 'raw']);
+    assertOnlyKnownFields(value.input, ['kind', 'raw', 'timeAdvance']);
   }
   if (value.worldClock !== undefined && !isRecord(value.worldClock)) {
     throw new Error(`Play turn artifact ${id} has invalid worldClock.`);
@@ -254,7 +262,10 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     id,
   );
   if (
-    schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION &&
+    (
+      schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION ||
+      schemaVersion === PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION
+    ) &&
     (
       artifactKind === undefined ||
       branchSnapshotVersion !== 1 ||
@@ -271,6 +282,32 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     );
   }
 
+  const rehearsalEvidenceRefs = value.rehearsalEvidenceRefs === undefined
+    ? undefined
+    : normalizeRequiredIdList(
+        value.rehearsalEvidenceRefs,
+        'rehearsalEvidenceRefs',
+      );
+  if (
+    schemaVersion === PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION &&
+    (
+      artifactKind !== 'worldSettlement' ||
+      !rehearsalEvidenceRefs?.length
+    )
+  ) {
+    throw new Error(
+      `Play rehearsal turn artifact ${id} requires committed rehearsal evidence.`,
+    );
+  }
+  if (
+    schemaVersion !== PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION &&
+    rehearsalEvidenceRefs !== undefined
+  ) {
+    throw new Error(
+      `Play turn artifact ${id} cannot carry rehearsal evidence before schema v3.`,
+    );
+  }
+
   return {
     schemaVersion,
     ...(artifactKind ? { artifactKind } : {}),
@@ -279,12 +316,7 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     revision,
     ...(parentTurnId ? { parentTurnId } : {}),
     ...(value.input
-      ? {
-          input: {
-            kind: normalizeActionKind(value.input.kind),
-            raw: normalizeRequiredString(value.input.raw, 'input.raw'),
-          },
-        }
+      ? { input: normalizePlayTurnArtifactInput(value.input) }
       : {}),
     messages,
     ...(value.worldClock
@@ -313,6 +345,7 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
       value.observationIds,
       'observationIds',
     ),
+    ...(rehearsalEvidenceRefs ? { rehearsalEvidenceRefs } : {}),
     stateDelta: structuredClone(value.stateDelta),
     suggestedActions: normalizeRequiredStringList(
       value.suggestedActions,
@@ -320,6 +353,23 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     ),
     committedAt,
     canonical: false,
+  };
+};
+
+const normalizePlayTurnArtifactInput = (
+  value: Record<string, unknown>,
+): NonNullable<PlayTurnArtifact['input']> => {
+  const kind = normalizeActionKind(value.kind);
+  const timeAdvance = value.timeAdvance === undefined
+    ? undefined
+    : normalizePlayRelativeTimeAdvance(value.timeAdvance);
+  if (timeAdvance && kind !== 'wait') {
+    throw new Error('Play turn artifact timeAdvance requires a wait action.');
+  }
+  return {
+    kind,
+    raw: normalizeRequiredString(value.raw, 'input.raw'),
+    ...(timeAdvance ? { timeAdvance } : {}),
   };
 };
 
@@ -614,8 +664,8 @@ const indexPlayTurnArtifacts = (
   }
 
   const roots = artifacts.filter((artifact) => !artifact.parentTurnId);
-  if (artifacts.length && roots.length !== 1) {
-    throw new Error('Play turn artifact graph requires exactly one root.');
+  if (artifacts.length && roots.length === 0) {
+    throw new Error('Play turn artifact graph requires at least one root.');
   }
 
   for (const artifact of artifacts) {

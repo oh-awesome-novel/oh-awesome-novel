@@ -38,11 +38,24 @@ describe('createOanClient', () => {
     await client.createPlaySession({
       title: 'Play',
       sceneStart: 'Scene',
+      worldMomentum: {
+        pressures: [{
+          id: 'station-lockdown',
+          kind: 'deadline',
+          label: '车站封锁',
+          status: 'active',
+          causeRefs: ['scene-seed'],
+          nextConsequence: '入口关闭',
+          visibility: 'playerVisible',
+        }],
+        agendas: [],
+      },
     });
     await client.runPlayWorldRefereeTurn('play-1', {
       userText: '等待两小时',
       actionKind: 'wait',
       baseRevision: 0,
+      timeAdvance: { amount: 2, unit: 'hour' },
     });
     await client.createPlayAdoptionPendingAction('play-1', 'adopt-1', {
       chapterId: '0001/0002',
@@ -68,6 +81,14 @@ describe('createOanClient', () => {
       url: 'http://backend.test/api/workspace/play-sessions',
       init: { method: 'POST' },
     });
+    expect(JSON.parse(String(calls[3]?.init?.body))).toMatchObject({
+      title: 'Play',
+      sceneStart: 'Scene',
+      worldMomentum: {
+        pressures: [expect.objectContaining({ id: 'station-lockdown' })],
+        agendas: [],
+      },
+    });
     expect(calls[4]).toMatchObject({
       url: 'http://backend.test/api/workspace/play-sessions/play-1/world-referee-turn',
       init: { method: 'POST' },
@@ -76,6 +97,7 @@ describe('createOanClient', () => {
       userText: '等待两小时',
       actionKind: 'wait',
       baseRevision: 0,
+      timeAdvance: { amount: 2, unit: 'hour' },
     });
     expect(calls[5]).toMatchObject({
       url: 'http://backend.test/api/workspace/play-sessions/play-1/adoption-candidates/adopt-1/pending-action',
@@ -174,6 +196,7 @@ describe('createOanClient', () => {
       userText: '等待',
       actionKind: 'wait',
       baseRevision: 0,
+      timeAdvance: { amount: 30, unit: 'minute' },
     }, { onTurnId })) {
       events.push(event);
     }
@@ -190,6 +213,142 @@ describe('createOanClient', () => {
       url: 'http://backend.test/api/workspace/play-sessions/play-1/turns/stream',
       init: { method: 'POST' },
     });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      userText: '等待',
+      actionKind: 'wait',
+      baseRevision: 0,
+      timeAdvance: { amount: 30, unit: 'minute' },
+    });
+  });
+
+  it('routes an atomic Play retry and validates the new sibling against its source artifact', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const onTurnId = vi.fn();
+    const encoded = new TextEncoder();
+    const committed = createPlayRetryCommittedPayload();
+    const frames = [
+      {
+        type: 'play.turn.started',
+        eventId: 'run-retry:1',
+        sequence: 1,
+        sessionId: 'play-1',
+        turnId: 'run-retry',
+        baseRevision: 1,
+        expectedArtifactId: 'turn-artifact-2',
+        retry: { sourceArtifactId: 'turn-artifact-1' },
+      },
+      {
+        type: 'play.turn.prepared',
+        eventId: 'run-retry:2',
+        sequence: 2,
+        sessionId: 'play-1',
+        turnId: 'run-retry',
+        baseRevision: 1,
+        targetRevision: 2,
+        artifactId: 'turn-artifact-2',
+      },
+      committed,
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') +
+      'data: [DONE]\n\n';
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoded.encode(frames));
+          controller.close();
+        },
+      }), {
+        status: 200,
+        headers: {
+          'content-type': 'text/event-stream',
+          'X-OAN-Play-Turn-Id': 'run-retry',
+        },
+      });
+    }) as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+      systemTheme: () => 'dark',
+    });
+    const events: PlayTurnStreamEvent[] = [];
+
+    for await (const event of client.retryPlayWorldRefereeTurn(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+      { onTurnId },
+    )) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.type)).toEqual([
+      'play.turn.started',
+      'play.turn.prepared',
+      'play.turn.committed',
+    ]);
+    expect(onTurnId).toHaveBeenCalledWith('run-retry');
+    expect(calls[0]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/turns/turn-artifact-1/retry/stream',
+      init: { method: 'POST' },
+    });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ baseRevision: 1 });
+  });
+
+  it('rejects retry streams that confuse run, source, expected, or committed artifact identity', async () => {
+    const base = createPlayRetryCommittedPayload();
+    const cases = [
+      {
+        start: { retry: { sourceArtifactId: 'different-source' } },
+        committed: base,
+      },
+      {
+        start: { expectedArtifactId: 'different-artifact' },
+        committed: base,
+      },
+      {
+        start: {},
+        committed: {
+          ...base,
+          artifactId: 'turn-artifact-1',
+        },
+      },
+    ];
+
+    for (const malformed of cases) {
+      const start = {
+        type: 'play.turn.started',
+        eventId: 'run-retry:1',
+        sequence: 1,
+        sessionId: 'play-1',
+        turnId: 'run-retry',
+        baseRevision: 1,
+        expectedArtifactId: 'turn-artifact-2',
+        retry: { sourceArtifactId: 'turn-artifact-1' },
+        ...malformed.start,
+      };
+      const prepared = {
+        type: 'play.turn.prepared',
+        eventId: 'run-retry:2',
+        sequence: 2,
+        sessionId: 'play-1',
+        turnId: 'run-retry',
+        baseRevision: 1,
+        targetRevision: 2,
+        artifactId: 'turn-artifact-2',
+      };
+      const client = createPlayRetryStreamClient([start, prepared, malformed.committed]);
+      const consume = async () => {
+        for await (const _event of client.retryPlayWorldRefereeTurn(
+          'play-1',
+          'turn-artifact-1',
+          { baseRevision: 1 },
+        )) {
+          // The adapter rejects before accepting inconsistent terminal truth.
+        }
+      };
+
+      await expect(consume()).rejects.toThrow(/retry stream/iu);
+    }
   });
 
   it('rejects malformed variant payloads in typed Play turn events', async () => {
@@ -683,6 +842,169 @@ describe('createOanClient', () => {
       .toThrow('Play session request returned an invalid payload');
   });
 
+  it('strictly validates reserved Play world momentum state and its hidden visibility', async () => {
+    const momentum = createPlayWorldMomentumFixture();
+    const valid = createEmptyPlaySessionEnvelope();
+    valid.playLocalState.worldMomentum = structuredClone(momentum);
+    valid.playLocalStateVisibility.worldMomentum = 'playerUnknown';
+    valid.branchBaseSnapshot.playLocalState.worldMomentum = structuredClone(momentum);
+    valid.branchBaseSnapshot.playLocalStateVisibility.worldMomentum = 'playerUnknown';
+    const validClient = createOanClient({
+      fetch: createFetchMock([], { session: valid }),
+      systemTheme: () => 'dark',
+    });
+    await expect(validClient.getPlaySession('play-1')).resolves.toEqual({ session: valid });
+
+    const wrongVisibility = structuredClone(valid);
+    wrongVisibility.playLocalStateVisibility.worldMomentum = 'playerVisible';
+    wrongVisibility.branchBaseSnapshot.playLocalStateVisibility.worldMomentum = 'playerVisible';
+
+    const unknownPressureField = structuredClone(valid);
+    (unknownPressureField.playLocalState.worldMomentum.pressures[0] as
+      Record<string, unknown>).unexpected = true;
+    (unknownPressureField.branchBaseSnapshot.playLocalState.worldMomentum.pressures[0] as
+      Record<string, unknown>).unexpected = true;
+
+    const duplicatePressure = structuredClone(valid);
+    duplicatePressure.playLocalState.worldMomentum.pressures.push(structuredClone(
+      duplicatePressure.playLocalState.worldMomentum.pressures[0],
+    ));
+    duplicatePressure.branchBaseSnapshot.playLocalState.worldMomentum.pressures.push(
+      structuredClone(
+        duplicatePressure.branchBaseSnapshot.playLocalState.worldMomentum.pressures[0],
+      ),
+    );
+
+    for (const malformed of [wrongVisibility, unknownPressureField, duplicatePressure]) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { session: malformed }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.getPlaySession('play-1'))
+        .rejects.toThrow('Play session request returned an invalid payload');
+    }
+  });
+
+  it('accepts a player-visible settlement that advances referee-only world momentum', async () => {
+    const valid = createPlayCommittedPayload([]);
+    const previous = createPlayWorldMomentumFixture();
+    const next = structuredClone(previous);
+    next.pressures[0]!.level = 2;
+    const artifact = valid.session.turnArtifacts[0];
+    valid.session.branchBaseSnapshot.playLocalState = { worldMomentum: previous };
+    valid.session.branchBaseSnapshot.playLocalStateVisibility = {
+      worldMomentum: 'playerUnknown',
+    };
+    artifact.stateDelta = { worldMomentum: next };
+    artifact.playLocalStateSnapshot = { worldMomentum: next };
+    artifact.playLocalStateVisibilitySnapshot = { worldMomentum: 'playerUnknown' };
+    valid.session.playLocalState = { worldMomentum: next };
+    valid.session.playLocalStateVisibility = { worldMomentum: 'playerUnknown' };
+
+    await expect(consumePlaySsePayload(valid)).resolves.toEqual([valid]);
+  });
+
+  it('accepts typed waits in Play artifacts and rejects malformed or non-wait time advances', async () => {
+    const valid = createPlayCommittedPayload([]);
+    (valid.session.turnArtifacts[0].input as Record<string, unknown>).timeAdvance = {
+      amount: 2,
+      unit: 'hour',
+    };
+    valid.session.turnArtifacts[0].worldClock.elapsed = 'PT2H';
+    valid.session.worldClock.elapsed = 'PT2H';
+    await expect(consumePlaySsePayload(valid)).resolves.toEqual([valid]);
+
+    const mismatchedElapsed = structuredClone(valid);
+    mismatchedElapsed.session.turnArtifacts[0].worldClock.elapsed = 'PT3H';
+    mismatchedElapsed.session.worldClock.elapsed = 'PT3H';
+
+    const zeroAmount = structuredClone(valid);
+    (zeroAmount.session.turnArtifacts[0].input as Record<string, unknown>).timeAdvance = {
+      amount: 0,
+      unit: 'hour',
+    };
+
+    const tooLong = structuredClone(valid);
+    (tooLong.session.turnArtifacts[0].input as Record<string, unknown>).timeAdvance = {
+      amount: 366,
+      unit: 'day',
+    };
+
+    const nonWait = structuredClone(valid);
+    nonWait.session.turnArtifacts[0].input.kind = 'do';
+    nonWait.session.turnArtifacts[0].messages[0].actionKind = 'do';
+    nonWait.session.transcript[0].actionKind = 'do';
+
+    for (const malformed of [mismatchedElapsed, zeroAmount, tooLong, nonWait]) {
+      await expect(consumePlaySsePayload(malformed))
+        .rejects.toThrow('invalid play.turn.committed event');
+    }
+  });
+
+  it('accepts shared-base v2 retry roots while rejecting legacy or unanchored forests', async () => {
+    const retrySession = structuredClone(createPlayRetryCommittedPayload().session);
+    retrySession.selectedTurnIds = [];
+    retrySession.transcript = [];
+    retrySession.playLocalState = structuredClone(
+      retrySession.branchBaseSnapshot.playLocalState,
+    );
+    retrySession.playLocalStateVisibility = structuredClone(
+      retrySession.branchBaseSnapshot.playLocalStateVisibility,
+    );
+    retrySession.scheduledEvents = structuredClone(
+      retrySession.branchBaseSnapshot.scheduledEvents,
+    );
+    retrySession.suggestedActions = [
+      ...retrySession.branchBaseSnapshot.suggestedActions,
+    ];
+    retrySession.worldClock = {
+      ...retrySession.branchBaseSnapshot.worldClock,
+      revision: retrySession.revision,
+    };
+    const accepted = createOanClient({
+      fetch: createFetchMock([], { session: retrySession }),
+      systemTheme: () => 'dark',
+    });
+    await expect(accepted.getPlaySession('play-1')).resolves.toEqual({
+      session: retrySession,
+    });
+
+    const legacyForest = structuredClone(retrySession);
+    legacyForest.turnArtifacts[0]!.schemaVersion = 1;
+    const legacyClient = createOanClient({
+      fetch: createFetchMock([], { session: legacyForest }),
+      systemTheme: () => 'dark',
+    });
+    await expect(legacyClient.getPlaySession('play-1'))
+      .rejects.toThrow('Play session request returned an invalid payload');
+
+    const legacyOnly = structuredClone(retrySession);
+    const legacyArtifact = structuredClone(legacyOnly.turnArtifacts[0]!);
+    legacyArtifact.schemaVersion = 1;
+    Reflect.deleteProperty(legacyArtifact, 'artifactKind');
+    Reflect.deleteProperty(legacyArtifact, 'branchSnapshotVersion');
+    Reflect.deleteProperty(legacyArtifact, 'input');
+    Reflect.deleteProperty(legacyArtifact, 'worldClock');
+    Reflect.deleteProperty(legacyArtifact, 'playLocalStateSnapshot');
+    Reflect.deleteProperty(legacyArtifact, 'playLocalStateVisibilitySnapshot');
+    legacyOnly.turnArtifacts = [legacyArtifact];
+    const legacyOnlyClient = createOanClient({
+      fetch: createFetchMock([], { session: legacyOnly }),
+      systemTheme: () => 'dark',
+    });
+    await expect(legacyOnlyClient.getPlaySession('play-1'))
+      .rejects.toThrow('Play session request returned an invalid payload');
+
+    const unanchoredForest = structuredClone(retrySession);
+    unanchoredForest.branchBaseSnapshot.parentTurnId = 'different-base';
+    const unanchoredClient = createOanClient({
+      fetch: createFetchMock([], { session: unanchoredForest }),
+      systemTheme: () => 'dark',
+    });
+    await expect(unanchoredClient.getPlaySession('play-1'))
+      .rejects.toThrow('Play session request returned an invalid payload');
+  });
+
   it('rejects malformed Play checkpoint summaries at the network boundary', async () => {
     const valid = createPlayCheckpointRestorePayload().checkpoints[0]!;
     const malformed = [
@@ -695,6 +1017,7 @@ describe('createOanClient', () => {
       { ...valid, status: 'stale' },
       { ...valid, canonical: true },
       { ...valid, restorable: true },
+      { ...valid, retryable: 'yes' },
     ];
 
     for (const checkpoint of malformed) {
@@ -707,10 +1030,7 @@ describe('createOanClient', () => {
         .toThrow('Play checkpoint list returned an invalid payload');
     }
 
-    for (const checkpoints of [
-      [valid, structuredClone(valid)],
-      [{ ...valid, status: 'variant', restorable: true }],
-    ]) {
+    for (const checkpoints of [[valid, structuredClone(valid)]]) {
       const client = createOanClient({
         fetch: createFetchMock([], { checkpoints }),
         systemTheme: () => 'dark',
@@ -719,6 +1039,22 @@ describe('createOanClient', () => {
         .rejects
         .toThrow('Play checkpoint list returned an invalid payload');
     }
+  });
+
+  it('accepts an all-variant checkpoint list for a virtual-base selection', async () => {
+    const checkpoint = {
+      ...createPlayCheckpointRestorePayload().checkpoints[0]!,
+      status: 'variant' as const,
+      restorable: true,
+    };
+    const client = createOanClient({
+      fetch: createFetchMock([], { checkpoints: [checkpoint] }),
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.listPlayCheckpoints('play-1')).resolves.toEqual({
+      checkpoints: [checkpoint],
+    });
   });
 
   it('rejects a Play checkpoint restore that disagrees with the returned session path', async () => {
@@ -766,6 +1102,19 @@ describe('createOanClient', () => {
     ))
       .rejects
       .toThrow('Play checkpoint restore returned an inconsistent payload');
+
+    const noCurrent = createPlayCheckpointRestorePayload();
+    noCurrent.checkpoints[0]!.status = 'variant';
+    noCurrent.checkpoints[0]!.restorable = true;
+    const noCurrentClient = createOanClient({
+      fetch: createFetchMock([], noCurrent),
+      systemTheme: () => 'dark',
+    });
+    await expect(noCurrentClient.restorePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+    )).rejects.toThrow('Play checkpoint restore returned an inconsistent payload');
   });
 
   it('routes Play stop through the explicit server cancellation endpoint', async () => {
@@ -957,6 +1306,67 @@ function createFetchMock(
       },
     });
   }) as typeof fetch;
+}
+
+function createPlayRetryStreamClient(events: unknown[]) {
+  const encoded = new TextEncoder();
+  const frames = events
+    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+    .join('') + 'data: [DONE]\n\n';
+  return createOanClient({
+    fetch: (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded.encode(frames));
+        controller.close();
+      },
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream',
+        'X-OAN-Play-Turn-Id': 'run-retry',
+      },
+    })) as typeof fetch,
+    systemTheme: () => 'dark',
+  });
+}
+
+function createPlayRetryCommittedPayload() {
+  const session = structuredClone(createPlayCommittedPayload([]).session);
+  const sourceArtifact = session.turnArtifacts[0]!;
+  const retryArtifact = structuredClone(sourceArtifact);
+  retryArtifact.id = 'turn-artifact-2';
+  retryArtifact.revision = 2;
+  retryArtifact.messages = [{
+    id: 'turn-2-user',
+    speaker: 'user',
+    content: sourceArtifact.input.raw,
+    createdAt: '2026-07-15T02:00:00.000Z',
+    actionKind: sourceArtifact.input.kind,
+  }, {
+    id: 'turn-2-referee',
+    speaker: 'world-referee',
+    content: '这一次，钟声从另一条走廊传来。',
+    createdAt: '2026-07-15T02:00:00.000Z',
+  }];
+  retryArtifact.worldClock = { turn: 1, revision: 2 };
+  retryArtifact.committedAt = '2026-07-15T02:00:00.000Z';
+
+  session.revision = 2;
+  session.transcript = structuredClone(retryArtifact.messages);
+  session.turnArtifacts = [sourceArtifact, retryArtifact];
+  session.selectedTurnIds = [retryArtifact.id];
+  session.worldClock = { turn: 1, revision: 2 };
+
+  return {
+    type: 'play.turn.committed',
+    eventId: 'run-retry:3',
+    sequence: 3,
+    sessionId: session.id,
+    turnId: 'run-retry',
+    artifactId: retryArtifact.id,
+    revision: 2,
+    session,
+  };
 }
 
 function createPlayOccurredPayload() {
@@ -1240,6 +1650,7 @@ function createPlayCheckpointRestorePayload() {
     preview: '时间继续流动。',
     status: 'current' as const,
     restorable: false,
+    retryable: true,
     canonical: false as const,
   };
 
@@ -1287,6 +1698,32 @@ function createEmptyPlaySessionEnvelope() {
     activatedSources: [],
     observations: [],
     adoptionCandidates: [],
+  };
+}
+
+function createPlayWorldMomentumFixture() {
+  return {
+    pressures: [{
+      id: 'station-lockdown',
+      kind: 'deadline',
+      label: '车站封锁',
+      status: 'active',
+      level: 1,
+      threshold: 3,
+      causeRefs: ['scene-seed'],
+      nextConsequence: '入口关闭',
+      visibility: 'playerVisible',
+    }],
+    agendas: [{
+      id: 'guard-search',
+      ownerEntityId: 'station-guard',
+      goal: '找到闯入者',
+      nextMove: '检查东侧站台',
+      blockers: [],
+      status: 'active',
+      visibility: 'playerUnknown',
+      updatedAtTurnId: 'turn-0',
+    }],
   };
 }
 

@@ -66,8 +66,15 @@ function formatTime(value: string): string {
       >
         <header>
           <strong>world-referee</strong>
-          <span>provisional · not committed</span>
+          <span>
+            {{ provisional.intent === 'retry' ? 'Retry · provisional · not committed' : 'provisional · not committed' }}
+          </span>
         </header>
+        <div v-if="provisional.intent === 'retry'" class="play-retry-source">
+          <span>Replaying original action</span>
+          <p>{{ provisional.userText }}</p>
+          <small>Old result preserved as a variant.</small>
+        </div>
         <p>{{ provisional.provisionalText || provisional.statusMessage }}</p>
         <footer class="play-provisional-status">
           <span>{{ provisional.statusMessage }}</span>

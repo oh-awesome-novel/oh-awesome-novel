@@ -11,6 +11,13 @@ export type PlaySourceTrust =
 
 export type PlayActionKind = 'say' | 'look' | 'move' | 'do' | 'wait';
 
+export type PlayTimeAdvanceUnit = 'minute' | 'hour' | 'day';
+
+export interface PlayRelativeTimeAdvance {
+  amount: number;
+  unit: PlayTimeAdvanceUnit;
+}
+
 export type PlaySimulationMode =
   | 'conversation'
   | 'reactiveWorld'
@@ -31,6 +38,50 @@ export type PlayEventOrigin =
   | 'environment'
   | 'worldRule'
   | 'manual';
+
+export type PlayPressureKind =
+  | 'deadline'
+  | 'pursuit'
+  | 'factionProject'
+  | 'environment'
+  | 'rumor'
+  | 'relationship';
+
+export type PlayPressureStatus = 'latent' | 'active' | 'resolved';
+
+export interface PlayPressure {
+  id: string;
+  kind: PlayPressureKind;
+  label: string;
+  status: PlayPressureStatus;
+  level?: number;
+  threshold?: number;
+  causeRefs: string[];
+  nextConsequence?: string;
+  visibility: PlayEventVisibility;
+}
+
+export type PlayAgendaStatus =
+  | 'active'
+  | 'blocked'
+  | 'completed'
+  | 'abandoned';
+
+export interface PlayAgenda {
+  id: string;
+  ownerEntityId: string;
+  goal: string;
+  nextMove?: string;
+  blockers: string[];
+  status: PlayAgendaStatus;
+  visibility: PlayEventVisibility;
+  updatedAtTurnId: string;
+}
+
+export interface PlayWorldMomentum {
+  pressures: PlayPressure[];
+  agendas: PlayAgenda[];
+}
 
 export type PlayWorldEventKind =
   | 'environmentChanged'

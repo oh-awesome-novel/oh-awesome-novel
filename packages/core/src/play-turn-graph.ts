@@ -28,6 +28,7 @@ export interface PlayCheckpointSummary {
   preview: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
+  retryable: boolean;
   canonical: false;
 }
 
@@ -78,6 +79,10 @@ export function listPlaySessionCheckpoints(
         preview: formatPlayCheckpointPreview(artifact),
         status,
         restorable: status !== 'current' && (completeSnapshot || branchBaseHead),
+        retryable:
+          completeSnapshot &&
+          artifact.artifactKind === 'worldSettlement' &&
+          artifact.rehearsalEvidenceRefs === undefined,
         canonical: false,
       };
     })
@@ -109,19 +114,62 @@ export function restorePlaySessionCheckpoint(
     throw new Error(`Play checkpoint is already current: ${safeArtifactId}.`);
   }
 
-  const completeSnapshot = hasCompletePlayBranchSnapshot(artifact);
-  const branchBaseHead = isPlayBranchBaseHead(
-    artifact,
-    facts.branchBaseSnapshot.parentTurnId,
-  );
-  if (!completeSnapshot && !branchBaseHead) {
+  return projectPlaySessionToTurnHead(session, safeArtifactId, {
+    advanceRevision: true,
+  });
+}
+
+/**
+ * Builds a validated projection at an artifact head without deleting any
+ * ledger facts. An undefined head represents the virtual branch base and is
+ * only valid for a new-session forest whose branch base has no artifact head.
+ *
+ * @internal This seam is shared by checkpoint restore and atomic turn retry.
+ */
+export function projectPlaySessionToTurnHead(
+  session: PlaySession,
+  artifactId: string | undefined,
+  options: { advanceRevision: boolean },
+): PlaySession {
+  const safeArtifactId = artifactId === undefined
+    ? undefined
+    : assertSafePlayTurnArtifactId(artifactId);
+  const facts = materializePlayTurnFacts(session);
+  const artifactsById = indexPlayTurnArtifacts(facts.turnArtifacts);
+  if (
+    safeArtifactId === undefined &&
+    facts.branchBaseSnapshot.parentTurnId !== undefined
+  ) {
     throw new Error(
-      `Play checkpoint artifact ${safeArtifactId} has no restorable branch snapshot.`,
+      'Play virtual branch base is unavailable when the branch base has an artifact head.',
+    );
+  }
+  const artifact = safeArtifactId === undefined
+    ? undefined
+    : artifactsById.get(safeArtifactId);
+  if (safeArtifactId !== undefined && !artifact) {
+    throw new Error(`Play checkpoint references an unknown artifact: ${safeArtifactId}.`);
+  }
+
+  const completeSnapshot = artifact
+    ? hasCompletePlayBranchSnapshot(artifact)
+    : false;
+  const branchBaseHead = artifact
+    ? isPlayBranchBaseHead(
+        artifact,
+        facts.branchBaseSnapshot.parentTurnId,
+      )
+    : false;
+  if (artifact && !completeSnapshot && !branchBaseHead) {
+    throw new Error(
+      `Play checkpoint artifact ${artifact.id} has no restorable branch snapshot.`,
     );
   }
 
-  const selectedTurnIds = resolvePlayTurnPath(safeArtifactId, artifactsById);
-  const snapshot = completeSnapshot
+  const selectedTurnIds = artifact
+    ? resolvePlayTurnPath(artifact.id, artifactsById)
+    : [];
+  const snapshot = artifact && completeSnapshot
     ? {
         worldClock: artifact.worldClock!,
         playLocalState: artifact.playLocalStateSnapshot!,
@@ -130,7 +178,8 @@ export function restorePlaySessionCheckpoint(
         suggestedActions: artifact.suggestedActions,
       }
     : facts.branchBaseSnapshot;
-  const revision = resolvePlaySessionRevision(session, facts.turnArtifacts) + 1;
+  const revision = resolvePlaySessionRevision(session, facts.turnArtifacts) +
+    (options.advanceRevision ? 1 : 0);
   const restored: PlaySession = {
     ...session,
     revision,

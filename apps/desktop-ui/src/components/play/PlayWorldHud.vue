@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import PlayWorldMomentum from './PlayWorldMomentum.vue';
 import type {
   PlayActivatedSource,
+  PlayAgenda,
   PlayEventPolicy,
+  PlayPressure,
   PlayScheduledEvent,
   PlayWorldClock,
 } from '../../composables/useWorkspaceApi';
@@ -14,6 +17,8 @@ defineProps<{
   characters: string[];
   stateEntries: PlayStateEntryView[];
   scheduledEvents: PlayScheduledEvent[];
+  pressures: PlayPressure[];
+  agendas: PlayAgenda[];
   sources: PlayActivatedSource[];
 }>();
 
@@ -71,6 +76,8 @@ function triggerLabel(event: PlayScheduledEvent): string {
         <div><dt>Turn cap</dt><dd>{{ policy.maxExternalEventsPerTurn }}</dd></div>
       </dl>
     </div>
+
+    <PlayWorldMomentum :pressures="pressures" :agendas="agendas" />
 
     <div v-if="stateEntries.length" class="play-hud-section">
       <h3><span aria-hidden="true">[+]</span> Local state</h3>

@@ -72,6 +72,64 @@ describe('PlayHistoryControls', () => {
     expect(wrapper.get('[role="status"]').text()).toBe('Restoring checkpoint…');
     wrapper.unmount();
   });
+
+  it('confirms Retry inline, explains variant preservation, and restores focus on Escape', async () => {
+    const wrapper = mountControls();
+    const retry = wrapper.get(
+      '.play-history-retry[data-artifact-id="turn-current"]',
+    );
+
+    await retry.trigger('click');
+    await flushPromises();
+
+    const confirm = wrapper.get('.play-history-confirm');
+    expect(document.activeElement).toBe(confirm.element);
+    expect(wrapper.get('.play-history-confirmation').text()).toContain(
+      'Retry from before this turn?',
+    );
+    expect(wrapper.get('.play-history-confirmation').text()).toContain(
+      'existing result is preserved as a variant',
+    );
+
+    await confirm.trigger('keydown', { key: 'Escape' });
+    await flushPromises();
+
+    expect(wrapper.find('.play-history-confirmation').exists()).toBe(false);
+    expect(document.activeElement).toBe(
+      wrapper.get('.play-history-retry[data-artifact-id="turn-current"]').element,
+    );
+
+    await wrapper.get('.play-history-retry[data-artifact-id="turn-current"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('.play-history-confirm').trigger('click');
+    expect(wrapper.emitted('retry')).toEqual([['turn-current']]);
+    wrapper.unmount();
+  });
+
+  it('disables Retry without a provider and announces an active Retry', async () => {
+    const wrapper = mountControls({
+      retryDisabled: true,
+      retryDisabledReason: 'Configure a provider to Retry.',
+    });
+    const retry = wrapper.get(
+      '.play-history-retry[data-artifact-id="turn-current"]',
+    );
+
+    expect(retry.attributes('disabled')).toBeDefined();
+    expect(retry.attributes('title')).toBe('Configure a provider to Retry.');
+    expect(wrapper.text()).toContain('Configure a provider to Retry.');
+
+    await wrapper.setProps({
+      retryDisabled: false,
+      retryingArtifactId: 'turn-current',
+    });
+    expect(wrapper.get('.play-history-controls').attributes('aria-busy')).toBe('true');
+    expect(wrapper.get('[role="status"]').text()).toContain(
+      'Retrying from before the original turn',
+    );
+    expect(wrapper.get('[role="status"]').text()).toContain('remains a variant');
+    wrapper.unmount();
+  });
 });
 
 function mountControls(overrides: Partial<{
@@ -79,6 +137,9 @@ function mountControls(overrides: Partial<{
   sessionRevision: number;
   loading: boolean;
   busyArtifactId: string;
+  retryingArtifactId: string;
+  retryDisabled: boolean;
+  retryDisabledReason: string;
   blocked: boolean;
   notice: string;
 }> = {}) {
@@ -97,7 +158,7 @@ function mountControls(overrides: Partial<{
 }
 
 function createCheckpoints(): PlayCheckpointSummary[] {
-  return [
+  const checkpoints: Array<PlayCheckpointSummary & { retryable: boolean }> = [
     {
       artifactId: 'turn-current',
       selectedTurnIds: ['turn-current'],
@@ -107,6 +168,7 @@ function createCheckpoints(): PlayCheckpointSummary[] {
       preview: 'Current scene',
       status: 'current',
       restorable: false,
+      retryable: true,
       canonical: false,
     },
     {
@@ -119,6 +181,7 @@ function createCheckpoints(): PlayCheckpointSummary[] {
       preview: 'Before the reveal',
       status: 'selectedAncestor',
       restorable: true,
+      retryable: true,
       canonical: false,
     },
     {
@@ -131,7 +194,9 @@ function createCheckpoints(): PlayCheckpointSummary[] {
       preview: 'Alternate reply',
       status: 'variant',
       restorable: true,
+      retryable: true,
       canonical: false,
     },
   ];
+  return checkpoints;
 }

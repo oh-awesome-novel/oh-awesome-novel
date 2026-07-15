@@ -8,6 +8,7 @@ import {
 
 import type {
   PlayActionKind,
+  PlayRelativeTimeAdvance,
   PlaySession,
   PlayTurnCancelResult,
   PlayTurnStreamEvent,
@@ -32,6 +33,10 @@ export interface PlayProvisionalTurn {
   baseRevision: number;
   userText: string;
   actionKind: PlayActionKind;
+  timeAdvance?: PlayRelativeTimeAdvance;
+  intent: 'submit' | 'retry';
+  retrySourceArtifactId?: string;
+  retryParentArtifactId?: string;
   phase: PlayTurnRunPhase;
   provisionalText: string;
   statusMessage: string;
@@ -44,8 +49,15 @@ export interface PlayTurnStreamClient {
     input: {
       userText: string;
       actionKind?: PlayActionKind;
+      timeAdvance?: PlayRelativeTimeAdvance;
       baseRevision?: number;
     },
+    options?: PlayTurnStreamOptions,
+  ): AsyncIterable<PlayTurnStreamEvent>;
+  retryPlayWorldRefereeTurn(
+    id: string,
+    artifactId: string,
+    input: { baseRevision: number },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
@@ -62,6 +74,23 @@ export type PlayTurnSubmitOutcome =
   | 'failed'
   | 'unknown'
   | 'ignored';
+
+export interface PlayTurnSubmitInput {
+  sessionId: string;
+  baseRevision: number;
+  userText: string;
+  actionKind: PlayActionKind;
+  timeAdvance?: PlayRelativeTimeAdvance;
+}
+
+export interface PlayTurnRetryInput extends PlayTurnSubmitInput {
+  artifactId: string;
+}
+
+interface PlayTurnInvocation extends PlayTurnSubmitInput {
+  intent: 'submit' | 'retry';
+  retrySourceArtifactId?: string;
+}
 
 const busyPhases: ReadonlySet<PlayTurnRunPhase> = new Set([
   'starting',
@@ -93,12 +122,42 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     );
   });
 
-  async function submit(input: {
-    sessionId: string;
-    baseRevision: number;
-    userText: string;
-    actionKind: PlayActionKind;
-  }): Promise<PlayTurnSubmitOutcome> {
+  function submit(input: PlayTurnSubmitInput): Promise<PlayTurnSubmitOutcome> {
+    return runTurn(
+      { ...input, intent: 'submit' },
+      (streamOptions) => options.client.streamPlayWorldRefereeTurn(
+        input.sessionId,
+        {
+          userText: input.userText,
+          actionKind: input.actionKind,
+          ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
+          baseRevision: input.baseRevision,
+        },
+        streamOptions,
+      ),
+    );
+  }
+
+  function retry(input: PlayTurnRetryInput): Promise<PlayTurnSubmitOutcome> {
+    return runTurn(
+      {
+        ...input,
+        intent: 'retry',
+        retrySourceArtifactId: input.artifactId,
+      },
+      (streamOptions) => options.client.retryPlayWorldRefereeTurn(
+        input.sessionId,
+        input.artifactId,
+        { baseRevision: input.baseRevision },
+        streamOptions,
+      ),
+    );
+  }
+
+  async function runTurn(
+    input: PlayTurnInvocation,
+    openStream: (streamOptions: PlayTurnStreamOptions) => AsyncIterable<PlayTurnStreamEvent>,
+  ): Promise<PlayTurnSubmitOutcome> {
     if (busy.value || disposed) {
       return 'ignored';
     }
@@ -112,35 +171,34 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       baseRevision: input.baseRevision,
       userText: input.userText,
       actionKind: input.actionKind,
+      ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
+      intent: input.intent,
+      retrySourceArtifactId: input.retrySourceArtifactId,
       phase: 'starting',
       provisionalText: '',
-      statusMessage: 'Starting world referee…',
+      statusMessage: input.intent === 'retry'
+        ? 'Starting Retry from before turn…'
+        : 'Starting world referee…',
     };
-    announcement.value = 'Starting Play turn.';
+    announcement.value = input.intent === 'retry'
+      ? 'Starting Play retry from before the original turn.'
+      : 'Starting Play turn.';
     const controller = new AbortController();
     activeConnection.value = { localId, controller };
     let outcome: PlayTurnSubmitOutcome | undefined;
     let knownTurnId: string | undefined;
 
     try {
-      for await (const event of options.client.streamPlayWorldRefereeTurn(
-        input.sessionId,
-        {
-          userText: input.userText,
-          actionKind: input.actionKind,
-          baseRevision: input.baseRevision,
+      for await (const event of openStream({
+        signal: controller.signal,
+        onTurnId(turnId) {
+          if (knownTurnId && knownTurnId !== turnId) {
+            throw new Error('Play turn response changed turn identity.');
+          }
+          knownTurnId = turnId;
+          updateRun(localId, { turnId });
         },
-        {
-          signal: controller.signal,
-          onTurnId(turnId) {
-            if (knownTurnId && knownTurnId !== turnId) {
-              throw new Error('Play turn response changed turn identity.');
-            }
-            knownTurnId = turnId;
-            updateRun(localId, { turnId });
-          },
-        },
-      )) {
+      })) {
         if (knownTurnId && knownTurnId !== event.turnId) {
           throw new Error('Play turn stream changed turn identity.');
         }
@@ -255,11 +313,56 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       updateRun(run.localId, {
         phase: previousPhase,
         statusMessage: previousPhase === 'prepared'
-          ? 'Validated · waiting to commit'
-          : 'World referee is responding…',
+          ? run.intent === 'retry'
+            ? 'Retry validated · waiting to commit'
+            : 'Validated · waiting to commit'
+          : run.intent === 'retry'
+            ? 'World referee is replaying from before turn…'
+            : 'World referee is responding…',
         error: `Stop request failed: ${toErrorMessage(caught)}`,
       });
     }
+  }
+
+  async function reconcile(): Promise<PlayTurnSubmitOutcome> {
+    const run = currentRun.value;
+    if (
+      busy.value ||
+      disposed ||
+      run?.phase !== 'indeterminate' ||
+      !run.turnId
+    ) {
+      return 'ignored';
+    }
+
+    const controller = new AbortController();
+    activeConnection.value = { localId: run.localId, controller };
+    let outcome: PlayTurnSubmitOutcome | undefined;
+
+    try {
+      outcome = await reconcileLostStream(
+        run.localId,
+        run.sessionId,
+        run.turnId,
+        controller,
+      );
+      if (!outcome) {
+        updateRun(run.localId, {
+          phase: 'indeterminate',
+          statusMessage: 'Server outcome still unknown · refresh again before continuing',
+        });
+        outcome = 'unknown';
+      }
+    } finally {
+      if (
+        activeConnection.value?.localId === run.localId &&
+        activeConnection.value.controller === controller
+      ) {
+        activeConnection.value = undefined;
+      }
+    }
+
+    return outcome;
   }
 
   function updateRun(
@@ -292,11 +395,19 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       case 'play.turn.started':
         updateRun(localId, (run) => ({
           turnId: event.turnId,
+          ...(event.retry
+            ? {
+                retrySourceArtifactId: event.retry.sourceArtifactId,
+                retryParentArtifactId: event.retry.parentArtifactId,
+              }
+            : {}),
           ...(isWaitingForServerTruth(run.phase)
             ? {}
             : {
                 phase: 'streaming' as const,
-                statusMessage: 'World referee is responding…',
+                statusMessage: run.intent === 'retry'
+                  ? 'World referee is replaying from before turn…'
+                  : 'World referee is responding…',
               }),
         }));
         return undefined;
@@ -309,7 +420,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
             ? {}
             : {
                 phase: 'streaming' as const,
-                statusMessage: 'Streaming · not committed',
+                statusMessage: run.intent === 'retry'
+                  ? 'Retry streaming · not committed'
+                  : 'Streaming · not committed',
               }),
         }));
         return undefined;
@@ -329,7 +442,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
           ? {}
           : {
               phase: 'prepared',
-              statusMessage: 'Validated · waiting to commit',
+              statusMessage: run.intent === 'retry'
+                ? 'Retry validated · waiting to commit'
+                : 'Validated · waiting to commit',
             });
         return undefined;
       case 'play.event.occurred':
@@ -477,6 +592,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
   function clearTerminalRun(): void {
     if (currentRun.value && !busyPhases.has(currentRun.value.phase)) {
       currentRun.value = undefined;
+      announcement.value = '';
     }
   }
 
@@ -496,7 +612,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     busy,
     canStop,
     submit,
+    retry,
     stop,
+    reconcile,
     clearTerminalRun,
     dispose,
   };

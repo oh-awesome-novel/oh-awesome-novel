@@ -10,6 +10,7 @@ describe('PlayEventFeed', () => {
     const wrapper = mount(PlayEventFeed, {
       props: {
         events: [],
+        causeLabelsByEventId: {},
         hasHiddenPlayContent: true,
         showSpoilers: false,
       },
@@ -46,6 +47,7 @@ describe('PlayEventFeed', () => {
           createdAt: '2026-07-15T04:00:00.000Z',
           canonical: false,
         }],
+        causeLabelsByEventId: {},
         hasHiddenPlayContent: true,
         showSpoilers: false,
       },
@@ -59,5 +61,42 @@ describe('PlayEventFeed', () => {
     await wrapper.setProps({ showSpoilers: true });
 
     expect(wrapper.get('details').text()).toContain('A hidden bargain');
+  });
+
+  it('shows spoiler-safe momentum labels while keeping author reasoning gated', () => {
+    const wrapper = mount(PlayEventFeed, {
+      props: {
+        events: [{
+          id: 'turn-3-event-1',
+          turnId: 'turn-3-referee',
+          sequence: 1,
+          kind: 'factionActed',
+          origin: 'faction',
+          title: 'The east gate closes',
+          summary: 'Guards seal the station exit.',
+          visibility: 'playerVisible',
+          cause: {
+            reason: 'The hidden commander ordered the lockdown.',
+            pressureId: 'pressure-1',
+            agendaId: 'agenda-1',
+          },
+          worldClock: { turn: 3, revision: 3 },
+          createdAt: '2026-07-15T05:00:00.000Z',
+          canonical: false,
+        }],
+        causeLabelsByEventId: {
+          'turn-3-event-1': [
+            'Pressure · Station lockdown',
+            'Agenda · Guard: lock the east gate',
+          ],
+        },
+        hasHiddenPlayContent: true,
+        showSpoilers: false,
+      },
+    });
+
+    expect(wrapper.get('.play-event-cause').text()).toContain('Station lockdown');
+    expect(wrapper.get('.play-event-cause').text()).toContain('lock the east gate');
+    expect(wrapper.text()).not.toContain('hidden commander');
   });
 });

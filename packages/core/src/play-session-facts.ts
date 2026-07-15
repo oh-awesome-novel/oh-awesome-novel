@@ -8,6 +8,7 @@ import {
   validatePlayScheduledEventHistory,
 } from './play-event-schedule-history.js';
 import {
+  PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION,
   assertSafePlayTurnArtifactId,
   createLegacyPlayTurnArtifacts,
   normalizePlayTurnArtifact,
@@ -28,6 +29,21 @@ import type {
   PlayWorldEventKind,
   PlayWorldRefereeSettlementEvent,
 } from './play-types.js';
+import {
+  PLAY_WORLD_MOMENTUM_STATE_KEY,
+  assertPlayWorldMomentumTransition,
+  formatPlayRelativeTimeAdvance,
+  readPlayWorldMomentum,
+} from './play-world-momentum.js';
+import {
+  normalizePlayCommittedSceneEvidence,
+  normalizePlaySceneRehearsalSidecar,
+} from './play-rehearsal.js';
+import type {
+  PlayCommittedSceneEvidence,
+  PlayRehearsalTurnEvidence,
+  PlaySceneRehearsalSidecar,
+} from './play-rehearsal.js';
 
 export interface PlayBranchBaseSnapshot {
   parentTurnId?: string;
@@ -53,6 +69,8 @@ export interface MaterializePlayTurnFactsInput {
   suggestedActions: string[];
   observations: PlayObservation[];
   adoptionCandidates: PlayAdoptionCandidate[];
+  sceneRehearsal?: PlaySceneRehearsalSidecar;
+  rehearsalScenes?: PlayCommittedSceneEvidence[];
 }
 
 export type PlaySessionRevisionSource = Pick<
@@ -138,6 +156,7 @@ export function materializePlayTurnFacts(
   selectedPlayLocalState: Record<string, unknown>;
   selectedPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
   selectedSuggestedActions: string[];
+  selectedRehearsalEvidence: PlayRehearsalTurnEvidence[];
   branchBaseSnapshot: PlayBranchBaseSnapshot;
 } {
   const storedArtifacts = Array.isArray(session.turnArtifacts)
@@ -174,6 +193,8 @@ export function materializePlayTurnFacts(
       session.branchSnapshotRequiredFromRevision,
     branchBaseSnapshot,
     sessionSuggestedActions: session.suggestedActions,
+    sceneRehearsal: session.sceneRehearsal,
+    rehearsalScenes: session.rehearsalScenes,
   });
 
   return {
@@ -199,6 +220,8 @@ export interface ValidatePlayTurnFactsInput {
   branchSnapshotRequiredFromRevision: number;
   branchBaseSnapshot: PlayBranchBaseSnapshot;
   sessionSuggestedActions: string[];
+  sceneRehearsal?: PlaySceneRehearsalSidecar;
+  rehearsalScenes?: PlayCommittedSceneEvidence[];
 }
 
 export interface ValidatedPlayTurnFacts {
@@ -210,11 +233,24 @@ export interface ValidatedPlayTurnFacts {
   selectedPlayLocalState: Record<string, unknown>;
   selectedPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
   selectedSuggestedActions: string[];
+  selectedRehearsalEvidence: PlayRehearsalTurnEvidence[];
 }
 
 export function validatePlayTurnFacts(
   input: ValidatePlayTurnFactsInput,
 ): ValidatedPlayTurnFacts {
+  const roots = input.turnArtifacts.filter((artifact) => !artifact.parentTurnId);
+  if (
+    roots.length > 1 &&
+    (
+      input.branchBaseSnapshot.parentTurnId !== undefined ||
+      roots.some((artifact) => !hasCompletePlayBranchSnapshot(artifact))
+    )
+  ) {
+    throw new Error(
+      'Play turn artifact forest roots must be complete v2 snapshots sharing the virtual branch base.',
+    );
+  }
   for (const event of input.events) {
     assertPlayWorldEvent(event, { strict: true });
   }
@@ -232,8 +268,17 @@ export function validatePlayTurnFacts(
     }
     adoptionCandidateIds.add(candidate.id);
   }
-  if (input.turnArtifacts.length && !input.selectedTurnIds.length) {
-    throw new Error('Play turn artifacts require a selected root-to-head path.');
+  if (
+    input.turnArtifacts.length &&
+    !input.selectedTurnIds.length &&
+    (
+      input.branchBaseSnapshot.parentTurnId !== undefined ||
+      roots.some((artifact) => !hasCompletePlayBranchSnapshot(artifact))
+    )
+  ) {
+    throw new Error(
+      'Play turn artifacts require a selected path or a complete v2 forest at the virtual branch base.',
+    );
   }
   const transcript = projectPlayTranscript(
     input.turnArtifacts,
@@ -463,6 +508,13 @@ export function validatePlayTurnFacts(
     currentWorldTurn: input.currentWorldTurn,
     branchBaseSnapshot: input.branchBaseSnapshot,
   });
+  const selectedRehearsalEvidence = validatePlayRehearsalEvidence({
+    artifacts: input.turnArtifacts,
+    selectedTurnIds: input.selectedTurnIds,
+    eventsById,
+    sidecar: input.sceneRehearsal,
+    scenes: input.rehearsalScenes,
+  });
 
   return {
     transcript,
@@ -474,7 +526,261 @@ export function validatePlayTurnFacts(
     selectedPlayLocalStateVisibility:
       selectedBranchSnapshot.playLocalStateVisibility,
     selectedSuggestedActions: selectedBranchSnapshot.suggestedActions,
+    selectedRehearsalEvidence,
   };
+}
+
+function validatePlayRehearsalEvidence(input: {
+  artifacts: PlayTurnArtifact[];
+  selectedTurnIds: string[];
+  eventsById: Map<string, PlayWorldEvent>;
+  sidecar?: PlaySceneRehearsalSidecar;
+  scenes?: PlayCommittedSceneEvidence[];
+}): PlayRehearsalTurnEvidence[] {
+  if ((input.sidecar === undefined) !== (input.scenes === undefined)) {
+    throw new Error('Play rehearsal sidecar and committed scenes must appear together.');
+  }
+  if (!input.sidecar || !input.scenes) {
+    const rehearsalArtifact = input.artifacts.find((artifact) =>
+      artifact.schemaVersion === PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION ||
+      artifact.rehearsalEvidenceRefs !== undefined);
+    if (rehearsalArtifact) {
+      throw new Error(
+        `Play artifact ${rehearsalArtifact.id} carries rehearsal evidence without a sidecar.`,
+      );
+    }
+    return [];
+  }
+
+  const sidecar = normalizePlaySceneRehearsalSidecar(input.sidecar);
+  const scenes = input.scenes.map(normalizePlayCommittedSceneEvidence);
+  if (scenes.length !== 1 || scenes[0]?.sceneId !== sidecar.activeSceneRef) {
+    throw new Error('Play rehearsal evidence does not match the active scene.');
+  }
+  const evidence = scenes.flatMap((scene) => scene.turns);
+  const evidenceById = new Map<string, PlayRehearsalTurnEvidence>();
+  for (const turnEvidence of evidence) {
+    if (evidenceById.has(turnEvidence.id)) {
+      throw new Error(`Play rehearsal evidence contains duplicate id: ${turnEvidence.id}.`);
+    }
+    evidenceById.set(turnEvidence.id, turnEvidence);
+  }
+  const referencedEvidenceIds = new Set<string>();
+  for (const artifact of input.artifacts) {
+    if (artifact.schemaVersion !== PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION) {
+      throw new Error(
+        `Play rehearsal artifact ${artifact.id} must use schema v3 evidence refs.`,
+      );
+    }
+    const artifactsById = new Map(input.artifacts.map((candidate) => [
+      candidate.id,
+      candidate,
+    ]));
+    const owningEventIds = new Set(artifact.eventIds);
+    const allowedEventIds = new Set<string>();
+    let ancestor: PlayTurnArtifact | undefined = artifact;
+    while (ancestor) {
+      for (const eventId of ancestor.eventIds) allowedEventIds.add(eventId);
+      ancestor = ancestor.parentTurnId
+        ? artifactsById.get(ancestor.parentTurnId)
+        : undefined;
+    }
+    for (const evidenceRef of artifact.rehearsalEvidenceRefs ?? []) {
+      if (referencedEvidenceIds.has(evidenceRef)) {
+        throw new Error(`Play rehearsal evidence belongs to multiple artifacts: ${evidenceRef}.`);
+      }
+      referencedEvidenceIds.add(evidenceRef);
+      const turnEvidence = evidenceById.get(evidenceRef);
+      if (!turnEvidence) {
+        throw new Error(
+          `Play rehearsal artifact ${artifact.id} references missing evidence: ${evidenceRef}.`,
+        );
+      }
+      if (turnEvidence.owningTurnArtifactId !== artifact.id) {
+        throw new Error(
+          `Play rehearsal evidence ${evidenceRef} does not point back to artifact ${artifact.id}.`,
+        );
+      }
+      if (turnEvidence.steps.length !== sidecar.participants.length) {
+        throw new Error(
+          `Play rehearsal evidence ${evidenceRef} does not cover the fixed actor queue.`,
+        );
+      }
+      const stepSettlementEventRefs: string[] = [];
+      for (const [index, step] of turnEvidence.steps.entries()) {
+        const participant = sidecar.participants[index];
+        if (step.participantRef !== participant?.participantRef) {
+          throw new Error(
+            `Play rehearsal evidence ${evidenceRef} breaks fixed actor order.`,
+          );
+        }
+        const allowedEvidenceRefs = new Set(
+          participant.initialKnowledgeEvidenceRefs,
+        );
+        const forbiddenDecisionRef = step.decisionBasisRefs.find((ref) =>
+          !allowedEvidenceRefs.has(ref));
+        if (forbiddenDecisionRef) {
+          throw new Error(
+            `Play rehearsal step ${step.stepRef} references forbidden knowledge: ${forbiddenDecisionRef}.`,
+          );
+        }
+        const invalidSettlementEventRef = step.settlementEventRefs.find((ref) => {
+          const event = input.eventsById.get(ref);
+          return !owningEventIds.has(ref) ||
+            !event ||
+            event.cause.triggerId !== undefined;
+        });
+        if (invalidSettlementEventRef) {
+          throw new Error(
+            `Play rehearsal step ${step.stepRef} references invalid settlement event evidence: ${invalidSettlementEventRef}.`,
+          );
+        }
+        stepSettlementEventRefs.push(...step.settlementEventRefs);
+        const expectedStepWorldNoticeEventRefs = step.settlementEventRefs.filter(
+          (ref) => input.eventsById.get(ref)!.visibility === 'playerVisible',
+        );
+        const worldNotices = step.narrativeBlocks.filter((block) =>
+          block.kind === 'worldNotice');
+        if (
+          worldNotices.length !== (expectedStepWorldNoticeEventRefs.length ? 1 : 0) ||
+          worldNotices.some((block) =>
+            block.id !== `world-notice-${step.stepRef}` ||
+            block.speakerRef !== undefined ||
+            block.visibility !== 'playerVisible' ||
+            block.projection !== 'transcript' ||
+            block.sourceRefs.length !== 0 ||
+            block.eventRefs.length === 0)
+        ) {
+          throw new Error(
+            `Play rehearsal step ${step.stepRef} contains invalid world notice evidence.`,
+          );
+        }
+        for (const block of step.narrativeBlocks) {
+          const forbiddenSourceRef = block.sourceRefs.find((ref) =>
+            !allowedEvidenceRefs.has(ref));
+          if (forbiddenSourceRef) {
+            throw new Error(
+              `Play rehearsal block ${block.id} references forbidden knowledge: ${forbiddenSourceRef}.`,
+            );
+          }
+          const unknownEventRef = block.eventRefs.find((ref) =>
+            !allowedEventIds.has(ref) || !input.eventsById.has(ref));
+          if (unknownEventRef) {
+            throw new Error(
+              `Play rehearsal block ${block.id} references an unknown owning event: ${unknownEventRef}.`,
+            );
+          }
+          const nonOwningWorldNoticeRef = block.kind === 'worldNotice'
+            ? block.eventRefs.find((ref) => !owningEventIds.has(ref))
+            : undefined;
+          if (nonOwningWorldNoticeRef) {
+            throw new Error(
+              `Play rehearsal world notice ${block.id} references a non-owning event: ${nonOwningWorldNoticeRef}.`,
+            );
+          }
+          if (block.kind === 'worldNotice') {
+            if (!isDeepStrictEqual(
+              block.eventRefs,
+              expectedStepWorldNoticeEventRefs,
+            )) {
+              throw new Error(
+                `Play rehearsal step world notice ${block.id} does not match its actor-contribution event partition.`,
+              );
+            }
+            const expectedContent = block.eventRefs.map((ref) => {
+              const event = input.eventsById.get(ref)!;
+              return `${event.title}: ${event.summary}`;
+            }).join('\n');
+            if (block.content !== expectedContent) {
+              throw new Error(
+                `Play rehearsal step world notice ${block.id} does not match its event evidence.`,
+              );
+            }
+          }
+          const incompatibleEventRef = block.eventRefs.find((ref) =>
+            !doesPlayVisibilityCover(
+              block.visibility,
+              input.eventsById.get(ref)!.visibility,
+            ));
+          if (incompatibleEventRef) {
+            throw new Error(
+              `Play rehearsal block ${block.id} is more visible than its event: ${incompatibleEventRef}.`,
+            );
+          }
+        }
+      }
+      const expectedStepSettlementEventRefs = artifact.eventIds.filter((ref) => {
+        const event = input.eventsById.get(ref);
+        return event && !event.cause.triggerId;
+      });
+      if (!isDeepStrictEqual(
+        stepSettlementEventRefs,
+        expectedStepSettlementEventRefs,
+      )) {
+        throw new Error(
+          `Play rehearsal evidence ${evidenceRef} does not exactly partition actor-contribution events by step.`,
+        );
+      }
+      const hostNarrativeBlocks = turnEvidence.hostNarrativeBlocks;
+      const expectedHostEventRefs = artifact.eventIds.filter((ref) => {
+        const event = input.eventsById.get(ref);
+        return event?.visibility === 'playerVisible' && Boolean(event.cause.triggerId);
+      });
+      const expectedHostBlockCount = expectedHostEventRefs.length ? 1 : 0;
+      if (hostNarrativeBlocks.length !== expectedHostBlockCount) {
+        throw new Error(
+          `Play rehearsal evidence ${evidenceRef} does not exactly cover player-visible host events.`,
+        );
+      }
+      for (const block of hostNarrativeBlocks) {
+        const expectedContent = expectedHostEventRefs.map((ref) => {
+          const event = input.eventsById.get(ref)!;
+          return `${event.title}: ${event.summary}`;
+        }).join('\n');
+        if (
+          block.id !== `world-notice-host-${artifact.id}` ||
+          block.kind !== 'worldNotice' ||
+          block.speakerRef !== undefined ||
+          block.visibility !== 'playerVisible' ||
+          block.projection !== 'transcript' ||
+          block.sourceRefs.length !== 0 ||
+          !isDeepStrictEqual(block.eventRefs, expectedHostEventRefs) ||
+          block.content !== expectedContent
+        ) {
+          throw new Error(
+            `Play rehearsal host world notice ${block.id} does not match its hard-due event evidence.`,
+          );
+        }
+      }
+    }
+  }
+  const unownedEvidence = evidence.find((turnEvidence) =>
+    !referencedEvidenceIds.has(turnEvidence.id));
+  if (unownedEvidence) {
+    throw new Error(
+      `Play rehearsal evidence is not owned by a turn artifact: ${unownedEvidence.id}.`,
+    );
+  }
+
+  const selectedArtifactsById = new Map(
+    input.artifacts.map((artifact) => [artifact.id, artifact]),
+  );
+  return input.selectedTurnIds.flatMap((artifactId) =>
+    (selectedArtifactsById.get(artifactId)?.rehearsalEvidenceRefs ?? []).map(
+      (evidenceRef) => structuredClone(evidenceById.get(evidenceRef)!),
+    ));
+}
+
+function doesPlayVisibilityCover(
+  blockVisibility: PlayEventVisibility,
+  eventVisibility: PlayEventVisibility,
+): boolean {
+  const restriction = {
+    playerVisible: 0,
+    rumor: 1,
+    playerUnknown: 2,
+  } satisfies Record<PlayEventVisibility, number>;
+  return restriction[blockVisibility] >= restriction[eventVisibility];
 }
 
 function validatePlayBranchSnapshots(input: {
@@ -494,6 +800,16 @@ function validatePlayBranchSnapshots(input: {
   playLocalStateVisibility: Record<string, PlayEventVisibility>;
   suggestedActions: string[];
 } {
+  assertPlayWorldMomentumState(
+    input.branchBaseSnapshot.playLocalState,
+    input.branchBaseSnapshot.playLocalStateVisibility,
+    'Play branch base',
+  );
+  assertPlayWorldMomentumState(
+    input.sessionPlayLocalState,
+    input.sessionPlayLocalStateVisibility,
+    'Play session',
+  );
   if (input.sessionWorldClock.revision !== input.currentRevision) {
     throw new Error('Play session world clock revision does not match session revision.');
   }
@@ -571,6 +887,11 @@ function validatePlayBranchSnapshots(input: {
     const predecessorSuggestedActions = parentComplete
       ? parent!.suggestedActions
       : input.branchBaseSnapshot.suggestedActions;
+    assertPlayWorldMomentumState(
+      stateSnapshot,
+      visibilitySnapshot,
+      `Play turn artifact ${artifact.id}`,
+    );
     if (artifact.revision <= predecessorClock.revision) {
       throw new Error(
         `Play turn artifact ${artifact.id} revision does not advance its predecessor.`,
@@ -613,13 +934,34 @@ function validatePlayBranchSnapshots(input: {
         `Play turn artifact ${artifact.id} state snapshot does not match its predecessor and delta.`,
       );
     }
+    const predecessorHasMomentum = Object.hasOwn(
+      predecessorState,
+      PLAY_WORLD_MOMENTUM_STATE_KEY,
+    );
+    const currentHasMomentum = Object.hasOwn(
+      stateSnapshot,
+      PLAY_WORLD_MOMENTUM_STATE_KEY,
+    );
+    if (predecessorHasMomentum !== currentHasMomentum) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} cannot add or remove world momentum records.`,
+      );
+    }
+    if (predecessorHasMomentum) {
+      assertPlayWorldMomentumTransition(
+        predecessorState[PLAY_WORLD_MOMENTUM_STATE_KEY],
+        stateSnapshot[PLAY_WORLD_MOMENTUM_STATE_KEY],
+      );
+    }
     const expectedVisibility = { ...predecessorVisibility };
     const settlementVisibility = resolveArtifactSettlementVisibility(
       artifact,
       input.eventsById,
     );
     for (const key of Object.keys(artifact.stateDelta)) {
-      expectedVisibility[key] = settlementVisibility;
+      expectedVisibility[key] = key === PLAY_WORLD_MOMENTUM_STATE_KEY
+        ? 'playerUnknown'
+        : settlementVisibility;
     }
     if (!isDeepStrictEqual(visibilitySnapshot, expectedVisibility)) {
       throw new Error(
@@ -725,6 +1067,20 @@ function validatePlayBranchSnapshots(input: {
   };
 }
 
+function assertPlayWorldMomentumState(
+  state: Record<string, unknown>,
+  visibility: Record<string, PlayEventVisibility>,
+  label: string,
+): void {
+  if (!Object.hasOwn(state, PLAY_WORLD_MOMENTUM_STATE_KEY)) {
+    return;
+  }
+  readPlayWorldMomentum(state);
+  if (visibility[PLAY_WORLD_MOMENTUM_STATE_KEY] !== 'playerUnknown') {
+    throw new Error(`${label} world momentum must remain referee-only in generic state.`);
+  }
+}
+
 function assertCompletePlayArtifactKind(
   artifact: PlayTurnArtifact,
   eventsById: Map<string, PlayWorldEvent>,
@@ -748,6 +1104,16 @@ function assertCompletePlayArtifactKind(
       eventsById.get(eventId)?.turnId !== refereeMessage.id)) {
       throw new Error(
         `Play turn artifact ${artifact.id} settlement events must belong to its referee message.`,
+      );
+    }
+    if (
+      artifact.input.timeAdvance &&
+      artifact.worldClock?.elapsed !== formatPlayRelativeTimeAdvance(
+        artifact.input.timeAdvance,
+      )
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} typed wait does not match its world clock elapsed.`,
       );
     }
     return;

@@ -2,7 +2,10 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { evaluatePlayDueEvents } from './play-event-schedule.js';
 import type { PlayScheduledEvent } from './play-event-schedule.js';
-import { PLAY_TURN_ARTIFACT_SCHEMA_VERSION } from './play-turn-artifact.js';
+import {
+  PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION,
+  PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+} from './play-turn-artifact.js';
 import type { PlayTurnArtifact } from './play-turn-artifact.js';
 import type {
   PlayWorldClock,
@@ -438,7 +441,8 @@ function assertScheduledEventResolutionMatchesDueEvidence(
 }
 
 export function hasCompletePlayBranchSnapshot(artifact: PlayTurnArtifact): boolean {
-  return artifact.schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION;
+  return artifact.schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION ||
+    artifact.schemaVersion === PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION;
 }
 
 export function collectPlayArtifactAncestorIds(

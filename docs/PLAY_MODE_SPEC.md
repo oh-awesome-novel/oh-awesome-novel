@@ -60,9 +60,9 @@ Play session 使用 workspace 内部目录：
 
 当前 session schema 为 v4，turn artifact schema 为 v2。`turns/<turn-id>.yaml` 是已提交回合的结构化事实源；v2 artifact 用 `artifactKind` 区分 `worldSettlement` 与 `transcriptAppend`，可记录输入、消息、parent turn、revision、world clock、event / scheduled event / observation 引用、hard-due evidence、state delta、分支快照与 suggested actions，并始终保持 `canonical: false`。artifact v1 只用于旧 session 兼容读取。
 
-turn artifacts 必须形成唯一 root 到各 head 的无环图，父子 revision 严格递增；`selectedTurnIds` 必须是一条连续的 root-to-head 路径。artifact、message、event、observation 和 adoption candidate id 必须唯一，artifact 对 `events.yaml` / `observations.yaml` 的引用及分支内来源引用在 staged write 前统一校验。无法识别或不完整的 v4 committed fact 必须拒绝，不能用默认值静默修补。
+非空 turn artifact ledger 必须形成至少包含一个 root 的无环图，父子 revision 严格递增；通常 `selectedTurnIds` 是一条连续的 root-to-head 路径。新 session 的完整 v2 root 可以共享 `parentTurnId` 为空的虚拟 branch base：首回合 Retry 会在这里形成多个 sibling root，before-turn / virtual-base selection 也可以显式使用空 selected path。只要存在 legacy / 不完整 root，或 branch base 已锚定 legacy head，就仍必须保持单 root 且禁止空 selected path。artifact、message、event、observation 和 adoption candidate id 必须唯一，artifact 对 `events.yaml` / `observations.yaml` 的引用及分支内来源引用在 staged write 前统一校验。无法识别或不完整的 v4 committed fact 必须拒绝，不能用默认值静默修补。
 
-`session.yaml` 只保存 session metadata、revision、world clock、event policy、suggested actions、Play-local state visibility、`selectedTurnIds`，以及必需的 `branchSnapshotRequiredFromRevision` 与 `branchBaseSnapshot`。它不再保存完整 `transcript`；当 turn artifacts 存在时，`selectedTurnIds` 明确给出当前选中路径，读取器不得自行猜测或混合分支。
+`session.yaml` 只保存 session metadata、revision、world clock、event policy、suggested actions、Play-local state visibility、`selectedTurnIds`，以及必需的 `branchSnapshotRequiredFromRevision` 与 `branchBaseSnapshot`。它不再保存完整 `transcript`；当 turn artifacts 存在时，`selectedTurnIds` 明确给出当前选中路径，或在上述完整 v2 forest 上显式给出虚拟初始基线的空路径，读取器不得自行猜测或混合分支。
 
 v4 的 `playLocalStateVisibility` 必须与 Play-local state 的叶路径精确对应；缺项、多项、危险 dotted path 或非法 visibility 都必须拒绝。observation 与 adoption candidate 同样必须显式携带合法 visibility。只有 v1 / v2 / 可迁移 v3 读取允许用旧版兼容规则补足缺失 metadata，写入 v4 前必须完成规范化，不能把 legacy 默认继续传播为新事实。
 
@@ -87,7 +87,11 @@ scheduled event 到期后成为 hard-due skeleton。referee 必须在 settlement
 
 已提交 turn artifact 同时充当 Play-local 隐式 checkpoint，不建立第二套分支事实。完整 v2 branch snapshot，以及与 `branchBaseSnapshot.parentTurnId` 对齐的 legacy base head，可以成为恢复目标；列表摘要只使用用户输入或 artifact id，不能把 referee / hidden narrative 暴露为 player-visible preview。恢复操作必须携带 `baseRevision`，与其他同 session mutation 共用互斥锁，并通过 staged snapshot 一次写入。
 
-恢复 checkpoint 会把 `selectedTurnIds` 切换为目标的 root-to-head path，同时恢复 transcript、world turn / anchor / elapsed、Play-local state value / visibility、schedule 与 suggested actions。session revision 和 session world-clock revision 仍单调增加，不能退回目标 artifact 的旧 revision；完整 artifact、event、observation 和 adoption ledger 均保留。旧后续回合因此成为可再次选择的 variant，恢复后提交的新回合则从目标 head 创建 sibling。当前切片不包含命名 checkpoint、初始空世界 checkpoint、自动调用 provider 的原子 retry，也没有独立的 branch-local knowledge / reveal store；这些能力不得因已有 selected projection restore 而标记完成。
+恢复 checkpoint 会把 `selectedTurnIds` 切换为目标的 root-to-head path，同时恢复 transcript、world turn / anchor / elapsed、Play-local state value / visibility、schedule 与 suggested actions。session revision 和 session world-clock revision 仍单调增加，不能退回目标 artifact 的旧 revision；完整 artifact、event、observation 和 adoption ledger 均保留。旧后续回合因此成为可再次选择的 variant，恢复后提交的新回合则从目标 head 创建 sibling。
+
+原子 Retry 使用独立 SSE 路由，并且请求只能携带 mandatory `baseRevision`；行动文本与 action kind 必须从目标 `worldSettlement` artifact 的不可变 typed input 读取，调用方不能覆盖。Core 只在内存中投影到该 artifact 的 before-turn state，provider、prompt 与 hard-due evaluator 都读取这份投影；最终 settlement 直接在权威 ledger 上生成同 parent sibling，session revision 只增加一次。旧 source artifact、其 descendants、event、observation 与 adoption ledger 均保留，只有新 sibling 成为 selected head；取消、provider / schema failure 或 commit 前 revision drift 都保持 session 零写入。首回合 Retry 通过共享虚拟 branch base 的两个完整 v2 root 表达，而不是把新结果错误挂到旧回合的 after-state。
+
+当前切片仍不包含命名 checkpoint、在历史 UI 中可直接选择的初始空世界 checkpoint，也没有独立的 branch-local knowledge / reveal store。Retry 会重新读取当前 activated source path 对应内容，因此在 context trace / source drift 封存落地前，只保证现有 transcript、state、events、schedule 与 suggestions 的同 before-turn projection，不能声称复现旧回合当时完全相同的外部 source bytes。
 
 session snapshot 采用 sibling staging directory + ready marker + directory swap 写入，固定 YAML / Markdown 文件、`turns/` 回合事实、event schedule 和 migration history 处于同一 snapshot。提交中断时，读取器可以恢复完整 stage 或已有 backup；不得并行直写目标文件形成混合 revision。同一 session 的 world turn、transcript、observation 和 adoption mutation 必须共享互斥锁，并支持 `baseRevision` 冲突检查。
 
@@ -103,6 +107,7 @@ Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 
 - `play-event-schedule-history.ts`：schedule history、due evidence、transition、ancestor ownership 与 snapshot clone。
 - `play-session-facts.ts`：selected path、branch snapshot、ledger provenance、事实 projection 与严格 stored-fact codec。
 - `play-turn-graph.ts`：隐式 checkpoint 摘要、selected path 恢复与 sibling variant 语义。
+- `play-turn-retry.ts`：before-turn 投影、typed source action、原子 sibling settlement 与稳定 retry error code。
 - `play-session.ts`：session lifecycle、referee settlement、staged snapshot、migration 与兼容 public interface。
 
 后续 Pressure / Agenda、checkpoint / variant、context trace、migration confirmation 等新增能力应建立独立深模块，再由 facade 组合；不得把新的领域状态机继续直接堆入 `play-session.ts`。包入口继续通过现有 Play public interface 暴露能力，包内文件拆分不应迫使 Backend、Client 或 Desktop UI 改用私有路径。
@@ -134,6 +139,7 @@ Play turn transport 使用专用 typed SSE，而不是把 Play transcript 伪装
 - 若 stream 与终态查询同时不可达，UI 必须进入 indeterminate / refresh-required 状态，不得声称“未提交”；刷新成功前禁止发起新的 Play-local mutation。
 - turn registry 绑定启动时的不可变 workspace；活跃 Play turn 期间不得切换或移除 active workspace，迟到的 committed 对账也不得用旧 revision 回滚 UI。
 - `play.event.occurred` 只会在包含该事件与 schedule 状态的 staged snapshot 已持久化成功后发布；cancel、provider error、schema failure 或写入失败都不得发布。它提供逐事件 committed 通知，但 `play.turn.committed.session` 仍是 transcript、world state、schedule、observation 和 event feed 的权威 UI 刷新载荷。
+- `POST /api/workspace/play-sessions/:id/turns/:artifactId/retry/stream` 复用同一 lifecycle、run registry、Stop / reconcile 与 commit barrier；SSE `turnId` / 响应头表示 execution run id，source artifact 与新 sibling artifact 使用独立字段。Desktop 在生成期间展示 before-turn projection、原始 action 和明确的 provisional / variant 保留提示，只有 authoritative committed session 才切换分支。
 
 当前该协议保证单 backend 进程内的 stop / commit 一致性；跨进程锁、fsync、可重启 terminal registry、graceful shutdown、SSE backpressure 和逐故障点耐久性仍由 task 1120 后续范围追踪。provisional narrative 仍依赖 referee 遵守 hidden-information 叙事约束；响应隔离能阻止缺失 / 变体 fence 下的结构化结算外泄，但不能证明模型没有在 narrative 自然语言中写出隐藏事实。
 

@@ -330,6 +330,14 @@ export {
   createNovelAgentValidationTools,
   streamNovelAgentCheckpointTurn,
 } from './checkpoint-runner';
+export {
+  PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
+  PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
+  MAX_PLAY_REHEARSAL_REFEREE_RESPONSE_CHARACTERS,
+  completePlayRehearsalReferee,
+  formatPlayRehearsalActorPrompt,
+  streamPlayRehearsalActorGeneration,
+} from './play-rehearsal.js';
 export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
   AgentSessionMetadata,
@@ -344,6 +352,24 @@ export type {
   CheckpointLevel,
   NovelAgentCheckpointInput,
 } from './checkpoint-runner';
+export type {
+  CompletePlayRehearsalRefereeInput,
+  PlayRehearsalActorBehaviorAnchor,
+  PlayRehearsalActorGenerationError,
+  PlayRehearsalActorGenerationEvent,
+  PlayRehearsalActorNarrativeBlockKind,
+  PlayRehearsalActorPerceptionSnapshot,
+  PlayRehearsalActorPromptInput,
+  PlayRehearsalActorSceneContractSnapshot,
+  PlayRehearsalActorVisibleEvent,
+  PlayRehearsalActorVisibleFact,
+  PlayRehearsalActorVisibleNarrativeBlock,
+  PlayRehearsalActorWorldClockSnapshot,
+  PlayRehearsalModelResolver,
+  PlayRehearsalRefereeCompletionError,
+  PlayRehearsalRefereeCompletionResult,
+  StreamPlayRehearsalActorGenerationInput,
+} from './play-rehearsal.js';
 export type { RuntimeEventUiStreamOptions } from './ui-stream';
 
 async function prepareAgentSession(input: {

@@ -11,18 +11,33 @@ import type { DeepReadonly } from 'vue';
 
 import type { PlayCheckpointSummary } from '../../composables/useWorkspaceApi';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   checkpoints: DeepReadonly<PlayCheckpointSummary[]>;
   sessionRevision: number;
   loading: boolean;
   busyArtifactId: string;
+  retryingArtifactId?: string;
+  retryDisabled?: boolean;
+  retryDisabledReason?: string;
   blocked: boolean;
   notice: string;
-}>();
+}>(), {
+  retryingArtifactId: '',
+  retryDisabled: false,
+  retryDisabledReason: 'Configure a provider to Retry this settlement.',
+});
 
 const emit = defineEmits<{
   restore: [artifactId: string];
+  retry: [artifactId: string];
 }>();
+
+type PendingActionKind = 'restore' | 'retry';
+
+interface PendingHistoryAction {
+  kind: PendingActionKind;
+  artifactId: string;
+}
 
 interface HistoryGroup {
   id: 'checkpoints' | 'variants';
@@ -32,9 +47,10 @@ interface HistoryGroup {
 }
 
 const headingId = `${useId()}-play-history-heading`;
-const pendingArtifactId = shallowRef('');
+const pendingAction = shallowRef<PendingHistoryAction>();
 const restoreButtons = useTemplateRef<HTMLButtonElement[]>('restoreButtons');
-const confirmRestoreButtons = useTemplateRef<HTMLButtonElement[]>('confirmRestoreButtons');
+const retryButtons = useTemplateRef<HTMLButtonElement[]>('retryButtons');
+const confirmActionButtons = useTemplateRef<HTMLButtonElement[]>('confirmActionButtons');
 
 const groups = computed<HistoryGroup[]>(() => [
   {
@@ -55,16 +71,24 @@ const statusMessage = computed(() => {
   if (props.loading) {
     return 'Loading Play history…';
   }
+  if (props.retryingArtifactId) {
+    return 'Retrying from before the original turn… The existing result remains a variant.';
+  }
   if (props.busyArtifactId) {
     return 'Restoring checkpoint…';
   }
-  return props.notice;
+  const retryNotice = props.retryDisabled && props.checkpoints.some(
+    (checkpoint) => checkpoint.retryable,
+  )
+    ? props.retryDisabledReason
+    : '';
+  return [props.notice, retryNotice].filter(Boolean).join(' ');
 });
 
 watch(
   () => props.sessionRevision,
   () => {
-    pendingArtifactId.value = '';
+    pendingAction.value = undefined;
   },
 );
 
@@ -92,42 +116,50 @@ function formatTime(value: string): string {
       });
 }
 
-async function requestRestore(artifactId: string): Promise<void> {
-  if (props.blocked || props.loading || props.busyArtifactId) {
-    return;
-  }
-
-  pendingArtifactId.value = artifactId;
-  await nextTick();
-  confirmRestoreButtons.value?.[0]?.focus();
+function isActionUnavailable(kind: PendingActionKind): boolean {
+  return props.blocked ||
+    props.loading ||
+    Boolean(props.busyArtifactId) ||
+    Boolean(props.retryingArtifactId) ||
+    (kind === 'retry' && props.retryDisabled);
 }
 
-async function cancelRestore(): Promise<void> {
-  const artifactId = pendingArtifactId.value;
-  if (!artifactId) {
+async function requestAction(kind: PendingActionKind, artifactId: string): Promise<void> {
+  if (isActionUnavailable(kind)) {
     return;
   }
 
-  pendingArtifactId.value = '';
+  pendingAction.value = { kind, artifactId };
   await nextTick();
-  restoreButtons.value
-    ?.find((button) => button.dataset.artifactId === artifactId)
+  confirmActionButtons.value?.[0]?.focus();
+}
+
+async function cancelAction(): Promise<void> {
+  const action = pendingAction.value;
+  if (!action) {
+    return;
+  }
+
+  pendingAction.value = undefined;
+  await nextTick();
+  const buttons = action.kind === 'retry' ? retryButtons.value : restoreButtons.value;
+  buttons
+    ?.find((button) => button.dataset.artifactId === action.artifactId)
     ?.focus();
 }
 
-function confirmRestore(): void {
-  const artifactId = pendingArtifactId.value;
-  if (
-    !artifactId ||
-    props.blocked ||
-    props.loading ||
-    props.busyArtifactId
-  ) {
+function confirmAction(): void {
+  const action = pendingAction.value;
+  if (!action || isActionUnavailable(action.kind)) {
     return;
   }
 
-  pendingArtifactId.value = '';
-  emit('restore', artifactId);
+  pendingAction.value = undefined;
+  if (action.kind === 'retry') {
+    emit('retry', action.artifactId);
+  } else {
+    emit('restore', action.artifactId);
+  }
 }
 </script>
 
@@ -135,7 +167,7 @@ function confirmRestore(): void {
   <section
     class="play-history-controls"
     :aria-labelledby="headingId"
-    :aria-busy="loading || Boolean(busyArtifactId)"
+    :aria-busy="loading || Boolean(busyArtifactId) || Boolean(retryingArtifactId)"
   >
     <header class="play-history-heading">
       <h3 :id="headingId">Checkpoints / Variants</h3>
@@ -165,37 +197,58 @@ function confirmRestore(): void {
             </small>
           </div>
 
-          <button
-            v-if="checkpoint.restorable && pendingArtifactId !== checkpoint.artifactId"
-            ref="restoreButtons"
-            class="play-history-restore"
-            type="button"
-            :data-artifact-id="checkpoint.artifactId"
-            :disabled="blocked || loading || Boolean(busyArtifactId)"
-            :aria-label="`Restore ${checkpointLabel(checkpoint)}`"
-            @click="requestRestore(checkpoint.artifactId)"
+          <div
+            v-if="pendingAction?.artifactId !== checkpoint.artifactId"
+            class="play-history-actions"
           >
-            {{ busyArtifactId === checkpoint.artifactId ? 'Restoring…' : 'Restore' }}
-          </button>
+            <button
+              v-if="checkpoint.restorable"
+              ref="restoreButtons"
+              class="play-history-restore"
+              type="button"
+              :data-artifact-id="checkpoint.artifactId"
+              :disabled="isActionUnavailable('restore')"
+              :aria-label="`Restore ${checkpointLabel(checkpoint)}`"
+              @click="requestAction('restore', checkpoint.artifactId)"
+            >
+              {{ busyArtifactId === checkpoint.artifactId ? 'Restoring…' : 'Restore' }}
+            </button>
+            <button
+              v-if="checkpoint.retryable"
+              ref="retryButtons"
+              class="play-history-retry"
+              type="button"
+              :data-artifact-id="checkpoint.artifactId"
+              :disabled="isActionUnavailable('retry')"
+              :title="retryDisabled ? retryDisabledReason : undefined"
+              :aria-label="`Retry ${checkpointLabel(checkpoint)} from before the turn`"
+              @click="requestAction('retry', checkpoint.artifactId)"
+            >
+              {{ retryingArtifactId === checkpoint.artifactId ? 'Retrying…' : 'Retry' }}
+            </button>
+          </div>
 
           <div
-            v-if="pendingArtifactId === checkpoint.artifactId"
+            v-if="pendingAction?.artifactId === checkpoint.artifactId"
             class="play-history-confirmation"
             role="group"
-            aria-label="Confirm checkpoint restore"
-            @keydown.esc.stop.prevent="cancelRestore"
+            :aria-label="pendingAction.kind === 'retry' ? 'Confirm settlement Retry' : 'Confirm checkpoint restore'"
+            @keydown.esc.stop.prevent="cancelAction"
           >
-            <p>Restore this checkpoint? Later turns remain variants and are not deleted.</p>
+            <p v-if="pendingAction.kind === 'retry'">
+              Retry from before this turn? The existing result is preserved as a variant.
+            </p>
+            <p v-else>Restore this checkpoint? Later turns remain variants and are not deleted.</p>
             <div class="play-history-confirmation-actions">
-              <button type="button" @click="cancelRestore">Cancel</button>
+              <button type="button" @click="cancelAction">Cancel</button>
               <button
-                ref="confirmRestoreButtons"
+                ref="confirmActionButtons"
                 class="play-history-confirm"
                 type="button"
-                :disabled="blocked || loading || Boolean(busyArtifactId)"
-                @click="confirmRestore"
+                :disabled="isActionUnavailable(pendingAction.kind)"
+                @click="confirmAction"
               >
-                Confirm restore
+                {{ pendingAction.kind === 'retry' ? 'Confirm Retry' : 'Confirm restore' }}
               </button>
             </div>
           </div>

@@ -552,18 +552,20 @@ describe('novel HTTP backend', () => {
     const canonicalChapterBefore = await readFile(canonicalChapterPath, 'utf-8');
     const interactionPath = join(workspaceRoot, 'characters/heroine/interaction.md');
     let playTurnRequest = '';
+    let playTurnTimeAdvance: { amount: number; unit: string } | undefined;
     await mkdir(join(workspaceRoot, 'characters/heroine'), { recursive: true });
     await writeFile(interactionPath, '她在压力下会先观察出口。\n', 'utf-8');
     const backend = await startNovelHttpBackend({
       workspaceRoot,
       runPlayTurn: async (input) => {
         playTurnRequest = input.request;
+        playTurnTimeAdvance = input.timeAdvance;
         return [
           '远处的铁门落锁，东侧入口已被控制。',
           '',
           '```oan-play-settlement',
           JSON.stringify({
-            elapsed: '35 minutes',
+            elapsed: 'PT2H',
             worldTimeAnchor: 'midnight',
             events: [
               {
@@ -604,6 +606,18 @@ describe('novel HTTP backend', () => {
           semanticBoundary: 'compressible',
           trust: 'interactionHint',
         }],
+        worldMomentum: {
+          pressures: [{
+            id: 'station-lockdown',
+            kind: 'deadline',
+            label: '车站封锁完成',
+            status: 'active',
+            causeRefs: ['scene-seed'],
+            nextConsequence: '东侧入口被控制',
+            visibility: 'playerVisible',
+          }],
+          agendas: [],
+        },
       }),
     });
 
@@ -630,6 +644,7 @@ describe('novel HTTP backend', () => {
         userText: '等待并观察封锁变化',
         actionKind: 'wait',
         baseRevision: 0,
+        timeAdvance: { amount: 2, unit: 'hour' },
       }),
     });
 
@@ -652,7 +667,7 @@ describe('novel HTTP backend', () => {
         turn: 1,
         revision: 1,
         anchor: 'midnight',
-        elapsed: '35 minutes',
+        elapsed: 'PT2H',
       },
       suggestedActions: ['调查东侧入口'],
     });
@@ -683,6 +698,9 @@ describe('novel HTTP backend', () => {
     expect(playTurnRequest).toContain('她在压力下会先观察出口。');
     expect(playTurnRequest).toContain('Trust: interactionHint');
     expect(playTurnRequest).toContain('User turn: 等待并观察封锁变化');
+    expect(playTurnRequest).toContain('requested elapsed PT2H');
+    expect(playTurnRequest).toContain('pressure station-lockdown');
+    expect(playTurnTimeAdvance).toEqual({ amount: 2, unit: 'hour' });
 
     await expect(fetchJson<{
       session: {
@@ -731,21 +749,48 @@ describe('novel HTTP backend', () => {
       request('null'),
       request(JSON.stringify({ userText: '等待', actionKind: 42 })),
       request(JSON.stringify({ userText: '等待', baseRevision: '0' })),
+      request(JSON.stringify({ userText: '等待', surprise: true })),
+      request(JSON.stringify({
+        userText: '等待',
+        actionKind: 'wait',
+        timeAdvance: { amount: 0, unit: 'hour' },
+      })),
+      request(JSON.stringify({
+        userText: '查看钟表',
+        actionKind: 'look',
+        timeAdvance: { amount: 1, unit: 'hour' },
+      })),
+      request(JSON.stringify({
+        userText: '等待',
+        actionKind: 'wait',
+        timeAdvance: { amount: 366, unit: 'day' },
+      })),
     ]);
 
-    expect(responses.map((response) => response.status)).toEqual([400, 400, 400, 400]);
+    expect(responses.map((response) => response.status)).toEqual([
+      400,
+      400,
+      400,
+      400,
+      400,
+      400,
+      400,
+      400,
+    ]);
     expect(providerCalled).toBe(false);
   });
 
   it('streams provisional Play narrative without exposing the settlement fence, then commits once', async () => {
     const workspaceRoot = await createOanWorkspace();
+    let providerTimeAdvance: { amount: number; unit: string } | undefined;
     const backend = await startNovelHttpBackend({
       workspaceRoot,
-      streamPlayTurn: async function* () {
+      streamPlayTurn: async function* (input) {
+        providerTimeAdvance = input.timeAdvance;
         yield '远处的铁门开始落锁。\n```oan-play-settle';
         yield 'ment\n';
         yield JSON.stringify({
-          elapsed: '10 minutes',
+          elapsed: 'PT10M',
           events: [],
           stateDelta: { gate: 'locked' },
           observations: [],
@@ -773,6 +818,7 @@ describe('novel HTTP backend', () => {
           userText: '等待十分钟',
           actionKind: 'wait',
           baseRevision: 0,
+          timeAdvance: { amount: 10, unit: 'minute' },
         }),
       },
     );
@@ -794,13 +840,21 @@ describe('novel HTTP backend', () => {
       .map((event) => event.delta)
       .join('')).toBe('远处的铁门开始落锁。\n');
     expect(body).not.toContain('oan-play-settlement');
+    expect(providerTimeAdvance).toEqual({ amount: 10, unit: 'minute' });
 
     await expect(fetchJson(
       `${backend.url}/api/workspace/play-sessions/play-stream-success`,
     )).resolves.toMatchObject({
       session: {
         revision: 1,
-        worldClock: { turn: 1, revision: 1, elapsed: '10 minutes' },
+        worldClock: { turn: 1, revision: 1, elapsed: 'PT10M' },
+        turnArtifacts: [expect.objectContaining({
+          input: {
+            kind: 'wait',
+            raw: '等待十分钟',
+            timeAdvance: { amount: 10, unit: 'minute' },
+          },
+        })],
         transcript: [
           expect.objectContaining({ speaker: 'user', content: '等待十分钟' }),
           expect.objectContaining({
@@ -1171,6 +1225,339 @@ describe('novel HTTP backend', () => {
           expect.objectContaining({ content: 'First' }),
           expect.objectContaining({ content: 'Second' }),
         ],
+      },
+    });
+  });
+
+  it('retries a committed Play turn atomically from its exact before-turn snapshot', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const providerTurns: Array<{
+      session: {
+        revision: number;
+        selectedTurnIds: string[];
+        transcript: Array<{ content: string }>;
+        playLocalState: Record<string, unknown>;
+      };
+      request: string;
+      timeAdvance?: { amount: number; unit: string };
+    }> = [];
+    let providerCall = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* (input) {
+        providerCall += 1;
+        providerTurns.push({
+          session: structuredClone(input.session),
+          request: input.request,
+          ...(input.timeAdvance ? { timeAdvance: { ...input.timeAdvance } } : {}),
+        });
+        yield createPlayTestRefereeResponse(
+          providerCall === 1 ? '第一种结果。' : '重试后的另一种结果。',
+          providerCall === 1 ? 'first' : 'retry',
+          'PT2H',
+        );
+      },
+    });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-atomic-retry`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-atomic-retry',
+        title: 'Atomic retry',
+        sceneStart: 'Station',
+      }),
+    });
+    const firstResponse = await fetch(`${sessionEndpoint}/turns/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        userText: '等待钟声',
+        actionKind: 'wait',
+        baseRevision: 0,
+        timeAdvance: { amount: 2, unit: 'hour' },
+      }),
+    });
+    expect(parseSseDataEvents(await firstResponse.text())).toContainEqual(
+      expect.objectContaining({ type: 'play.turn.committed', revision: 1 }),
+    );
+
+    const retryResponse = await fetch(
+      `${sessionEndpoint}/turns/turn-artifact-1/retry/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 1 }),
+      },
+    );
+    const runId = retryResponse.headers.get('x-oan-play-turn-id');
+    const retryEvents = parseSseDataEvents(await retryResponse.text());
+    const committed = retryEvents.find((event) =>
+      event.type === 'play.turn.committed') as {
+        artifactId: string;
+        revision: number;
+        session: {
+          revision: number;
+          selectedTurnIds: string[];
+          turnArtifacts: Array<{
+            id: string;
+            parentTurnId?: string;
+            input?: {
+              kind: string;
+              raw: string;
+              timeAdvance?: { amount: number; unit: string };
+            };
+          }>;
+          transcript: Array<{ content: string }>;
+          playLocalState: Record<string, unknown>;
+        };
+      };
+
+    expect(runId).toMatch(/^play-turn-/u);
+    expect(runId).not.toBe('turn-artifact-1');
+    expect(retryEvents[0]).toMatchObject({
+      type: 'play.turn.started',
+      baseRevision: 1,
+      expectedArtifactId: 'turn-artifact-2',
+      retry: { sourceArtifactId: 'turn-artifact-1' },
+    });
+    expect(committed).toMatchObject({
+      artifactId: 'turn-artifact-2',
+      revision: 2,
+      session: {
+        revision: 2,
+        selectedTurnIds: ['turn-artifact-2'],
+        playLocalState: { outcome: 'retry' },
+      },
+    });
+    expect(committed.session.turnArtifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'turn-artifact-1',
+        input: {
+          kind: 'wait',
+          raw: '等待钟声',
+          timeAdvance: { amount: 2, unit: 'hour' },
+        },
+      }),
+      expect.objectContaining({
+        id: 'turn-artifact-2',
+        input: {
+          kind: 'wait',
+          raw: '等待钟声',
+          timeAdvance: { amount: 2, unit: 'hour' },
+        },
+      }),
+    ]));
+    expect(committed.session.turnArtifacts.every((artifact) =>
+      artifact.parentTurnId === undefined)).toBe(true);
+    expect(committed.session.transcript.map((turn) => turn.content)).toEqual([
+      '等待钟声',
+      '重试后的另一种结果。',
+    ]);
+    expect(providerTurns[1]).toMatchObject({
+      session: {
+        revision: 1,
+        selectedTurnIds: [],
+        transcript: [],
+        playLocalState: {},
+      },
+      timeAdvance: { amount: 2, unit: 'hour' },
+    });
+    expect(providerTurns[1]?.request).toContain('requested elapsed PT2H');
+  });
+
+  it('strictly validates Play retry targets and mandatory revision before provider work', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        providerCalls += 1;
+        yield createPlayTestRefereeResponse('不应调用。', 'unexpected');
+      },
+    });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-retry-validation`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-retry-validation',
+        title: 'Retry validation',
+        sceneStart: 'Archive',
+      }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({
+        speaker: 'note',
+        content: 'Not a settlement.',
+        baseRevision: 0,
+      }),
+    });
+    const retry = (artifactId: string, body: Record<string, unknown>) => fetch(
+      `${sessionEndpoint}/turns/${encodeURIComponent(artifactId)}/retry/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+
+    await expect(retry('turn-artifact-1', {})).resolves.toMatchObject({ status: 400 });
+    await expect(retry('turn-artifact-1', { baseRevision: -1 }))
+      .resolves.toMatchObject({ status: 400 });
+    await expect(retry('turn-artifact-1', { baseRevision: 1, userText: 'override' }))
+      .resolves.toMatchObject({ status: 400 });
+    await expect(retry('turn-artifact-1', { baseRevision: 0 }))
+      .resolves.toMatchObject({ status: 409 });
+    await expect(retry('missing-artifact', { baseRevision: 1 }))
+      .resolves.toMatchObject({ status: 404 });
+    await expect(retry('..unsafe', { baseRevision: 1 }))
+      .resolves.toMatchObject({ status: 400 });
+    await expect(retry('turn-artifact-1', { baseRevision: 1 }))
+      .resolves.toMatchObject({ status: 422 });
+    expect(providerCalls).toBe(0);
+  });
+
+  it('cancels a Play retry by execution run id without changing the selected artifact', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCall = 0;
+    let markRetryStreaming: (() => void) | undefined;
+    const retryStreaming = new Promise<void>((resolve) => {
+      markRetryStreaming = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* (input) {
+        providerCall += 1;
+        if (providerCall === 1) {
+          yield createPlayTestRefereeResponse('原结果。', 'original');
+          return;
+        }
+        markRetryStreaming?.();
+        yield '仍未提交的重试内容。';
+        await new Promise<void>((resolve) => {
+          input.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+    });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-retry-cancel`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'play-retry-cancel', title: 'Retry cancel', sceneStart: 'Gate' }),
+    });
+    const first = await fetch(`${sessionEndpoint}/turns/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+    });
+    await first.text();
+
+    const retryResponse = await fetch(
+      `${sessionEndpoint}/turns/turn-artifact-1/retry/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 1 }),
+      },
+    );
+    await retryStreaming;
+    const runId = retryResponse.headers.get('x-oan-play-turn-id');
+    expect(runId).toMatch(/^play-turn-/u);
+    await expect(fetchJson(
+      `${sessionEndpoint}/turns/turn-artifact-1/cancel`,
+      { method: 'POST' },
+    )).rejects.toThrow('Play turn run was not found');
+    await expect(fetchJson(
+      `${sessionEndpoint}/turns/${runId}/cancel`,
+      { method: 'POST' },
+    )).resolves.toMatchObject({ status: 'cancelling', committed: false });
+
+    const retryEvents = parseSseDataEvents(await retryResponse.text());
+    expect(retryEvents).toContainEqual(expect.objectContaining({
+      type: 'play.turn.cancelled',
+      committed: false,
+      revision: 1,
+    }));
+    expect(retryEvents.some((event) => event.type === 'play.turn.committed')).toBe(false);
+    await expect(fetchJson(sessionEndpoint)).resolves.toMatchObject({
+      session: {
+        revision: 1,
+        selectedTurnIds: ['turn-artifact-1'],
+        turnArtifacts: [expect.objectContaining({ id: 'turn-artifact-1' })],
+      },
+    });
+  });
+
+  it('fails a prepared Play retry when another backend changes the revision before commit', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const competingBackend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(competingBackend);
+    let providerCall = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* () {
+        providerCall += 1;
+        if (providerCall === 2) {
+          await fetchJson(
+            `${competingBackend.url}/api/workspace/play-sessions/play-retry-drift/transcript`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                speaker: 'note',
+                content: 'Concurrent committed mutation.',
+                baseRevision: 1,
+              }),
+            },
+          );
+        }
+        yield createPlayTestRefereeResponse(
+          providerCall === 1 ? '原结果。' : '本应成为重试结果。',
+          providerCall === 1 ? 'original' : 'retry',
+        );
+      },
+    });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-retry-drift`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'play-retry-drift', title: 'Retry drift', sceneStart: 'Gate' }),
+    });
+    const first = await fetch(`${sessionEndpoint}/turns/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 0 }),
+    });
+    await first.text();
+
+    const retryResponse = await fetch(
+      `${sessionEndpoint}/turns/turn-artifact-1/retry/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 1 }),
+      },
+    );
+    const retryEvents = parseSseDataEvents(await retryResponse.text());
+    expect(retryEvents).toContainEqual(expect.objectContaining({
+      type: 'play.turn.failed',
+      error: expect.objectContaining({ code: 'revision_conflict', retryable: true }),
+    }));
+    expect(retryEvents.some((event) => event.type === 'play.turn.committed')).toBe(false);
+    await expect(fetchJson(
+      `${competingBackend.url}/api/workspace/play-sessions/play-retry-drift`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: 2,
+        selectedTurnIds: ['turn-artifact-1', 'turn-artifact-2'],
+        transcript: expect.arrayContaining([
+          expect.objectContaining({ content: 'Concurrent committed mutation.' }),
+        ]),
       },
     });
   });
@@ -2382,6 +2769,26 @@ async function fetchJson<T = unknown>(
   }
 
   return data;
+}
+
+function createPlayTestRefereeResponse(
+  narrative: string,
+  outcome: string,
+  elapsed?: string,
+): string {
+  return [
+    narrative,
+    '```oan-play-settlement',
+    JSON.stringify({
+      ...(elapsed ? { elapsed } : {}),
+      events: [],
+      scheduledEventChanges: [],
+      stateDelta: { outcome },
+      observations: [],
+      suggestedActions: [],
+    }),
+    '```',
+  ].join('\n');
 }
 
 function parseSseDataEvents(body: string): Array<Record<string, unknown>> {
