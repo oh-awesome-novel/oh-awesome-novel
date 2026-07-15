@@ -716,6 +716,126 @@
 
 /* World inspector */
 
+#play-workspace .play-history-controls {
+  display: grid;
+  gap: 11px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--play-line);
+}
+
+#play-workspace .play-history-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#play-workspace .play-history-heading h3,
+#play-workspace .play-history-group h4 {
+  margin: 0;
+  color: var(--play-ink);
+  font-size: 12px;
+}
+
+#play-workspace .play-history-heading span,
+#play-workspace .play-history-group h4,
+#play-workspace .play-history-item-copy span,
+#play-workspace .play-history-item-copy small {
+  color: var(--play-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+#play-workspace .play-history-group {
+  display: grid;
+  gap: 6px;
+}
+
+#play-workspace .play-history-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#play-workspace .play-history-item {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--play-line);
+  background: var(--play-canvas);
+}
+
+#play-workspace .play-history-item[aria-current="true"] {
+  border-color: var(--play-line-strong);
+}
+
+#play-workspace .play-history-item-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+#play-workspace .play-history-item-copy strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#play-workspace .play-history-restore,
+#play-workspace .play-history-confirmation button {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--play-line-strong);
+  background: var(--play-canvas);
+  color: var(--play-body);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#play-workspace .play-history-restore {
+  justify-self: start;
+}
+
+#play-workspace .play-history-confirmation {
+  display: grid;
+  gap: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--play-line);
+}
+
+#play-workspace .play-history-confirmation p,
+#play-workspace .play-history-empty,
+#play-workspace .play-history-status {
+  margin: 0;
+  color: var(--play-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+#play-workspace .play-history-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#play-workspace .play-history-confirmation .play-history-confirm {
+  border-color: var(--play-inverse);
+  background: var(--play-inverse);
+  color: var(--play-on-inverse);
+}
+
+#play-workspace .play-history-controls :where(button):disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+#play-workspace .play-history-controls + .play-hud {
+  padding-top: 12px;
+}
+
 #play-workspace .play-hud,
 #play-workspace .play-event-feed,
 #play-workspace .play-adoption-panel {

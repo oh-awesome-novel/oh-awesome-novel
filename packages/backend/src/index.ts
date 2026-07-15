@@ -35,11 +35,13 @@ import {
   loadNovelCopilotSkill,
   loadWorkspaceList,
   listPlaySessions,
+  listPlaySessionCheckpoints,
   listReferenceWorks,
   normalizeLlmProviderConfig,
   readProjectHealth,
   readPlaySessionFiles,
   resolvePlaySessionPath,
+  restorePlaySessionCheckpoint,
   removeLlmProviderConfig,
   redactLlmProviderConfig,
   resolveGlobalOanConfigDir,
@@ -286,6 +288,16 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleCreatePlaySession(options, state, context));
   app.get('/api/workspace/play-sessions/:id', (context) =>
     handleReadPlaySession(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace/play-sessions/:id/checkpoints', (context) =>
+    handleListPlaySessionCheckpoints(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/checkpoints/:artifactId/restore', (context) =>
+    handleRestorePlaySessionCheckpoint(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context.req.param('artifactId') ?? '',
+      context,
+    ));
   app.post('/api/workspace/play-sessions/:id/transcript', (context) =>
     handleAppendPlayTranscript(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/observations', (context) =>
@@ -1280,6 +1292,104 @@ async function handleReadPlaySession(
     return jsonResponse(context, 404, {
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+async function handleListPlaySessionCheckpoints(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    return jsonResponse(context, 200, {
+      checkpoints: listPlaySessionCheckpoints(session),
+    });
+  } catch (error) {
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+    return jsonResponse(context, status, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleRestorePlaySessionCheckpoint(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  artifactId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  if (!hasOwn(body, 'baseRevision')) {
+    return jsonResponse(context, 400, { error: 'baseRevision is required.' });
+  }
+  if (Object.keys(body).some((field) => field !== 'baseRevision')) {
+    return jsonResponse(context, 400, {
+      error: 'Play checkpoint restore request contains unknown fields.',
+    });
+  }
+  const revisionCheck = readPlayBaseRevision(body);
+  if (revisionCheck.error) {
+    return jsonResponse(context, 400, { error: revisionCheck.error });
+  }
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  try {
+    let session: PlaySession;
+    try {
+      session = await readPlaySessionFiles(workspaceRoot, id);
+    } catch (error) {
+      const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+      return jsonResponse(context, status, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      revisionCheck.value,
+      session.revision,
+    );
+    if (revisionConflict) {
+      return revisionConflict;
+    }
+
+    let restored: PlaySession;
+    try {
+      restored = restorePlaySessionCheckpoint(session, artifactId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = message === 'Invalid Play turn artifact id.'
+        ? 400
+        : message.startsWith('Play checkpoint references an unknown artifact:')
+          ? 404
+          : message.startsWith('Play checkpoint is already current:')
+            ? 409
+            : 422;
+      return jsonResponse(context, status, { error: message });
+    }
+
+    await writePlaySessionFiles(workspaceRoot, restored);
+    return jsonResponse(context, 200, {
+      session: restored,
+      checkpoints: listPlaySessionCheckpoints(restored),
+      restoredArtifactId: artifactId,
+    });
+  } finally {
+    state.activePlayTurns.delete(lockKey);
   }
 }
 

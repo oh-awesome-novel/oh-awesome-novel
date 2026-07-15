@@ -83,6 +83,46 @@ describe('createOanClient', () => {
     });
   });
 
+  it('routes Play checkpoint list and restore through typed client methods', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const restorePayload = createPlayCheckpointRestorePayload();
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      const body = url.endsWith('/restore')
+        ? restorePayload
+        : { checkpoints: restorePayload.checkpoints };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.listPlayCheckpoints('play-1')).resolves.toEqual({
+      checkpoints: restorePayload.checkpoints,
+    });
+    await expect(client.restorePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+    )).resolves.toEqual(restorePayload);
+
+    expect(calls[0]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/checkpoints',
+      init: { method: 'GET' },
+    });
+    expect(calls[1]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/checkpoints/turn-artifact-1/restore',
+      init: { method: 'POST' },
+    });
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ baseRevision: 1 });
+  });
+
   it('surfaces backend error messages from JSON error responses', async () => {
     const client = createOanClient({
       fetch: createFetchMock([], { error: 'Workspace missing.' }, 404),
@@ -643,6 +683,91 @@ describe('createOanClient', () => {
       .toThrow('Play session request returned an invalid payload');
   });
 
+  it('rejects malformed Play checkpoint summaries at the network boundary', async () => {
+    const valid = createPlayCheckpointRestorePayload().checkpoints[0]!;
+    const malformed = [
+      { ...valid, unexpected: true },
+      { ...valid, artifactId: '../unsafe', selectedTurnIds: ['../unsafe'] },
+      { ...valid, selectedTurnIds: [valid.artifactId, valid.artifactId] },
+      { ...valid, parentArtifactId: 'not-the-path-parent' },
+      { ...valid, revision: -1 },
+      { ...valid, worldTurn: -1 },
+      { ...valid, status: 'stale' },
+      { ...valid, canonical: true },
+      { ...valid, restorable: true },
+    ];
+
+    for (const checkpoint of malformed) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { checkpoints: [checkpoint] }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.listPlayCheckpoints('play-1'))
+        .rejects
+        .toThrow('Play checkpoint list returned an invalid payload');
+    }
+
+    for (const checkpoints of [
+      [valid, structuredClone(valid)],
+      [{ ...valid, status: 'variant', restorable: true }],
+    ]) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { checkpoints }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.listPlayCheckpoints('play-1'))
+        .rejects
+        .toThrow('Play checkpoint list returned an invalid payload');
+    }
+  });
+
+  it('rejects a Play checkpoint restore that disagrees with the returned session path', async () => {
+    const payload = createPlayCheckpointRestorePayload();
+    payload.checkpoints[0]!.selectedTurnIds = ['different-artifact'];
+    payload.checkpoints[0]!.artifactId = 'different-artifact';
+    const client = createOanClient({
+      fetch: createFetchMock([], payload),
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.restorePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+    ))
+      .rejects
+      .toThrow('Play checkpoint restore returned an inconsistent payload');
+
+    const metadataMismatch = createPlayCheckpointRestorePayload();
+    metadataMismatch.checkpoints[0]!.committedAt = '2026-07-15T02:00:00.000Z';
+    const metadataClient = createOanClient({
+      fetch: createFetchMock([], metadataMismatch),
+      systemTheme: () => 'dark',
+    });
+    await expect(metadataClient.restorePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+    ))
+      .rejects
+      .toThrow('Play checkpoint restore returned an inconsistent payload');
+
+    const nonIncrementing = createPlayCheckpointRestorePayload();
+    nonIncrementing.session.revision = 1;
+    nonIncrementing.session.worldClock.revision = 1;
+    const revisionClient = createOanClient({
+      fetch: createFetchMock([], nonIncrementing),
+      systemTheme: () => 'dark',
+    });
+    await expect(revisionClient.restorePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1 },
+    ))
+      .rejects
+      .toThrow('Play checkpoint restore returned an inconsistent payload');
+  });
+
   it('routes Play stop through the explicit server cancellation endpoint', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const client = createOanClient({
@@ -1099,6 +1224,29 @@ function createPlayCommittedPayload(scheduledEvents: unknown[]) {
       observations: [] as PlayObservation[],
       adoptionCandidates: [] as PlayAdoptionCandidate[],
     },
+  };
+}
+
+function createPlayCheckpointRestorePayload() {
+  const session = structuredClone(createPlayCommittedPayload([]).session);
+  session.revision = 2;
+  session.worldClock.revision = 2;
+  const checkpoint = {
+    artifactId: 'turn-artifact-1',
+    selectedTurnIds: ['turn-artifact-1'],
+    revision: 1,
+    worldTurn: 1,
+    committedAt: '2026-07-15T01:00:00.000Z',
+    preview: '时间继续流动。',
+    status: 'current' as const,
+    restorable: false,
+    canonical: false as const,
+  };
+
+  return {
+    session,
+    checkpoints: [checkpoint],
+    restoredArtifactId: checkpoint.artifactId,
   };
 }
 

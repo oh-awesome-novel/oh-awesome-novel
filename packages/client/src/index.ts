@@ -460,6 +460,27 @@ export interface PlaySession {
   adoptionCandidates: PlayAdoptionCandidate[];
 }
 
+export type PlayCheckpointStatus = 'current' | 'selectedAncestor' | 'variant';
+
+export interface PlayCheckpointSummary {
+  artifactId: string;
+  parentArtifactId?: string;
+  selectedTurnIds: string[];
+  revision: number;
+  worldTurn: number;
+  committedAt: string;
+  preview: string;
+  status: PlayCheckpointStatus;
+  restorable: boolean;
+  canonical: false;
+}
+
+export interface PlayCheckpointRestoreResult {
+  session: PlaySession;
+  checkpoints: PlayCheckpointSummary[];
+  restoredArtifactId: string;
+}
+
 export interface PlayTurnStreamEventBase {
   eventId: string;
   sequence: number;
@@ -748,6 +769,12 @@ export interface OanClient {
     eventPolicy?: Partial<PlayEventPolicy>;
   }): Promise<{ session: PlaySession; files: string[] }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  listPlayCheckpoints(id: string): Promise<{ checkpoints: PlayCheckpointSummary[] }>;
+  restorePlayCheckpoint(
+    id: string,
+    artifactId: string,
+    input: { baseRevision: number },
+  ): Promise<PlayCheckpointRestoreResult>;
   runPlayWorldRefereeTurn(id: string, input: {
     userText: string;
     actionKind?: PlayActionKind;
@@ -1007,6 +1034,22 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
       ).then((value) => parsePlaySessionResponse(value, id)),
+    listPlayCheckpoints: (id) =>
+      requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints`,
+      ).then(parsePlayCheckpointListResponse),
+    restorePlayCheckpoint: (id, artifactId, input) =>
+      requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(artifactId)}/restore`,
+        {
+          method: 'POST',
+          body: input,
+        },
+      ).then((value) => parsePlayCheckpointRestoreResponse(
+        value,
+        id,
+        artifactId,
+      )),
     runPlayWorldRefereeTurn: (id, input) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/world-referee-turn`,
@@ -1330,6 +1373,122 @@ function parsePlayTurnCancelResult(
   }
 
   throw new Error('Play turn cancellation returned an invalid result.');
+}
+
+function parsePlayCheckpointListResponse(
+  value: unknown,
+): { checkpoints: PlayCheckpointSummary[] } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['checkpoints']) ||
+    !isPlayCheckpointSummaryList(value.checkpoints)
+  ) {
+    throw new Error('Play checkpoint list returned an invalid payload.');
+  }
+
+  return value as unknown as { checkpoints: PlayCheckpointSummary[] };
+}
+
+function parsePlayCheckpointRestoreResponse(
+  value: unknown,
+  sessionId: string,
+  artifactId: string,
+): PlayCheckpointRestoreResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session', 'checkpoints', 'restoredArtifactId']) ||
+    value.restoredArtifactId !== artifactId ||
+    !isSafePlayFactId(value.restoredArtifactId) ||
+    !isPlaySessionEnvelope(value.session, sessionId) ||
+    !isPlayCheckpointSummaryList(value.checkpoints)
+  ) {
+    throw new Error('Play checkpoint restore returned an invalid payload.');
+  }
+
+  const session = value.session;
+  const checkpoints = value.checkpoints;
+  const restored = checkpoints.find((checkpoint) =>
+    checkpoint.artifactId === artifactId);
+  const currentCheckpoints = checkpoints.filter((checkpoint) =>
+    checkpoint.status === 'current');
+  const restoredArtifact = session.turnArtifacts.find((artifact) =>
+    artifact.id === artifactId);
+  if (
+    !restored ||
+    !restoredArtifact ||
+    restored.status !== 'current' ||
+    restored.restorable ||
+    currentCheckpoints.length !== 1 ||
+    session.selectedTurnIds.at(-1) !== artifactId ||
+    !isDeepEqualJson(session.selectedTurnIds, restored.selectedTurnIds) ||
+    session.worldClock.turn !== restored.worldTurn ||
+    restored.revision !== restoredArtifact.revision ||
+    restored.parentArtifactId !== restoredArtifact.parentTurnId ||
+    restored.committedAt !== restoredArtifact.committedAt ||
+    restored.revision >= session.revision
+  ) {
+    throw new Error('Play checkpoint restore returned an inconsistent payload.');
+  }
+
+  return value as unknown as PlayCheckpointRestoreResult;
+}
+
+function isPlayCheckpointSummaryList(
+  value: unknown,
+): value is PlayCheckpointSummary[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every(isPlayCheckpointSummaryEnvelope) ||
+    new Set(value.map((checkpoint) => checkpoint.artifactId)).size !== value.length
+  ) {
+    return false;
+  }
+
+  const currentCheckpoints = value.filter((checkpoint) =>
+    checkpoint.status === 'current');
+  return currentCheckpoints.length === (value.length ? 1 : 0) &&
+    currentCheckpoints.every((checkpoint) => !checkpoint.restorable);
+}
+
+function isPlayCheckpointSummaryEnvelope(
+  value: unknown,
+): value is PlayCheckpointSummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'artifactId',
+      'parentArtifactId',
+      'selectedTurnIds',
+      'revision',
+      'worldTurn',
+      'committedAt',
+      'preview',
+      'status',
+      'restorable',
+      'canonical',
+    ]) ||
+    !isSafePlayFactId(value.artifactId) ||
+    (value.parentArtifactId !== undefined && !isSafePlayFactId(value.parentArtifactId)) ||
+    !isUniqueSafePlayIdArray(value.selectedTurnIds) ||
+    value.selectedTurnIds.length === 0 ||
+    value.selectedTurnIds.at(-1) !== value.artifactId ||
+    value.selectedTurnIds.at(-2) !== value.parentArtifactId ||
+    !isNonNegativeSafeInteger(value.revision) ||
+    !isNonNegativeSafeInteger(value.worldTurn) ||
+    !isNonEmptyString(value.committedAt) ||
+    !isNonEmptyString(value.preview) ||
+    (
+      value.status !== 'current' &&
+      value.status !== 'selectedAncestor' &&
+      value.status !== 'variant'
+    ) ||
+    typeof value.restorable !== 'boolean' ||
+    value.canonical !== false
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function parsePlaySessionListResponse(

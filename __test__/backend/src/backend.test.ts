@@ -927,6 +927,254 @@ describe('novel HTTP backend', () => {
     });
   });
 
+  it('lists implicit Play checkpoints and restores the complete selected projection', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerTurn = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => {
+        providerTurn += 1;
+        return providerTurn === 1
+          ? [
+              '站台闸门暂时保持开启。',
+              '```oan-play-settlement',
+              JSON.stringify({
+                events: [],
+                stateDelta: { gate: 'open' },
+                scheduledEventChanges: [{
+                  type: 'schedule',
+                  label: 'Station lockdown',
+                  trigger: { type: 'nextTurn' },
+                  template: {
+                    kind: 'factionActed',
+                    origin: 'faction',
+                    title: '封锁开始',
+                    summary: '站台出口按计划关闭',
+                    visibility: 'playerVisible',
+                  },
+                  reason: '安保协议已经启动',
+                }],
+                observations: [],
+                suggestedActions: ['检查闸门'],
+              }),
+              '```',
+            ].join('\n')
+          : [
+              '闸门在身后关闭。',
+              '```oan-play-settlement',
+              JSON.stringify({
+                events: [{
+                  kind: 'factionActed',
+                  origin: 'faction',
+                  title: '封锁开始',
+                  summary: '站台出口已经关闭',
+                  visibility: 'playerVisible',
+                  cause: { reason: '安保计划到期', triggerId: 'scheduled-1-1' },
+                }],
+                stateDelta: { gate: 'locked' },
+                observations: [],
+                suggestedActions: ['寻找备用出口'],
+              }),
+              '```',
+            ].join('\n');
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-checkpoint-restore',
+        title: 'Checkpoint restore',
+        sceneStart: 'Station',
+      }),
+    });
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/world-referee-turn`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ userText: '观察闸门', baseRevision: 0 }),
+      },
+    );
+    await fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/world-referee-turn`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ userText: '继续等待', baseRevision: 1 }),
+      },
+    );
+
+    const listed = await fetchJson<{
+      checkpoints: Array<{
+        artifactId: string;
+        selectedTurnIds: string[];
+        status: string;
+        restorable: boolean;
+      }>;
+    }>(`${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/checkpoints`);
+    expect(listed.checkpoints).toHaveLength(2);
+    expect(listed.checkpoints).toEqual([
+      expect.objectContaining({
+        artifactId: 'turn-artifact-1',
+        selectedTurnIds: ['turn-artifact-1'],
+        status: 'selectedAncestor',
+        restorable: true,
+      }),
+      expect.objectContaining({
+        artifactId: 'turn-artifact-2',
+        selectedTurnIds: ['turn-artifact-1', 'turn-artifact-2'],
+        status: 'current',
+        restorable: false,
+      }),
+    ]);
+
+    const restored = await fetchJson<{
+      restoredArtifactId: string;
+      session: {
+        revision: number;
+        selectedTurnIds: string[];
+        transcript: Array<{ content: string }>;
+        playLocalState: Record<string, unknown>;
+        worldClock: { turn: number; revision: number };
+        scheduledEvents: Array<{ id: string; status: string }>;
+        suggestedActions: string[];
+      };
+      checkpoints: Array<{ artifactId: string; status: string; restorable: boolean }>;
+    }>(
+      `${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/checkpoints/turn-artifact-1/restore`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ baseRevision: 2 }),
+      },
+    );
+
+    expect(restored).toMatchObject({
+      restoredArtifactId: 'turn-artifact-1',
+      session: {
+        revision: 3,
+        selectedTurnIds: ['turn-artifact-1'],
+        playLocalState: { gate: 'open' },
+        worldClock: { turn: 1, revision: 3 },
+        scheduledEvents: [{ id: 'scheduled-1-1', status: 'scheduled' }],
+        suggestedActions: ['检查闸门'],
+      },
+      checkpoints: [
+        expect.objectContaining({
+          artifactId: 'turn-artifact-1',
+          status: 'current',
+          restorable: false,
+        }),
+        expect.objectContaining({
+          artifactId: 'turn-artifact-2',
+          status: 'variant',
+          restorable: true,
+        }),
+      ],
+    });
+    expect(restored.session.transcript.map((turn) => turn.content)).toEqual([
+      '观察闸门',
+      '站台闸门暂时保持开启。',
+    ]);
+  });
+
+  it('requires a current baseRevision and leaves Play checkpoints unchanged on restore errors', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-checkpoint-cas`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-checkpoint-cas',
+        title: 'Checkpoint CAS',
+        sceneStart: 'Archive',
+      }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'First', baseRevision: 0 }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'Second', baseRevision: 1 }),
+    });
+
+    const restoreEndpoint = `${sessionEndpoint}/checkpoints/turn-artifact-1/restore`;
+    const missingRevision = await fetch(restoreEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(missingRevision.status).toBe(400);
+    await expect(missingRevision.json()).resolves.toEqual({ error: 'baseRevision is required.' });
+
+    const invalidRevision = await fetch(restoreEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: -1 }),
+    });
+    expect(invalidRevision.status).toBe(400);
+
+    const unknownField = await fetch(restoreEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 2, force: true }),
+    });
+    expect(unknownField.status).toBe(400);
+    await expect(unknownField.json()).resolves.toEqual({
+      error: 'Play checkpoint restore request contains unknown fields.',
+    });
+
+    const staleRevision = await fetch(restoreEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 1 }),
+    });
+    expect(staleRevision.status).toBe(409);
+
+    const unknownTarget = await fetch(
+      `${sessionEndpoint}/checkpoints/unknown-artifact/restore`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 2 }),
+      },
+    );
+    expect(unknownTarget.status).toBe(404);
+
+    const unsafeTarget = await fetch(
+      `${sessionEndpoint}/checkpoints/${encodeURIComponent('../unsafe')}/restore`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 2 }),
+      },
+    );
+    expect(unsafeTarget.status).toBe(400);
+
+    const currentTarget = await fetch(
+      `${sessionEndpoint}/checkpoints/turn-artifact-2/restore`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 2 }),
+      },
+    );
+    expect(currentTarget.status).toBe(409);
+
+    await expect(fetchJson(sessionEndpoint)).resolves.toMatchObject({
+      session: {
+        revision: 2,
+        selectedTurnIds: ['turn-artifact-1', 'turn-artifact-2'],
+        transcript: [
+          expect.objectContaining({ content: 'First' }),
+          expect.objectContaining({ content: 'Second' }),
+        ],
+      },
+    });
+  });
+
   it('confirms a mid-stream Play cancellation without committing provisional facts', async () => {
     const workspaceRoot = await createOanWorkspace();
     let markStreaming: (() => void) | undefined;
@@ -1374,6 +1622,71 @@ describe('novel HTTP backend', () => {
       },
     );
     expect(competingMutation.status).toBe(409);
+
+    finishTurn?.([
+      '时间过去了。',
+      '```oan-play-settlement',
+      JSON.stringify({ events: [], stateDelta: {}, observations: [], suggestedActions: [] }),
+      '```',
+    ].join('\n'));
+    expect((await runningTurn).status).toBe(200);
+  });
+
+  it('keeps Play checkpoint reads and restores behind the active session lock', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let markStarted: (() => void) | undefined;
+    let finishTurn: ((value: string) => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const refereeResponse = new Promise<string>((resolve) => {
+      finishTurn = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => {
+        markStarted?.();
+        return refereeResponse;
+      },
+    });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-checkpoint-busy`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-checkpoint-busy',
+        title: 'Checkpoint busy',
+        sceneStart: 'Archive',
+      }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'First', baseRevision: 0 }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'Second', baseRevision: 1 }),
+    });
+
+    const runningTurn = fetch(`${sessionEndpoint}/world-referee-turn`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userText: '等待', actionKind: 'wait', baseRevision: 2 }),
+    });
+    await started;
+
+    const listed = await fetch(`${sessionEndpoint}/checkpoints`);
+    expect(listed.status).toBe(409);
+    const restored = await fetch(
+      `${sessionEndpoint}/checkpoints/turn-artifact-1/restore`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 2 }),
+      },
+    );
+    expect(restored.status).toBe(409);
 
     finishTurn?.([
       '时间过去了。',

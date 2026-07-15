@@ -2,6 +2,7 @@
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
 import PlayComposer from './PlayComposer.vue';
 import PlayEventFeed from './PlayEventFeed.vue';
+import PlayHistoryControls from './PlayHistoryControls.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
@@ -30,6 +31,10 @@ const {
   selectedSessionId,
   sending,
   interactionBlocked,
+  historyCheckpoints,
+  historyBusyArtifactId,
+  historyLoading,
+  historyNotice,
   canStop,
   provisionalTurn,
   turnAnnouncement,
@@ -47,6 +52,7 @@ const {
   createAdoptionCandidate,
   createSession,
   refreshSessions,
+  restoreCheckpoint,
   selectSession,
   stopTurn,
   submitTurn,
@@ -76,7 +82,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         </span>
         <button
           type="button"
-          :disabled="loading || sending"
+          :disabled="loading || interactionBlocked"
           aria-label="刷新 Play workspace"
           @click="refreshSessions"
         >
@@ -94,7 +100,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         :loading="loading"
         :creating="creating"
         :busy="interactionBlocked"
-        :refresh-disabled="sending"
+        :refresh-disabled="interactionBlocked"
         @select-session="selectSession"
         @create-session="createSession"
         @refresh="refreshSessions"
@@ -139,6 +145,15 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
       </section>
 
       <aside v-if="selectedSession" class="play-world-inspector" aria-label="Play world inspector">
+        <PlayHistoryControls
+          :checkpoints="historyCheckpoints"
+          :session-revision="selectedSession.revision"
+          :loading="historyLoading"
+          :busy-artifact-id="historyBusyArtifactId"
+          :blocked="interactionBlocked"
+          :notice="historyNotice"
+          @restore="restoreCheckpoint"
+        />
         <PlayWorldHud
           :clock="selectedSession.worldClock"
           :policy="selectedSession.eventPolicy"

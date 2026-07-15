@@ -5,7 +5,7 @@ import type {
   PlayTranscriptTurn,
   PlayWorldClock,
   PlayWorldEvent,
-} from './play-session.js';
+} from './play-types.js';
 import { normalizePlayScheduledEvents } from './play-event-schedule.js';
 import type { PlayScheduledEvent } from './play-event-schedule.js';
 

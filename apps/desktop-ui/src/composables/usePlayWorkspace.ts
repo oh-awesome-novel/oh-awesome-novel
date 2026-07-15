@@ -1,6 +1,7 @@
 import { computed, onMounted, shallowRef } from 'vue';
 
 import { useWorkspaceApi } from './useWorkspaceApi';
+import { usePlaySessionHistory } from './usePlaySessionHistory';
 import { usePlayTurnStream } from './usePlayTurnStream';
 import type {
   PlayActionKind,
@@ -72,8 +73,32 @@ export function usePlayWorkspace(workspacePath: string) {
   const selectedSession = computed(() =>
     sessions.value.find((session) => session.id === selectedSessionId.value),
   );
-  const interactionBlocked = computed(() =>
+  const turnInteractionBlocked = computed(() =>
     sending.value || provisionalTurn.value?.phase === 'indeterminate',
+  );
+  const {
+    checkpoints: historyCheckpoints,
+    busyArtifactId: historyBusyArtifactId,
+    loading: historyLoading,
+    notice: historyNotice,
+    restore: restoreCheckpoint,
+  } = usePlaySessionHistory({
+    client: api,
+    selectedSession,
+    blocked: turnInteractionBlocked,
+    onRestored(session) {
+      replaceSession(session);
+      clearTerminalRun();
+      userText.value = '';
+      error.value = '';
+      adoptionNotice.value = '';
+    },
+    onError(caught) {
+      error.value = toErrorMessage(caught);
+    },
+  });
+  const interactionBlocked = computed(() =>
+    turnInteractionBlocked.value || Boolean(historyBusyArtifactId.value),
   );
   const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
     (selectedSession.value?.suggestedActions ?? []).map((suggestion, index) => ({
@@ -199,7 +224,7 @@ export function usePlayWorkspace(workspacePath: string) {
   });
 
   async function refreshSessions() {
-    if (sending.value) {
+    if (interactionBlocked.value) {
       return;
     }
 
@@ -355,6 +380,10 @@ export function usePlayWorkspace(workspacePath: string) {
     selectedSessionId,
     sending,
     interactionBlocked,
+    historyCheckpoints,
+    historyBusyArtifactId,
+    historyLoading,
+    historyNotice,
     canStop,
     provisionalTurn,
     turnAnnouncement,
@@ -372,6 +401,7 @@ export function usePlayWorkspace(workspacePath: string) {
     createAdoptionCandidate,
     createSession,
     refreshSessions,
+    restoreCheckpoint,
     selectSession,
     stopTurn,
     submitTurn,

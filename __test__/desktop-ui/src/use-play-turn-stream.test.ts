@@ -511,6 +511,7 @@ describe('usePlayTurnStream', () => {
       '../../../apps/desktop-ui/src/components/play/PlayComposer.vue',
       '../../../apps/desktop-ui/src/components/play/PlaySessionRail.vue',
       '../../../apps/desktop-ui/src/components/play/PlaySessionCreateForm.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayHistoryControls.vue',
       '../../../apps/desktop-ui/src/components/play/PlayWorldHud.vue',
       '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue',
       '../../../apps/desktop-ui/src/components/play/PlayAdoptionPanel.vue',
@@ -525,6 +526,7 @@ describe('usePlayTurnStream', () => {
     expect(source).not.toMatch(/rgb\(180 83 9|rgb\(217 119 6|rgb\(255 252 247/iu);
     expect(source).toContain('{{ announcement }}');
     expect(source).toContain(':busy="interactionBlocked"');
+    expect(source).toContain('<PlayHistoryControls');
     expect(source).toContain(':disabled="disabled || Boolean(busyCandidateId)"');
   });
 });

@@ -85,9 +85,27 @@ scheduled event 到期后成为 hard-due skeleton。referee 必须在 settlement
 
 `session.yaml` 的 world clock、state visibility、suggested actions，`play-local-state.yaml` 和 `event-schedule.yaml` 必须与 `selectedTurnIds` 的 head snapshot 一致；兄弟分支的时钟、状态、可见性、建议或计划不能进入当前 evaluator、prompt 或 HUD，event / observation / candidate UI 也只投影 selected artifact refs。ledger 可以保留合法兄弟分支的历史事实，因此持久化校验要求 provenance 全局存在且落在同一条连贯分支，不要求所有历史都属于当前 selected path；但手工新建 observation / candidate 时只能引用当时选中的分支。无法可靠投影时必须 fail closed。只有 revision 不高于 cutoff 的 artifact schema v1 历史记录才走 legacy 兼容投影；当 selected head 仍是 legacy 时，它必须等于 base parent，且 session projection 必须逐项等于 base。legacy 兼容不得向后续完整 v2 head 注入无来源 schedule 或其他分支状态。
 
+已提交 turn artifact 同时充当 Play-local 隐式 checkpoint，不建立第二套分支事实。完整 v2 branch snapshot，以及与 `branchBaseSnapshot.parentTurnId` 对齐的 legacy base head，可以成为恢复目标；列表摘要只使用用户输入或 artifact id，不能把 referee / hidden narrative 暴露为 player-visible preview。恢复操作必须携带 `baseRevision`，与其他同 session mutation 共用互斥锁，并通过 staged snapshot 一次写入。
+
+恢复 checkpoint 会把 `selectedTurnIds` 切换为目标的 root-to-head path，同时恢复 transcript、world turn / anchor / elapsed、Play-local state value / visibility、schedule 与 suggested actions。session revision 和 session world-clock revision 仍单调增加，不能退回目标 artifact 的旧 revision；完整 artifact、event、observation 和 adoption ledger 均保留。旧后续回合因此成为可再次选择的 variant，恢复后提交的新回合则从目标 head 创建 sibling。当前切片不包含命名 checkpoint、初始空世界 checkpoint、自动调用 provider 的原子 retry，也没有独立的 branch-local knowledge / reveal store；这些能力不得因已有 selected projection restore 而标记完成。
+
 session snapshot 采用 sibling staging directory + ready marker + directory swap 写入，固定 YAML / Markdown 文件、`turns/` 回合事实、event schedule 和 migration history 处于同一 snapshot。提交中断时，读取器可以恢复完整 stage 或已有 backup；不得并行直写目标文件形成混合 revision。同一 session 的 world turn、transcript、observation 和 adoption mutation 必须共享互斥锁，并支持 `baseRevision` 冲突检查。
 
 这些文件用于恢复、复核和继续 Play，不进入 `chapters/`、`state/`、`timeline/`、`foreshadow/` 等事实域。
+
+## Core Module Seams
+
+Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：
+
+- `play-types.ts`：无 Play 运行时依赖的公共领域类型叶。
+- `play-event-schedule.ts`：trigger / template / schedule codec 与纯 due-event evaluator。
+- `play-turn-artifact.ts`：turn artifact codec、legacy artifact conversion 与 selected transcript projection。
+- `play-event-schedule-history.ts`：schedule history、due evidence、transition、ancestor ownership 与 snapshot clone。
+- `play-session-facts.ts`：selected path、branch snapshot、ledger provenance、事实 projection 与严格 stored-fact codec。
+- `play-turn-graph.ts`：隐式 checkpoint 摘要、selected path 恢复与 sibling variant 语义。
+- `play-session.ts`：session lifecycle、referee settlement、staged snapshot、migration 与兼容 public interface。
+
+后续 Pressure / Agenda、checkpoint / variant、context trace、migration confirmation 等新增能力应建立独立深模块，再由 facade 组合；不得把新的领域状态机继续直接堆入 `play-session.ts`。包入口继续通过现有 Play public interface 暴露能力，包内文件拆分不应迫使 Backend、Client 或 Desktop UI 改用私有路径。
 
 ## Runtime Shape
 

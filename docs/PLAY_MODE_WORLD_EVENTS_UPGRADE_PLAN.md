@@ -63,8 +63,9 @@ Play Mode
 - `play.event.occurred` 只在 staged snapshot durable write 成功后发布，terminal committed session 继续作为 UI 权威事实；cancel / provider / validation / commit failure 不发布 occurred。
 - UI 已提供 committed transcript、真实 provisional block、Stop / cancel / failed / conflict / indeterminate 状态、action kind、suggestions、HUD、spoiler-aware pending schedule、visible / hidden event feed、source/state、observation 和 adoption candidate 表单；Play 组件统一使用共享黑白中性设计 token。
 - workspace mode 与布局偏好按 workspace 恢复，session rail 具备明确 ARIA 状态。根目录 `__test__/desktop-ui` 已覆盖 stream reducer、terminal 幂等、cancel / commit race、中性设计、router 恢复与 mounted session rail；完整键盘旅程和浏览器级覆盖仍需扩展。
+- committed turn artifact 已作为隐式 checkpoint 提供 list / restore 纵向能力；恢复会以 mandatory revision CAS 重新投影 transcript、world state、event refs、schedule 与 suggestions，保留全部 ledger，并让下一回合自然形成 sibling variant。Desktop 以文本状态和 inline confirmation 呈现恢复，不把 variant 误报为已删除历史。
 
-尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、pressure / agenda / eligible evaluator、typed state-delta refs、checkpoint / variant、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
+尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、pressure / agenda / eligible evaluator、typed state-delta refs、命名 / 初始 checkpoint、原子 retry、branch-local knowledge、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
 
 ## 2. 规划依据与参考边界
 
@@ -745,6 +746,8 @@ checkpoint 必须覆盖：
 - restore checkpoint 必须回退事件计划和隐藏知识，不能只截断聊天文本。
 - checkpoint / variant 是 Play-local 分支，不自动创建 Git branch。
 
+当前已落地 committed-turn 隐式 checkpoint：任意带完整 branch snapshot 的 artifact 都可作为 selected path 恢复目标，legacy 仅允许恢复到 branch base head。restore 后 session revision 单调推进，目标之后的 ledger 保留并标记为 variant；再次选择旧 variant 或从恢复点继续推进都不需要复制或删除历史。尚未落地命名 / 初始 checkpoint、自动 provider retry，以及独立 knowledge / reveal snapshot，因此本节完整验收仍是部分完成。
+
 ## 14. Observation 与 Canonical Adoption
 
 世界事件提供比纯聊天更好的 adoption 证据。候选映射包括：
@@ -844,7 +847,7 @@ Play observation / event
 
 ### Phase 3：Backend 与 client 闭环
 
-当前状态：**部分完成**。turn stream、cancel、commit barrier 与类型安全 client adapter 已落地；retry、checkpoint / restore、独立 event / trace 查询及旧 endpoint deprecation 仍待完成。在 evaluator 与独立事件通知落地前，committed session 继续承担事件 feed 的权威刷新载荷。
+当前状态：**部分完成**。turn stream、cancel、commit barrier、committed-turn checkpoint list / restore 与类型安全 client adapter 已落地；命名 / 初始 checkpoint、原子 retry、独立 event / trace 查询及旧 endpoint deprecation 仍待完成。在 evaluator 与独立事件通知落地前，committed session 继续承担事件 feed 的权威刷新载荷。
 
 建议范围：
 

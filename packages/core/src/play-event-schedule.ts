@@ -2,7 +2,7 @@ import type {
   PlayEventOrigin,
   PlayEventVisibility,
   PlayWorldEventKind,
-} from './play-session.js';
+} from './play-types.js';
 
 export type PlayFlagValue = string | number | boolean;
 
