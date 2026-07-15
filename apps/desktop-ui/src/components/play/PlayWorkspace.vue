@@ -34,6 +34,7 @@ const {
   provisionalTurn,
   turnAnnouncement,
   showSpoilers,
+  hasHiddenPlayContent,
   sessions,
   sortedEvents,
   stateEntries,
@@ -41,6 +42,7 @@ const {
   userText,
   visibleCandidates,
   visibleObservations,
+  visibleScheduledEvents,
   createPendingAction,
   createAdoptionCandidate,
   createSession,
@@ -143,9 +145,14 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           :scene-start="selectedSession.sceneStart"
           :characters="selectedSession.characters"
           :state-entries="stateEntries"
+          :scheduled-events="visibleScheduledEvents"
           :sources="selectedSession.activatedSources"
         />
-        <PlayEventFeed v-model:show-spoilers="showSpoilers" :events="sortedEvents" />
+        <PlayEventFeed
+          v-model:show-spoilers="showSpoilers"
+          :events="sortedEvents"
+          :has-hidden-play-content="hasHiddenPlayContent"
+        />
         <PlayAdoptionPanel
           :observations="visibleObservations"
           :candidates="visibleCandidates"

@@ -1,15 +1,26 @@
 import type {
   PlayActionKind,
+  PlayEventVisibility,
   PlayObservation,
   PlayTranscriptTurn,
   PlayWorldClock,
   PlayWorldEvent,
 } from './play-session.js';
+import { normalizePlayScheduledEvents } from './play-event-schedule.js';
+import type { PlayScheduledEvent } from './play-event-schedule.js';
 
-export const PLAY_TURN_ARTIFACT_SCHEMA_VERSION = 1 as const;
+export const PLAY_TURN_ARTIFACT_SCHEMA_VERSION = 2 as const;
+export const LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION = 1 as const;
+
+export type PlayTurnArtifactSchemaVersion =
+  | typeof LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION
+  | typeof PLAY_TURN_ARTIFACT_SCHEMA_VERSION;
+export type PlayTurnArtifactKind = 'worldSettlement' | 'transcriptAppend';
 
 export interface PlayTurnArtifact {
-  schemaVersion: typeof PLAY_TURN_ARTIFACT_SCHEMA_VERSION;
+  schemaVersion: PlayTurnArtifactSchemaVersion;
+  artifactKind?: PlayTurnArtifactKind;
+  branchSnapshotVersion?: 1;
   id: string;
   revision: number;
   parentTurnId?: string;
@@ -20,6 +31,11 @@ export interface PlayTurnArtifact {
   messages: PlayTranscriptTurn[];
   worldClock?: PlayWorldClock;
   eventIds: string[];
+  dueScheduledEventIds: string[];
+  scheduledEventIds: string[];
+  scheduledEventSnapshots: PlayScheduledEvent[];
+  playLocalStateSnapshot?: Record<string, unknown>;
+  playLocalStateVisibilitySnapshot?: Record<string, PlayEventVisibility>;
   observationIds: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
@@ -100,7 +116,7 @@ export const createLegacyPlayTurnArtifacts = (
       .map((observation) => observation.id);
 
     return {
-      schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+      schemaVersion: LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
       id,
       revision,
       ...(index > 0
@@ -111,6 +127,9 @@ export const createLegacyPlayTurnArtifacts = (
         id: message.id ?? `${id}-message-${messageIndex + 1}`,
       })),
       eventIds,
+      dueScheduledEventIds: [],
+      scheduledEventIds: [],
+      scheduledEventSnapshots: [],
       observationIds,
       stateDelta: {},
       suggestedActions: [],
@@ -124,13 +143,18 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
   if (!isRecord(value)) {
     throw new Error('Stored Play turn artifact must be an object.');
   }
-  if (value.schemaVersion !== PLAY_TURN_ARTIFACT_SCHEMA_VERSION) {
+  if (
+    value.schemaVersion !== LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION &&
+    value.schemaVersion !== PLAY_TURN_ARTIFACT_SCHEMA_VERSION
+  ) {
     throw new Error(
       `Unsupported Play turn artifact schemaVersion: ${String(value.schemaVersion)}.`,
     );
   }
   assertOnlyKnownFields(value, [
     'schemaVersion',
+    'artifactKind',
+    'branchSnapshotVersion',
     'id',
     'revision',
     'parentTurnId',
@@ -138,6 +162,11 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     'messages',
     'worldClock',
     'eventIds',
+    'dueScheduledEventIds',
+    'scheduledEventIds',
+    'scheduledEventSnapshots',
+    'playLocalStateSnapshot',
+    'playLocalStateVisibilitySnapshot',
     'observationIds',
     'stateDelta',
     'suggestedActions',
@@ -158,6 +187,21 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     requireId: true,
   }));
   const committedAt = normalizeRequiredString(value.committedAt, 'committedAt');
+  const schemaVersion = value.schemaVersion;
+  const artifactKind = value.artifactKind;
+  if (
+    artifactKind !== undefined &&
+    artifactKind !== 'worldSettlement' &&
+    artifactKind !== 'transcriptAppend'
+  ) {
+    throw new Error(`Play turn artifact ${id} has invalid artifactKind.`);
+  }
+  const branchSnapshotVersion = value.branchSnapshotVersion;
+  if (branchSnapshotVersion !== undefined && branchSnapshotVersion !== 1) {
+    throw new Error(
+      `Play turn artifact ${id} has unsupported branchSnapshotVersion.`,
+    );
+  }
 
   if (!messages.length) {
     throw new Error(`Play turn artifact ${id} requires at least one message.`);
@@ -178,8 +222,59 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     throw new Error(`Play turn artifact ${id} must remain non-canonical.`);
   }
 
+  const scheduledEventIds = value.scheduledEventIds === undefined
+    ? []
+    : normalizeRequiredIdList(
+        value.scheduledEventIds,
+        'scheduledEventIds',
+      );
+  const scheduledEventSnapshots = value.scheduledEventSnapshots === undefined
+    ? []
+    : normalizePlayScheduledEvents(value.scheduledEventSnapshots);
+  if (
+    scheduledEventIds.length !== scheduledEventSnapshots.length ||
+    scheduledEventIds.some((scheduledEventId, index) =>
+      scheduledEventSnapshots[index]?.id !== scheduledEventId)
+  ) {
+    throw new Error(
+      `Play turn artifact ${id} scheduledEventIds must match scheduledEventSnapshots.`,
+    );
+  }
+  const playLocalStateSnapshot = value.playLocalStateSnapshot;
+  if (
+    playLocalStateSnapshot !== undefined &&
+    !isRecord(playLocalStateSnapshot)
+  ) {
+    throw new Error(
+      `Play turn artifact ${id} has invalid playLocalStateSnapshot.`,
+    );
+  }
+  const playLocalStateVisibilitySnapshot = normalizeVisibilitySnapshot(
+    value.playLocalStateVisibilitySnapshot,
+    id,
+  );
+  if (
+    schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION &&
+    (
+      artifactKind === undefined ||
+      branchSnapshotVersion !== 1 ||
+      !Object.hasOwn(value, 'scheduledEventIds') ||
+      !Object.hasOwn(value, 'scheduledEventSnapshots') ||
+      !Object.hasOwn(value, 'dueScheduledEventIds') ||
+      value.worldClock === undefined ||
+      playLocalStateSnapshot === undefined ||
+      playLocalStateVisibilitySnapshot === undefined
+    )
+  ) {
+    throw new Error(
+      `Play turn artifact ${id} requires a complete branch snapshot.`,
+    );
+  }
+
   return {
-    schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    schemaVersion,
+    ...(artifactKind ? { artifactKind } : {}),
+    ...(branchSnapshotVersion === 1 ? { branchSnapshotVersion } : {}),
     id,
     revision,
     ...(parentTurnId ? { parentTurnId } : {}),
@@ -195,12 +290,30 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     ...(value.worldClock
       ? { worldClock: normalizeWorldClock(value.worldClock) }
       : {}),
-    eventIds: normalizeRequiredStringList(value.eventIds, 'eventIds'),
-    observationIds: normalizeRequiredStringList(
+    eventIds: normalizeRequiredIdList(value.eventIds, 'eventIds'),
+    dueScheduledEventIds: value.dueScheduledEventIds === undefined
+      ? []
+      : normalizeRequiredIdList(
+          value.dueScheduledEventIds,
+          'dueScheduledEventIds',
+        ),
+    scheduledEventIds,
+    scheduledEventSnapshots,
+    ...(playLocalStateSnapshot
+      ? { playLocalStateSnapshot: structuredClone(playLocalStateSnapshot) }
+      : {}),
+    ...(playLocalStateVisibilitySnapshot
+      ? {
+          playLocalStateVisibilitySnapshot: {
+            ...playLocalStateVisibilitySnapshot,
+          },
+        }
+      : {}),
+    observationIds: normalizeRequiredIdList(
       value.observationIds,
       'observationIds',
     ),
-    stateDelta: { ...value.stateDelta },
+    stateDelta: structuredClone(value.stateDelta),
     suggestedActions: normalizeRequiredStringList(
       value.suggestedActions,
       'suggestedActions',
@@ -335,7 +448,7 @@ const normalizeTranscriptTurn = (
 
   const id = value.id === undefined
     ? undefined
-    : normalizeRequiredString(value.id, 'messages[].id');
+    : assertSafePlayFactReferenceId(value.id, 'messages[].id');
   if (options.requireId && !id) {
     throw new Error('Stored Play turn artifact requires messages[].id.');
   }
@@ -385,6 +498,33 @@ const normalizeWorldClock = (value: Record<string, unknown>): PlayWorldClock => 
   };
 };
 
+const normalizeVisibilitySnapshot = (
+  value: unknown,
+  artifactId: string,
+): Record<string, PlayEventVisibility> | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(
+      `Play turn artifact ${artifactId} has invalid playLocalStateVisibilitySnapshot.`,
+    );
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, visibility]) => {
+    if (
+      visibility !== 'playerVisible' &&
+      visibility !== 'rumor' &&
+      visibility !== 'playerUnknown'
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifactId} has invalid state visibility for ${key}.`,
+      );
+    }
+    return [key, visibility];
+  }));
+};
+
 const normalizeRequiredStringList = (value: unknown, field: string): string[] => {
   if (!Array.isArray(value)) {
     throw new Error(`Stored Play turn artifact requires ${field}.`);
@@ -395,6 +535,30 @@ const normalizeRequiredStringList = (value: unknown, field: string): string[] =>
     throw new Error(`Play turn artifact ${field} must not contain duplicates.`);
   }
   return normalized;
+};
+
+const normalizeRequiredIdList = (value: unknown, field: string): string[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`Stored Play turn artifact requires ${field}.`);
+  }
+  const ids = value.map((item) => assertSafePlayFactReferenceId(item, field));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`Play turn artifact ${field} must not contain duplicates.`);
+  }
+  return ids;
+};
+
+const assertSafePlayFactReferenceId = (value: unknown, field: string): string => {
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value) ||
+    value.includes('..') ||
+    value.includes('/') ||
+    value.includes('\\')
+  ) {
+    throw new Error(`Play turn artifact ${field} contains an invalid id.`);
+  }
+  return value;
 };
 
 const normalizeRequiredString = (value: unknown, field: string): string => {
@@ -409,7 +573,7 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 const assertNonNegativeInteger = (value: unknown, field: string): number => {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`Stored Play turn artifact requires non-negative ${field}.`);
   }
   return value;

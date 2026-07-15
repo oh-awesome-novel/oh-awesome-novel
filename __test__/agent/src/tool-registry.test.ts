@@ -8,7 +8,7 @@ import {
 } from '@oh-awesome-novel/agent';
 import type { ToolSet } from 'ai';
 
-const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'sample-novel');
+const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'simple-novel');
 
 describe('Novel agent tool assembly', () => {
   it('creates a runtime with the agent-assembled AI SDK ToolSet', () => {

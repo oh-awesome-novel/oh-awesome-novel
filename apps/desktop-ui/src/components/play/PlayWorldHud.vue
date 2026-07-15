@@ -2,6 +2,7 @@
 import type {
   PlayActivatedSource,
   PlayEventPolicy,
+  PlayScheduledEvent,
   PlayWorldClock,
 } from '../../composables/useWorkspaceApi';
 import type { PlayStateEntryView } from '../../composables/usePlayWorkspace';
@@ -12,11 +13,27 @@ defineProps<{
   sceneStart: string;
   characters: string[];
   stateEntries: PlayStateEntryView[];
+  scheduledEvents: PlayScheduledEvent[];
   sources: PlayActivatedSource[];
 }>();
 
 function sourceName(source: PlayActivatedSource): string {
   return source.path ?? source.sourceId;
+}
+
+function triggerLabel(event: PlayScheduledEvent): string {
+  switch (event.trigger.type) {
+    case 'nextTurn':
+      return 'next turn';
+    case 'afterTurns':
+      return `after ${event.trigger.turns} turn${event.trigger.turns === 1 ? '' : 's'}`;
+    case 'flagEquals':
+      return `${event.trigger.path} = ${String(event.trigger.value)}`;
+    case 'atWorldTime':
+      return `at ${event.trigger.value}`;
+    case 'manual':
+      return 'manual trigger';
+  }
 }
 </script>
 
@@ -63,6 +80,17 @@ function sourceName(source: PlayActivatedSource): string {
           <dd>{{ entry.value }}</dd>
         </div>
       </dl>
+    </div>
+
+    <div v-if="scheduledEvents.length" class="play-hud-section">
+      <h3><span aria-hidden="true">[+]</span> Scheduled changes</h3>
+      <div class="play-source-list play-schedule-list">
+        <article v-for="event in scheduledEvents" :key="event.id">
+          <strong>{{ event.label }}</strong>
+          <span>{{ triggerLabel(event) }} · priority {{ event.priority ?? 0 }}</span>
+          <p>{{ event.template.summary }}</p>
+        </article>
+      </div>
     </div>
 
     <div class="play-hud-section">

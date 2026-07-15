@@ -24,6 +24,8 @@ export type {
   PlayEventPolicy,
   PlayEventVisibility,
   PlayObservation,
+  PlayScheduledEvent,
+  PlayScheduledEventStatus,
   PlaySession,
   PlaySimulationMode,
   PlaySourceTrust,

@@ -38,6 +38,28 @@ describe('usePlayTurnStream', () => {
     expect(flow.run.value).toBeUndefined();
   });
 
+  it('removes provisional text when the server rejects the turn', async () => {
+    const client = createClient(async function* () {
+      yield startedEvent();
+      yield deltaEvent('Provisional text that must not survive validation.');
+      yield failedEvent();
+    });
+    const flow = usePlayTurnStream({ client, onCommitted: vi.fn() });
+
+    await expect(flow.submit({
+      sessionId: 'play-1',
+      baseRevision: 0,
+      userText: '等待',
+      actionKind: 'wait',
+    })).resolves.toBe('failed');
+
+    expect(flow.run.value).toMatchObject({
+      phase: 'failed',
+      provisionalText: '',
+      statusMessage: 'Turn not committed',
+    });
+  });
+
   it('waits for server cancellation and never promotes provisional text', async () => {
     let releaseCancellation: (() => void) | undefined;
     const cancellation = new Promise<void>((resolve) => {
@@ -571,9 +593,24 @@ function cancelledEvent(): PlayTurnStreamEvent {
   };
 }
 
+function failedEvent(): PlayTurnStreamEvent {
+  return {
+    type: 'play.turn.failed',
+    eventId: 'run-1:3',
+    sequence: 3,
+    sessionId: 'play-1',
+    turnId: 'run-1',
+    error: {
+      code: 'invalid_settlement',
+      message: 'Settlement validation failed.',
+      retryable: true,
+    },
+  };
+}
+
 function createSession(revision: number): PlaySession {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: 'play-1',
     title: 'Play',
     createdAt: '2026-07-14T00:00:00.000Z',
@@ -583,6 +620,14 @@ function createSession(revision: number): PlaySession {
     transcript: [],
     turnArtifacts: [],
     selectedTurnIds: [],
+    branchSnapshotRequiredFromRevision: revision,
+    branchBaseSnapshot: {
+      worldClock: { turn: revision, revision },
+      playLocalState: {},
+      playLocalStateVisibility: {},
+      scheduledEvents: [],
+      suggestedActions: [],
+    },
     metadataExtensions: {},
     playLocalState: {},
     playLocalStateVisibility: {},
@@ -595,6 +640,7 @@ function createSession(revision: number): PlaySession {
       maxExternalEventsPerTurn: 2,
     },
     events: [],
+    scheduledEvents: [],
     suggestedActions: [],
     activatedSources: [],
     observations: [],

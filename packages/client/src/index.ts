@@ -291,6 +291,15 @@ export interface PlayWorldClock {
   elapsed?: string;
 }
 
+export interface PlayBranchBaseSnapshot {
+  parentTurnId?: string;
+  worldClock: PlayWorldClock;
+  playLocalState: Record<string, unknown>;
+  playLocalStateVisibility: Record<string, PlayEventVisibility>;
+  scheduledEvents: PlayScheduledEvent[];
+  suggestedActions: string[];
+}
+
 export interface PlayEventPolicy {
   simulationMode: PlaySimulationMode;
   density: PlayEventDensity;
@@ -323,6 +332,41 @@ export interface PlayWorldEvent {
   canonical: false;
 }
 
+export type PlayFlagValue = string | number | boolean;
+
+export type PlayEventTrigger =
+  | { type: 'nextTurn' }
+  | { type: 'afterTurns'; turns: number }
+  | { type: 'flagEquals'; path: string; value: PlayFlagValue }
+  | { type: 'atWorldTime'; value: string }
+  | { type: 'manual' };
+
+export type PlayScheduledEventStatus = 'scheduled' | 'occurred' | 'cancelled';
+
+export interface PlayScheduledEventTemplate {
+  kind: PlayWorldEventKind;
+  origin: PlayEventOrigin;
+  title: string;
+  summary: string;
+  visibility: PlayEventVisibility;
+}
+
+export interface PlayScheduledEvent {
+  id: string;
+  label: string;
+  trigger: PlayEventTrigger;
+  template: PlayScheduledEventTemplate;
+  status: PlayScheduledEventStatus;
+  scheduledAtTurn: number;
+  scheduledAtRevision: number;
+  sourceTurnId?: string;
+  changeReason?: string;
+  priority?: number;
+  occurredEventIds?: string[];
+  resolvedAtTurnId?: string;
+  resolutionReason?: string;
+}
+
 export interface PlayActivatedSource {
   sourceId: string;
   path?: string;
@@ -341,7 +385,9 @@ export interface PlayTranscriptTurn {
 }
 
 export interface PlayTurnArtifact {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  artifactKind?: 'worldSettlement' | 'transcriptAppend';
+  branchSnapshotVersion?: 1;
   id: string;
   revision: number;
   parentTurnId?: string;
@@ -352,6 +398,11 @@ export interface PlayTurnArtifact {
   messages: PlayTranscriptTurn[];
   worldClock?: PlayWorldClock;
   eventIds: string[];
+  dueScheduledEventIds: string[];
+  scheduledEventIds: string[];
+  scheduledEventSnapshots: PlayScheduledEvent[];
+  playLocalStateSnapshot?: Record<string, unknown>;
+  playLocalStateVisibilitySnapshot?: Record<string, PlayEventVisibility>;
   observationIds: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
@@ -383,7 +434,7 @@ export interface PlayAdoptionCandidate {
 }
 
 export interface PlaySession {
-  schemaVersion: 3;
+  schemaVersion: 4;
   id: string;
   title: string;
   createdAt: string;
@@ -394,12 +445,15 @@ export interface PlaySession {
   transcript: PlayTranscriptTurn[];
   turnArtifacts: PlayTurnArtifact[];
   selectedTurnIds: string[];
+  branchSnapshotRequiredFromRevision: number;
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
   metadataExtensions: Record<string, unknown>;
   playLocalState: Record<string, unknown>;
   playLocalStateVisibility: Record<string, PlayEventVisibility>;
   worldClock: PlayWorldClock;
   eventPolicy: PlayEventPolicy;
   events: PlayWorldEvent[];
+  scheduledEvents: PlayScheduledEvent[];
   suggestedActions: string[];
   activatedSources: PlayActivatedSource[];
   observations: PlayObservation[];
@@ -444,6 +498,11 @@ export type PlayTurnStreamEvent =
       baseRevision: number;
       targetRevision: number;
       artifactId?: string;
+    })
+  | (PlayTurnStreamEventBase & {
+      type: 'play.event.occurred';
+      revision: number;
+      event: PlayWorldEvent;
     })
   | (PlayTurnStreamEventBase & {
       type: 'play.turn.committed';
@@ -716,13 +775,11 @@ export interface OanClient {
     baseRevision?: number;
   }): Promise<{ session: PlaySession }>;
   addPlayObservation(id: string, observation: {
-    id?: string;
     summary: string;
     evidence: string;
     baseRevision?: number;
   }): Promise<{ session: PlaySession }>;
   addPlayAdoptionCandidate(id: string, candidate: {
-    id?: string;
     target: PlayAdoptionTarget;
     summary: string;
     evidence: string;
@@ -939,27 +996,25 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         method: 'POST',
       }),
     listPlaySessions: () =>
-      requestJson<{ sessions: PlaySession[] }>('/api/workspace/play-sessions'),
+      requestJson<unknown>('/api/workspace/play-sessions')
+        .then(parsePlaySessionListResponse),
     createPlaySession: (input) =>
-      requestJson<{ session: PlaySession; files: string[] }>('/api/workspace/play-sessions', {
+      requestJson<unknown>('/api/workspace/play-sessions', {
         method: 'POST',
         body: input,
-      }),
+      }).then((value) => parsePlaySessionCreateResponse(value, input.id)),
     getPlaySession: (id) =>
-      requestJson<{ session: PlaySession }>(
+      requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
-      ),
+      ).then((value) => parsePlaySessionResponse(value, id)),
     runPlayWorldRefereeTurn: (id, input) =>
-      requestJson<{
-        session: PlaySession;
-        result?: { assistantMessage?: { role: 'assistant'; content: string } };
-      }>(
+      requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/world-referee-turn`,
         {
           method: 'POST',
           body: input,
         },
-      ),
+      ).then((value) => parsePlayWorldRefereeTurnResponse(value, id)),
     streamPlayWorldRefereeTurn: (id, input, streamOptions) =>
       streamPlayWorldRefereeTurnWith(
         fetcher,
@@ -974,29 +1029,29 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         { method: 'POST' },
       ).then((value) => parsePlayTurnCancelResult(value, id, turnId)),
     appendPlayTranscript: (id, turn) =>
-      requestJson<{ session: PlaySession }>(
+      requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/transcript`,
         {
           method: 'POST',
           body: turn,
         },
-      ),
+      ).then((value) => parsePlaySessionResponse(value, id)),
     addPlayObservation: (id, observation) =>
-      requestJson<{ session: PlaySession }>(
+      requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/observations`,
         {
           method: 'POST',
           body: observation,
         },
-      ),
+      ).then((value) => parsePlaySessionResponse(value, id)),
     addPlayAdoptionCandidate: (id, candidate) =>
-      requestJson<{ session: PlaySession; candidate: PlayAdoptionCandidate }>(
+      requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/adoption-candidates`,
         {
           method: 'POST',
           body: candidate,
         },
-      ),
+      ).then((value) => parsePlayAdoptionCandidateResponse(value, id)),
     createPlayAdoptionPendingAction: (id, candidateId, payload) =>
       requestJson<{
         candidate: PlayAdoptionCandidate;
@@ -1200,6 +1255,24 @@ function parsePlayTurnStreamEventPayload(
         && hasOptionalArtifactId
         ? value as unknown as PlayTurnStreamEvent
         : undefined;
+    case 'play.event.occurred':
+      if (
+        !hasOnlyKnownFields(value, [
+          'type',
+          'eventId',
+          'sequence',
+          'sessionId',
+          'turnId',
+          'revision',
+          'event',
+        ]) ||
+        !isNonNegativeSafeInteger(value.revision) ||
+        !isPlayWorldEventEnvelope(value.event) ||
+        value.revision !== value.event.worldClock.revision
+      ) {
+        return undefined;
+      }
+      return value as unknown as PlayTurnStreamEvent;
     case 'play.turn.committed':
       return isNonNegativeSafeInteger(value.revision)
         && hasOptionalArtifactId
@@ -1259,6 +1332,106 @@ function parsePlayTurnCancelResult(
   throw new Error('Play turn cancellation returned an invalid result.');
 }
 
+function parsePlaySessionListResponse(
+  value: unknown,
+): { sessions: PlaySession[] } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['sessions']) ||
+    !Array.isArray(value.sessions) ||
+    !value.sessions.every((session) =>
+      isRecord(session) && isPlaySessionEnvelope(session, session.id))
+  ) {
+    throw new Error('Play session list returned an invalid payload.');
+  }
+  return value as unknown as { sessions: PlaySession[] };
+}
+
+function parsePlaySessionResponse(
+  value: unknown,
+  sessionId: string,
+): { session: PlaySession } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session']) ||
+    !isPlaySessionEnvelope(value.session, sessionId)
+  ) {
+    throw new Error('Play session request returned an invalid payload.');
+  }
+  return value as unknown as { session: PlaySession };
+}
+
+function parsePlaySessionCreateResponse(
+  value: unknown,
+  requestedSessionId?: string,
+): { session: PlaySession; files: string[] } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session', 'files']) ||
+    !isRecord(value.session) ||
+    !isPlaySessionEnvelope(
+      value.session,
+      requestedSessionId ?? value.session.id,
+    ) ||
+    !isStringArray(value.files)
+  ) {
+    throw new Error('Play session creation returned an invalid payload.');
+  }
+  return value as unknown as { session: PlaySession; files: string[] };
+}
+
+function parsePlayWorldRefereeTurnResponse(
+  value: unknown,
+  sessionId: string,
+): {
+  session: PlaySession;
+  result?: { assistantMessage?: { role: 'assistant'; content: string } };
+} {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session', 'result']) ||
+    !isPlaySessionEnvelope(value.session, sessionId) ||
+    (value.result !== undefined && !isPlayWorldRefereeResult(value.result))
+  ) {
+    throw new Error('Play world referee turn returned an invalid payload.');
+  }
+  return value as unknown as {
+    session: PlaySession;
+    result?: { assistantMessage?: { role: 'assistant'; content: string } };
+  };
+}
+
+function isPlayWorldRefereeResult(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, ['assistantMessage'])) {
+    return false;
+  }
+  if (value.assistantMessage === undefined) {
+    return true;
+  }
+  return isRecord(value.assistantMessage)
+    && hasOnlyKnownFields(value.assistantMessage, ['role', 'content'])
+    && value.assistantMessage.role === 'assistant'
+    && typeof value.assistantMessage.content === 'string';
+}
+
+function parsePlayAdoptionCandidateResponse(
+  value: unknown,
+  sessionId: string,
+): { session: PlaySession; candidate: PlayAdoptionCandidate } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session', 'candidate']) ||
+    !isPlaySessionEnvelope(value.session, sessionId) ||
+    !isPlayAdoptionCandidateEnvelope(value.candidate)
+  ) {
+    throw new Error('Play adoption candidate returned an invalid payload.');
+  }
+  return value as unknown as {
+    session: PlaySession;
+    candidate: PlayAdoptionCandidate;
+  };
+}
+
 function isPlayTurnStreamError(value: unknown): value is PlayTurnStreamError {
   return isRecord(value)
     && isNonEmptyString(value.code)
@@ -1271,11 +1444,37 @@ function isPlaySessionEnvelope(
   sessionId: unknown,
   revision?: number,
 ): value is PlaySession {
-  if (!isRecord(value) || value.schemaVersion !== 3) {
+  if (!isRecord(value) || value.schemaVersion !== 4) {
     return false;
   }
 
-  return value.id === sessionId
+  return hasOnlyKnownFields(value, [
+    'schemaVersion',
+    'id',
+    'title',
+    'createdAt',
+    'revision',
+    'userPersona',
+    'sceneStart',
+    'characters',
+    'transcript',
+    'turnArtifacts',
+    'selectedTurnIds',
+    'branchSnapshotRequiredFromRevision',
+    'branchBaseSnapshot',
+    'metadataExtensions',
+    'playLocalState',
+    'playLocalStateVisibility',
+    'worldClock',
+    'eventPolicy',
+    'events',
+    'scheduledEvents',
+    'suggestedActions',
+    'activatedSources',
+    'observations',
+    'adoptionCandidates',
+  ])
+    && value.id === sessionId
     && (revision === undefined || value.revision === revision)
     && isNonEmptyString(value.id)
     && isNonEmptyString(value.title)
@@ -1286,30 +1485,778 @@ function isPlaySessionEnvelope(
     && Array.isArray(value.transcript)
     && value.transcript.every(isPlayTranscriptTurn)
     && Array.isArray(value.turnArtifacts)
-    && value.turnArtifacts.every(isRecord)
-    && isStringArray(value.selectedTurnIds)
+    && value.turnArtifacts.every(isPlayTurnArtifactEnvelope)
+    && isUniqueSafePlayIdArray(value.selectedTurnIds)
+    && isNonNegativeSafeInteger(value.branchSnapshotRequiredFromRevision)
+    && isPlayBranchBaseSnapshotEnvelope(value.branchBaseSnapshot)
     && isRecord(value.metadataExtensions)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
     && isPlayWorldClock(value.worldClock)
     && isPlayEventPolicy(value.eventPolicy)
-    && Array.isArray(value.events)
-    && value.events.every(isPlayWorldEventEnvelope)
+    && isPlayWorldEventList(value.events)
+    && isPlayScheduledEventList(value.scheduledEvents)
     && isStringArray(value.suggestedActions)
     && Array.isArray(value.activatedSources)
     && value.activatedSources.every(isPlayActivatedSourceEnvelope)
     && Array.isArray(value.observations)
     && value.observations.every(isPlayObservationEnvelope)
+    && hasUniqueEntityIds(value.observations)
     && Array.isArray(value.adoptionCandidates)
-    && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope);
+    && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope)
+    && hasUniqueEntityIds(value.adoptionCandidates)
+    && hasConsistentPlaySessionFacts(value as unknown as PlaySession);
+}
+
+function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
+  if (
+    session.worldClock.revision !== session.revision ||
+    session.branchSnapshotRequiredFromRevision > session.revision ||
+    session.branchSnapshotRequiredFromRevision !==
+      session.branchBaseSnapshot.worldClock.revision ||
+    !hasValidPlayBranchBaseScheduleSeeds(session.branchBaseSnapshot) ||
+    !hasUniqueEntityIds(session.turnArtifacts)
+  ) {
+    return false;
+  }
+  const artifactsById = new Map(
+    session.turnArtifacts.map((artifact) => [artifact.id, artifact]),
+  );
+  const roots = session.turnArtifacts.filter((artifact) => !artifact.parentTurnId);
+  if (session.turnArtifacts.length > 0 && roots.length !== 1) {
+    return false;
+  }
+  const eventsById = new Map(session.events.map((event) => [event.id, event]));
+  const observationsById = new Map(
+    session.observations.map((observation) => [observation.id, observation]),
+  );
+  const messageIds = new Set<string>();
+  const messageOwners = new Map<string, string>();
+  const eventOwners = new Map<string, string>();
+  const observationOwners = new Map<string, string>();
+
+  for (const artifact of session.turnArtifacts) {
+    const parent = artifact.parentTurnId
+      ? artifactsById.get(artifact.parentTurnId)
+      : undefined;
+    if (
+      (artifact.parentTurnId !== undefined && !parent) ||
+      (parent !== undefined && artifact.revision <= parent.revision) ||
+      (
+        artifact.revision > session.branchSnapshotRequiredFromRevision &&
+        artifact.schemaVersion !== 2
+      ) ||
+      (
+        artifact.worldClock !== undefined &&
+        artifact.worldClock.revision !== artifact.revision
+      )
+    ) {
+      return false;
+    }
+
+    const visited = new Set([artifact.id]);
+    let ancestor = parent;
+    while (ancestor) {
+      if (visited.has(ancestor.id)) {
+        return false;
+      }
+      visited.add(ancestor.id);
+      ancestor = ancestor.parentTurnId
+        ? artifactsById.get(ancestor.parentTurnId)
+        : undefined;
+    }
+
+    for (const message of artifact.messages) {
+      if (!message.id || messageIds.has(message.id)) {
+        return false;
+      }
+      messageIds.add(message.id);
+      messageOwners.set(message.id, artifact.id);
+    }
+
+    if (artifact.schemaVersion === 2) {
+      if (!hasConsistentPlayV2Artifact(
+        artifact,
+        parent,
+        artifactsById,
+        eventsById,
+        session.branchBaseSnapshot,
+      )) {
+        return false;
+      }
+    } else if (
+      parent?.schemaVersion === 2 ||
+      artifact.branchSnapshotVersion !== undefined ||
+      artifact.artifactKind !== undefined ||
+      artifact.playLocalStateSnapshot !== undefined ||
+      artifact.playLocalStateVisibilitySnapshot !== undefined ||
+      artifact.scheduledEventSnapshots.length > 0
+    ) {
+      return false;
+    }
+
+    for (const eventId of artifact.eventIds) {
+      const event = eventsById.get(eventId);
+      const allowedArtifactIds = collectPlayArtifactAncestorIds(
+        artifact,
+        artifactsById,
+      );
+      const allowedTurnIds = collectPlayArtifactMessageIds(
+        allowedArtifactIds,
+        artifactsById,
+      );
+      const allowedEventIds = collectPlayArtifactEventIds(
+        allowedArtifactIds,
+        artifactsById,
+      );
+      if (
+        !event ||
+        eventOwners.has(eventId) ||
+        !artifact.messages.some((message) => message.id === event.turnId) ||
+        !hasScopedPlayFactReferences(
+          event.cause.sourceTurnIds ?? [],
+          event.cause.sourceEventIds ?? [],
+          allowedTurnIds,
+          allowedEventIds,
+        ) ||
+        (artifact.worldClock !== undefined &&
+          !isDeepEqualJson(event.worldClock, artifact.worldClock))
+      ) {
+        return false;
+      }
+      eventOwners.set(eventId, artifact.id);
+    }
+
+    for (const observationId of artifact.observationIds) {
+      const observation = observationsById.get(observationId);
+      const allowedArtifactIds = collectPlayArtifactAncestorIds(
+        artifact,
+        artifactsById,
+      );
+      const allowedTurnIds = collectPlayArtifactMessageIds(
+        allowedArtifactIds,
+        artifactsById,
+      );
+      const allowedEventIds = collectPlayArtifactEventIds(
+        allowedArtifactIds,
+        artifactsById,
+      );
+      if (
+        !observation ||
+        observationOwners.has(observationId) ||
+        !hasScopedPlayFactReferences(
+          observation.sourceTurnIds,
+          observation.sourceEventIds,
+          allowedTurnIds,
+          allowedEventIds,
+        )
+      ) {
+        return false;
+      }
+      observationOwners.set(observationId, artifact.id);
+    }
+  }
+
+  if (session.events.some((event) => !eventOwners.has(event.id))) {
+    return false;
+  }
+  if (session.scheduledEvents.some((event) =>
+    event.scheduledAtRevision > session.revision ||
+    event.scheduledAtTurn > session.worldClock.turn)) {
+    return false;
+  }
+
+  const selectedArtifacts: PlayTurnArtifact[] = [];
+  let expectedParentId: string | undefined;
+  for (const selectedId of session.selectedTurnIds) {
+    const artifact = artifactsById.get(selectedId);
+    if (!artifact || artifact.parentTurnId !== expectedParentId) {
+      return false;
+    }
+    selectedArtifacts.push(artifact);
+    expectedParentId = artifact.id;
+  }
+  if (session.turnArtifacts.length > 0 && selectedArtifacts.length === 0) {
+    return false;
+  }
+  if (!isDeepEqualJson(
+    session.transcript,
+    selectedArtifacts.flatMap((artifact) => artifact.messages),
+  )) {
+    return false;
+  }
+  const allEventIds = new Set(eventsById.keys());
+  for (const observation of session.observations) {
+    if (observationOwners.has(observation.id)) {
+      continue;
+    }
+    if (
+      !hasScopedPlayFactReferences(
+        observation.sourceTurnIds,
+        observation.sourceEventIds,
+        messageIds,
+        allEventIds,
+      ) ||
+      !doPlayReferenceOwnersShareBranch(
+        collectPlayReferenceOwnerIds(
+          observation.sourceTurnIds,
+          observation.sourceEventIds,
+          messageOwners,
+          eventOwners,
+        ),
+        artifactsById,
+      )
+    ) {
+      return false;
+    }
+  }
+  for (const candidate of session.adoptionCandidates) {
+    const provenanceOwnerIds = collectPlayReferenceOwnerIds(
+      candidate.sourceTurnIds,
+      candidate.sourceEventIds,
+      messageOwners,
+      eventOwners,
+    );
+    for (const observationId of candidate.sourceObservationIds) {
+      const observationOwnerId = observationOwners.get(observationId);
+      if (observationOwnerId) {
+        provenanceOwnerIds.push(observationOwnerId);
+        continue;
+      }
+      const observation = observationsById.get(observationId);
+      if (observation) {
+        provenanceOwnerIds.push(...collectPlayReferenceOwnerIds(
+          observation.sourceTurnIds,
+          observation.sourceEventIds,
+          messageOwners,
+          eventOwners,
+        ));
+      }
+    }
+    if (
+      !hasScopedPlayFactReferences(
+        candidate.sourceTurnIds,
+        candidate.sourceEventIds,
+        messageIds,
+        allEventIds,
+      ) ||
+      candidate.sourceObservationIds.some((id) => !observationsById.has(id)) ||
+      !doPlayReferenceOwnersShareBranch(
+        provenanceOwnerIds,
+        artifactsById,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const selectedHead = selectedArtifacts.at(-1);
+  if (selectedHead?.schemaVersion === 2) {
+    if (
+      !isDeepEqualJson(session.scheduledEvents, selectedHead.scheduledEventSnapshots) ||
+      !isDeepEqualJson(session.playLocalState, selectedHead.playLocalStateSnapshot) ||
+      !isDeepEqualJson(
+        session.playLocalStateVisibility,
+        selectedHead.playLocalStateVisibilitySnapshot,
+      ) ||
+      !isDeepEqualJson(session.suggestedActions, selectedHead.suggestedActions) ||
+      session.worldClock.turn !== selectedHead.worldClock?.turn ||
+      session.worldClock.anchor !== selectedHead.worldClock?.anchor ||
+      session.worldClock.elapsed !== selectedHead.worldClock?.elapsed
+    ) {
+      return false;
+    }
+  } else if (
+    selectedHead?.id !== session.branchBaseSnapshot.parentTurnId ||
+    !isDeepEqualJson(
+      session.scheduledEvents,
+      session.branchBaseSnapshot.scheduledEvents,
+    ) ||
+    !isDeepEqualJson(
+      session.playLocalState,
+      session.branchBaseSnapshot.playLocalState,
+    ) ||
+    !isDeepEqualJson(
+      session.playLocalStateVisibility,
+      session.branchBaseSnapshot.playLocalStateVisibility,
+    ) ||
+    !isDeepEqualJson(
+      session.suggestedActions,
+      session.branchBaseSnapshot.suggestedActions,
+    ) ||
+    session.worldClock.turn !== session.branchBaseSnapshot.worldClock.turn ||
+    session.worldClock.anchor !== session.branchBaseSnapshot.worldClock.anchor ||
+    session.worldClock.elapsed !== session.branchBaseSnapshot.worldClock.elapsed
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function hasConsistentPlayV2Artifact(
+  artifact: PlayTurnArtifact,
+  parent: PlayTurnArtifact | undefined,
+  artifactsById: Map<string, PlayTurnArtifact>,
+  eventsById: Map<string, PlayWorldEvent>,
+  branchBaseSnapshot: PlayBranchBaseSnapshot,
+): boolean {
+  if (
+    artifact.branchSnapshotVersion !== 1 ||
+    !artifact.worldClock ||
+    !artifact.playLocalStateSnapshot ||
+    !artifact.playLocalStateVisibilitySnapshot ||
+    !isDeepEqualJson(
+      Object.keys(artifact.playLocalStateSnapshot).sort(),
+      Object.keys(artifact.playLocalStateVisibilitySnapshot).sort(),
+    )
+  ) {
+    return false;
+  }
+  const artifactWorldClock = artifact.worldClock;
+  const dueIds = new Set(artifact.dueScheduledEventIds);
+  if (artifact.dueScheduledEventIds.some((dueId) =>
+    artifact.scheduledEventSnapshots.find((event) => event.id === dueId)?.status
+      !== 'occurred')) {
+    return false;
+  }
+
+  if (artifact.artifactKind === 'worldSettlement') {
+    const [userMessage, refereeMessage] = artifact.messages;
+    if (
+      !artifact.input ||
+      artifact.messages.length !== 2 ||
+      userMessage?.speaker !== 'user' ||
+      refereeMessage?.speaker !== 'world-referee' ||
+      userMessage.content !== artifact.input.raw ||
+      userMessage.actionKind !== artifact.input.kind ||
+      refereeMessage.actionKind !== undefined ||
+      artifact.eventIds.some((eventId) =>
+        eventsById.get(eventId)?.turnId !== refereeMessage.id)
+    ) {
+      return false;
+    }
+  } else if (
+    artifact.artifactKind !== 'transcriptAppend' ||
+    artifact.input !== undefined ||
+    artifact.messages.length !== 1 ||
+    artifact.eventIds.length !== 0 ||
+    artifact.dueScheduledEventIds.length !== 0 ||
+    artifact.observationIds.length !== 0 ||
+    Object.keys(artifact.stateDelta).length !== 0
+  ) {
+    return false;
+  }
+
+  const parentComplete = parent?.schemaVersion === 2;
+  if (!parentComplete && branchBaseSnapshot.parentTurnId !== artifact.parentTurnId) {
+    return false;
+  }
+  const predecessorClock = parentComplete
+    ? parent.worldClock!
+    : branchBaseSnapshot.worldClock;
+  const predecessorState = parentComplete
+    ? parent.playLocalStateSnapshot!
+    : branchBaseSnapshot.playLocalState;
+  const predecessorVisibility = parentComplete
+    ? parent.playLocalStateVisibilitySnapshot!
+    : branchBaseSnapshot.playLocalStateVisibility;
+  const predecessorSchedules = parentComplete
+    ? parent.scheduledEventSnapshots
+    : branchBaseSnapshot.scheduledEvents;
+  const predecessorSuggestedActions = parentComplete
+    ? parent.suggestedActions
+    : branchBaseSnapshot.suggestedActions;
+  if (artifact.revision <= predecessorClock.revision) {
+    return false;
+  }
+  const expectedTurn = predecessorClock.turn +
+    (artifact.artifactKind === 'worldSettlement' ? 1 : 0);
+  const expectedState = {
+    ...predecessorState,
+    ...artifact.stateDelta,
+  };
+  const expectedVisibility = { ...predecessorVisibility };
+  const eventVisibilities = artifact.eventIds.map((eventId) =>
+    eventsById.get(eventId)?.visibility ?? 'playerVisible');
+  const settlementVisibility: PlayEventVisibility =
+    eventVisibilities.includes('playerUnknown')
+      ? 'playerUnknown'
+      : eventVisibilities.includes('rumor')
+        ? 'rumor'
+        : 'playerVisible';
+  for (const key of Object.keys(artifact.stateDelta)) {
+    expectedVisibility[key] = settlementVisibility;
+  }
+  const expectedDueIds = artifact.artifactKind === 'worldSettlement'
+    ? predecessorSchedules
+        .filter((event) => event.status === 'scheduled')
+        .filter((event) => isClientScheduledEventDue(
+          event,
+          artifactWorldClock.turn,
+          predecessorState,
+        ))
+        .sort(compareClientScheduledEvents)
+        .map((event) => event.id)
+    : [];
+  const predecessorSchedulesById = new Map(
+    predecessorSchedules.map((event) => [event.id, event]),
+  );
+  const currentSchedulesById = new Map(
+    artifact.scheduledEventSnapshots.map((event) => [event.id, event]),
+  );
+  if (
+    artifactWorldClock.turn !== expectedTurn ||
+    (artifact.artifactKind === 'transcriptAppend' &&
+      (
+        artifactWorldClock.anchor !== predecessorClock.anchor ||
+        artifactWorldClock.elapsed !== predecessorClock.elapsed
+      )) ||
+    !isDeepEqualJson(artifact.playLocalStateSnapshot, expectedState) ||
+    !isDeepEqualJson(
+      artifact.playLocalStateVisibilitySnapshot,
+      expectedVisibility,
+    ) ||
+    (artifact.artifactKind === 'transcriptAppend' &&
+      (
+        !isDeepEqualJson(
+          artifact.suggestedActions,
+          predecessorSuggestedActions,
+        ) ||
+        !isDeepEqualJson(
+          artifact.scheduledEventSnapshots,
+          predecessorSchedules,
+        )
+      )) ||
+    !isDeepEqualJson(artifact.dueScheduledEventIds, expectedDueIds) ||
+    predecessorSchedules.some((event) => !currentSchedulesById.has(event.id)) ||
+    artifact.scheduledEventSnapshots.some((event) =>
+      predecessorSchedulesById.get(event.id)?.status === 'scheduled' &&
+      event.status === 'occurred' &&
+      !dueIds.has(event.id))
+  ) {
+    return false;
+  }
+
+  for (const scheduledEvent of artifact.scheduledEventSnapshots) {
+    const previous = predecessorSchedulesById.get(scheduledEvent.id);
+    if (!previous) {
+      if (
+        scheduledEvent.status !== 'scheduled' ||
+        !hasCurrentArtifactScheduleEvidence(scheduledEvent, artifact)
+      ) {
+        return false;
+      }
+    } else if (previous.status !== 'scheduled') {
+      if (!isDeepEqualJson(previous, scheduledEvent)) {
+        return false;
+      }
+    } else if (!isDeepEqualJson(previous, scheduledEvent)) {
+      if (scheduledEvent.status === 'scheduled') {
+        if (
+          previous.id !== scheduledEvent.id ||
+          previous.label !== scheduledEvent.label ||
+          !isDeepEqualJson(previous.template, scheduledEvent.template) ||
+          !hasCurrentArtifactScheduleEvidence(scheduledEvent, artifact)
+        ) {
+          return false;
+        }
+      } else if (
+        !hasSamePlayScheduledEventPlan(previous, scheduledEvent) ||
+        !hasCurrentArtifactScheduleResolution(scheduledEvent, artifact)
+      ) {
+        return false;
+      }
+    }
+    if (scheduledEvent.status !== 'occurred') {
+      continue;
+    }
+
+    const occurredEventIds = scheduledEvent.occurredEventIds;
+    const occurredEventId = occurredEventIds?.[0];
+    const occurredEvent = occurredEventId
+      ? eventsById.get(occurredEventId)
+      : undefined;
+    const occurrenceOwner = occurredEventId
+      ? findPlayEventOwner(occurredEventId, artifactsById)
+      : undefined;
+    const newlyOccurred = previous?.status !== 'occurred';
+    if (
+      occurredEventIds?.length !== 1 ||
+      !occurredEvent ||
+      !occurrenceOwner ||
+      (newlyOccurred
+        ? occurrenceOwner.id !== artifact.id
+        : !isPlayArtifactAncestorOrSelf(
+          occurrenceOwner.id,
+          artifact,
+          artifactsById,
+        )) ||
+      occurrenceOwner.artifactKind !== 'worldSettlement' ||
+      occurrenceOwner.messages[1]?.id !== scheduledEvent.resolvedAtTurnId ||
+      occurredEvent.turnId !== scheduledEvent.resolvedAtTurnId ||
+      occurredEvent.cause.triggerId !== scheduledEvent.id ||
+      !doesPlayEventMatchScheduledTemplate(occurredEvent, scheduledEvent)
+    ) {
+      return false;
+    }
+  }
+
+  for (const eventId of artifact.eventIds) {
+    const event = eventsById.get(eventId);
+    const triggerId = event?.cause.triggerId;
+    if (!triggerId) {
+      continue;
+    }
+    const scheduledEvent = currentSchedulesById.get(triggerId);
+    if (
+      scheduledEvent?.status !== 'occurred' ||
+      scheduledEvent.occurredEventIds?.length !== 1 ||
+      scheduledEvent.occurredEventIds[0] !== eventId
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function hasValidPlayBranchBaseScheduleSeeds(
+  branchBaseSnapshot: PlayBranchBaseSnapshot,
+): boolean {
+  return branchBaseSnapshot.scheduledEvents.every((event) =>
+    event.status === 'scheduled' &&
+    event.scheduledAtTurn <= branchBaseSnapshot.worldClock.turn &&
+    event.scheduledAtRevision <= branchBaseSnapshot.worldClock.revision &&
+    event.sourceTurnId === undefined &&
+    event.changeReason === undefined &&
+    event.occurredEventIds === undefined &&
+    event.resolvedAtTurnId === undefined &&
+    event.resolutionReason === undefined);
+}
+
+function findPlayEventOwner(
+  eventId: string,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): PlayTurnArtifact | undefined {
+  let owner: PlayTurnArtifact | undefined;
+  for (const artifact of artifactsById.values()) {
+    if (!artifact.eventIds.includes(eventId)) {
+      continue;
+    }
+    if (owner) {
+      return undefined;
+    }
+    owner = artifact;
+  }
+  return owner;
+}
+
+function isPlayArtifactAncestorOrSelf(
+  candidateId: string,
+  artifact: PlayTurnArtifact,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): boolean {
+  let current: PlayTurnArtifact | undefined = artifact;
+  while (current) {
+    if (current.id === candidateId) {
+      return true;
+    }
+    current = current.parentTurnId
+      ? artifactsById.get(current.parentTurnId)
+      : undefined;
+  }
+  return false;
+}
+
+function collectPlayArtifactAncestorIds(
+  artifact: PlayTurnArtifact,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): Set<string> {
+  const ids = new Set<string>();
+  let current: PlayTurnArtifact | undefined = artifact;
+  while (current) {
+    ids.add(current.id);
+    current = current.parentTurnId
+      ? artifactsById.get(current.parentTurnId)
+      : undefined;
+  }
+  return ids;
+}
+
+function collectPlayArtifactMessageIds(
+  artifactIds: Set<string>,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): Set<string> {
+  return new Set([...artifactIds].flatMap((artifactId) =>
+    artifactsById.get(artifactId)?.messages.flatMap((message) =>
+      message.id ? [message.id] : []) ?? []));
+}
+
+function collectPlayArtifactEventIds(
+  artifactIds: Set<string>,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): Set<string> {
+  return new Set([...artifactIds].flatMap((artifactId) =>
+    artifactsById.get(artifactId)?.eventIds ?? []));
+}
+
+function hasScopedPlayFactReferences(
+  sourceTurnIds: string[],
+  sourceEventIds: string[],
+  allowedTurnIds: Set<string>,
+  allowedEventIds: Set<string>,
+): boolean {
+  return sourceTurnIds.every((id) => allowedTurnIds.has(id)) &&
+    sourceEventIds.every((id) => allowedEventIds.has(id));
+}
+
+function collectPlayReferenceOwnerIds(
+  sourceTurnIds: string[],
+  sourceEventIds: string[],
+  messageOwners: Map<string, string>,
+  eventOwners: Map<string, string>,
+): string[] {
+  return [
+    ...sourceTurnIds.map((turnId) => messageOwners.get(turnId)),
+    ...sourceEventIds.map((eventId) => eventOwners.get(eventId)),
+  ].filter((artifactId): artifactId is string => artifactId !== undefined);
+}
+
+function doPlayReferenceOwnersShareBranch(
+  ownerArtifactIds: string[],
+  artifactsById: Map<string, PlayTurnArtifact>,
+): boolean {
+  const uniqueOwnerIds = [...new Set(ownerArtifactIds)];
+  if (uniqueOwnerIds.length < 2) {
+    return true;
+  }
+  const deepestOwner = uniqueOwnerIds
+    .map((artifactId) => artifactsById.get(artifactId))
+    .filter((artifact): artifact is PlayTurnArtifact => artifact !== undefined)
+    .sort((left, right) => right.revision - left.revision)[0];
+  if (!deepestOwner) {
+    return false;
+  }
+  const ancestorIds = collectPlayArtifactAncestorIds(
+    deepestOwner,
+    artifactsById,
+  );
+  return uniqueOwnerIds.every((artifactId) => ancestorIds.has(artifactId));
+}
+
+function doesPlayEventMatchScheduledTemplate(
+  event: PlayWorldEvent,
+  scheduledEvent: PlayScheduledEvent,
+): boolean {
+  return event.kind === scheduledEvent.template.kind &&
+    event.origin === scheduledEvent.template.origin &&
+    event.title === scheduledEvent.template.title &&
+    event.visibility === scheduledEvent.template.visibility;
+}
+
+function hasCurrentArtifactScheduleEvidence(
+  scheduledEvent: PlayScheduledEvent,
+  artifact: PlayTurnArtifact,
+): boolean {
+  const refereeMessage = artifact.messages[1];
+  return artifact.artifactKind === 'worldSettlement' &&
+    refereeMessage?.speaker === 'world-referee' &&
+    scheduledEvent.sourceTurnId === refereeMessage.id &&
+    isNonEmptyString(scheduledEvent.changeReason) &&
+    scheduledEvent.scheduledAtRevision === artifact.revision &&
+    scheduledEvent.scheduledAtTurn === artifact.worldClock?.turn;
+}
+
+function hasCurrentArtifactScheduleResolution(
+  scheduledEvent: PlayScheduledEvent,
+  artifact: PlayTurnArtifact,
+): boolean {
+  const refereeMessage = artifact.messages[1];
+  return artifact.artifactKind === 'worldSettlement' &&
+    refereeMessage?.speaker === 'world-referee' &&
+    scheduledEvent.resolvedAtTurnId === refereeMessage.id;
+}
+
+function hasSamePlayScheduledEventPlan(
+  left: PlayScheduledEvent,
+  right: PlayScheduledEvent,
+): boolean {
+  return left.id === right.id &&
+    left.label === right.label &&
+    isDeepEqualJson(left.trigger, right.trigger) &&
+    isDeepEqualJson(left.template, right.template) &&
+    left.scheduledAtTurn === right.scheduledAtTurn &&
+    left.scheduledAtRevision === right.scheduledAtRevision &&
+    left.sourceTurnId === right.sourceTurnId &&
+    left.changeReason === right.changeReason &&
+    left.priority === right.priority;
+}
+
+function isClientScheduledEventDue(
+  event: PlayScheduledEvent,
+  nextTurn: number,
+  playLocalState: Record<string, unknown>,
+): boolean {
+  if (event.trigger.type === 'nextTurn') {
+    return nextTurn > event.scheduledAtTurn;
+  }
+  if (event.trigger.type === 'afterTurns') {
+    return nextTurn >= event.scheduledAtTurn + event.trigger.turns;
+  }
+  if (event.trigger.type === 'flagEquals') {
+    let value: unknown = playLocalState;
+    for (const segment of event.trigger.path.split('.')) {
+      if (!isRecord(value) || !Object.hasOwn(value, segment)) {
+        return false;
+      }
+      value = value[segment];
+    }
+    return value === event.trigger.value;
+  }
+  return false;
+}
+
+function compareClientScheduledEvents(
+  left: PlayScheduledEvent,
+  right: PlayScheduledEvent,
+): number {
+  return (right.priority ?? 0) - (left.priority ?? 0) ||
+    left.scheduledAtTurn - right.scheduledAtTurn ||
+    (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
 }
 
 function isPlayWorldClock(value: unknown): value is PlayWorldClock {
   return isRecord(value)
+    && hasOnlyKnownFields(value, ['turn', 'revision', 'anchor', 'elapsed'])
     && isNonNegativeSafeInteger(value.turn)
     && isNonNegativeSafeInteger(value.revision)
-    && (value.anchor === undefined || typeof value.anchor === 'string')
-    && (value.elapsed === undefined || typeof value.elapsed === 'string');
+    && (value.anchor === undefined || isNonEmptyString(value.anchor))
+    && (value.elapsed === undefined || isNonEmptyString(value.elapsed));
+}
+
+function isPlayBranchBaseSnapshotEnvelope(
+  value: unknown,
+): value is PlayBranchBaseSnapshot {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'parentTurnId',
+      'worldClock',
+      'playLocalState',
+      'playLocalStateVisibility',
+      'scheduledEvents',
+      'suggestedActions',
+    ])
+    && (value.parentTurnId === undefined || isSafePlayFactId(value.parentTurnId))
+    && isPlayWorldClock(value.worldClock)
+    && isRecord(value.playLocalState)
+    && isPlayVisibilityMap(value.playLocalStateVisibility)
+    && isDeepEqualJson(
+      Object.keys(value.playLocalState).sort(),
+      Object.keys(value.playLocalStateVisibility).sort(),
+    )
+    && isPlayScheduledEventList(value.scheduledEvents)
+    && isUniqueNonEmptyStringArray(value.suggestedActions);
 }
 
 function isPlayTranscriptTurn(value: unknown): value is PlayTranscriptTurn {
@@ -1328,19 +2275,243 @@ function isPlayTranscriptTurn(value: unknown): value is PlayTranscriptTurn {
 
 function isPlayWorldEventEnvelope(value: unknown): value is PlayWorldEvent {
   return isRecord(value)
-    && isNonEmptyString(value.id)
-    && isNonEmptyString(value.turnId)
-    && isNonNegativeSafeInteger(value.sequence)
-    && isNonEmptyString(value.kind)
-    && isNonEmptyString(value.origin)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'turnId',
+      'sequence',
+      'kind',
+      'origin',
+      'title',
+      'summary',
+      'visibility',
+      'cause',
+      'worldClock',
+      'createdAt',
+      'canonical',
+    ])
+    && isSafePlayFactId(value.id)
+    && isSafePlayFactId(value.turnId)
+    && isPositiveSafeInteger(value.sequence)
+    && isPlayWorldEventKind(value.kind)
+    && isPlayEventOrigin(value.origin)
     && isNonEmptyString(value.title)
-    && typeof value.summary === 'string'
+    && isNonEmptyString(value.summary)
     && isPlayVisibility(value.visibility)
-    && isRecord(value.cause)
-    && isNonEmptyString(value.cause.reason)
+    && isPlayEventCauseEnvelope(value.cause)
     && isPlayWorldClock(value.worldClock)
     && isNonEmptyString(value.createdAt)
     && value.canonical === false;
+}
+
+function isPlayWorldEventList(value: unknown): value is PlayWorldEvent[] {
+  return Array.isArray(value)
+    && value.every(isPlayWorldEventEnvelope)
+    && hasUniqueEntityIds(value);
+}
+
+function isPlayEventCauseEnvelope(value: unknown): value is PlayEventCause {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'reason',
+      'sourceTurnIds',
+      'sourceEventIds',
+      'triggerId',
+      'pressureId',
+      'agendaId',
+    ])
+    && isNonEmptyString(value.reason)
+    && (value.sourceTurnIds === undefined || isUniqueSafePlayIdArray(value.sourceTurnIds))
+    && (value.sourceEventIds === undefined || isUniqueSafePlayIdArray(value.sourceEventIds))
+    && (value.triggerId === undefined || isSafePlayFactId(value.triggerId))
+    && (value.pressureId === undefined || isSafePlayFactId(value.pressureId))
+    && (value.agendaId === undefined || isSafePlayFactId(value.agendaId));
+}
+
+function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'artifactKind',
+      'branchSnapshotVersion',
+      'id',
+      'revision',
+      'parentTurnId',
+      'input',
+      'messages',
+      'worldClock',
+      'eventIds',
+      'dueScheduledEventIds',
+      'scheduledEventIds',
+      'scheduledEventSnapshots',
+      'playLocalStateSnapshot',
+      'playLocalStateVisibilitySnapshot',
+      'observationIds',
+      'stateDelta',
+      'suggestedActions',
+      'committedAt',
+      'canonical',
+    ])
+    && (value.schemaVersion === 1 || value.schemaVersion === 2)
+    && (value.artifactKind === undefined
+      || value.artifactKind === 'worldSettlement'
+      || value.artifactKind === 'transcriptAppend')
+    && (value.branchSnapshotVersion === undefined || value.branchSnapshotVersion === 1)
+    && isSafePlayFactId(value.id)
+    && isNonNegativeSafeInteger(value.revision)
+    && (value.parentTurnId === undefined || isSafePlayFactId(value.parentTurnId))
+    && (value.input === undefined || (
+      isRecord(value.input)
+      && hasOnlyKnownFields(value.input, ['kind', 'raw'])
+      && isPlayActionKind(value.input.kind)
+      && isNonEmptyString(value.input.raw)
+    ))
+    && Array.isArray(value.messages)
+    && value.messages.length > 0
+    && value.messages.every(isPlayTurnArtifactMessage)
+    && (value.worldClock === undefined || isPlayWorldClock(value.worldClock))
+    && isUniqueSafePlayIdArray(value.eventIds)
+    && isUniqueSafePlayIdArray(value.dueScheduledEventIds)
+    && hasMatchingScheduledEventSnapshots(
+      value.scheduledEventIds,
+      value.scheduledEventSnapshots,
+    )
+    && (value.playLocalStateSnapshot === undefined || isRecord(value.playLocalStateSnapshot))
+    && (value.playLocalStateVisibilitySnapshot === undefined
+      || isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot))
+    && (value.schemaVersion !== 2 || (
+      (value.artifactKind === 'worldSettlement'
+        || value.artifactKind === 'transcriptAppend')
+      && value.branchSnapshotVersion === 1
+      && value.worldClock !== undefined
+      && isRecord(value.playLocalStateSnapshot)
+      && isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot)
+    ))
+    && isUniqueSafePlayIdArray(value.observationIds)
+    && isRecord(value.stateDelta)
+    && isUniqueNonEmptyStringArray(value.suggestedActions)
+    && isNonEmptyString(value.committedAt)
+    && value.canonical === false;
+}
+
+function isPlayTurnArtifactMessage(value: unknown): value is PlayTranscriptTurn & { id: string } {
+  return isPlayTranscriptTurn(value)
+    && isRecord(value)
+    && hasOnlyKnownFields(value, ['id', 'speaker', 'content', 'createdAt', 'actionKind'])
+    && isSafePlayFactId(value.id)
+    && isNonEmptyString(value.content);
+}
+
+function hasMatchingScheduledEventSnapshots(
+  scheduledEventIds: unknown,
+  scheduledEventSnapshots: unknown,
+): boolean {
+  if (
+    !isUniqueSafePlayIdArray(scheduledEventIds) ||
+    !isPlayScheduledEventList(scheduledEventSnapshots)
+  ) {
+    return false;
+  }
+
+  return scheduledEventSnapshots.length === scheduledEventIds.length
+    && scheduledEventSnapshots.every((event, index) =>
+      event.id === scheduledEventIds[index]);
+}
+
+function isPlayScheduledEventEnvelope(value: unknown): value is PlayScheduledEvent {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'label',
+      'trigger',
+      'template',
+      'status',
+      'scheduledAtTurn',
+      'scheduledAtRevision',
+      'sourceTurnId',
+      'changeReason',
+      'priority',
+      'occurredEventIds',
+      'resolvedAtTurnId',
+      'resolutionReason',
+    ])
+  ) {
+    return false;
+  }
+  const status = value.status;
+  const occurredEventIds = value.occurredEventIds;
+  const resolvedAtTurnId = value.resolvedAtTurnId;
+  const resolutionReason = value.resolutionReason;
+
+  return isSafePlayFactId(value.id)
+    && isNonEmptyString(value.label)
+    && isPlayEventTrigger(value.trigger)
+    && isPlayScheduledEventTemplate(value.template)
+    && (status === 'scheduled' || status === 'occurred' || status === 'cancelled')
+    && isNonNegativeSafeInteger(value.scheduledAtTurn)
+    && isNonNegativeSafeInteger(value.scheduledAtRevision)
+    && (value.sourceTurnId === undefined || isSafePlayFactId(value.sourceTurnId))
+    && (value.changeReason === undefined || isNonEmptyString(value.changeReason))
+    && (value.priority === undefined || Number.isSafeInteger(value.priority))
+    && (occurredEventIds === undefined || isUniqueSafePlayIdArray(occurredEventIds))
+    && (resolvedAtTurnId === undefined || isSafePlayFactId(resolvedAtTurnId))
+    && (resolutionReason === undefined || isNonEmptyString(resolutionReason))
+    && (status !== 'scheduled' || (
+      occurredEventIds === undefined
+      && resolvedAtTurnId === undefined
+      && resolutionReason === undefined
+    ))
+    && (status !== 'occurred' || (
+      Array.isArray(occurredEventIds)
+      && occurredEventIds.length > 0
+      && isNonEmptyString(resolvedAtTurnId)
+    ))
+    && (status !== 'cancelled' || (
+      occurredEventIds === undefined
+      && isNonEmptyString(resolvedAtTurnId)
+      && isNonEmptyString(resolutionReason)
+    ));
+}
+
+function isPlayScheduledEventList(value: unknown): value is PlayScheduledEvent[] {
+  return Array.isArray(value)
+    && value.every(isPlayScheduledEventEnvelope)
+    && hasUniqueEntityIds(value);
+}
+
+function isPlayEventTrigger(value: unknown): value is PlayEventTrigger {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === 'nextTurn' || value.type === 'manual') {
+    return hasOnlyKnownFields(value, ['type']);
+  }
+  if (value.type === 'afterTurns') {
+    return hasOnlyKnownFields(value, ['type', 'turns'])
+      && isPositiveSafeInteger(value.turns);
+  }
+  if (value.type === 'flagEquals') {
+    return hasOnlyKnownFields(value, ['type', 'path', 'value'])
+      && isSafePlayStatePath(value.path)
+      && (typeof value.value === 'string'
+        || typeof value.value === 'boolean'
+        || (typeof value.value === 'number' && Number.isFinite(value.value)));
+  }
+  return value.type === 'atWorldTime'
+    && hasOnlyKnownFields(value, ['type', 'value'])
+    && isNonEmptyString(value.value);
+}
+
+function isPlayScheduledEventTemplate(
+  value: unknown,
+): value is PlayScheduledEventTemplate {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['kind', 'origin', 'title', 'summary', 'visibility'])
+    && isPlayWorldEventKind(value.kind)
+    && isPlayEventOrigin(value.origin)
+    && isNonEmptyString(value.title)
+    && isNonEmptyString(value.summary)
+    && isPlayVisibility(value.visibility);
 }
 
 function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSource {
@@ -1363,18 +2534,18 @@ function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSo
 
 function isPlayObservationEnvelope(value: unknown): value is PlayObservation {
   return isRecord(value)
-    && isNonEmptyString(value.id)
+    && isSafePlayFactId(value.id)
     && isNonEmptyString(value.summary)
     && typeof value.evidence === 'string'
     && isPlayVisibility(value.visibility)
-    && isStringArray(value.sourceTurnIds)
-    && isStringArray(value.sourceEventIds)
+    && isUniqueSafePlayIdArray(value.sourceTurnIds)
+    && isUniqueSafePlayIdArray(value.sourceEventIds)
     && value.canonical === false;
 }
 
 function isPlayAdoptionCandidateEnvelope(value: unknown): value is PlayAdoptionCandidate {
   return isRecord(value)
-    && isNonEmptyString(value.id)
+    && isSafePlayFactId(value.id)
     && (value.target === 'chapterDraft'
       || value.target === 'state'
       || value.target === 'timeline'
@@ -1383,9 +2554,9 @@ function isPlayAdoptionCandidateEnvelope(value: unknown): value is PlayAdoptionC
     && typeof value.evidence === 'string'
     && (value.payload === undefined || isRecord(value.payload))
     && isPlayVisibility(value.visibility)
-    && isStringArray(value.sourceObservationIds)
-    && isStringArray(value.sourceTurnIds)
-    && isStringArray(value.sourceEventIds)
+    && isUniqueSafePlayIdArray(value.sourceObservationIds)
+    && isUniqueSafePlayIdArray(value.sourceTurnIds)
+    && isUniqueSafePlayIdArray(value.sourceEventIds)
     && value.requiresPendingAction === true;
 }
 
@@ -1395,6 +2566,41 @@ function isPlayVisibilityMap(value: unknown): value is Record<string, PlayEventV
 
 function isPlayVisibility(value: unknown): value is PlayEventVisibility {
   return value === 'playerVisible' || value === 'rumor' || value === 'playerUnknown';
+}
+
+function isPlayActionKind(value: unknown): value is PlayActionKind {
+  return value === 'say'
+    || value === 'look'
+    || value === 'move'
+    || value === 'do'
+    || value === 'wait';
+}
+
+function isPlayEventOrigin(value: unknown): value is PlayEventOrigin {
+  return value === 'player'
+    || value === 'npc'
+    || value === 'faction'
+    || value === 'clock'
+    || value === 'environment'
+    || value === 'worldRule'
+    || value === 'manual';
+}
+
+function isPlayWorldEventKind(value: unknown): value is PlayWorldEventKind {
+  return value === 'environmentChanged'
+    || value === 'locationChanged'
+    || value === 'npcActed'
+    || value === 'factionActed'
+    || value === 'arrival'
+    || value === 'departure'
+    || value === 'deadlineAdvanced'
+    || value === 'resourceChanged'
+    || value === 'itemMoved'
+    || value === 'evidenceChanged'
+    || value === 'relationshipChanged'
+    || value === 'informationSpread'
+    || value === 'ruleConsequence'
+    || value === 'manual';
 }
 
 function isPlayEventPolicy(value: unknown): value is PlayEventPolicy {
@@ -1413,11 +2619,92 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1;
+}
+
+function hasOnlyKnownFields(
+  value: Record<string, unknown>,
+  knownFields: readonly string[],
+): boolean {
+  const known = new Set(knownFields);
+  return Object.keys(value).every((field) => known.has(field));
+}
+
+function isSafePlayFactId(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
+    && !value.includes('..')
+    && !value.includes('/')
+    && !value.includes('\\');
+}
+
+function isUniqueSafePlayIdArray(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.every(isSafePlayFactId)
+    && new Set(value).size === value.length;
+}
+
+function isUniqueNonEmptyStringArray(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.every(isNonEmptyString)
+    && new Set(value).size === value.length;
+}
+
+function hasUniqueEntityIds(value: readonly unknown[]): boolean {
+  const ids = value.map((item) => isRecord(item) && isSafePlayFactId(item.id)
+    ? item.id
+    : undefined);
+  return ids.every((id): id is string => id !== undefined)
+    && new Set(ids).size === ids.length;
+}
+
+function isDeepEqualJson(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((item, index) => isDeepEqualJson(item, right[index]));
+  }
+  if (!isRecord(left) || !isRecord(right)) {
+    return false;
+  }
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) =>
+      key === rightKeys[index] && isDeepEqualJson(left[key], right[key]));
+}
+
+const UNSAFE_PLAY_STATE_PATH_SEGMENTS = new Set([
+  '__proto__',
+  'prototype',
+  'constructor',
+]);
+
+function isSafePlayStatePath(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 256 ||
+    value.trim() !== value
+  ) {
+    return false;
+  }
+
+  return value.split('.').every((segment) =>
+    /^[\p{L}_][\p{L}\p{N}_-]*$/u.test(segment)
+    && !UNSAFE_PLAY_STATE_PATH_SEGMENTS.has(segment));
 }
 
 function isPlayTurnStreamEventType(value: string): value is PlayTurnStreamEvent['type'] {
@@ -1426,6 +2713,7 @@ function isPlayTurnStreamEventType(value: string): value is PlayTurnStreamEvent[
     || value === 'play.narrative.delta'
     || value === 'play.narrative.reset'
     || value === 'play.turn.prepared'
+    || value === 'play.event.occurred'
     || value === 'play.turn.committed'
     || value === 'play.turn.cancelled'
     || value === 'play.turn.failed';

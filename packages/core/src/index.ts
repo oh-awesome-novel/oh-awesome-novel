@@ -229,6 +229,7 @@ export {
   createPlayAdoptionCandidate,
   createPlaySessionDraft,
   createDefaultPlayWorldClock,
+  evaluatePlaySessionDueEvents,
   formatPlayWorldRefereePrompt,
   listPlaySessions,
   previewPlaySessionMigration,
@@ -253,6 +254,7 @@ export type {
   PlayActivatedSource,
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
+  PlayBranchBaseSnapshot,
   PlayObservation,
   PlayEventDensity,
   PlayEventOrigin,
@@ -269,10 +271,12 @@ export type {
   PlayWorldEventKind,
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
+  PlayWorldRefereeScheduledEventChange,
   SettlePlayWorldRefereeResponseInput,
   PlaySessionMigrationPreview,
 } from './play-session.js';
 export {
+  LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
   PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
   assertSafePlayTurnArtifactId,
   createLegacyPlayTurnArtifacts,
@@ -283,6 +287,8 @@ export {
 } from './play-turn-artifact.js';
 export type {
   LegacyPlayTurnArtifactInput,
+  PlayTurnArtifactKind,
+  PlayTurnArtifactSchemaVersion,
   PlayTurnArtifact,
 } from './play-turn-artifact.js';
 export {
@@ -290,6 +296,26 @@ export {
   createPlayNarrativeStreamFilter,
 } from './play-narrative-stream.js';
 export type { PlayNarrativeStreamFilter } from './play-narrative-stream.js';
+export {
+  assertPlayScheduledEvent,
+  assertPlayScheduledEvents,
+  assertSafePlayScheduledEventId,
+  assertSafePlayStatePath,
+  evaluatePlayDueEvents,
+  normalizePlayEventTrigger,
+  normalizePlayScheduledEvent,
+  normalizePlayScheduledEventTemplate,
+  normalizePlayScheduledEvents,
+} from './play-event-schedule.js';
+export type {
+  EvaluatePlayDueEventsInput,
+  PlayDueEventEvaluation,
+  PlayEventTrigger,
+  PlayFlagValue,
+  PlayScheduledEvent,
+  PlayScheduledEventStatus,
+  PlayScheduledEventTemplate,
+} from './play-event-schedule.js';
 export type {
   CreateOanTavernImportPreviewOptions,
   NormalizedTavernCard,

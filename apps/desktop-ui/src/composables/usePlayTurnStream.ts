@@ -198,6 +198,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         } else {
           updateRun(localId, {
             phase: /revision conflict/iu.test(message) ? 'conflict' : 'failed',
+            provisionalText: '',
             statusMessage: 'Turn not committed',
             error: message,
           });
@@ -331,6 +332,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
               statusMessage: 'Validated · waiting to commit',
             });
         return undefined;
+      case 'play.event.occurred':
+        // The following committed session remains the authoritative UI projection.
+        return undefined;
       case 'play.turn.committed':
         applyCommittedSession(event.turnId, event.session);
         terminalOutcomes.set(event.turnId, 'committed');
@@ -349,6 +353,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       case 'play.turn.failed':
         updateRun(localId, {
           phase: event.error.code === 'revision_conflict' ? 'conflict' : 'failed',
+          provisionalText: '',
           statusMessage: 'Turn not committed',
           error: event.error.message,
         });
@@ -402,6 +407,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     terminalOutcomes.set(result.turnId, 'failed');
     updateRun(localId, {
       phase: 'failed',
+      provisionalText: '',
       statusMessage: 'Turn not committed',
       error: result.error,
     });

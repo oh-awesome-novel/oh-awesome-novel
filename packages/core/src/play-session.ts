@@ -2,9 +2,22 @@ import { randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { access, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'yaml';
 
 import type { ContextBudgetLayer, SemanticBoundary } from './agent-context-package.js';
+import { assertSafePlayNarrativePrefix } from './play-narrative-stream.js';
+import {
+  evaluatePlayDueEvents,
+  normalizePlayEventTrigger,
+  normalizePlayScheduledEventTemplate,
+  normalizePlayScheduledEvents,
+} from './play-event-schedule.js';
+import type {
+  PlayEventTrigger,
+  PlayScheduledEvent,
+  PlayScheduledEventTemplate,
+} from './play-event-schedule.js';
 import {
   PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
   assertSafePlayTurnArtifactId,
@@ -22,11 +35,12 @@ export const PLAY_SESSION_FILES = [
   'play-local-state.yaml',
   'activated-sources.yaml',
   'events.yaml',
+  'event-schedule.yaml',
   'observations.yaml',
   'adoption-candidates.yaml',
 ] as const;
 
-export const PLAY_SESSION_SCHEMA_VERSION = 3 as const;
+export const PLAY_SESSION_SCHEMA_VERSION = 4 as const;
 export const PLAY_TURNS_DIRECTORY = 'turns' as const;
 
 export type PlaySessionFile = typeof PLAY_SESSION_FILES[number];
@@ -90,6 +104,15 @@ export interface PlayWorldClock {
   elapsed?: string;
 }
 
+export interface PlayBranchBaseSnapshot {
+  parentTurnId?: string;
+  worldClock: PlayWorldClock;
+  playLocalState: Record<string, unknown>;
+  playLocalStateVisibility: Record<string, PlayEventVisibility>;
+  scheduledEvents: PlayScheduledEvent[];
+  suggestedActions: string[];
+}
+
 export interface PlayEventPolicy {
   simulationMode: PlaySimulationMode;
   density: PlayEventDensity;
@@ -135,10 +158,33 @@ export interface PlayWorldRefereeSettlement {
   elapsed?: string;
   worldTimeAnchor?: string;
   events: PlayWorldRefereeSettlementEvent[];
+  scheduledEventChanges: PlayWorldRefereeScheduledEventChange[];
   stateDelta: Record<string, unknown>;
   observations: Array<{ summary: string; evidence: string }>;
   suggestedActions: string[];
 }
+
+export type PlayWorldRefereeScheduledEventChange =
+  | {
+      type: 'schedule';
+      label: string;
+      trigger: PlayEventTrigger;
+      template: PlayScheduledEventTemplate;
+      reason: string;
+      priority?: number;
+    }
+  | {
+      type: 'cancel';
+      scheduledEventId: string;
+      reason: string;
+    }
+  | {
+      type: 'reschedule';
+      scheduledEventId: string;
+      trigger: PlayEventTrigger;
+      reason: string;
+      priority?: number;
+    };
 
 export interface ParsedPlayWorldRefereeResponse {
   narrative: string;
@@ -201,12 +247,15 @@ export interface PlaySession {
   transcript: PlayTranscriptTurn[];
   turnArtifacts: PlayTurnArtifact[];
   selectedTurnIds: string[];
+  branchSnapshotRequiredFromRevision: number;
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
   metadataExtensions: Record<string, unknown>;
   playLocalState: Record<string, unknown>;
   playLocalStateVisibility: Record<string, PlayEventVisibility>;
   worldClock: PlayWorldClock;
   eventPolicy: PlayEventPolicy;
   events: PlayWorldEvent[];
+  scheduledEvents: PlayScheduledEvent[];
   suggestedActions: string[];
   activatedSources: PlayActivatedSource[];
   observations: PlayObservation[];
@@ -215,7 +264,7 @@ export interface PlaySession {
 
 export interface PlaySessionMigrationPreview {
   sessionId: string;
-  fromSchemaVersion: 1 | 2;
+  fromSchemaVersion: 1 | 2 | 3;
   toSchemaVersion: typeof PLAY_SESSION_SCHEMA_VERSION;
   unknownMetadataKeys: string[];
   legacyTranscriptCount: number;
@@ -233,33 +282,50 @@ export interface CreatePlaySessionInput {
   characters: string[];
   activatedSources?: PlayActivatedSource[];
   eventPolicy?: Partial<PlayEventPolicy>;
+  scheduledEvents?: PlayScheduledEvent[];
 }
 
 export const createPlaySessionDraft = (
   input: CreatePlaySessionInput,
-): PlaySession => ({
-  schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
-  id: assertSafePlaySessionId(input.id),
-  title: input.title,
-  createdAt: input.createdAt ?? new Date().toISOString(),
-  revision: 0,
-  userPersona: input.userPersona,
-  sceneStart: input.sceneStart,
-  characters: [...input.characters],
-  transcript: [],
-  turnArtifacts: [],
-  selectedTurnIds: [],
-  metadataExtensions: {},
-  playLocalState: {},
-  playLocalStateVisibility: {},
-  worldClock: createDefaultPlayWorldClock(),
-  eventPolicy: normalizePlayEventPolicy(input.eventPolicy),
-  events: [],
-  suggestedActions: [],
-  activatedSources: input.activatedSources?.map(assertActivatedSource) ?? [],
-  observations: [],
-  adoptionCandidates: [],
-});
+): PlaySession => {
+  const worldClock = createDefaultPlayWorldClock();
+  const scheduledEvents = normalizePlayBranchBaseScheduledEvents(
+    input.scheduledEvents ?? [],
+    worldClock,
+  );
+  return {
+    schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
+    id: assertSafePlaySessionId(input.id),
+    title: input.title,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    revision: 0,
+    userPersona: input.userPersona,
+    sceneStart: input.sceneStart,
+    characters: [...input.characters],
+    transcript: [],
+    turnArtifacts: [],
+    selectedTurnIds: [],
+    branchSnapshotRequiredFromRevision: 0,
+    branchBaseSnapshot: {
+      worldClock: { ...worldClock },
+      playLocalState: {},
+      playLocalStateVisibility: {},
+      scheduledEvents: scheduledEvents.map(clonePlayScheduledEvent),
+      suggestedActions: [],
+    },
+    metadataExtensions: {},
+    playLocalState: {},
+    playLocalStateVisibility: {},
+    worldClock,
+    eventPolicy: normalizePlayEventPolicy(input.eventPolicy),
+    events: [],
+    scheduledEvents,
+    suggestedActions: [],
+    activatedSources: input.activatedSources?.map(assertActivatedSource) ?? [],
+    observations: [],
+    adoptionCandidates: [],
+  };
+};
 
 export const createPlayAdoptionCandidate = (
   input: Omit<
@@ -347,16 +413,33 @@ export const writePlaySessionFiles = async (
 ): Promise<string[]> => {
   await recoverPlaySessionDirectory(workspaceRoot, session.id);
 
-  const normalizedFacts = materializePlayTurnFacts(session);
-  const revision = resolvePlaySessionRevision(session, normalizedFacts.turnArtifacts);
-  const sessionForWrite: PlaySession = {
+  const normalizedObservations = session.observations.map((observation) =>
+    assertPlayObservation(observation, { strict: true }));
+  const normalizedAdoptionCandidates = session.adoptionCandidates.map((candidate) =>
+    assertPlayAdoptionCandidate(candidate, { strict: true }));
+  const normalizedSession: PlaySession = {
     ...session,
+    observations: normalizedObservations,
+    adoptionCandidates: normalizedAdoptionCandidates,
+  };
+  const normalizedFacts = materializePlayTurnFacts(normalizedSession);
+  const revision = resolvePlaySessionRevision(
+    normalizedSession,
+    normalizedFacts.turnArtifacts,
+  );
+  const sessionForWrite: PlaySession = {
+    ...normalizedSession,
     revision,
     transcript: normalizedFacts.transcript,
     turnArtifacts: normalizedFacts.turnArtifacts,
     selectedTurnIds: normalizedFacts.selectedTurnIds,
+    branchBaseSnapshot: normalizedFacts.branchBaseSnapshot,
+    scheduledEvents: normalizedFacts.selectedScheduledEvents,
+    playLocalState: normalizedFacts.selectedPlayLocalState,
+    playLocalStateVisibility: normalizedFacts.selectedPlayLocalStateVisibility,
+    suggestedActions: normalizedFacts.selectedSuggestedActions,
     worldClock: {
-      ...session.worldClock,
+      ...normalizedSession.worldClock,
       revision,
     },
   };
@@ -368,6 +451,9 @@ export const writePlaySessionFiles = async (
       activatedSources: sessionForWrite.activatedSources,
     })],
     ['events.yaml', stringify({ events: sessionForWrite.events })],
+    ['event-schedule.yaml', stringify({
+      scheduledEvents: normalizePlayScheduledEvents(sessionForWrite.scheduledEvents),
+    })],
     ['observations.yaml', stringify({ observations: sessionForWrite.observations })],
     ['adoption-candidates.yaml', stringify({
       adoptionCandidates: sessionForWrite.adoptionCandidates,
@@ -466,6 +552,8 @@ export const readPlaySessionFiles = async (
     suggestedActions?: string[];
     playLocalStateVisibility?: Record<string, PlayEventVisibility>;
     selectedTurnIds?: string[];
+    branchSnapshotRequiredFromRevision?: number;
+    branchBaseSnapshot?: unknown;
   }>(workspaceRoot, sessionId, 'session.yaml');
   assertSupportedPlaySessionSchemaVersion(metadata.schemaVersion);
   const sourceSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
@@ -492,6 +580,12 @@ export const readPlaySessionFiles = async (
     'events.yaml',
     {},
   );
+  const eventSchedule = await readPlayYaml<{ scheduledEvents?: unknown }>(
+    workspaceRoot,
+    sessionId,
+    'event-schedule.yaml',
+    {},
+  );
   const observations = await readPlayYaml<{ observations?: PlayObservation[] }>(
     workspaceRoot,
     sessionId,
@@ -504,29 +598,89 @@ export const readPlaySessionFiles = async (
     'adoption-candidates.yaml',
     {},
   );
-  const normalizedEvents = (events.events ?? []).map(assertPlayWorldEvent);
-  const normalizedObservations = (observations.observations ?? []).map(assertPlayObservation);
-  const turnArtifacts = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+  const requireStoredVisibility = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION;
+  const normalizedEvents = (events.events ?? []).map((event) =>
+    assertPlayWorldEvent(event, { strict: requireStoredVisibility }));
+  const normalizedScheduledEvents = normalizePlayScheduledEvents(
+    eventSchedule.scheduledEvents ?? [],
+  );
+  const normalizedObservations = (observations.observations ?? []).map((observation) =>
+    assertPlayObservation(observation, {
+      strict: requireStoredVisibility,
+    }));
+  const normalizedAdoptionCandidates = (adoptionCandidates.adoptionCandidates ?? [])
+    .map((candidate) => assertPlayAdoptionCandidate(candidate, {
+      strict: requireStoredVisibility,
+    }));
+  const usesStructuredTurnArtifacts = sourceSchemaVersion >= 3;
+  const turnArtifacts = usesStructuredTurnArtifacts
     ? await readPlayTurnArtifacts(workspaceRoot, sessionId)
     : createLegacyPlayTurnArtifacts({
         transcript: metadata.transcript ?? [],
         events: normalizedEvents,
         observations: normalizedObservations,
       });
-  const selectedTurnIds = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+  const selectedTurnIds = usesStructuredTurnArtifacts
     ? normalizeSelectedTurnIds(metadata.selectedTurnIds, turnArtifacts)
     : turnArtifacts.map((artifact) => artifact.id);
-  const validatedFacts = validatePlayTurnFacts({
-    turnArtifacts,
-    selectedTurnIds,
-    events: normalizedEvents,
-    observations: normalizedObservations,
-  });
-  const transcript = validatedFacts.transcript;
   const revision = Math.max(
     normalizeNonNegativeInteger(metadata.revision ?? metadata.worldClock?.revision),
     ...turnArtifacts.map((artifact) => artifact.revision),
   );
+  const worldClock = normalizePlayWorldClock(metadata.worldClock, revision);
+  const sessionPlayLocalStateVisibility = requireStoredVisibility
+    ? requireExactPlayLocalStateVisibility(
+        playLocalState,
+        metadata.playLocalStateVisibility,
+        'Play session v4 state visibility',
+      )
+    : normalizePlayLocalStateVisibility(
+        playLocalState,
+        metadata.playLocalStateVisibility,
+      );
+  const sessionSuggestedActions = normalizeStringList(metadata.suggestedActions, 6);
+  if (
+    sourceSchemaVersion === 3 &&
+    turnArtifacts.some((artifact) =>
+      artifact.schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION)
+  ) {
+    throw new Error('Play session v3 cannot contain unverifiable v2 branch snapshots.');
+  }
+  const branchSnapshotRequiredFromRevision =
+    sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+      ? requirePlayBranchSnapshotWatermark(
+          metadata.branchSnapshotRequiredFromRevision,
+        )
+      : revision;
+  const branchBaseSnapshot = sourceSchemaVersion === PLAY_SESSION_SCHEMA_VERSION
+    ? normalizePlayBranchBaseSnapshot(metadata.branchBaseSnapshot)
+    : normalizePlayBranchBaseSnapshot({
+        ...(selectedTurnIds.at(-1)
+          ? { parentTurnId: selectedTurnIds.at(-1) }
+          : {}),
+        worldClock: { ...worldClock },
+        playLocalState: clonePlayLocalState(playLocalState),
+        playLocalStateVisibility: { ...sessionPlayLocalStateVisibility },
+        scheduledEvents: normalizedScheduledEvents.map(clonePlayScheduledEvent),
+        suggestedActions: [...sessionSuggestedActions],
+      });
+  const validatedFacts = validatePlayTurnFacts({
+    turnArtifacts,
+    selectedTurnIds,
+    events: normalizedEvents,
+    scheduledEvents: normalizedScheduledEvents,
+    observations: normalizedObservations,
+    adoptionCandidates: normalizedAdoptionCandidates,
+    currentRevision: revision,
+    currentWorldTurn: worldClock.turn,
+    sessionWorldClock: worldClock,
+    sessionPlayLocalState: playLocalState,
+    sessionPlayLocalStateVisibility,
+    branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot,
+    sessionSuggestedActions,
+  });
+  const transcript = validatedFacts.transcript;
 
   return {
     schemaVersion: PLAY_SESSION_SCHEMA_VERSION,
@@ -540,23 +694,19 @@ export const readPlaySessionFiles = async (
     transcript,
     turnArtifacts,
     selectedTurnIds,
+    branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot,
     metadataExtensions: readPlaySessionMetadataExtensions(metadata),
-    playLocalState,
-    playLocalStateVisibility: normalizePlayLocalStateVisibility(
-      playLocalState,
-      metadata.playLocalStateVisibility,
-    ),
-    worldClock: normalizePlayWorldClock(
-      metadata.worldClock,
-      revision,
-    ),
+    playLocalState: validatedFacts.selectedPlayLocalState,
+    playLocalStateVisibility: validatedFacts.selectedPlayLocalStateVisibility,
+    worldClock,
     eventPolicy: normalizePlayEventPolicy(metadata.eventPolicy),
     events: normalizedEvents,
-    suggestedActions: normalizeStringList(metadata.suggestedActions, 6),
+    scheduledEvents: validatedFacts.selectedScheduledEvents,
+    suggestedActions: validatedFacts.selectedSuggestedActions,
     activatedSources: (activatedSources.activatedSources ?? []).map(assertActivatedSource),
     observations: normalizedObservations,
-    adoptionCandidates: (adoptionCandidates.adoptionCandidates ?? [])
-      .map(assertPlayAdoptionCandidate),
+    adoptionCandidates: normalizedAdoptionCandidates,
   };
 };
 
@@ -599,11 +749,27 @@ export const listPlaySessions = async (
   }
 };
 
+export const evaluatePlaySessionDueEvents = (
+  session: PlaySession,
+) => {
+  const facts = materializePlayTurnFacts(session);
+  return evaluatePlayDueEvents({
+    scheduledEvents: facts.selectedScheduledEvents,
+    currentTurn: session.worldClock.turn,
+    nextTurn: session.worldClock.turn + 1,
+    playLocalState: facts.selectedPlayLocalState,
+    ...(session.worldClock.anchor
+      ? { currentWorldTime: session.worldClock.anchor }
+      : {}),
+  });
+};
+
 export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
   const facts = materializePlayTurnFacts(session);
   const selectedEvents = session.events.filter((event) =>
     facts.selectedEventIds.has(event.id));
   const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
+  const scheduleEvaluation = evaluatePlaySessionDueEvents(session);
 
   return [
     '# Play Mode World Referee',
@@ -624,7 +790,7 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
     `World activity: ${session.eventPolicy.simulationMode}/${session.eventPolicy.density}; max external events ${session.eventPolicy.maxExternalEventsPerTurn}`,
     '',
     'Current Play-local state:',
-    formatPromptJson(session.playLocalState),
+    formatPromptJson(facts.selectedPlayLocalState),
     '',
     'Recent committed transcript:',
     ...(facts.transcript.length
@@ -640,6 +806,21 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
         )
       : ['- none']),
     '',
+    'Host-enforced hard-due events for this turn:',
+    ...(scheduleEvaluation.dueEvents.length
+      ? scheduleEvaluation.dueEvents.map((event) =>
+          `- ${event.id} [priority ${event.priority ?? 0}/${event.template.visibility}] ${event.label}: ${event.template.title} — ${event.template.summary}`,
+        )
+      : ['- none']),
+    'Every listed hard-due event must appear exactly once in settlement.events with cause.triggerId set to its id. Hard-due events do not consume the external-event budget.',
+    '',
+    'Pending scheduled events:',
+    ...(scheduleEvaluation.pendingEvents.length
+      ? scheduleEvaluation.pendingEvents.slice(0, 20).map((event) =>
+          `- ${event.id} [${event.trigger.type}/${event.template.visibility}] ${event.label}`,
+        )
+      : ['- none']),
+    '',
     'Activated sources:',
     ...(
       session.activatedSources.length
@@ -652,10 +833,12 @@ export const formatPlayWorldRefereePrompt = (session: PlaySession): string => {
     'Output protocol:',
     '1. Write only the player-visible narrative first. Never leak playerUnknown events.',
     '2. End with exactly one fenced `oan-play-settlement` JSON object.',
-    '3. The JSON fields are: elapsed, worldTimeAnchor, events, stateDelta, observations, suggestedActions.',
+    '3. The JSON fields are: elapsed, worldTimeAnchor, events, scheduledEventChanges, stateDelta, observations, suggestedActions.',
     '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason }.',
-    '5. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
-    '6. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
+    '5. To create a future consequence, add a scheduledEventChanges item with type schedule, label, trigger, template, reason, and optional priority. To cancel or reschedule a pending item, reference its scheduledEventId and provide a reason.',
+    '6. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
+    '7. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
+    '8. Player-visible or rumor summaries and observation evidence may describe only perceivable consequences. Keep hidden causal reasoning in event cause and mark truly secret facts playerUnknown.',
   ].join('\n');
 };
 
@@ -682,6 +865,7 @@ export const parsePlayWorldRefereeResponse = (
   if (!narrative) {
     throw new Error('Play world referee response requires player-visible narrative.');
   }
+  assertSafePlayNarrativePrefix(narrative);
 
   let parsed: unknown;
   try {
@@ -714,7 +898,17 @@ export const settlePlayWorldRefereeResponse = (
   const turnId = `turn-${revision}`;
   const userTurnId = `${turnId}-user`;
   const refereeTurnId = `${turnId}-referee`;
-  assertSettlementMatchesEventPolicy(input.session, parsed.settlement);
+  const scheduleEvaluation = evaluatePlaySessionDueEvents(input.session);
+  assertSettlementMatchesEventPolicy(
+    input.session,
+    parsed.settlement,
+    scheduleEvaluation.dueEvents,
+  );
+  assertSettlementScheduleReferences(
+    input.session,
+    parsed.settlement,
+    scheduleEvaluation.dueEvents,
+  );
   assertSettlementCauseReferences(
     existingFacts,
     parsed.settlement,
@@ -765,12 +959,27 @@ export const settlePlayWorldRefereeResponse = (
       canonical: false,
     }),
   );
+  const scheduledEvents = materializePlayScheduledEvents({
+    session: input.session,
+    settlement: parsed.settlement,
+    events,
+    revision,
+    worldTurn: worldClock.turn,
+    refereeTurnId,
+  });
   const playLocalStateVisibility = {
-    ...input.session.playLocalStateVisibility,
+    ...existingFacts.selectedPlayLocalStateVisibility,
   };
   for (const key of Object.keys(parsed.settlement.stateDelta)) {
     playLocalStateVisibility[key] = settlementVisibility;
   }
+  const playLocalState = mergePlayLocalState(
+    existingFacts.selectedPlayLocalState,
+    parsed.settlement.stateDelta,
+  );
+  const suggestedActions = settlementVisibility === 'playerUnknown'
+    ? []
+    : [...parsed.settlement.suggestedActions];
 
   const messages: PlayTranscriptTurn[] = [
     {
@@ -794,6 +1003,8 @@ export const settlePlayWorldRefereeResponse = (
   const parentTurnId = existingFacts.selectedTurnIds.at(-1);
   const artifact: PlayTurnArtifact = {
     schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    artifactKind: 'worldSettlement',
+    branchSnapshotVersion: 1,
     id: artifactId,
     revision,
     ...(parentTurnId ? { parentTurnId } : {}),
@@ -804,9 +1015,14 @@ export const settlePlayWorldRefereeResponse = (
     messages,
     worldClock: { ...worldClock },
     eventIds: events.map((event) => event.id),
+    dueScheduledEventIds: scheduleEvaluation.dueEvents.map((event) => event.id),
+    scheduledEventIds: scheduledEvents.map((scheduledEvent) => scheduledEvent.id),
+    scheduledEventSnapshots: scheduledEvents.map(clonePlayScheduledEvent),
+    playLocalStateSnapshot: clonePlayLocalState(playLocalState),
+    playLocalStateVisibilitySnapshot: { ...playLocalStateVisibility },
     observationIds: observations.map((observation) => observation.id),
-    stateDelta: { ...parsed.settlement.stateDelta },
-    suggestedActions: [...parsed.settlement.suggestedActions],
+    stateDelta: clonePlayLocalState(parsed.settlement.stateDelta),
+    suggestedActions,
     committedAt: createdAt,
     canonical: false,
   };
@@ -820,18 +1036,17 @@ export const settlePlayWorldRefereeResponse = (
     transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
     turnArtifacts,
     selectedTurnIds,
+    branchSnapshotRequiredFromRevision:
+      input.session.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot: existingFacts.branchBaseSnapshot,
     metadataExtensions: { ...(input.session.metadataExtensions ?? {}) },
-    playLocalState: {
-      ...input.session.playLocalState,
-      ...parsed.settlement.stateDelta,
-    },
+    playLocalState,
     playLocalStateVisibility,
     worldClock,
     events: [...input.session.events, ...events],
+    scheduledEvents,
     observations: [...input.session.observations, ...observations],
-    suggestedActions: settlementVisibility === 'playerUnknown'
-      ? []
-      : parsed.settlement.suggestedActions,
+    suggestedActions,
   };
 };
 
@@ -839,6 +1054,9 @@ export const addPlayTranscriptTurn = (
   session: PlaySession,
   turn: PlayTranscriptTurn,
 ): PlaySession => {
+  if (turn.speaker.trim().toLowerCase() === 'world-referee') {
+    throw new Error('world-referee is reserved for host-validated settlements.');
+  }
   const existingFacts = materializePlayTurnFacts(session);
   const next = advancePlaySessionRevision(session, existingFacts.turnArtifacts);
   const artifactId = createPlayTurnArtifactId(
@@ -848,6 +1066,8 @@ export const addPlayTranscriptTurn = (
   const parentTurnId = existingFacts.selectedTurnIds.at(-1);
   const artifact: PlayTurnArtifact = {
     schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    artifactKind: 'transcriptAppend',
+    branchSnapshotVersion: 1,
     id: artifactId,
     revision: next.revision,
     ...(parentTurnId ? { parentTurnId } : {}),
@@ -855,10 +1075,22 @@ export const addPlayTranscriptTurn = (
       ...turn,
       id: turn.id ?? `${artifactId}-message-1`,
     }],
+    worldClock: { ...next.worldClock },
     eventIds: [],
+    dueScheduledEventIds: [],
+    scheduledEventIds: existingFacts.selectedScheduledEvents.map((event) => event.id),
+    scheduledEventSnapshots: existingFacts.selectedScheduledEvents.map(
+      clonePlayScheduledEvent,
+    ),
+    playLocalStateSnapshot: clonePlayLocalState(
+      existingFacts.selectedPlayLocalState,
+    ),
+    playLocalStateVisibilitySnapshot: {
+      ...existingFacts.selectedPlayLocalStateVisibility,
+    },
     observationIds: [],
     stateDelta: {},
-    suggestedActions: [],
+    suggestedActions: [...existingFacts.selectedSuggestedActions],
     committedAt: turn.createdAt,
     canonical: false,
   };
@@ -869,6 +1101,9 @@ export const addPlayTranscriptTurn = (
     transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
     turnArtifacts,
     selectedTurnIds,
+    branchSnapshotRequiredFromRevision:
+      session.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot: existingFacts.branchBaseSnapshot,
     metadataExtensions: { ...(session.metadataExtensions ?? {}) },
   };
 };
@@ -877,10 +1112,30 @@ export const addPlayObservation = (
   session: PlaySession,
   observation: PlayObservation,
 ): PlaySession => {
-  const next = advancePlaySessionRevision(session);
+  const normalizedObservation = assertPlayObservation(observation, {
+    strict: true,
+  });
+  const existingFacts = materializePlayTurnFacts(session);
+  const outOfBranchTurnId = normalizedObservation.sourceTurnIds.find(
+    (turnId) => !existingFacts.selectedMessageIds.has(turnId),
+  );
+  if (outOfBranchTurnId) {
+    throw new Error(
+      `Play manual observation references out-of-branch turn: ${outOfBranchTurnId}.`,
+    );
+  }
+  const outOfBranchEventId = normalizedObservation.sourceEventIds.find(
+    (eventId) => !existingFacts.selectedEventIds.has(eventId),
+  );
+  if (outOfBranchEventId) {
+    throw new Error(
+      `Play manual observation references out-of-branch event: ${outOfBranchEventId}.`,
+    );
+  }
+  const next = advancePlaySessionRevision(session, existingFacts.turnArtifacts);
   return {
     ...next,
-    observations: [...session.observations, observation],
+    observations: [...session.observations, normalizedObservation],
   };
 };
 
@@ -888,11 +1143,32 @@ export const addPlayAdoptionCandidate = (
   session: PlaySession,
   candidate: PlayAdoptionCandidate,
 ): PlaySession => {
-  const next = advancePlaySessionRevision(session);
-  return {
-    ...next,
-    adoptionCandidates: [...session.adoptionCandidates, candidate],
+  const normalizedCandidate = assertPlayAdoptionCandidate(candidate, {
+    strict: true,
+  });
+  const existingFacts = materializePlayTurnFacts(session);
+  assertScopedPlayFactReferences(
+    `Play adoption candidate ${normalizedCandidate.id}`,
+    normalizedCandidate.sourceTurnIds,
+    normalizedCandidate.sourceEventIds,
+    existingFacts.selectedMessageIds,
+    existingFacts.selectedEventIds,
+  );
+  const outOfBranchObservationId = normalizedCandidate.sourceObservationIds.find(
+    (observationId) => !existingFacts.selectedObservationIds.has(observationId),
+  );
+  if (outOfBranchObservationId) {
+    throw new Error(
+      `Play adoption candidate ${normalizedCandidate.id} references ` +
+      `out-of-branch observation: ${outOfBranchObservationId}.`,
+    );
+  }
+  const sessionWithCandidate: PlaySession = {
+    ...session,
+    adoptionCandidates: [...session.adoptionCandidates, normalizedCandidate],
   };
+  const facts = materializePlayTurnFacts(sessionWithCandidate);
+  return advancePlaySessionRevision(sessionWithCandidate, facts.turnArtifacts);
 };
 
 function formatTranscript(session: PlaySession): string {
@@ -926,6 +1202,9 @@ function formatSessionMetadata(session: PlaySession): Record<string, unknown> {
     sceneStart: session.sceneStart,
     characters: session.characters,
     selectedTurnIds: session.selectedTurnIds,
+    branchSnapshotRequiredFromRevision:
+      session.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot: session.branchBaseSnapshot,
     playLocalStateVisibility: session.playLocalStateVisibility,
     worldClock: session.worldClock,
     eventPolicy: session.eventPolicy,
@@ -961,6 +1240,12 @@ async function readPlayTurnArtifacts(
     sessionId,
     'session.yaml',
   ));
+  return readPlayTurnArtifactsFromSessionRoot(sessionRoot);
+}
+
+async function readPlayTurnArtifactsFromSessionRoot(
+  sessionRoot: string,
+): Promise<PlayTurnArtifact[]> {
   const turnsRoot = join(sessionRoot, PLAY_TURNS_DIRECTORY);
   let entries: Dirent[];
 
@@ -1002,6 +1287,11 @@ function materializePlayTurnFacts(session: PlaySession): {
   selectedMessageIds: Set<string>;
   selectedEventIds: Set<string>;
   selectedObservationIds: Set<string>;
+  selectedScheduledEvents: PlayScheduledEvent[];
+  selectedPlayLocalState: Record<string, unknown>;
+  selectedPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
+  selectedSuggestedActions: string[];
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
 } {
   const storedArtifacts = Array.isArray(session.turnArtifacts)
     ? session.turnArtifacts.map(normalizePlayTurnArtifact)
@@ -1017,18 +1307,33 @@ function materializePlayTurnFacts(session: PlaySession): {
   const selectedTurnIds = usesStoredArtifacts && Array.isArray(session.selectedTurnIds)
     ? session.selectedTurnIds.map(assertSafePlayTurnArtifactId)
     : selectDefaultPlayTurnPath(turnArtifacts);
+  const branchBaseSnapshot = normalizePlayBranchBaseSnapshot(
+    session.branchBaseSnapshot,
+  );
 
   const validated = validatePlayTurnFacts({
     turnArtifacts,
     selectedTurnIds,
     events: session.events,
+    scheduledEvents: session.scheduledEvents,
     observations: session.observations,
+    adoptionCandidates: session.adoptionCandidates,
+    currentRevision: resolvePlaySessionRevision(session, turnArtifacts),
+    currentWorldTurn: session.worldClock.turn,
+    sessionWorldClock: session.worldClock,
+    sessionPlayLocalState: session.playLocalState,
+    sessionPlayLocalStateVisibility: session.playLocalStateVisibility,
+    branchSnapshotRequiredFromRevision:
+      session.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot,
+    sessionSuggestedActions: session.suggestedActions,
   });
 
   return {
     ...validated,
     turnArtifacts,
     selectedTurnIds,
+    branchBaseSnapshot,
   };
 }
 
@@ -1036,7 +1341,17 @@ interface ValidatePlayTurnFactsInput {
   turnArtifacts: PlayTurnArtifact[];
   selectedTurnIds: string[];
   events: PlayWorldEvent[];
+  scheduledEvents: PlayScheduledEvent[];
   observations: PlayObservation[];
+  adoptionCandidates: PlayAdoptionCandidate[];
+  currentRevision: number;
+  currentWorldTurn: number;
+  sessionWorldClock: PlayWorldClock;
+  sessionPlayLocalState: Record<string, unknown>;
+  sessionPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
+  branchSnapshotRequiredFromRevision: number;
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
+  sessionSuggestedActions: string[];
 }
 
 interface ValidatedPlayTurnFacts {
@@ -1044,11 +1359,32 @@ interface ValidatedPlayTurnFacts {
   selectedMessageIds: Set<string>;
   selectedEventIds: Set<string>;
   selectedObservationIds: Set<string>;
+  selectedScheduledEvents: PlayScheduledEvent[];
+  selectedPlayLocalState: Record<string, unknown>;
+  selectedPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
+  selectedSuggestedActions: string[];
 }
 
 function validatePlayTurnFacts(
   input: ValidatePlayTurnFactsInput,
 ): ValidatedPlayTurnFacts {
+  for (const event of input.events) {
+    assertPlayWorldEvent(event, { strict: true });
+  }
+  for (const observation of input.observations) {
+    assertPlayObservation(observation, { strict: true });
+  }
+  const adoptionCandidates = input.adoptionCandidates.map((candidate) =>
+    assertPlayAdoptionCandidate(candidate, { strict: true }));
+  const adoptionCandidateIds = new Set<string>();
+  for (const candidate of adoptionCandidates) {
+    if (adoptionCandidateIds.has(candidate.id)) {
+      throw new Error(
+        `Play adoption candidate ledger contains duplicate id: ${candidate.id}.`,
+      );
+    }
+    adoptionCandidateIds.add(candidate.id);
+  }
   if (input.turnArtifacts.length && !input.selectedTurnIds.length) {
     throw new Error('Play turn artifacts require a selected root-to-head path.');
   }
@@ -1060,6 +1396,7 @@ function validatePlayTurnFacts(
     input.turnArtifacts.map((artifact) => [artifact.id, artifact]),
   );
   const messagesById = new Map<string, PlayTranscriptTurn>();
+  const messageOwners = new Map<string, string>();
   for (const artifact of input.turnArtifacts) {
     for (const message of artifact.messages) {
       if (!message.id) {
@@ -1069,10 +1406,12 @@ function validatePlayTurnFacts(
         throw new Error(`Play turn artifacts contain duplicate message id: ${message.id}.`);
       }
       messagesById.set(message.id, message);
+      messageOwners.set(message.id, artifact.id);
     }
   }
 
   const eventsById = indexUniquePlayFacts(input.events, 'event');
+  const scheduledEvents = normalizePlayScheduledEvents(input.scheduledEvents);
   const observationsById = indexUniquePlayFacts(input.observations, 'observation');
   const eventOwners = new Map<string, string>();
   const observationOwners = new Map<string, string>();
@@ -1175,18 +1514,908 @@ function validatePlayTurnFacts(
   }
 
   const selectedArtifacts = input.selectedTurnIds.map((id) => artifactsById.get(id)!);
+  const selectedMessageIds = new Set(
+    selectedArtifacts.flatMap((artifact) =>
+      artifact.messages.map((message) => message.id!)),
+  );
+  const selectedEventIds = new Set(
+    selectedArtifacts.flatMap((artifact) => artifact.eventIds),
+  );
+  const selectedObservationIds = new Set(
+    selectedArtifacts.flatMap((artifact) => artifact.observationIds),
+  );
+  const selectedArtifactIds = new Set(input.selectedTurnIds);
+  for (const observation of input.observations) {
+    if (observationOwners.has(observation.id)) {
+      continue;
+    }
+    const provenanceArtifactIds = collectPlayReferenceOwnerArtifactIds(
+      observation.sourceTurnIds,
+      observation.sourceEventIds,
+      messageOwners,
+      eventOwners,
+    );
+    assertPlayReferenceOwnersShareBranch(
+      `Play unowned observation ${observation.id}`,
+      provenanceArtifactIds,
+      artifactsById,
+    );
+    if (provenanceArtifactIds.every((artifactId) =>
+      selectedArtifactIds.has(artifactId))) {
+      selectedObservationIds.add(observation.id);
+    }
+  }
+  for (const candidate of adoptionCandidates) {
+    assertKnownPlayFactReferences(
+      `Play adoption candidate ${candidate.id}`,
+      candidate.sourceTurnIds,
+      candidate.sourceEventIds,
+      messagesById,
+      eventsById,
+    );
+    const unknownObservationId = candidate.sourceObservationIds.find(
+      (observationId) => !observationsById.has(observationId),
+    );
+    if (unknownObservationId) {
+      throw new Error(
+        `Play adoption candidate ${candidate.id} references unknown ` +
+        `observation: ${unknownObservationId}.`,
+      );
+    }
+    const provenanceArtifactIds = collectPlayReferenceOwnerArtifactIds(
+      candidate.sourceTurnIds,
+      candidate.sourceEventIds,
+      messageOwners,
+      eventOwners,
+    );
+    for (const observationId of candidate.sourceObservationIds) {
+      const observation = observationsById.get(observationId)!;
+      const observationOwnerId = observationOwners.get(observationId);
+      if (observationOwnerId) {
+        provenanceArtifactIds.push(observationOwnerId);
+        continue;
+      }
+      provenanceArtifactIds.push(...collectPlayReferenceOwnerArtifactIds(
+        observation.sourceTurnIds,
+        observation.sourceEventIds,
+        messageOwners,
+        eventOwners,
+      ));
+    }
+    assertPlayReferenceOwnersShareBranch(
+      `Play adoption candidate ${candidate.id}`,
+      provenanceArtifactIds,
+      artifactsById,
+    );
+  }
+
+  const selectedBranchSnapshot = validatePlayBranchSnapshots({
+    artifacts: input.turnArtifacts,
+    artifactsById,
+    selectedTurnIds: input.selectedTurnIds,
+    eventsById,
+    sessionWorldClock: input.sessionWorldClock,
+    sessionPlayLocalState: input.sessionPlayLocalState,
+    sessionPlayLocalStateVisibility: input.sessionPlayLocalStateVisibility,
+    currentRevision: input.currentRevision,
+    branchSnapshotRequiredFromRevision:
+      input.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot: input.branchBaseSnapshot,
+    sessionSuggestedActions: input.sessionSuggestedActions,
+  });
+
+  const selectedScheduledEvents = validatePlayScheduledEventHistory({
+    artifacts: input.turnArtifacts,
+    artifactsById,
+    selectedTurnIds: input.selectedTurnIds,
+    ledger: scheduledEvents,
+    messageOwners,
+    eventOwners,
+    eventsById,
+    currentRevision: input.currentRevision,
+    currentWorldTurn: input.currentWorldTurn,
+    branchBaseSnapshot: input.branchBaseSnapshot,
+  });
+
   return {
     transcript,
-    selectedMessageIds: new Set(
-      selectedArtifacts.flatMap((artifact) =>
-        artifact.messages.map((message) => message.id!)),
-    ),
-    selectedEventIds: new Set(
-      selectedArtifacts.flatMap((artifact) => artifact.eventIds),
-    ),
-    selectedObservationIds: new Set(
-      selectedArtifacts.flatMap((artifact) => artifact.observationIds),
-    ),
+    selectedMessageIds,
+    selectedEventIds,
+    selectedObservationIds,
+    selectedScheduledEvents,
+    selectedPlayLocalState: selectedBranchSnapshot.playLocalState,
+    selectedPlayLocalStateVisibility:
+      selectedBranchSnapshot.playLocalStateVisibility,
+    selectedSuggestedActions: selectedBranchSnapshot.suggestedActions,
+  };
+}
+
+function validatePlayBranchSnapshots(input: {
+  artifacts: PlayTurnArtifact[];
+  artifactsById: Map<string, PlayTurnArtifact>;
+  selectedTurnIds: string[];
+  eventsById: Map<string, PlayWorldEvent>;
+  sessionWorldClock: PlayWorldClock;
+  sessionPlayLocalState: Record<string, unknown>;
+  sessionPlayLocalStateVisibility: Record<string, PlayEventVisibility>;
+  currentRevision: number;
+  branchSnapshotRequiredFromRevision: number;
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
+  sessionSuggestedActions: string[];
+}): {
+  playLocalState: Record<string, unknown>;
+  playLocalStateVisibility: Record<string, PlayEventVisibility>;
+  suggestedActions: string[];
+} {
+  if (input.sessionWorldClock.revision !== input.currentRevision) {
+    throw new Error('Play session world clock revision does not match session revision.');
+  }
+  if (
+    !Number.isSafeInteger(input.branchSnapshotRequiredFromRevision) ||
+    input.branchSnapshotRequiredFromRevision < 0
+  ) {
+    throw new Error('Play branch snapshot watermark must be a non-negative integer.');
+  }
+  if (
+    input.branchSnapshotRequiredFromRevision > input.currentRevision ||
+    input.branchSnapshotRequiredFromRevision !==
+      input.branchBaseSnapshot.worldClock.revision
+  ) {
+    throw new Error('Play branch snapshot watermark does not match its base snapshot.');
+  }
+
+  for (const artifact of input.artifacts) {
+    const parent = artifact.parentTurnId
+      ? input.artifactsById.get(artifact.parentTurnId)
+      : undefined;
+    const completeSnapshot = hasCompletePlayBranchSnapshot(artifact);
+    if (
+      artifact.revision > input.branchSnapshotRequiredFromRevision &&
+      !completeSnapshot
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} cannot downgrade below the branch snapshot watermark.`,
+      );
+    }
+    if (
+      artifact.worldClock &&
+      artifact.worldClock.revision !== artifact.revision
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} world clock revision does not match artifact revision.`,
+      );
+    }
+    if (!completeSnapshot) {
+      if (
+        (parent && hasCompletePlayBranchSnapshot(parent)) ||
+        artifact.branchSnapshotVersion !== undefined ||
+        artifact.artifactKind !== undefined ||
+        artifact.scheduledEventSnapshots.length ||
+        artifact.playLocalStateSnapshot !== undefined ||
+        artifact.playLocalStateVisibilitySnapshot !== undefined
+      ) {
+        throw new Error(
+          `Play turn artifact ${artifact.id} has an incomplete branch snapshot.`,
+        );
+      }
+      continue;
+    }
+
+    const worldClock = artifact.worldClock!;
+    const stateSnapshot = artifact.playLocalStateSnapshot!;
+    const visibilitySnapshot = artifact.playLocalStateVisibilitySnapshot!;
+    const parentComplete = Boolean(parent && hasCompletePlayBranchSnapshot(parent));
+    const usesBaseSnapshot = !parentComplete &&
+      input.branchBaseSnapshot.parentTurnId === artifact.parentTurnId;
+    if (!parentComplete && !usesBaseSnapshot) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} has no verifiable predecessor snapshot.`,
+      );
+    }
+    const predecessorClock = parentComplete
+      ? parent!.worldClock!
+      : input.branchBaseSnapshot.worldClock;
+    const predecessorState = parentComplete
+      ? parent!.playLocalStateSnapshot!
+      : input.branchBaseSnapshot.playLocalState;
+    const predecessorVisibility = parentComplete
+      ? parent!.playLocalStateVisibilitySnapshot!
+      : input.branchBaseSnapshot.playLocalStateVisibility;
+    const predecessorSuggestedActions = parentComplete
+      ? parent!.suggestedActions
+      : input.branchBaseSnapshot.suggestedActions;
+    if (artifact.revision <= predecessorClock.revision) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} revision does not advance its predecessor.`,
+      );
+    }
+    assertCompletePlayArtifactKind(artifact, input.eventsById);
+    if (
+      artifact.artifactKind === 'transcriptAppend' &&
+      !isDeepStrictEqual(
+        artifact.suggestedActions,
+        predecessorSuggestedActions,
+      )
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} transcript append changes suggested actions.`,
+      );
+    }
+    const expectedTurn = predecessorClock.turn +
+      (artifact.artifactKind === 'worldSettlement' ? 1 : 0);
+    if (
+      worldClock.turn !== expectedTurn ||
+      (
+        artifact.artifactKind === 'transcriptAppend' &&
+        (
+          worldClock.anchor !== predecessorClock.anchor ||
+          worldClock.elapsed !== predecessorClock.elapsed
+        )
+      )
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} world clock does not follow its predecessor.`,
+      );
+    }
+    const expectedState = mergePlayLocalState(
+      predecessorState,
+      artifact.stateDelta,
+    );
+    if (!isDeepStrictEqual(stateSnapshot, expectedState)) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} state snapshot does not match its predecessor and delta.`,
+      );
+    }
+    const expectedVisibility = { ...predecessorVisibility };
+    const settlementVisibility = resolveArtifactSettlementVisibility(
+      artifact,
+      input.eventsById,
+    );
+    for (const key of Object.keys(artifact.stateDelta)) {
+      expectedVisibility[key] = settlementVisibility;
+    }
+    if (!isDeepStrictEqual(visibilitySnapshot, expectedVisibility)) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} state visibility does not match its predecessor and delta.`,
+      );
+    }
+    if (
+      !isDeepStrictEqual(
+        Object.keys(visibilitySnapshot).toSorted(),
+        Object.keys(stateSnapshot).toSorted(),
+      )
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} state visibility keys do not match its state snapshot.`,
+      );
+    }
+
+    for (const eventId of artifact.eventIds) {
+      const event = input.eventsById.get(eventId)!;
+      if (!isDeepStrictEqual(event.worldClock, worldClock)) {
+        throw new Error(
+          `Play event ${eventId} world clock does not match artifact ${artifact.id}.`,
+        );
+      }
+    }
+  }
+
+  const selectedHeadId = input.selectedTurnIds.at(-1);
+  const selectedHead = selectedHeadId
+    ? input.artifactsById.get(selectedHeadId)
+    : undefined;
+  if (!selectedHead || !hasCompletePlayBranchSnapshot(selectedHead)) {
+    if (
+      selectedHeadId !== input.branchBaseSnapshot.parentTurnId ||
+      input.sessionWorldClock.turn !== input.branchBaseSnapshot.worldClock.turn ||
+      input.sessionWorldClock.anchor !== input.branchBaseSnapshot.worldClock.anchor ||
+      input.sessionWorldClock.elapsed !== input.branchBaseSnapshot.worldClock.elapsed ||
+      !isDeepStrictEqual(
+        input.sessionPlayLocalState,
+        input.branchBaseSnapshot.playLocalState,
+      ) ||
+      !isDeepStrictEqual(
+        input.sessionPlayLocalStateVisibility,
+        input.branchBaseSnapshot.playLocalStateVisibility,
+      ) ||
+      !isDeepStrictEqual(
+        input.sessionSuggestedActions,
+        input.branchBaseSnapshot.suggestedActions,
+      )
+    ) {
+      throw new Error('Play legacy projection does not match its branch base snapshot.');
+    }
+    return {
+      playLocalState: clonePlayLocalState(input.branchBaseSnapshot.playLocalState),
+      playLocalStateVisibility: {
+        ...input.branchBaseSnapshot.playLocalStateVisibility,
+      },
+      suggestedActions: [...input.branchBaseSnapshot.suggestedActions],
+    };
+  }
+
+  const headClock = selectedHead.worldClock!;
+  if (
+    input.sessionWorldClock.turn !== headClock.turn ||
+    input.sessionWorldClock.anchor !== headClock.anchor ||
+    input.sessionWorldClock.elapsed !== headClock.elapsed
+  ) {
+    throw new Error(
+      'Play session world clock does not match the selected turn artifact head.',
+    );
+  }
+  if (!isDeepStrictEqual(
+    input.sessionPlayLocalState,
+    selectedHead.playLocalStateSnapshot,
+  )) {
+    throw new Error(
+      'Play-local state does not match the selected turn artifact head.',
+    );
+  }
+  if (!isDeepStrictEqual(
+    input.sessionPlayLocalStateVisibility,
+    selectedHead.playLocalStateVisibilitySnapshot,
+  )) {
+    throw new Error(
+      'Play-local state visibility does not match the selected turn artifact head.',
+    );
+  }
+  if (!isDeepStrictEqual(
+    input.sessionSuggestedActions,
+    selectedHead.suggestedActions,
+  )) {
+    throw new Error(
+      'Play suggested actions do not match the selected turn artifact head.',
+    );
+  }
+
+  return {
+    playLocalState: clonePlayLocalState(selectedHead.playLocalStateSnapshot!),
+    playLocalStateVisibility: {
+      ...selectedHead.playLocalStateVisibilitySnapshot!,
+    },
+    suggestedActions: [...selectedHead.suggestedActions],
+  };
+}
+
+function hasCompletePlayBranchSnapshot(artifact: PlayTurnArtifact): boolean {
+  return artifact.schemaVersion === PLAY_TURN_ARTIFACT_SCHEMA_VERSION;
+}
+
+function assertCompletePlayArtifactKind(
+  artifact: PlayTurnArtifact,
+  eventsById: Map<string, PlayWorldEvent>,
+): void {
+  if (artifact.artifactKind === 'worldSettlement') {
+    const [userMessage, refereeMessage] = artifact.messages;
+    if (
+      !artifact.input ||
+      artifact.messages.length !== 2 ||
+      userMessage?.speaker !== 'user' ||
+      refereeMessage?.speaker !== 'world-referee' ||
+      userMessage.content !== artifact.input.raw ||
+      userMessage.actionKind !== artifact.input.kind ||
+      refereeMessage.actionKind !== undefined
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} has an invalid world settlement shape.`,
+      );
+    }
+    if (artifact.eventIds.some((eventId) =>
+      eventsById.get(eventId)?.turnId !== refereeMessage.id)) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} settlement events must belong to its referee message.`,
+      );
+    }
+    return;
+  }
+
+  if (
+    artifact.artifactKind !== 'transcriptAppend' ||
+    artifact.input !== undefined ||
+    artifact.messages.length !== 1 ||
+    artifact.eventIds.length !== 0 ||
+    artifact.dueScheduledEventIds.length !== 0 ||
+    artifact.observationIds.length !== 0 ||
+    Object.keys(artifact.stateDelta).length !== 0
+  ) {
+    throw new Error(
+      `Play turn artifact ${artifact.id} has an invalid transcript append shape.`,
+    );
+  }
+}
+
+function resolveArtifactSettlementVisibility(
+  artifact: PlayTurnArtifact,
+  eventsById: Map<string, PlayWorldEvent>,
+): PlayEventVisibility {
+  const visibilities = artifact.eventIds.map((eventId) =>
+    eventsById.get(eventId)?.visibility ?? 'playerVisible');
+  if (visibilities.includes('playerUnknown')) {
+    return 'playerUnknown';
+  }
+  if (visibilities.includes('rumor')) {
+    return 'rumor';
+  }
+  return 'playerVisible';
+}
+
+interface ValidatePlayScheduledEventHistoryInput {
+  artifacts: PlayTurnArtifact[];
+  artifactsById: Map<string, PlayTurnArtifact>;
+  selectedTurnIds: string[];
+  ledger: PlayScheduledEvent[];
+  messageOwners: Map<string, string>;
+  eventOwners: Map<string, string>;
+  eventsById: Map<string, PlayWorldEvent>;
+  currentRevision: number;
+  currentWorldTurn: number;
+  branchBaseSnapshot: PlayBranchBaseSnapshot;
+}
+
+function validatePlayScheduledEventHistory(
+  input: ValidatePlayScheduledEventHistoryInput,
+): PlayScheduledEvent[] {
+  for (const artifact of input.artifacts) {
+    if (!hasCompletePlayBranchSnapshot(artifact)) {
+      continue;
+    }
+    const allowedArtifactIds = collectPlayArtifactAncestorIds(
+      artifact,
+      input.artifactsById,
+    );
+    const parent = artifact.parentTurnId
+      ? input.artifactsById.get(artifact.parentTurnId)
+      : undefined;
+    const parentSnapshotComplete = Boolean(
+      parent && hasCompletePlayBranchSnapshot(parent),
+    );
+    const previousSnapshots = parentSnapshotComplete
+      ? parent!.scheduledEventSnapshots
+      : input.branchBaseSnapshot.scheduledEvents;
+    const predecessorWorldClock = parentSnapshotComplete
+      ? parent!.worldClock!
+      : input.branchBaseSnapshot.worldClock;
+    const predecessorPlayLocalState = parentSnapshotComplete
+      ? parent!.playLocalStateSnapshot!
+      : input.branchBaseSnapshot.playLocalState;
+    const previousById = new Map(
+      previousSnapshots.map((event) => [event.id, event]),
+    );
+    const currentById = new Map(
+      artifact.scheduledEventSnapshots.map((event) => [event.id, event]),
+    );
+    if (
+      artifact.artifactKind === 'transcriptAppend' &&
+      !arePlayScheduledEventListsEqual(
+        artifact.scheduledEventSnapshots,
+        previousSnapshots,
+      )
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} transcript append changes the schedule head.`,
+      );
+    }
+    assertPlayArtifactDueScheduleEvidence({
+      artifact,
+      previousSnapshots,
+      currentSnapshots: artifact.scheduledEventSnapshots,
+      predecessorWorldClock,
+      predecessorPlayLocalState,
+    });
+
+    for (const previous of previousSnapshots) {
+      if (!currentById.has(previous.id)) {
+        throw new Error(
+          `Play turn artifact ${artifact.id} removes scheduled event ${previous.id}.`,
+        );
+      }
+    }
+
+    for (const scheduledEvent of artifact.scheduledEventSnapshots) {
+      assertPlayScheduledEventEvidence({
+        artifact,
+        scheduledEvent,
+        allowedArtifactIds,
+        artifactsById: input.artifactsById,
+        messageOwners: input.messageOwners,
+        eventOwners: input.eventOwners,
+        eventsById: input.eventsById,
+      });
+      assertPlayScheduledEventTransition(
+        artifact,
+        true,
+        previousById.get(scheduledEvent.id),
+        scheduledEvent,
+      );
+    }
+  }
+
+  for (const event of input.eventsById.values()) {
+    const triggerId = event.cause.triggerId;
+    if (!triggerId) {
+      continue;
+    }
+    const ownerId = input.eventOwners.get(event.id);
+    const owner = ownerId ? input.artifactsById.get(ownerId) : undefined;
+    const scheduledEvent = owner?.scheduledEventSnapshots.find(
+      (candidate) => candidate.id === triggerId,
+    );
+    if (
+      !scheduledEvent ||
+      scheduledEvent.status !== 'occurred' ||
+      !scheduledEvent.occurredEventIds?.includes(event.id)
+    ) {
+      throw new Error(
+        `Play event ${event.id} is not recorded by scheduled event ${triggerId} on its branch.`,
+      );
+    }
+  }
+
+  const selectedHeadId = input.selectedTurnIds.at(-1);
+  const selectedHead = selectedHeadId
+    ? input.artifactsById.get(selectedHeadId)
+    : undefined;
+  let selectedScheduledEvents: PlayScheduledEvent[];
+  if (selectedHead && hasCompletePlayBranchSnapshot(selectedHead)) {
+    selectedScheduledEvents = selectedHead.scheduledEventSnapshots;
+  } else {
+    selectedScheduledEvents = input.branchBaseSnapshot.scheduledEvents;
+  }
+
+  if (!arePlayScheduledEventListsEqual(input.ledger, selectedScheduledEvents)) {
+    throw new Error(
+      'Play event-schedule ledger does not match the selected turn artifact head.',
+    );
+  }
+
+  for (const scheduledEvent of selectedScheduledEvents) {
+    if (
+      scheduledEvent.scheduledAtRevision > input.currentRevision ||
+      scheduledEvent.scheduledAtTurn > input.currentWorldTurn
+    ) {
+      throw new Error(
+        `Play scheduled event ${scheduledEvent.id} is ahead of the selected session clock.`,
+      );
+    }
+  }
+
+  return selectedScheduledEvents.map(clonePlayScheduledEvent);
+}
+
+function assertPlayScheduledEventEvidence(input: {
+  artifact: PlayTurnArtifact;
+  scheduledEvent: PlayScheduledEvent;
+  allowedArtifactIds: Set<string>;
+  artifactsById: Map<string, PlayTurnArtifact>;
+  messageOwners: Map<string, string>;
+  eventOwners: Map<string, string>;
+  eventsById: Map<string, PlayWorldEvent>;
+}): void {
+  const {
+    artifact,
+    scheduledEvent,
+    allowedArtifactIds,
+    artifactsById,
+    messageOwners,
+    eventOwners,
+    eventsById,
+  } = input;
+
+  if (scheduledEvent.scheduledAtRevision > artifact.revision) {
+    throw new Error(
+      `Play scheduled event ${scheduledEvent.id} has a future scheduledAtRevision in artifact ${artifact.id}.`,
+    );
+  }
+  if (
+    artifact.worldClock &&
+    scheduledEvent.scheduledAtTurn > artifact.worldClock.turn
+  ) {
+    throw new Error(
+      `Play scheduled event ${scheduledEvent.id} has a future scheduledAtTurn in artifact ${artifact.id}.`,
+    );
+  }
+
+  if (scheduledEvent.sourceTurnId) {
+    const sourceOwnerId = messageOwners.get(scheduledEvent.sourceTurnId);
+    const sourceOwner = sourceOwnerId
+      ? artifactsById.get(sourceOwnerId)
+      : undefined;
+    const sourceMessage = sourceOwner?.messages.find(
+      (message) => message.id === scheduledEvent.sourceTurnId,
+    );
+    if (
+      !sourceOwnerId ||
+      !sourceOwner ||
+      sourceOwner.artifactKind !== 'worldSettlement' ||
+      sourceMessage?.speaker !== 'world-referee' ||
+      sourceOwner.messages[1]?.id !== scheduledEvent.sourceTurnId ||
+      !allowedArtifactIds.has(sourceOwnerId)
+    ) {
+      throw new Error(
+        `Play scheduled event ${scheduledEvent.id} references an out-of-branch source turn.`,
+      );
+    }
+    if (
+      scheduledEvent.scheduledAtRevision !== sourceOwner.revision ||
+      !sourceOwner.worldClock ||
+      scheduledEvent.scheduledAtTurn !== sourceOwner.worldClock.turn
+    ) {
+      throw new Error(
+        `Play scheduled event ${scheduledEvent.id} scheduling evidence does not match its source artifact.`,
+      );
+    }
+    if (!scheduledEvent.changeReason) {
+      throw new Error(
+        `Play scheduled event ${scheduledEvent.id} requires changeReason for a turn-owned change.`,
+      );
+    }
+  }
+
+  if (!scheduledEvent.resolvedAtTurnId) {
+    return;
+  }
+
+  const resolutionOwnerId = messageOwners.get(scheduledEvent.resolvedAtTurnId);
+  const resolutionOwner = resolutionOwnerId
+    ? artifactsById.get(resolutionOwnerId)
+    : undefined;
+  const resolutionMessage = resolutionOwner?.messages.find(
+    (message) => message.id === scheduledEvent.resolvedAtTurnId,
+  );
+  if (
+    !resolutionOwnerId ||
+    resolutionOwner?.artifactKind !== 'worldSettlement' ||
+    resolutionMessage?.speaker !== 'world-referee' ||
+    resolutionOwner?.messages[1]?.id !== scheduledEvent.resolvedAtTurnId ||
+    !allowedArtifactIds.has(resolutionOwnerId)
+  ) {
+    throw new Error(
+      `Play scheduled event ${scheduledEvent.id} references an out-of-branch resolution turn.`,
+    );
+  }
+
+  if (
+    scheduledEvent.status === 'occurred' &&
+    scheduledEvent.occurredEventIds?.length !== 1
+  ) {
+    throw new Error(
+      `Play scheduled event ${scheduledEvent.id} must resolve to exactly one occurred event.`,
+    );
+  }
+
+  for (const eventId of scheduledEvent.occurredEventIds ?? []) {
+    const event = eventsById.get(eventId);
+    if (
+      !event ||
+      eventOwners.get(eventId) !== resolutionOwnerId ||
+      event.turnId !== scheduledEvent.resolvedAtTurnId ||
+      event.cause.triggerId !== scheduledEvent.id
+    ) {
+      throw new Error(
+        `Play scheduled event ${scheduledEvent.id} references invalid branch-owned occurred event ${eventId}.`,
+      );
+    }
+    assertDueEventMatchesTemplate(event, scheduledEvent);
+  }
+}
+
+function assertPlayArtifactDueScheduleEvidence(input: {
+  artifact: PlayTurnArtifact;
+  previousSnapshots: PlayScheduledEvent[];
+  currentSnapshots: PlayScheduledEvent[];
+  predecessorWorldClock: PlayWorldClock;
+  predecessorPlayLocalState: Record<string, unknown>;
+}): void {
+  const {
+    artifact,
+    previousSnapshots,
+    currentSnapshots,
+    predecessorWorldClock,
+    predecessorPlayLocalState,
+  } = input;
+  const eligibleIds = new Set(previousSnapshots.map((event) => event.id));
+  if (artifact.dueScheduledEventIds.some((id) => !eligibleIds.has(id))) {
+    throw new Error(
+      `Play turn artifact ${artifact.id} contains invalid hard-due schedule evidence.`,
+    );
+  }
+
+  const expectedDueIds = artifact.artifactKind === 'worldSettlement'
+    ? evaluatePlayDueEvents({
+      scheduledEvents: previousSnapshots,
+      currentTurn: predecessorWorldClock.turn,
+      nextTurn: artifact.worldClock!.turn,
+      playLocalState: predecessorPlayLocalState,
+      ...(predecessorWorldClock.anchor
+        ? { currentWorldTime: predecessorWorldClock.anchor }
+        : {}),
+    }).dueEvents.map((event) => event.id)
+    : [];
+  if (!isDeepStrictEqual(artifact.dueScheduledEventIds, expectedDueIds)) {
+    throw new Error(
+      `Play turn artifact ${artifact.id} hard-due evidence does not match its predecessor snapshot.`,
+    );
+  }
+
+  for (const dueId of artifact.dueScheduledEventIds) {
+    if (currentSnapshots.find((event) => event.id === dueId)?.status !== 'occurred') {
+      throw new Error(
+        `Play scheduled event ${dueId} was hard-due and did not occur in artifact ${artifact.id}.`,
+      );
+    }
+  }
+}
+
+function assertPlayScheduledEventTransition(
+  artifact: PlayTurnArtifact,
+  parentSnapshotComplete: boolean,
+  previous: PlayScheduledEvent | undefined,
+  current: PlayScheduledEvent,
+): void {
+  if (!previous) {
+    if (!current.sourceTurnId) {
+      const resolvesSeedInThisArtifact =
+        current.status !== 'scheduled' &&
+        Boolean(current.resolvedAtTurnId) &&
+        artifact.messages.some((message) => message.id === current.resolvedAtTurnId);
+      if (
+        parentSnapshotComplete ||
+        current.scheduledAtRevision >= artifact.revision ||
+        (current.status !== 'scheduled' && !resolvesSeedInThisArtifact)
+      ) {
+        throw new Error(
+          `Play scheduled event ${current.id} has invalid seed evidence in artifact ${artifact.id}.`,
+        );
+      }
+      if (current.status !== 'scheduled') {
+        assertScheduledEventResolutionMatchesDueEvidence(artifact, current);
+      } else if (artifact.dueScheduledEventIds.includes(current.id)) {
+        throw new Error(
+          `Play scheduled event ${current.id} was hard-due and cannot remain scheduled.`,
+        );
+      }
+      return;
+    }
+    if (
+      current.status !== 'scheduled' ||
+      !artifact.messages.some((message) => message.id === current.sourceTurnId)
+    ) {
+      throw new Error(
+        `Play scheduled event ${current.id} has an invalid creation transition in artifact ${artifact.id}.`,
+      );
+    }
+    return;
+  }
+
+  if (previous.status !== 'scheduled') {
+    if (arePlayScheduledEventsEqual(previous, current)) {
+      return;
+    }
+    throw new Error(
+      `Play scheduled event ${current.id} changes after reaching ${previous.status}.`,
+    );
+  }
+
+  const wasDue = artifact.dueScheduledEventIds.includes(previous.id);
+  if (wasDue && current.status !== 'occurred') {
+    throw new Error(
+      `Play scheduled event ${current.id} was hard-due and cannot be ${current.status}.`,
+    );
+  }
+  if (!wasDue && current.status === 'occurred') {
+    throw new Error(
+      `Play scheduled event ${current.id} occurred before its trigger was due.`,
+    );
+  }
+  if (arePlayScheduledEventsEqual(previous, current)) {
+    if (wasDue) {
+      throw new Error(
+        `Play scheduled event ${current.id} was hard-due and cannot remain scheduled.`,
+      );
+    }
+    return;
+  }
+
+  if (current.status === 'scheduled') {
+    if (
+      previous.id !== current.id ||
+      previous.label !== current.label ||
+      JSON.stringify(previous.template) !== JSON.stringify(current.template) ||
+      !current.sourceTurnId ||
+      !artifact.messages.some((message) => message.id === current.sourceTurnId) ||
+      current.scheduledAtRevision !== artifact.revision ||
+      !artifact.worldClock ||
+      current.scheduledAtTurn !== artifact.worldClock.turn
+    ) {
+      throw new Error(
+        `Play scheduled event ${current.id} has an invalid reschedule transition in artifact ${artifact.id}.`,
+      );
+    }
+    return;
+  }
+
+  if (
+    !hasSamePlayScheduledEventPlan(previous, current) ||
+    !current.resolvedAtTurnId ||
+    !artifact.messages.some((message) => message.id === current.resolvedAtTurnId)
+  ) {
+    throw new Error(
+      `Play scheduled event ${current.id} has an invalid ${current.status} transition in artifact ${artifact.id}.`,
+    );
+  }
+}
+
+function assertScheduledEventResolutionMatchesDueEvidence(
+  artifact: PlayTurnArtifact,
+  current: PlayScheduledEvent,
+): void {
+  const wasDue = artifact.dueScheduledEventIds.includes(current.id);
+  if (current.status === 'occurred' && !wasDue) {
+    throw new Error(
+      `Play scheduled event ${current.id} occurred before its trigger was due.`,
+    );
+  }
+  if (current.status === 'cancelled' && wasDue) {
+    throw new Error(
+      `Play scheduled event ${current.id} was hard-due and cannot be cancelled.`,
+    );
+  }
+}
+
+function collectPlayArtifactAncestorIds(
+  artifact: PlayTurnArtifact,
+  artifactsById: Map<string, PlayTurnArtifact>,
+): Set<string> {
+  const ids = new Set<string>();
+  let current: PlayTurnArtifact | undefined = artifact;
+  while (current) {
+    ids.add(current.id);
+    current = current.parentTurnId
+      ? artifactsById.get(current.parentTurnId)
+      : undefined;
+  }
+  return ids;
+}
+
+function hasSamePlayScheduledEventPlan(
+  left: PlayScheduledEvent,
+  right: PlayScheduledEvent,
+): boolean {
+  return left.id === right.id &&
+    left.label === right.label &&
+    JSON.stringify(left.trigger) === JSON.stringify(right.trigger) &&
+    JSON.stringify(left.template) === JSON.stringify(right.template) &&
+    left.scheduledAtTurn === right.scheduledAtTurn &&
+    left.scheduledAtRevision === right.scheduledAtRevision &&
+    left.sourceTurnId === right.sourceTurnId &&
+    left.changeReason === right.changeReason &&
+    left.priority === right.priority;
+}
+
+function arePlayScheduledEventsEqual(
+  left: PlayScheduledEvent,
+  right: PlayScheduledEvent,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function arePlayScheduledEventListsEqual(
+  left: readonly PlayScheduledEvent[],
+  right: readonly PlayScheduledEvent[],
+): boolean {
+  return left.length === right.length && left.every((event, index) =>
+    arePlayScheduledEventsEqual(event, right[index]!));
+}
+
+function clonePlayScheduledEvent(event: PlayScheduledEvent): PlayScheduledEvent {
+  return {
+    ...event,
+    trigger: { ...event.trigger },
+    template: { ...event.template },
+    ...(event.occurredEventIds
+      ? { occurredEventIds: [...event.occurredEventIds] }
+      : {}),
   };
 }
 
@@ -1218,6 +2447,41 @@ function assertKnownPlayFactReferences(
   const unknownEventId = sourceEventIds.find((id) => !eventsById.has(id));
   if (unknownEventId) {
     throw new Error(`${label} references unknown event: ${unknownEventId}.`);
+  }
+}
+
+function collectPlayReferenceOwnerArtifactIds(
+  sourceTurnIds: string[],
+  sourceEventIds: string[],
+  messageOwners: Map<string, string>,
+  eventOwners: Map<string, string>,
+): string[] {
+  return [
+    ...sourceTurnIds.map((turnId) => messageOwners.get(turnId)),
+    ...sourceEventIds.map((eventId) => eventOwners.get(eventId)),
+  ].filter((artifactId): artifactId is string => artifactId !== undefined);
+}
+
+function assertPlayReferenceOwnersShareBranch(
+  label: string,
+  ownerArtifactIds: string[],
+  artifactsById: Map<string, PlayTurnArtifact>,
+): void {
+  const uniqueOwnerIds = [...new Set(ownerArtifactIds)];
+  if (uniqueOwnerIds.length < 2) {
+    return;
+  }
+  const deepestOwner = uniqueOwnerIds
+    .map((artifactId) => artifactsById.get(artifactId)!)
+    .toSorted((left, right) => right.revision - left.revision)[0]!;
+  const ancestorIds = collectPlayArtifactAncestorIds(deepestOwner, artifactsById);
+  const incompatibleOwnerId = uniqueOwnerIds.find((artifactId) =>
+    !ancestorIds.has(artifactId));
+  if (incompatibleOwnerId) {
+    throw new Error(
+      `${label} mixes facts from incompatible Play branches: ` +
+      `${incompatibleOwnerId}.`,
+    );
   }
 }
 
@@ -1264,6 +2528,8 @@ const PLAY_SESSION_METADATA_KEYS = new Set([
   'characters',
   'transcript',
   'selectedTurnIds',
+  'branchSnapshotRequiredFromRevision',
+  'branchBaseSnapshot',
   'playLocalStateVisibility',
   'worldClock',
   'eventPolicy',
@@ -1278,11 +2544,11 @@ function readPlaySessionMetadataExtensions(
   );
 }
 
-function normalizeStoredPlaySessionSchemaVersion(value: unknown): 1 | 2 | 3 {
+function normalizeStoredPlaySessionSchemaVersion(value: unknown): 1 | 2 | 3 | 4 {
   if (value === undefined || value === 1) {
     return 1;
   }
-  if (value === 2 || value === PLAY_SESSION_SCHEMA_VERSION) {
+  if (value === 2 || value === 3 || value === PLAY_SESSION_SCHEMA_VERSION) {
     return value;
   }
   throw new Error(`Unsupported Play session schemaVersion: ${String(value)}.`);
@@ -1315,7 +2581,9 @@ async function readStoredPlaySessionMigrationPreview(
   const transcript = Array.isArray(metadata.transcript)
     ? metadata.transcript as PlayTranscriptTurn[]
     : [];
-  const projectedArtifacts = createLegacyPlayTurnArtifacts({ transcript });
+  const projectedArtifacts = fromSchemaVersion === 3
+    ? await readPlayTurnArtifactsFromSessionRoot(sessionRoot)
+    : createLegacyPlayTurnArtifacts({ transcript });
   const migrationName = `v${fromSchemaVersion}-to-v${PLAY_SESSION_SCHEMA_VERSION}`;
 
   return {
@@ -1637,6 +2905,7 @@ function assertSupportedPlaySessionSchemaVersion(value: unknown): void {
     value === undefined ||
     value === 1 ||
     value === 2 ||
+    value === 3 ||
     value === PLAY_SESSION_SCHEMA_VERSION
   ) {
     return;
@@ -1657,6 +2926,125 @@ function normalizePlayLocalStateVisibility(
   );
 }
 
+function requireExactPlayLocalStateVisibility(
+  state: Record<string, unknown>,
+  value: unknown,
+  label: string,
+): Record<string, PlayEventVisibility> {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be present as an object.`);
+  }
+  const stateKeys = Object.keys(state).toSorted();
+  const visibilityKeys = Object.keys(value).toSorted();
+  if (!isDeepStrictEqual(visibilityKeys, stateKeys)) {
+    throw new Error(`${label} keys must exactly match Play-local state keys.`);
+  }
+  return Object.fromEntries(stateKeys.map((key) => {
+    const visibility = normalizeEnum(value[key], PLAY_EVENT_VISIBILITIES);
+    if (!visibility) {
+      throw new Error(`${label} contains invalid visibility for ${key}.`);
+    }
+    return [key, visibility];
+  }));
+}
+
+function requirePlayBranchSnapshotWatermark(value: unknown): number {
+  const watermark = normalizeOptionalNonNegativeInteger(value);
+  if (watermark === undefined) {
+    throw new Error('Play session v4 requires a branch snapshot watermark.');
+  }
+  return watermark;
+}
+
+function normalizePlayBranchBaseSnapshot(
+  value: unknown,
+): PlayBranchBaseSnapshot {
+  if (!isRecord(value)) {
+    throw new Error('Play session v4 requires a branch base snapshot.');
+  }
+  const knownFields = new Set([
+    'parentTurnId',
+    'worldClock',
+    'playLocalState',
+    'playLocalStateVisibility',
+    'scheduledEvents',
+    'suggestedActions',
+  ]);
+  if (Object.keys(value).some((field) => !knownFields.has(field))) {
+    throw new Error('Play branch base snapshot contains unknown fields.');
+  }
+  if (
+    !isRecord(value.worldClock) ||
+    !isRecord(value.playLocalState) ||
+    !isRecord(value.playLocalStateVisibility)
+  ) {
+    throw new Error('Play branch base snapshot is incomplete.');
+  }
+  const playLocalState = clonePlayLocalState(value.playLocalState);
+  const playLocalStateVisibility = requireExactPlayLocalStateVisibility(
+    playLocalState,
+    value.playLocalStateVisibility,
+    'Play branch base state visibility',
+  );
+  const worldClock = normalizePlayWorldClock(value.worldClock);
+  const suggestedActions = normalizeStringList(value.suggestedActions, 6);
+  if (
+    !Array.isArray(value.suggestedActions) ||
+    suggestedActions.length !== value.suggestedActions.length ||
+    new Set(suggestedActions).size !== suggestedActions.length
+  ) {
+    throw new Error('Play branch base suggested actions are invalid.');
+  }
+  return {
+    ...(value.parentTurnId !== undefined
+      ? { parentTurnId: assertSafePlayTurnArtifactId(value.parentTurnId) }
+      : {}),
+    worldClock,
+    playLocalState,
+    playLocalStateVisibility,
+    scheduledEvents: normalizePlayBranchBaseScheduledEvents(
+      value.scheduledEvents,
+      worldClock,
+    ),
+    suggestedActions,
+  };
+}
+
+function normalizePlayBranchBaseScheduledEvents(
+  value: unknown,
+  worldClock: PlayWorldClock,
+): PlayScheduledEvent[] {
+  const events = normalizePlayScheduledEvents(value);
+  for (const event of events) {
+    if (event.status !== 'scheduled') {
+      throw new Error(
+        `Play branch base scheduled event ${event.id} cannot start terminal.`,
+      );
+    }
+    if (
+      event.sourceTurnId !== undefined ||
+      event.changeReason !== undefined ||
+      event.occurredEventIds !== undefined ||
+      event.resolvedAtTurnId !== undefined ||
+      event.resolutionReason !== undefined
+    ) {
+      throw new Error(
+        `Play branch base scheduled event ${event.id} cannot contain ` +
+        'unverifiable source or resolution evidence.',
+      );
+    }
+    if (
+      event.scheduledAtTurn > worldClock.turn ||
+      event.scheduledAtRevision > worldClock.revision
+    ) {
+      throw new Error(
+        `Play branch base scheduled event ${event.id} starts after its base clock.`,
+      );
+    }
+  }
+  return events;
+}
+
 function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSettlement {
   if (!isRecord(value)) {
     throw new Error('Play settlement must be a JSON object.');
@@ -1664,6 +3052,18 @@ function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSe
 
   if (value.events !== undefined && !Array.isArray(value.events)) {
     throw new Error('Play settlement events must be an array.');
+  }
+  if (
+    value.scheduledEventChanges !== undefined &&
+    !Array.isArray(value.scheduledEventChanges)
+  ) {
+    throw new Error('Play settlement scheduledEventChanges must be an array.');
+  }
+  if (
+    Array.isArray(value.scheduledEventChanges) &&
+    value.scheduledEventChanges.length > 8
+  ) {
+    throw new Error('Play settlement cannot change more than 8 scheduled events per turn.');
   }
   if (value.stateDelta !== undefined && !isRecord(value.stateDelta)) {
     throw new Error('Play settlement stateDelta must be an object.');
@@ -1683,17 +3083,124 @@ function normalizePlayWorldRefereeSettlement(value: unknown): PlayWorldRefereeSe
       ? { worldTimeAnchor: normalizeOptionalString(value.worldTimeAnchor) }
       : {}),
     events: (value.events ?? []).map(normalizePlayWorldRefereeEvent),
-    stateDelta: isRecord(value.stateDelta) ? { ...value.stateDelta } : {},
+    scheduledEventChanges: (value.scheduledEventChanges ?? [])
+      .map(normalizePlayWorldRefereeScheduledEventChange),
+    stateDelta: isRecord(value.stateDelta)
+      ? clonePlayLocalState(value.stateDelta)
+      : {},
     observations: (value.observations ?? []).map(normalizePlayWorldRefereeObservation),
     suggestedActions: normalizeStringList(value.suggestedActions, 6),
   };
 }
 
+function normalizePlayWorldRefereeScheduledEventChange(
+  value: unknown,
+): PlayWorldRefereeScheduledEventChange {
+  if (!isRecord(value)) {
+    throw new Error('Every Play scheduled event change must be an object.');
+  }
+
+  const reason = normalizeOptionalString(value.reason);
+  if (!reason) {
+    throw new Error('Every Play scheduled event change requires a reason.');
+  }
+
+  switch (value.type) {
+    case 'schedule': {
+      assertPlayScheduledEventChangeFields(value, [
+        'type',
+        'label',
+        'trigger',
+        'template',
+        'reason',
+        'priority',
+      ]);
+      const label = normalizeOptionalString(value.label);
+      if (!label) {
+        throw new Error('A Play schedule change requires a label.');
+      }
+      return {
+        type: 'schedule',
+        label,
+        trigger: normalizePlayEventTrigger(value.trigger),
+        template: normalizePlayScheduledEventTemplate(value.template),
+        reason,
+        ...readOptionalSchedulePriority(value.priority),
+      };
+    }
+    case 'cancel':
+      assertPlayScheduledEventChangeFields(value, [
+        'type',
+        'scheduledEventId',
+        'reason',
+      ]);
+      return {
+        type: 'cancel',
+        scheduledEventId: normalizeRequiredScheduleId(value.scheduledEventId),
+        reason,
+      };
+    case 'reschedule':
+      assertPlayScheduledEventChangeFields(value, [
+        'type',
+        'scheduledEventId',
+        'trigger',
+        'reason',
+        'priority',
+      ]);
+      return {
+        type: 'reschedule',
+        scheduledEventId: normalizeRequiredScheduleId(value.scheduledEventId),
+        trigger: normalizePlayEventTrigger(value.trigger),
+        reason,
+        ...readOptionalSchedulePriority(value.priority),
+      };
+    default:
+      throw new Error(`Unsupported Play scheduled event change type: ${String(value.type)}.`);
+  }
+}
+
+function assertPlayScheduledEventChangeFields(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  const known = new Set(allowed);
+  const unknown = Object.keys(value).filter((key) => !known.has(key));
+  if (unknown.length) {
+    throw new Error(
+      `Play scheduled event change contains unknown fields: ${unknown.join(', ')}.`,
+    );
+  }
+}
+
+function normalizeRequiredScheduleId(value: unknown): string {
+  const id = normalizeOptionalString(value);
+  if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id) || id.includes('..')) {
+    throw new Error('Play scheduled event change requires a safe scheduledEventId.');
+  }
+  return id;
+}
+
+function readOptionalSchedulePriority(
+  value: unknown,
+): { priority?: number } {
+  if (value === undefined) {
+    return {};
+  }
+  if (!Number.isSafeInteger(value)) {
+    throw new Error('Play scheduled event priority must be a safe integer.');
+  }
+  return { priority: value as number };
+}
+
 function assertSettlementMatchesEventPolicy(
   session: PlaySession,
   settlement: PlayWorldRefereeSettlement,
+  dueEvents: readonly PlayScheduledEvent[],
 ): void {
-  if (settlement.events.length > session.eventPolicy.maxExternalEventsPerTurn) {
+  const dueIds = new Set(dueEvents.map((event) => event.id));
+  const budgetedEvents = settlement.events.filter((event) =>
+    !event.cause.triggerId || !dueIds.has(event.cause.triggerId));
+  if (budgetedEvents.length > session.eventPolicy.maxExternalEventsPerTurn) {
     throw new Error(
       `Play settlement exceeds the event budget of ${session.eventPolicy.maxExternalEventsPerTurn}.`,
     );
@@ -1707,6 +3214,183 @@ function assertSettlementMatchesEventPolicy(
   }
   if (hasPlayerUnknownEvent && !session.eventPolicy.allowOffscreen) {
     throw new Error('Play settlement contains an offscreen event while offscreen events are disabled.');
+  }
+
+  const hasHiddenSchedule = settlement.scheduledEventChanges.some(
+    (change) => change.type === 'schedule' && change.template.visibility === 'playerUnknown',
+  );
+  if (hasHiddenSchedule && !session.eventPolicy.allowHidden) {
+    throw new Error('Play settlement schedules a hidden event while hidden events are disabled.');
+  }
+  if (hasHiddenSchedule && !session.eventPolicy.allowOffscreen) {
+    throw new Error('Play settlement schedules an offscreen event while offscreen events are disabled.');
+  }
+}
+
+function materializePlayScheduledEvents(input: {
+  session: PlaySession;
+  settlement: PlayWorldRefereeSettlement;
+  events: PlayWorldEvent[];
+  revision: number;
+  worldTurn: number;
+  refereeTurnId: string;
+}): PlayScheduledEvent[] {
+  const eventIdsByTrigger = new Map<string, string[]>();
+  for (const event of input.events) {
+    const triggerId = event.cause.triggerId;
+    if (!triggerId) {
+      continue;
+    }
+    eventIdsByTrigger.set(triggerId, [
+      ...(eventIdsByTrigger.get(triggerId) ?? []),
+      event.id,
+    ]);
+  }
+
+  const scheduledEvents = input.session.scheduledEvents.map((scheduledEvent) => {
+    const occurredEventIds = eventIdsByTrigger.get(scheduledEvent.id);
+    if (!occurredEventIds) {
+      return { ...scheduledEvent };
+    }
+    return {
+      ...scheduledEvent,
+      status: 'occurred' as const,
+      occurredEventIds,
+      resolvedAtTurnId: input.refereeTurnId,
+    };
+  });
+  const scheduledIds = new Set(scheduledEvents.map((event) => event.id));
+  let createdIndex = 0;
+
+  for (const change of input.settlement.scheduledEventChanges) {
+    if (change.type === 'schedule') {
+      createdIndex += 1;
+      let id = `scheduled-${input.revision}-${createdIndex}`;
+      while (scheduledIds.has(id)) {
+        createdIndex += 1;
+        id = `scheduled-${input.revision}-${createdIndex}`;
+      }
+      scheduledIds.add(id);
+      scheduledEvents.push({
+        id,
+        label: change.label,
+        trigger: change.trigger,
+        template: change.template,
+        status: 'scheduled',
+        scheduledAtTurn: input.worldTurn,
+        scheduledAtRevision: input.revision,
+        sourceTurnId: input.refereeTurnId,
+        changeReason: change.reason,
+        ...(change.priority !== undefined ? { priority: change.priority } : {}),
+      });
+      continue;
+    }
+
+    const index = scheduledEvents.findIndex((event) =>
+      event.id === change.scheduledEventId);
+    const existing = scheduledEvents[index];
+    if (!existing) {
+      throw new Error(
+        `Play scheduled event disappeared during settlement: ${change.scheduledEventId}.`,
+      );
+    }
+    if (change.type === 'cancel') {
+      scheduledEvents[index] = {
+        ...existing,
+        status: 'cancelled',
+        resolvedAtTurnId: input.refereeTurnId,
+        resolutionReason: change.reason,
+      };
+      continue;
+    }
+    scheduledEvents[index] = {
+      ...existing,
+      trigger: change.trigger,
+      status: 'scheduled',
+      scheduledAtTurn: input.worldTurn,
+      scheduledAtRevision: input.revision,
+      sourceTurnId: input.refereeTurnId,
+      changeReason: change.reason,
+      ...(change.priority !== undefined
+        ? { priority: change.priority }
+        : existing.priority !== undefined
+          ? { priority: existing.priority }
+          : {}),
+    };
+  }
+
+  return normalizePlayScheduledEvents(scheduledEvents);
+}
+
+function assertSettlementScheduleReferences(
+  session: PlaySession,
+  settlement: PlayWorldRefereeSettlement,
+  dueEvents: readonly PlayScheduledEvent[],
+): void {
+  const dueById = new Map(dueEvents.map((event) => [event.id, event]));
+  const settledDueIds = new Set<string>();
+
+  for (const event of settlement.events) {
+    const triggerId = event.cause.triggerId;
+    if (!triggerId) {
+      continue;
+    }
+    const scheduledEvent = dueById.get(triggerId);
+    if (!scheduledEvent) {
+      throw new Error(`Play event references a scheduled trigger that is not due: ${triggerId}.`);
+    }
+    if (settledDueIds.has(triggerId)) {
+      throw new Error(`Play settlement resolves hard-due event more than once: ${triggerId}.`);
+    }
+    assertDueEventMatchesTemplate(event, scheduledEvent);
+    settledDueIds.add(triggerId);
+  }
+
+  const missingDueEvent = dueEvents.find((event) => !settledDueIds.has(event.id));
+  if (missingDueEvent) {
+    throw new Error(`Play settlement omitted hard-due event: ${missingDueEvent.id}.`);
+  }
+
+  const scheduledById = new Map(session.scheduledEvents.map((event) => [event.id, event]));
+  const changedIds = new Set<string>();
+  for (const change of settlement.scheduledEventChanges) {
+    if (change.type === 'schedule') {
+      continue;
+    }
+    if (changedIds.has(change.scheduledEventId)) {
+      throw new Error(
+        `Play settlement changes scheduled event more than once: ${change.scheduledEventId}.`,
+      );
+    }
+    changedIds.add(change.scheduledEventId);
+    const existing = scheduledById.get(change.scheduledEventId);
+    if (!existing || existing.status !== 'scheduled') {
+      throw new Error(
+        `Play settlement references an unavailable scheduled event: ${change.scheduledEventId}.`,
+      );
+    }
+    if (dueById.has(change.scheduledEventId)) {
+      throw new Error(
+        `Hard-due Play event cannot be cancelled or rescheduled: ${change.scheduledEventId}.`,
+      );
+    }
+  }
+}
+
+function assertDueEventMatchesTemplate(
+  event: PlayWorldRefereeSettlementEvent,
+  scheduledEvent: PlayScheduledEvent,
+): void {
+  const template = scheduledEvent.template;
+  if (
+    event.kind !== template.kind ||
+    event.origin !== template.origin ||
+    event.title !== template.title ||
+    event.visibility !== template.visibility
+  ) {
+    throw new Error(
+      `Play hard-due event does not match its host template: ${scheduledEvent.id}.`,
+    );
   }
 }
 
@@ -1807,28 +3491,61 @@ function normalizePlayWorldRefereeObservation(value: unknown): {
   return { summary, evidence };
 }
 
-function assertPlayWorldEvent(value: PlayWorldEvent): PlayWorldEvent {
+function assertPlayWorldEvent(
+  value: unknown,
+  options: { strict?: boolean } = {},
+): PlayWorldEvent {
   if (!isRecord(value)) {
     throw new Error('Stored Play event must be an object.');
   }
 
   const draft = normalizePlayWorldRefereeEvent(value);
-  const id = normalizeOptionalString(value.id);
-  const turnId = normalizeOptionalString(value.turnId);
+  const id = normalizeStoredPlayFactId(
+    value.id,
+    'Play event id',
+    options.strict === true,
+  );
+  const turnId = normalizeStoredPlayFactId(
+    value.turnId,
+    'Play event turnId',
+    options.strict === true,
+  );
   const createdAt = normalizeOptionalString(value.createdAt);
-  const sequence = normalizeNonNegativeInteger(value.sequence);
+  const sequence = value.sequence;
   const worldClock = isRecord(value.worldClock)
     ? normalizePlayWorldClock(value.worldClock)
     : undefined;
 
-  if (!id || !turnId || !createdAt || sequence < 1 || !worldClock) {
+  if (
+    !id ||
+    !turnId ||
+    !createdAt ||
+    !Number.isSafeInteger(sequence) ||
+    (sequence as number) < 1 ||
+    !worldClock
+  ) {
     throw new Error('Stored Play event requires id, turnId, sequence, worldClock, and createdAt.');
+  }
+  if (
+    options.strict &&
+    (
+      !isRecord(value.worldClock) ||
+      !Number.isSafeInteger(value.worldClock.turn) ||
+      (value.worldClock.turn as number) < 0 ||
+      !Number.isSafeInteger(value.worldClock.revision) ||
+      (value.worldClock.revision as number) < 0
+    )
+  ) {
+    throw new Error(`Stored Play event ${id} requires a valid world clock.`);
+  }
+  if (options.strict && value.canonical !== false) {
+    throw new Error(`Stored Play event ${id} must remain non-canonical.`);
   }
 
   return {
     id,
     turnId,
-    sequence,
+    sequence: sequence as number,
     ...draft,
     worldClock,
     createdAt,
@@ -1836,43 +3553,87 @@ function assertPlayWorldEvent(value: PlayWorldEvent): PlayWorldEvent {
   };
 }
 
-function assertPlayObservation(value: PlayObservation): PlayObservation {
+function assertPlayObservation(
+  value: unknown,
+  options: { strict?: boolean } = {},
+): PlayObservation {
   if (!isRecord(value)) {
     throw new Error('Stored Play observation must be an object.');
   }
 
-  const id = normalizeOptionalString(value.id);
+  const id = normalizeStoredPlayFactId(
+    value.id,
+    'Play observation id',
+    options.strict === true,
+  );
   const summary = normalizeOptionalString(value.summary);
   const evidence = normalizeOptionalString(value.evidence);
   if (!id || !summary || !evidence) {
     throw new Error('Stored Play observation requires id, summary, and evidence.');
+  }
+  const visibility = normalizeEnum(value.visibility, PLAY_EVENT_VISIBILITIES);
+  if (options.strict && !visibility) {
+    throw new Error(
+      `Stored Play observation ${id} requires a valid visibility.`,
+    );
+  }
+  if (options.strict && value.canonical !== false) {
+    throw new Error(`Stored Play observation ${id} must remain non-canonical.`);
   }
 
   return {
     id,
     summary,
     evidence,
-    visibility: normalizeEnum(value.visibility, PLAY_EVENT_VISIBILITIES)
-      ?? 'playerVisible',
-    sourceTurnIds: normalizeStringList(value.sourceTurnIds, 24),
-    sourceEventIds: normalizeStringList(value.sourceEventIds, 24),
+    visibility: visibility ?? 'playerVisible',
+    sourceTurnIds: normalizePlayProvenanceIdList(
+      value.sourceTurnIds,
+      'sourceTurnIds',
+      `Play observation ${id}`,
+      options.strict === true,
+    ),
+    sourceEventIds: normalizePlayProvenanceIdList(
+      value.sourceEventIds,
+      'sourceEventIds',
+      `Play observation ${id}`,
+      options.strict === true,
+    ),
     canonical: false,
   };
 }
 
 function assertPlayAdoptionCandidate(
-  value: PlayAdoptionCandidate,
+  value: unknown,
+  options: { strict?: boolean } = {},
 ): PlayAdoptionCandidate {
   if (!isRecord(value)) {
     throw new Error('Stored Play adoption candidate must be an object.');
   }
 
-  const id = normalizeOptionalString(value.id);
+  const id = normalizeStoredPlayFactId(
+    value.id,
+    'Play adoption candidate id',
+    options.strict === true,
+  );
   const target = normalizeEnum(value.target, PLAY_ADOPTION_TARGETS);
   const summary = normalizeOptionalString(value.summary);
   const evidence = normalizeOptionalString(value.evidence);
   if (!id || !target || !summary || !evidence) {
     throw new Error('Stored Play adoption candidate is incomplete.');
+  }
+  const visibility = normalizeEnum(value.visibility, PLAY_EVENT_VISIBILITIES);
+  if (options.strict && !visibility) {
+    throw new Error(
+      `Stored Play adoption candidate ${id} requires a valid visibility.`,
+    );
+  }
+  if (options.strict && value.requiresPendingAction !== true) {
+    throw new Error(
+      `Stored Play adoption candidate ${id} must require a PendingAction.`,
+    );
+  }
+  if (options.strict && value.payload !== undefined && !isRecord(value.payload)) {
+    throw new Error(`Stored Play adoption candidate ${id} has an invalid payload.`);
   }
 
   return createPlayAdoptionCandidate({
@@ -1881,22 +3642,95 @@ function assertPlayAdoptionCandidate(
     summary,
     evidence,
     ...(isRecord(value.payload) ? { payload: { ...value.payload } } : {}),
-    visibility: normalizeEnum(value.visibility, PLAY_EVENT_VISIBILITIES)
-      ?? 'playerVisible',
-    sourceObservationIds: normalizeStringList(value.sourceObservationIds, 24),
-    sourceTurnIds: normalizeStringList(value.sourceTurnIds, 24),
-    sourceEventIds: normalizeStringList(value.sourceEventIds, 24),
+    visibility: visibility ?? 'playerVisible',
+    sourceObservationIds: normalizePlayProvenanceIdList(
+      value.sourceObservationIds,
+      'sourceObservationIds',
+      `Play adoption candidate ${id}`,
+      options.strict === true,
+    ),
+    sourceTurnIds: normalizePlayProvenanceIdList(
+      value.sourceTurnIds,
+      'sourceTurnIds',
+      `Play adoption candidate ${id}`,
+      options.strict === true,
+    ),
+    sourceEventIds: normalizePlayProvenanceIdList(
+      value.sourceEventIds,
+      'sourceEventIds',
+      `Play adoption candidate ${id}`,
+      options.strict === true,
+    ),
   });
+}
+
+function normalizeStoredPlayFactId(
+  value: unknown,
+  label: string,
+  strict: boolean,
+): string | undefined {
+  const normalized = strict
+    ? value
+    : normalizeOptionalString(value);
+  if (normalized === undefined) {
+    return undefined;
+  }
+  return assertSafePlayStoredFactId(normalized, label);
+}
+
+function normalizePlayProvenanceIdList(
+  value: unknown,
+  field: 'sourceObservationIds' | 'sourceTurnIds' | 'sourceEventIds',
+  ownerLabel: string,
+  strict: boolean,
+): string[] {
+  if (strict) {
+    if (!Array.isArray(value) || value.length > 24) {
+      throw new Error(`${ownerLabel} ${field} must be an array of at most 24 ids.`);
+    }
+    const ids = value.map((id) => assertSafePlayStoredFactId(
+      id,
+      `${ownerLabel} ${field}`,
+    ));
+    if (new Set(ids).size !== ids.length) {
+      throw new Error(`${ownerLabel} ${field} must not contain duplicates.`);
+    }
+    return ids;
+  }
+
+  return [...new Set(normalizeStringList(value, 24).filter((id) =>
+    isSafePlayStoredFactId(id)))];
+}
+
+function assertSafePlayStoredFactId(value: unknown, label: string): string {
+  if (!isSafePlayStoredFactId(value)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
+function isSafePlayStoredFactId(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value) &&
+    !value.includes('..') &&
+    !value.includes('/') &&
+    !value.includes('\\');
 }
 
 function readOptionalCauseReferences(
   cause: Record<string, unknown>,
 ): Omit<PlayWorldEventCause, 'reason'> {
-  const sourceTurnIds = normalizeStringList(cause.sourceTurnIds, 24);
-  const sourceEventIds = normalizeStringList(cause.sourceEventIds, 24);
-  const triggerId = normalizeOptionalString(cause.triggerId);
-  const pressureId = normalizeOptionalString(cause.pressureId);
-  const agendaId = normalizeOptionalString(cause.agendaId);
+  const sourceTurnIds = normalizeUniquePlayCauseIds(
+    cause.sourceTurnIds,
+    'sourceTurnIds',
+  );
+  const sourceEventIds = normalizeUniquePlayCauseIds(
+    cause.sourceEventIds,
+    'sourceEventIds',
+  );
+  const triggerId = normalizeOptionalPlayCauseId(cause.triggerId, 'triggerId');
+  const pressureId = normalizeOptionalPlayCauseId(cause.pressureId, 'pressureId');
+  const agendaId = normalizeOptionalPlayCauseId(cause.agendaId, 'agendaId');
 
   return {
     ...(sourceTurnIds.length ? { sourceTurnIds } : {}),
@@ -1905,6 +3739,46 @@ function readOptionalCauseReferences(
     ...(pressureId ? { pressureId } : {}),
     ...(agendaId ? { agendaId } : {}),
   };
+}
+
+function normalizeUniquePlayCauseIds(
+  value: unknown,
+  field: 'sourceTurnIds' | 'sourceEventIds',
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 24) {
+    throw new Error(`Play event cause ${field} must be an array of at most 24 ids.`);
+  }
+  const ids = value.map((id) => assertSafePlayCauseId(id, field));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`Play event cause ${field} must not contain duplicates.`);
+  }
+  return ids;
+}
+
+function normalizeOptionalPlayCauseId(
+  value: unknown,
+  field: 'triggerId' | 'pressureId' | 'agendaId',
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return assertSafePlayCauseId(value, field);
+}
+
+function assertSafePlayCauseId(value: unknown, field: string): string {
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value) ||
+    value.includes('..') ||
+    value.includes('/') ||
+    value.includes('\\')
+  ) {
+    throw new Error(`Invalid Play event cause ${field}.`);
+  }
+  return value;
 }
 
 function normalizeEnum<T extends string>(
@@ -1936,6 +3810,34 @@ function normalizeNonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
     ? value
     : 0;
+}
+
+function normalizeOptionalNonNegativeInteger(
+  value: unknown,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error('Play branch snapshot watermark must be a non-negative integer.');
+  }
+  return value;
+}
+
+function clonePlayLocalState(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return structuredClone(value);
+}
+
+function mergePlayLocalState(
+  base: Record<string, unknown>,
+  delta: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...clonePlayLocalState(base),
+    ...clonePlayLocalState(delta),
+  };
 }
 
 function formatPromptJson(value: unknown): string {

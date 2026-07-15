@@ -469,11 +469,49 @@ describe('novel HTTP backend', () => {
         },
       });
 
+    const observed = await fetchJson<{
+      session: {
+        revision: number;
+        observations: Array<{ id: string }>;
+      };
+    }>(`${backend.url}/api/workspace/play-sessions/${created.session.id}/observations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: '她在雨里停住。',
+        evidence: 'Play transcript turn',
+      }),
+    });
+    const observationId = observed.session.observations[0]!.id;
+    const invalidCandidateResponse = await fetch(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}/adoption-candidates`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          target: 'chapterDraft',
+          summary: '重复证据候选',
+          evidence: 'Play observation',
+          sourceObservationIds: [observationId, observationId],
+          baseRevision: observed.session.revision,
+        }),
+      },
+    );
+    expect(invalidCandidateResponse.status).toBe(400);
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/${created.session.id}`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: observed.session.revision,
+        adoptionCandidates: [],
+      },
+    });
+
     const candidateResult = await fetchJson<{
       candidate: { id: string };
     }>(`${backend.url}/api/workspace/play-sessions/${created.session.id}/adoption-candidates`, {
       method: 'POST',
       body: JSON.stringify({
+        id: 'caller-controlled-candidate',
         target: 'chapterDraft',
         summary: '转成下一章草稿',
         evidence: 'Play transcript turn',
@@ -483,6 +521,7 @@ describe('novel HTTP backend', () => {
         },
       }),
     });
+    expect(candidateResult.candidate.id).not.toBe('caller-controlled-candidate');
 
     await expect(fetchJson(`${backend.url}/api/workspace/play-sessions/${created.session.id}/adoption-candidates/${candidateResult.candidate.id}/pending-action`, {
       method: 'POST',
@@ -774,6 +813,120 @@ describe('novel HTTP backend', () => {
     });
   });
 
+  it('publishes hard-due world events only after the scheduled snapshot is committed', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerTurn = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      streamPlayTurn: async function* (input) {
+        providerTurn += 1;
+        if (providerTurn === 1) {
+          yield '广播仍然沉默。\n```oan-play-settlement\n';
+          yield JSON.stringify({
+            events: [],
+            scheduledEventChanges: [{
+              type: 'schedule',
+              label: 'Station lockdown',
+              trigger: { type: 'nextTurn' },
+              template: {
+                kind: 'factionActed',
+                origin: 'faction',
+                title: '封锁开始',
+                summary: '站台出口按计划关闭',
+                visibility: 'playerVisible',
+              },
+              reason: '安保协议已经启动',
+              priority: 10,
+            }],
+          });
+          yield '\n```';
+          return;
+        }
+
+        expect(input.request).toContain(
+          'scheduled-1-1 [priority 10/playerVisible] Station lockdown',
+        );
+        yield '铁门依次落下。\n```oan-play-settlement\n';
+        yield JSON.stringify({
+          events: [{
+            kind: 'factionActed',
+            origin: 'faction',
+            title: '封锁开始',
+            summary: '站台出口已经关闭',
+            visibility: 'playerVisible',
+            cause: { reason: '安保计划到期', triggerId: 'scheduled-1-1' },
+          }],
+        });
+        yield '\n```';
+      },
+    });
+    servers.push(backend);
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-hard-due-stream',
+        title: 'Hard due stream',
+        sceneStart: 'Station',
+        eventPolicy: { maxExternalEventsPerTurn: 0 },
+      }),
+    });
+
+    const first = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-hard-due-stream/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '观察广播。', baseRevision: 0 }),
+      },
+    );
+    const firstEvents = parseSseDataEvents(await first.text());
+    expect(firstEvents.some((event) => event.type === 'play.event.occurred')).toBe(false);
+    expect(firstEvents.at(-1)).toMatchObject({
+      type: 'play.turn.committed',
+      revision: 1,
+    });
+
+    const second = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-hard-due-stream/turns/stream`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userText: '继续等待。', actionKind: 'wait', baseRevision: 1 }),
+      },
+    );
+    const secondEvents = parseSseDataEvents(await second.text());
+    expect(secondEvents.map((event) => event.type)).toEqual([
+      'play.turn.started',
+      'play.context.ready',
+      'play.narrative.delta',
+      'play.turn.prepared',
+      'play.event.occurred',
+      'play.turn.committed',
+    ]);
+    expect(secondEvents[4]).toMatchObject({
+      revision: 2,
+      event: {
+        id: 'turn-2-event-1',
+        cause: { triggerId: 'scheduled-1-1' },
+      },
+    });
+
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-sessions/play-hard-due-stream`,
+    )).resolves.toMatchObject({
+      session: {
+        revision: 2,
+        scheduledEvents: [{
+          id: 'scheduled-1-1',
+          status: 'occurred',
+          occurredEventIds: ['turn-2-event-1'],
+          resolvedAtTurnId: 'turn-2-referee',
+        }],
+      },
+    });
+  });
+
   it('confirms a mid-stream Play cancellation without committing provisional facts', async () => {
     const workspaceRoot = await createOanWorkspace();
     let markStreaming: (() => void) | undefined;
@@ -826,13 +979,13 @@ describe('novel HTTP backend', () => {
     expect(cancellation).toMatchObject({ status: 'cancelling', committed: false });
     expect(providerSignal?.aborted).toBe(true);
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'play.narrative.delta', provisional: true }),
       expect.objectContaining({
         type: 'play.turn.cancelled',
         committed: false,
         revision: 0,
       }),
     ]));
+    expect(events.some((event) => event.type === 'play.narrative.delta')).toBe(false);
     expect(events.some((event) => event.type === 'play.turn.committed')).toBe(false);
     await expect(fetchJson(
       `${backend.url}/api/workspace/play-sessions/play-stream-cancel`,
@@ -1036,12 +1189,21 @@ describe('novel HTTP backend', () => {
     });
   });
 
-  it('marks an invalid streamed settlement as failed and leaves the session unchanged', async () => {
+  it('rejects raw structured data before a valid fence without exposing or committing it', async () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startNovelHttpBackend({
       workspaceRoot,
       streamPlayTurn: async function* () {
-        yield '只有 provisional 叙事，没有 settlement。';
+        yield '走廊安静。\n';
+        yield '{"events":[{"visibility":"playerUnknown","summary":"刺客在阁楼"}]}';
+        yield '\n```oan-play-settlement\n';
+        yield JSON.stringify({
+          events: [],
+          stateDelta: {},
+          observations: [],
+          suggestedActions: [],
+        });
+        yield '\n```';
       },
     });
     servers.push(backend);
@@ -1065,12 +1227,12 @@ describe('novel HTTP backend', () => {
     const events = parseSseDataEvents(await response.text());
 
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'play.narrative.delta', provisional: true }),
       expect.objectContaining({
         type: 'play.turn.failed',
         error: expect.objectContaining({ code: 'invalid_settlement' }),
       }),
     ]));
+    expect(events.some((event) => event.type === 'play.narrative.delta')).toBe(false);
     expect(events.some((event) => event.type === 'play.turn.committed')).toBe(false);
     await expect(fetchJson(
       `${backend.url}/api/workspace/play-sessions/play-stream-invalid`,

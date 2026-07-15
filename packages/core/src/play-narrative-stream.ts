@@ -1,4 +1,7 @@
 export const PLAY_SETTLEMENT_FENCE = '```oan-play-settlement';
+const PLAY_STREAM_BOUNDARIES = ['```', '~~~', 'oan-play-settlement'] as const;
+const PLAY_STRUCTURED_NARRATIVE_FIELD =
+  /(?:[{}]|```|~~~|oan-play-settlement|^\s*(?:settlement|events|scheduledEventChanges|stateDelta|observations|suggestedActions|elapsed|worldTimeAnchor)\s*:|"(?:events|scheduledEventChanges|stateDelta|observations|suggestedActions|elapsed|worldTimeAnchor)"\s*:)/imu;
 
 export interface PlayNarrativeStreamFilter {
   push(chunk: string): string;
@@ -8,9 +11,12 @@ export interface PlayNarrativeStreamFilter {
 }
 
 /**
- * Keeps the structured settlement fence server-side while allowing the
- * narrative prefix to be shown as provisional text. The rolling tail makes
- * fence detection safe when a provider splits the sentinel across chunks.
+ * Keeps the complete provider response quarantined until a settlement
+ * boundary is observed. Only then may the narrative prefix be shown as
+ * provisional text. This deliberately trades token-by-token latency for a
+ * fail-closed boundary: a model response that omits the settlement fence (or
+ * prints raw settlement JSON) never reaches the player UI. The final parser
+ * separately requires the exact settlement tag before anything is committed.
  */
 export const createPlayNarrativeStreamFilter = (): PlayNarrativeStreamFilter => {
   let pending = '';
@@ -23,28 +29,32 @@ export const createPlayNarrativeStreamFilter = (): PlayNarrativeStreamFilter => 
       }
 
       pending += chunk;
-      const fenceIndex = pending.toLowerCase().indexOf(PLAY_SETTLEMENT_FENCE);
+      // Player-visible provisional prose must never include a fenced block.
+      // The final parser still requires the exact settlement tag, but the
+      // streaming boundary is deliberately more conservative so a mistyped,
+      // spaced, or untagged settlement fence cannot expose structured facts.
+      const normalizedPending = pending.toLowerCase();
+      const fenceIndex = PLAY_STREAM_BOUNDARIES
+        .map((boundary) => normalizedPending.indexOf(boundary))
+        .filter((index) => index >= 0)
+        .sort((left, right) => left - right)[0] ?? -1;
 
       if (fenceIndex >= 0) {
         const narrative = pending.slice(0, fenceIndex);
         pending = '';
         settlementStarted = true;
-        return narrative;
+        return isSafePlayNarrativePrefix(narrative) ? narrative : '';
       }
 
-      const safeLength = pending.length - settlementFencePrefixSuffixLength(pending);
-      const narrative = pending.slice(0, safeLength);
-      pending = pending.slice(safeLength);
-      return narrative;
+      return '';
     },
     finish() {
       if (settlementStarted) {
         return '';
       }
 
-      const narrative = pending;
       pending = '';
-      return narrative;
+      return '';
     },
     reset() {
       pending = '';
@@ -56,18 +66,20 @@ export const createPlayNarrativeStreamFilter = (): PlayNarrativeStreamFilter => 
   };
 };
 
-function settlementFencePrefixSuffixLength(value: string): number {
-  const normalized = value.toLowerCase();
-  const maxLength = Math.min(
-    normalized.length,
-    PLAY_SETTLEMENT_FENCE.length - 1,
-  );
-
-  for (let length = maxLength; length > 0; length -= 1) {
-    if (PLAY_SETTLEMENT_FENCE.startsWith(normalized.slice(-length))) {
-      return length;
-    }
+/**
+ * Player-visible narrative is prose, never a second structured output
+ * channel. Rejecting braces and settlement field labels is intentionally
+ * conservative: otherwise raw hidden JSON before a later valid fence could
+ * be released and then committed as if it were ordinary narrative.
+ */
+export function assertSafePlayNarrativePrefix(value: string): void {
+  if (!isSafePlayNarrativePrefix(value)) {
+    throw new Error(
+      'Play player-visible narrative must not contain structured settlement data.',
+    );
   }
+}
 
-  return 0;
+function isSafePlayNarrativePrefix(value: string): boolean {
+  return !PLAY_STRUCTURED_NARRATIVE_FIELD.test(value);
 }

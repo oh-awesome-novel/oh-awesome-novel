@@ -63,7 +63,7 @@ Play Mode
 本文以 `docs/tasks/1120.md` 和当前代码为事实基线，不沿用旧参考报告中“Play 尚未实现”的过时判断。当前已经具备：
 
 - 顶级 `Writing | Play` workspace，Play 不再是 Writing 右侧 tab。
-- session schema v2 与七个 Play-local 文件。
+- session schema v4、`turns/*.yaml` 结构化回合事实与包含 event schedule 在内的 Play-local snapshot 文件；必需 branch base 与 legacy cutoff 为 root / legacy bridge 提供可验证前驱。
 - world clock、event policy、typed world events 与 visibility。
 - activated source 实际内容装载与路径约束。
 - 单一只读 world referee endpoint。
@@ -76,17 +76,15 @@ Play Mode
 
 ### 2.2 `1120` 仍需先收口的冻结范围
 
-`docs/tasks/1120.md` 已经明确以下 Remaining Review Scope：
+`docs/tasks/1120.md` 已落地结构化 turn / selected projection、session v4 migration 基础、scheduled hard-due evaluator、隔离式 provisional transport、stop / cancel 和第一批 Desktop UI 测试。当前仍明确以下 Remaining Review Scope：
 
-1. provisional narrative stream 与 stop / cancel；
-2. `turns/*.yaml` 结构化事实和 `transcript.md` 单向 projection；
-3. fsync、跨进程锁、故障注入与残留 stage 清理；
-4. v1 migration backup / preview / unknown field preservation；
-5. schedule / pressure / agenda / hard-due evaluator 与严格 delta refs；
-6. checkpoint / variant / retry 对 state、events、schedule、knowledge 与 transcript path 的一致恢复；
-7. context trace、omitted source、canonical drift / rebase / fork；
-8. session summary / detail 与长 transcript / event 窗口化；
-9. 根目录 `__test__/desktop-ui`。
+1. staged swap 的 fsync、跨进程锁、故障注入与残留 stage 清理；
+2. migration preview 的 backend / client / UI 显式确认、取消与恢复体验；
+3. pressure / agenda / eligible evaluator、规范化 `atWorldTime` 与严格 typed delta refs；
+4. checkpoint / variant / retry 对 state、events、schedule、knowledge 与 transcript path 的一致恢复；
+5. context trace、omitted source、canonical drift / rebase / fork；
+6. session summary / detail 与长 transcript / event 窗口化；
+7. Desktop UI 的窗口化、checkpoint / variant、完整键盘旅程与浏览器级 smoke。
 
 本计划不得把上述事项改名后当作新增，也不得把新的角色推演范围静默塞进 `1120`。正确顺序是：
 
@@ -963,12 +961,13 @@ play.turn.failed
 
 ### 14.1 版本门槛
 
-不要在 `1120` 的 migration backup / preview / unknown field preservation 完成前仓促冻结 session v3。候选升级遵循：
+当前以 `1120` 已落地的 session v4 为兼容基线。后续为 guided entry / rehearsal 引入候选 schema 升级时，不得绕过尚未完成的产品层 migration confirmation，并必须保留 v4 branch base / cutoff 证据。候选升级遵循：
 
 - 旧 v2 session 默认解释为 `purpose: immersiveJourney`、`startMode: quick`。
 - 不要求批量重写所有旧 session。
 - 首次显式升级前生成 backup 与 preview。
 - 保留未知字段，拒绝未来 schema，而不是静默丢弃。
+- `branchSnapshotRequiredFromRevision` 与 `branchBaseSnapshot` 不得被删除或重算成宽松默认值；新 artifact 必须继续从完整 parent 或对齐的 branch base 验证。
 - 旧 string character name 尽可能解析为 stable participant ref；无法解析时创建 guest ref，不伪造 canonical character id。
 
 ### 14.2 Setup stale

@@ -50,19 +50,21 @@ Play Mode
 第一阶段纵向切片已经落地：
 
 - Play 已成为与 Writing 同层级的顶级工作区，并从 Writing right tabs 移除。
-- session schema v3 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`，并以 `turns/*.yaml` 保存结构化回合事实、以 `selectedTurnIds` 选择 transcript projection 路径。
+- session schema v4 已提供 revision、world clock、event policy、typed world events 与 `events.yaml`，并以 `turns/*.yaml` 保存结构化回合事实、以 `selectedTurnIds` 选择 transcript projection 路径。
 - client / backend 已接通真实 world-referee turn；referee 只使用 read tools。
-- Play turn 已升级为专用 SSE：正文以 provisional delta 输出，中间 read-tool loop 通过 `play.narrative.reset` 清除旧 provisional block，结构化 settlement fence 保留在服务端；响应头预先提供 turn id，显式 Stop 与断流恢复通过 turn registry、cancel endpoint 与 commit barrier 确认 cancelled 或 committed truth。
+- Play turn 已升级为专用 SSE：provider response 会先隔离到检测到 settlement boundary，再把 boundary 前的正文作为 provisional delta 输出；无 fence / raw JSON 不进入 UI。中间 read-tool loop 通过 `play.narrative.reset` 清除旧 provisional block，结构化 settlement fence 保留在服务端；响应头预先提供 turn id，显式 Stop 与断流恢复通过 turn registry、cancel endpoint 与 commit barrier 确认 cancelled 或 committed truth。
 - prompt 已加载最近 transcript、Play-local state、既有事件和 activated source 实际内容。
 - narrative + 必需的 `oan-play-settlement` 通过宿主的 schema、事件预算和 cause reference 校验后才写入；无效 settlement 不产生部分回合。
 - session 已采用 staged directory snapshot、ready marker、swap 与读取恢复；同 session 的所有 Play-local mutation 共享锁和 revision conflict 检查。
-- hidden event 的 state、observation 与 adoption provenance 已统一标记，spoiler 关闭时不会从 HUD / adoption 旁路泄露。
+- v4 state / observation / adoption visibility 与 provenance 已严格校验；兄弟分支历史可保留但当前 UI 只投影 selected branch。spoiler 关闭时 hidden facts 和 `cause.reason` 不会从 HUD / event feed / adoption 旁路泄露，同时允许隐藏原因产生公开可感知的后果。
 - activated sources 与 referee read tools 已增加 realpath workspace containment，重复 session id 与未来 schema 会被拒绝。
-- v1 / v2 -> v3 的 Core migration preview、原始 snapshot 备份、未知顶层 session metadata 保留和 migration history 延续已落地。
-- UI 已提供 committed transcript、真实 provisional block、Stop / cancel / failed / conflict / indeterminate 状态、action kind、suggestions、HUD、visible / hidden event feed、source/state、observation 和 adoption candidate 表单；Play 组件统一使用共享黑白中性设计 token。
-- 根目录 `__test__/desktop-ui` 已建立，首批覆盖 stream reducer、terminal 幂等、cancel / commit race 与中性设计契约；组件级和浏览器级覆盖仍需扩展。
+- v1 / v2 / v3 -> v4 的 Core migration preview、原始 snapshot 备份、未知顶层 session metadata 保留和 migration history 延续已落地。v3 仅在为空 session 或其 structured turns 仍为 legacy artifact v1 时可迁移；内含 artifact v2 但缺少 branch base / cutoff 的 v3 session 仍 fail closed。升级后会以当前 revision 作为 `branchSnapshotRequiredFromRevision` cutoff，并用 `branchBaseSnapshot` 封存 selected legacy head 的 clock / state / visibility / schedule / suggestions。
+- typed `event-schedule.yaml`、`nextTurn` / `afterTurns` / `flagEquals` evaluator 与 hard-due settlement 已落地；到期事件必须用 `triggerId` 恰好结算一次且不占 spontaneous event budget。artifact schema v2 以版本化 branch snapshot 保存 world clock、Play-local state value / visibility、suggested actions、完整 schedule head 和 pre-turn hard-due evidence；完整 parent 或 v4 branch base 上会重跑 evaluator，selected path 与当前 projection 不一致时 fail closed，避免 root / legacy bridge 无前驱校验或 sibling branch 污染 evaluator / prompt / HUD。`atWorldTime` 在没有规范化 comparator 时保持 pending，Pressure / Agenda 与 eligible evaluator 仍待完成。
+- `play.event.occurred` 只在 staged snapshot durable write 成功后发布，terminal committed session 继续作为 UI 权威事实；cancel / provider / validation / commit failure 不发布 occurred。
+- UI 已提供 committed transcript、真实 provisional block、Stop / cancel / failed / conflict / indeterminate 状态、action kind、suggestions、HUD、spoiler-aware pending schedule、visible / hidden event feed、source/state、observation 和 adoption candidate 表单；Play 组件统一使用共享黑白中性设计 token。
+- workspace mode 与布局偏好按 workspace 恢复，session rail 具备明确 ARIA 状态。根目录 `__test__/desktop-ui` 已覆盖 stream reducer、terminal 幂等、cancel / commit race、中性设计、router 恢复与 mounted session rail；完整键盘旅程和浏览器级覆盖仍需扩展。
 
-尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、schedule / pressure / agenda evaluator、checkpoint / variant、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
+尚未完成的 Phase 2+ 能力继续由 `docs/tasks/1120.md` 追踪：产品层 migration confirmation、事务 fsync / 跨进程锁 / 完整故障注入、pressure / agenda / eligible evaluator、typed state-delta refs、checkpoint / variant、canonical drift / context trace、summary / windowing 与更完整的 UI 自动化。
 
 ## 2. 规划依据与参考边界
 
@@ -778,14 +780,15 @@ Play observation / event
 
 ## 15. 兼容与迁移
 
-当前已落地 `schemaVersion: 3` 的 turn fact 与迁移基础：
+当前已落地 `schemaVersion: 4` 的 turn fact 与迁移基础：
 
-1. 旧 session 继续可读。
-2. Core 可在写入前生成 migration preview；第一次写入 v3 staged snapshot 时保存原始备份和 preview。backend / client / UI 的显式确认仍待实现。
+1. v1 / v2 session 继续可读；v3 只在为空 session，或 structured turns 仍为 artifact v1 且 projection 可验证时兼容读取与迁移。缺少 branch base / cutoff 却已包含 artifact v2 的 v3 session 会 fail closed，不静默推断前驱。
+2. Core 可在写入前生成 migration preview；第一次写入 v4 staged snapshot 时保存原始备份和 preview，v1 / v2 / v3 备份路径分别为 `.migrations/v1-to-v4/`、`.migrations/v2-to-v4/` 与 `.migrations/v3-to-v4/`。backend / client / UI 的显式确认仍待实现。
 3. 把旧 `session.yaml.transcript` 转换为 legacy turn artifacts。
 4. 重新生成 `transcript.md` projection。
-5. 保留未知顶层 session metadata，并让 `.migrations/` 历史跨后续保存延续；旧自由形态 local state 的进一步归一化仍待后续 schema 完成。
-6. migration 与 v3 snapshot 在同一个 staged directory swap 中提交；更完整的 fsync、跨进程锁和逐故障点验证仍待实现。
+5. 保留未知顶层 session metadata，并让 `.migrations/` 历史跨后续保存延续；升级时用 `branchBaseSnapshot` 封存当前 selected legacy projection，以当前 revision 作为 cutoff。
+6. v4 中 cutoff 与 branch base 都是必需证据，不得删除或静默重算；watermark 必须等于 base revision，revision 高于 cutoff 的 artifact 必须有完整 v2 snapshot，前驱、selected projection 或 schedule 不连续时 fail closed。
+7. migration 与 v4 snapshot 在同一个 staged directory swap 中提交；更完整的 fsync、跨进程锁和逐故障点验证仍待实现。
 
 不应在应用升级时批量静默重写全部 Play session。
 
@@ -798,7 +801,7 @@ Play observation / event
 - 对照代码复核 `docs/tasks/1090.md` 的 client、stream、UI 和 adoption done criteria。
 - 新建独立 Planned task，例如 `1120 Play World Events And Turn Transactions`。
 - 将本计划链接为 Related Plan；不要直接改写旧任务历史。
-- 更新 `docs/PLAY_MODE_SPEC.md`，冻结 v3 turn fact / projection 术语、事实边界和非目标。
+- 更新 `docs/PLAY_MODE_SPEC.md`，冻结 v4 turn fact / projection / branch base 术语、事实边界和非目标。
 - 把 `Writing | Play` 顶级模式导航和移除 `rightTab: 'play'` 写入 UI scope；不允许只升级现有 `PlayModeTab.vue`。
 
 完成标准：实现团队知道哪些是旧 Play 缺口，哪些是本次 world-event 新能力。
@@ -815,7 +818,7 @@ Play observation / event
 
 交付：
 
-- session v3 schema（turn artifact / selected path 基础；其余 world simulation schema 按后续阶段增量交付）。
+- session v4 schema（turn artifact / selected path / branch base 基础；其余 world simulation schema 按后续阶段增量交付）。
 - WorldEvent / Schedule / Pressure / Agenda / TurnArtifact schema。
 - trigger evaluator、领域 validator、state reducer。
 - legacy session reader / migrator。
@@ -979,16 +982,16 @@ PlayAdoptionDrawer.vue
 开始写代码前必须确认以下决策已进入稳定规格：
 
 - [x] `turns/*.yaml` 是结构化回合事实，`transcript.md` 是 projection。
-- [ ] `play-local-state.yaml` 是当前 snapshot，events 不是唯一状态源。
-- [ ] 外部世界只在显式 Play turn / time advance 时结算。
-- [ ] 单 world referee，不引入 character agents 或 background agents。
+- [x] `play-local-state.yaml` 是当前 snapshot，events 不是唯一状态源。
+- [x] 外部世界只在显式 Play turn / time advance 时结算。
+- [x] 单 world referee，不引入 character agents 或 background agents。
 - [ ] hard due / eligible pressure / immediate consequence 三层机制成立。
 - [ ] event origin、cause、visibility、world time、delta refs 为必需字段。
 - [ ] hidden event 的保存、投影、揭示与 adoption 规则明确。
 - [ ] PlayTurnTransaction 的失败恢复和 revision conflict 行为明确。
 - [x] provisional stream 与 committed turn 在 UI 上有清晰区别；Stop 通过服务端 cancel confirmation 与 commit barrier 处理。
 - [ ] checkpoint / variant 覆盖状态、事件、计划、知识与 source refs。
-- [ ] canonical adoption 继续经过 PendingAction / diff / human approval。
+- [x] canonical adoption 继续经过 PendingAction / diff / human approval。
 
 ## 21. 最终建议
 

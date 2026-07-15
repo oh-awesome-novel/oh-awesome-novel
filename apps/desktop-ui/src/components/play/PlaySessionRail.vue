@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef, watch } from 'vue';
+import { shallowRef, useId, watch } from 'vue';
 
 import PlaySessionCreateForm from './PlaySessionCreateForm.vue';
 import type { PlaySession } from '../../composables/useWorkspaceApi';
@@ -21,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const createOpen = shallowRef(false);
+const createFormId = `${useId()}-play-session-create-form`;
 
 watch(
   () => props.selectedSessionId,
@@ -54,6 +55,8 @@ watch(
       class="play-create-trigger"
       type="button"
       :disabled="busy"
+      :aria-expanded="createOpen"
+      :aria-controls="createFormId"
       @click="createOpen = !createOpen"
     >
       <span aria-hidden="true">[+]</span>
@@ -62,6 +65,7 @@ watch(
 
     <PlaySessionCreateForm
       v-if="createOpen"
+      :id="createFormId"
       :creating="creating || busy"
       @cancel="createOpen = false"
       @create="emit('createSession', $event)"
@@ -75,6 +79,7 @@ watch(
         :class="{ 'play-session-card-active': session.id === selectedSessionId }"
         type="button"
         :disabled="busy"
+        :aria-current="session.id === selectedSessionId ? 'true' : undefined"
         @click="emit('selectSession', session.id)"
       >
         <span class="play-session-title">{{ session.title }}</span>

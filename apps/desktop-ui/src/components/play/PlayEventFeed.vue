@@ -5,12 +5,10 @@ import type { PlayWorldEvent } from '../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   events: PlayWorldEvent[];
+  hasHiddenPlayContent: boolean;
 }>();
 
 const showSpoilers = defineModel<boolean>('showSpoilers', { required: true });
-const hiddenCount = computed(() =>
-  props.events.filter((event) => event.visibility === 'playerUnknown').length,
-);
 const visibleEvents = computed(() =>
   showSpoilers.value
     ? props.events
@@ -30,15 +28,16 @@ function eventKindLabel(value: string): string {
         <h2>Recent events</h2>
       </div>
       <button
-        v-if="hiddenCount"
+        v-if="hasHiddenPlayContent"
         type="button"
         role="switch"
         :aria-checked="showSpoilers"
-        :title="showSpoilers ? '隐藏玩家未知事件' : '作者视图：显示未知事件'"
+        :aria-label="showSpoilers ? '关闭作者视图' : '开启作者视图，显示玩家未知内容和因果分析'"
+        :title="showSpoilers ? '隐藏作者专用内容' : '作者视图：显示未知内容和因果分析'"
         @click="showSpoilers = !showSpoilers"
       >
         <span aria-hidden="true">{{ showSpoilers ? '[-]' : '[+]' }}</span>
-        {{ hiddenCount }} hidden
+        Author view
       </button>
     </header>
 
@@ -59,7 +58,7 @@ function eventKindLabel(value: string): string {
           </div>
           <h3>{{ event.title }}</h3>
           <p>{{ event.summary }}</p>
-          <details>
+          <details v-if="showSpoilers">
             <summary>Cause</summary>
             <p>{{ event.cause.reason }}</p>
           </details>

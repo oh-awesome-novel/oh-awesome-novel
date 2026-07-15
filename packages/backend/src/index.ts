@@ -1360,7 +1360,14 @@ async function handleAddPlayObservation(
     if (revisionConflict) {
       return revisionConflict;
     }
-    const next = addPlayObservation(session, observation);
+    let next: PlaySession;
+    try {
+      next = addPlayObservation(session, observation);
+    } catch (error) {
+      return jsonResponse(context, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await writePlaySessionFiles(workspaceRoot, next);
 
     return jsonResponse(context, 200, { session: next });
@@ -1413,7 +1420,14 @@ async function handleAddPlayAdoptionCandidate(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const next = addPlayAdoptionCandidate(session, enrichedCandidate);
+    let next: PlaySession;
+    try {
+      next = addPlayAdoptionCandidate(session, enrichedCandidate);
+    } catch (error) {
+      return jsonResponse(context, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await writePlaySessionFiles(workspaceRoot, next);
 
     return jsonResponse(context, 200, {
@@ -1632,6 +1646,12 @@ async function handlePlayWorldRefereeTurnStream(
 
           run.status = 'committed';
           run.committedSession = next;
+          for (const event of next.events.slice(session.events.length)) {
+            emit('play.event.occurred', {
+              revision: next.revision,
+              event,
+            });
+          }
           emit('play.turn.committed', {
             artifactId: next.selectedTurnIds.at(-1),
             revision: next.revision,
@@ -3290,7 +3310,7 @@ function readPlayTranscriptTurn(value: Record<string, unknown>): PlayTranscriptT
   const speaker = getOptionalString(value, 'speaker')?.trim();
   const content = getOptionalString(value, 'content')?.trim();
 
-  if (!speaker || !content) {
+  if (!speaker || !content || speaker.toLowerCase() === 'world-referee') {
     return undefined;
   }
 
@@ -3325,7 +3345,7 @@ function readPlayObservation(value: Record<string, unknown>): PlayObservation | 
   }
 
   return {
-    id: getOptionalString(value, 'id')?.trim() || `obs-${randomUUID()}`,
+    id: `obs-${randomUUID()}`,
     summary,
     evidence,
     visibility: 'playerVisible',
@@ -3347,7 +3367,7 @@ function readPlayAdoptionCandidate(
   }
 
   return createPlayAdoptionCandidate({
-    id: getOptionalString(value, 'id')?.trim() || `adopt-${randomUUID()}`,
+    id: `adopt-${randomUUID()}`,
     target,
     summary,
     evidence,

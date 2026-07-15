@@ -7,6 +7,7 @@ import type {
   PlayAdoptionCandidate,
   PlayAdoptionTarget,
   PlayEventPolicy,
+  PlayObservation,
   PlaySession,
 } from './useWorkspaceApi';
 
@@ -93,21 +94,105 @@ export function usePlayWorkspace(workspacePath: string) {
         value: formatStateValue(value),
       })),
   );
+  const selectedArtifactIds = computed(() =>
+    new Set(selectedSession.value?.selectedTurnIds ?? []),
+  );
+  const selectedEventIds = computed(() => new Set(
+    (selectedSession.value?.turnArtifacts ?? [])
+      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
+      .flatMap((artifact) => artifact.eventIds),
+  ));
+  const selectedMessageIds = computed(() => new Set(
+    (selectedSession.value?.turnArtifacts ?? [])
+      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
+      .flatMap((artifact) => artifact.messages.map((message) => message.id))
+      .filter((id): id is string => Boolean(id)),
+  ));
+  const selectedObservationIds = computed(() => new Set(
+    (selectedSession.value?.turnArtifacts ?? [])
+      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
+      .flatMap((artifact) => artifact.observationIds),
+  ));
+  const artifactOwnedObservationIds = computed(() => new Set(
+    (selectedSession.value?.turnArtifacts ?? [])
+      .flatMap((artifact) => artifact.observationIds),
+  ));
+  const projectedEvents = computed(() =>
+    (selectedSession.value?.events ?? []).filter((event) =>
+      selectedEventIds.value.has(event.id),
+    ),
+  );
+  const projectedObservations = computed(() =>
+    (selectedSession.value?.observations ?? []).filter((observation) =>
+      (
+        !artifactOwnedObservationIds.value.has(observation.id) ||
+        selectedObservationIds.value.has(observation.id)
+      ) && isPlayProvenanceInSelectedBranch(
+        observation,
+        selectedMessageIds.value,
+        selectedEventIds.value,
+      ),
+    ),
+  );
+  const projectedObservationIds = computed(() => new Set(
+    projectedObservations.value.map((observation) => observation.id),
+  ));
+  const projectedCandidates = computed(() =>
+    (selectedSession.value?.adoptionCandidates ?? []).filter((candidate) =>
+      candidate.sourceObservationIds.every((id) =>
+        projectedObservationIds.value.has(id)) &&
+      isPlayProvenanceInSelectedBranch(
+        candidate,
+        selectedMessageIds.value,
+        selectedEventIds.value,
+      ),
+    ),
+  );
   const sortedEvents = computed(() =>
-    [...(selectedSession.value?.events ?? [])].sort((left, right) =>
+    [...projectedEvents.value].sort((left, right) =>
       right.createdAt.localeCompare(left.createdAt) || right.sequence - left.sequence,
     ),
   );
   const visibleObservations = computed(() =>
-    (selectedSession.value?.observations ?? []).filter(
+    projectedObservations.value.filter(
       (observation) => showSpoilers.value || observation.visibility !== 'playerUnknown',
     ),
   );
   const visibleCandidates = computed(() =>
-    (selectedSession.value?.adoptionCandidates ?? []).filter(
+    projectedCandidates.value.filter(
       (candidate) => showSpoilers.value || candidate.visibility !== 'playerUnknown',
     ),
   );
+  const visibleScheduledEvents = computed(() =>
+    [...(selectedSession.value?.scheduledEvents ?? [])]
+      .filter((event) =>
+        event.status === 'scheduled' &&
+        (showSpoilers.value || event.template.visibility !== 'playerUnknown'),
+      )
+      .sort((left, right) =>
+        (right.priority ?? 0) - (left.priority ?? 0) ||
+        left.scheduledAtTurn - right.scheduledAtTurn ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+      ),
+  );
+  const hasHiddenPlayContent = computed(() => {
+    const session = selectedSession.value;
+    if (!session) {
+      return false;
+    }
+
+    return projectedEvents.value.some((event) => Boolean(event.cause.reason)) ||
+      Object.keys(session.playLocalStateVisibility).some(
+      (key) => session.playLocalStateVisibility[key] === 'playerUnknown',
+    ) || projectedEvents.value.some((event) => event.visibility === 'playerUnknown')
+      || projectedObservations.value.some((observation) =>
+        observation.visibility === 'playerUnknown')
+      || projectedCandidates.value.some((candidate) =>
+        candidate.visibility === 'playerUnknown')
+      || session.scheduledEvents.some((event) =>
+        event.status === 'scheduled' &&
+        event.template.visibility === 'playerUnknown');
+  });
 
   onMounted(() => {
     void refreshSessions();
@@ -274,6 +359,7 @@ export function usePlayWorkspace(workspacePath: string) {
     provisionalTurn,
     turnAnnouncement,
     showSpoilers,
+    hasHiddenPlayContent,
     sessions,
     sortedEvents,
     stateEntries,
@@ -281,6 +367,7 @@ export function usePlayWorkspace(workspacePath: string) {
     userText,
     visibleCandidates,
     visibleObservations,
+    visibleScheduledEvents,
     createPendingAction,
     createAdoptionCandidate,
     createSession,
@@ -289,6 +376,15 @@ export function usePlayWorkspace(workspacePath: string) {
     stopTurn,
     submitTurn,
   };
+}
+
+export function isPlayProvenanceInSelectedBranch(
+  fact: Pick<PlayObservation | PlayAdoptionCandidate, 'sourceTurnIds' | 'sourceEventIds'>,
+  selectedMessageIds: ReadonlySet<string>,
+  selectedEventIds: ReadonlySet<string>,
+): boolean {
+  return fact.sourceTurnIds.every((id) => selectedMessageIds.has(id)) &&
+    fact.sourceEventIds.every((id) => selectedEventIds.has(id));
 }
 
 function inferActionKind(text: string): PlayActionKind {
