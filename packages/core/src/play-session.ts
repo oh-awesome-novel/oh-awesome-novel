@@ -1,11 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
-import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'yaml';
 
 import { assertSafePlayNarrativePrefix } from './play-narrative-stream.js';
+import { createPlayAdoptionSourceBase } from './play-adoption.js';
+import {
+  PLAY_KNOWLEDGE_STATE_KEY,
+  applyPlayKnowledgeChanges,
+  listPlayKnowledgeRevealCandidates,
+  normalizePlayKnowledgeChanges,
+  readPlayKnowledgeState,
+} from './play-knowledge.js';
+import type { PlayKnowledgeChange } from './play-knowledge.js';
 import {
   evaluatePlayDueEvents,
   normalizePlayEventTrigger,
@@ -172,6 +181,7 @@ export interface PlayWorldRefereeSettlement {
   pressureChanges: PlayPressureChange[];
   agendaChanges: PlayAgendaChange[];
   scheduledEventChanges: PlayWorldRefereeScheduledEventChange[];
+  knowledgeChanges: PlayKnowledgeChange[];
   stateDelta: Record<string, unknown>;
   observations: Array<{ summary: string; evidence: string }>;
   suggestedActions: string[];
@@ -624,6 +634,7 @@ const writePlaySessionFilesWithLock = async (
   try {
     await copyPlaySessionMigrationHistory(sessionRoot, stageRoot);
     await copyPlaySessionRecoveryState(sessionRoot, stageRoot);
+    await copyPlaySessionReports(sessionRoot, stageRoot);
     if (migrationPreview) {
       await writePlaySessionMigrationBackup({
         sessionRoot,
@@ -1031,6 +1042,10 @@ export const formatPlayWorldRefereePrompt = (
   const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
   const scheduleEvaluation = evaluatePlaySessionDueEvents(session);
   const momentum = readPlayWorldMomentum(facts.selectedPlayLocalState);
+  const revealCandidates = listPlayKnowledgeRevealCandidates({
+    playLocalState: facts.selectedPlayLocalState,
+    selectedEvents,
+  });
   const eligibleEvaluation = evaluatePlaySessionEligibleEvents(session, turn);
   const timeAdvance = turn.timeAdvance === undefined
     ? undefined
@@ -1071,6 +1086,14 @@ export const formatPlayWorldRefereePrompt = (
           `- ${event.id} [${event.visibility}/${event.kind}] ${event.summary}; cause: ${event.cause.reason}`,
         )
       : ['- none']),
+    '',
+    'Selected-branch hidden events eligible for an explicit causal reveal:',
+    ...(revealCandidates.length
+      ? revealCandidates.map((candidate) =>
+          `- ${candidate.subjectEventId} [current ${candidate.currentPlayerProjection}/${candidate.kind}] ${candidate.title}: ${candidate.summary}; cause: ${candidate.reason}`,
+        )
+      : ['- none']),
+    'To reveal one candidate, emit exactly one knowledgeChanges revealEvent item and exactly one current informationSpread event at the same target visibility whose cause.sourceEventIds contains that subjectEventId. Never copy hidden source details into Player-facing prose.',
     '',
     'World momentum records (referee knowledge; never leak playerUnknown entries):',
     ...(momentum.pressures.length
@@ -1119,10 +1142,10 @@ export const formatPlayWorldRefereePrompt = (
     'Output protocol:',
     '1. Write only the player-visible narrative first. Never leak playerUnknown events.',
     '2. End with exactly one fenced `oan-play-settlement` JSON object.',
-    '3. The JSON fields are: elapsed, worldTimeAnchor, events, pressureChanges, agendaChanges, scheduledEventChanges, stateDelta, observations, suggestedActions.',
+    '3. The JSON fields are: elapsed, worldTimeAnchor, events, pressureChanges, agendaChanges, scheduledEventChanges, knowledgeChanges, stateDelta, observations, suggestedActions.',
     '4. Each event contains kind, origin, title, summary, visibility, and cause: { reason, optional pressureId or agendaId }. Momentum ids must come from the host-eligible list.',
     '5. To create a future consequence, add a scheduledEventChanges item with type schedule, label, trigger, template, reason, and optional priority. To cancel or reschedule a pending item, reference its scheduledEventId and provide a reason.',
-    '6. Update an existing pressure or agenda only through pressureChanges / agendaChanges. Each change needs its id, reason, and at least one changed field; every event that cites a pressureId or agendaId must include the matching change. Never write worldMomentum through stateDelta and never invent a new momentum id.',
+    '6. Update an existing pressure or agenda only through pressureChanges / agendaChanges. Each change needs its id, reason, and at least one changed field; every event that cites a pressureId or agendaId must include the matching change. Never write worldMomentum or playKnowledge through stateDelta and never invent a new momentum id.',
     '7. Do not include event ids, turn ids, sequence, timestamps, or canonical flags; the host assigns them.',
     '8. After the turn, observations remain Play-local. Do not adopt them into canon without PendingAction.',
     '9. Player-visible or rumor summaries and observation evidence may describe only perceivable consequences. Keep hidden causal reasoning in event cause and mark truly secret facts playerUnknown.',
@@ -1272,6 +1295,17 @@ export const settlePlayWorldRefereeSettlement = (
     createdAt,
     canonical: false,
   }));
+  const nextKnowledge = settlement.knowledgeChanges.length
+    ? applyPlayKnowledgeChanges({
+        playLocalState: existingFacts.selectedPlayLocalState,
+        selectedAncestorEvents: input.session.events.filter((event) =>
+          existingFacts.selectedEventIds.has(event.id)),
+        currentEvents: events,
+        changes: settlement.knowledgeChanges,
+        revision,
+        refereeTurnId,
+      })
+    : readPlayKnowledgeState(existingFacts.selectedPlayLocalState);
   const settlementVisibility: PlayEventVisibility = events.some(
     (event) => event.visibility === 'playerUnknown',
   )
@@ -1326,11 +1360,17 @@ export const settlePlayWorldRefereeSettlement = (
   if (momentumChanged) {
     stateDelta[PLAY_WORLD_MOMENTUM_STATE_KEY] = nextMomentum;
   }
+  if (settlement.knowledgeChanges.length) {
+    stateDelta[PLAY_KNOWLEDGE_STATE_KEY] = nextKnowledge;
+  }
   const playLocalStateVisibility = {
     ...existingFacts.selectedPlayLocalStateVisibility,
   };
   for (const key of Object.keys(stateDelta)) {
-    playLocalStateVisibility[key] = key === PLAY_WORLD_MOMENTUM_STATE_KEY
+    playLocalStateVisibility[key] = (
+      key === PLAY_WORLD_MOMENTUM_STATE_KEY ||
+      key === PLAY_KNOWLEDGE_STATE_KEY
+    )
       ? 'playerUnknown'
       : settlementVisibility;
   }
@@ -1339,6 +1379,7 @@ export const settlePlayWorldRefereeSettlement = (
     stateDelta,
   );
   readPlayWorldMomentum(playLocalState);
+  readPlayKnowledgeState(playLocalState);
   const suggestedActions = settlementVisibility === 'playerUnknown'
     ? []
     : [...settlement.suggestedActions];
@@ -1510,6 +1551,39 @@ export const addPlayAdoptionCandidate = (
     strict: true,
   });
   const existingFacts = materializePlayTurnFacts(session);
+  if (normalizedCandidate.evidenceClosure) {
+    const closure = normalizedCandidate.evidenceClosure;
+    if (
+      closure.sessionId !== session.id ||
+      closure.sessionRevision !== session.revision ||
+      !isDeepStrictEqual(
+        closure.selectedArtifactTurnRefs,
+        existingFacts.selectedTurnIds,
+      )
+    ) {
+      throw new Error(
+        `Play adoption candidate ${normalizedCandidate.id} evidence closure ` +
+        'is stale for the current selected branch.',
+      );
+    }
+    const outOfBranchArtifact = closure.artifactTurnRefs.find((artifactRef) =>
+      !existingFacts.selectedTurnIds.includes(artifactRef));
+    if (outOfBranchArtifact) {
+      throw new Error(
+        `Play adoption candidate ${normalizedCandidate.id} references ` +
+        `out-of-branch artifact: ${outOfBranchArtifact}.`,
+      );
+    }
+    const sourceBase = createPlayAdoptionSourceBase(session.activatedSources);
+    if (
+      closure.sourceBaseFingerprint !== sourceBase.sourceBaseFingerprint ||
+      !isDeepStrictEqual(closure.sourceSnapshots, sourceBase.sourceSnapshots)
+    ) {
+      throw new Error(
+        `Play adoption candidate ${normalizedCandidate.id} source base is stale.`,
+      );
+    }
+  }
   assertScopedPlayFactReferences(
     `Play adoption candidate ${normalizedCandidate.id}`,
     normalizedCandidate.sourceTurnIds,
@@ -1949,6 +2023,55 @@ async function copyPlaySessionRecoveryState(
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       throw error;
     }
+  }
+}
+
+async function copyPlaySessionReports(
+  sessionRoot: string,
+  stageRoot: string,
+): Promise<void> {
+  const reportsRoot = join(sessionRoot, 'reports');
+  const allowedFiles = new Set(['outcome.yaml', 'outcome.md']);
+  let rootStats: Stats;
+  try {
+    rootStats = await lstat(reportsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error('Play reports root must be a real directory.');
+  }
+  const entries = await readdir(reportsRoot, { withFileTypes: true });
+  const unsupported = entries.find((entry) =>
+    !allowedFiles.has(entry.name));
+  if (unsupported) {
+    throw new Error(
+      `Play reports directory contains an unsupported entry: ${unsupported.name}.`,
+    );
+  }
+  const names = new Set(entries.map((entry) => entry.name));
+  if (names.has('outcome.md') && !names.has('outcome.yaml')) {
+    throw new Error('Play outcome markdown cannot exist without authoritative YAML.');
+  }
+  if (!names.has('outcome.yaml')) return;
+  const targetRoot = join(stageRoot, 'reports');
+  await mkdir(targetRoot, { recursive: true });
+  for (const entry of entries) {
+    const sourcePath = join(reportsRoot, entry.name);
+    const fileStats = await lstat(sourcePath);
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      !fileStats.isFile() ||
+      fileStats.isSymbolicLink()
+    ) {
+      throw new Error(`Play report must be a regular file: ${entry.name}.`);
+    }
+    if (fileStats.size > 32 * 1024 * 1024) {
+      throw new Error(`Play report exceeds the preservation size limit: ${entry.name}.`);
+    }
+    await copyFile(sourcePath, join(targetRoot, entry.name));
   }
 }
 
@@ -2403,15 +2526,21 @@ export function normalizePlayWorldRefereeSettlement(
   ) {
     throw new Error('Play settlement cannot change more than 8 scheduled events per turn.');
   }
+  if (value.knowledgeChanges !== undefined && !Array.isArray(value.knowledgeChanges)) {
+    throw new Error('Play settlement knowledgeChanges must be an array.');
+  }
   if (value.stateDelta !== undefined && !isRecord(value.stateDelta)) {
     throw new Error('Play settlement stateDelta must be an object.');
   }
   if (
     isRecord(value.stateDelta) &&
-    Object.hasOwn(value.stateDelta, PLAY_WORLD_MOMENTUM_STATE_KEY)
+    (
+      Object.hasOwn(value.stateDelta, PLAY_WORLD_MOMENTUM_STATE_KEY) ||
+      Object.hasOwn(value.stateDelta, PLAY_KNOWLEDGE_STATE_KEY)
+    )
   ) {
     throw new Error(
-      'Play settlement must update world momentum through typed changes, not stateDelta.',
+      'Play settlement must update reserved state through typed changes, not stateDelta.',
     );
   }
   if (value.observations !== undefined && !Array.isArray(value.observations)) {
@@ -2433,6 +2562,7 @@ export function normalizePlayWorldRefereeSettlement(
     agendaChanges: normalizePlayAgendaChanges(value.agendaChanges),
     scheduledEventChanges: (value.scheduledEventChanges ?? [])
       .map(normalizePlayWorldRefereeScheduledEventChange),
+    knowledgeChanges: normalizePlayKnowledgeChanges(value.knowledgeChanges),
     stateDelta: isRecord(value.stateDelta)
       ? clonePlayLocalState(value.stateDelta)
       : {},

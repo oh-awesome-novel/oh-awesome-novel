@@ -100,6 +100,7 @@ onMounted(() => {
   void loadWorkspaceStatus();
   void loadProjectHealth();
   void loadPendingActions();
+  void conversations.refreshWritingReferences();
 });
 
 watch(
@@ -294,6 +295,18 @@ function reviewPendingAction(action?: PendingActionView) {
   layout.openRightPanel('approval');
 }
 
+async function reviewPlayPendingAction(pendingActionId: string): Promise<void> {
+  await refreshPendingActionSurface();
+  const action = decoratedPendingActions.value.find(
+    (candidate) => candidate.id === pendingActionId,
+  );
+  if (action) {
+    reviewPendingAction(action);
+    return;
+  }
+  openPendingActions();
+}
+
 function openPendingActionDiff(action: PendingActionView) {
   selectedPendingActionId.value = action.id;
   layout.openRightPanel('diff');
@@ -470,6 +483,10 @@ function applyDecisionRefresh(
       :chat-input="conversations.activeInput.value"
       :chat-messages="conversations.activeMessages.value"
       :chat-pending-actions="conversations.activePendingActions.value"
+      :writing-reference-attachments="conversations.writingReferenceAttachments.value"
+      :selected-writing-reference-attachment-ids="conversations.selectedWritingReferenceAttachmentIds.value"
+      :writing-references-loading="conversations.writingReferencesLoading.value"
+      :writing-references-error="conversations.writingReferencesError.value"
       @update-left-overlay-open="layout.leftOverlayOpen.value = $event"
       @update-sidebar-tab="layout.sidebarTab.value = $event"
       @open-file="openFile"
@@ -483,6 +500,8 @@ function applyDecisionRefresh(
       @update-chat-input="conversations.activeInput.value = $event"
       @send-chat-input="conversations.sendCurrentInput"
       @stop-chat="conversations.stop"
+      @refresh-writing-references="conversations.refreshWritingReferences"
+      @toggle-writing-reference="conversations.toggleWritingReferenceAttachment"
       @prompt-consumed="clearQueuedPrompt"
       @accept-pending-action="acceptPendingAction"
       @reject-pending-action="rejectPendingAction"
@@ -501,6 +520,8 @@ function applyDecisionRefresh(
       :files-error="treeError"
       @configure-provider="emit('configureProvider')"
       @pending-action-created="refreshPendingActionSurface"
+      @review-pending-action="reviewPlayPendingAction"
+      @writing-references-updated="conversations.refreshWritingReferences"
     />
 
     <div v-if="searchOpen" class="search-overlay" role="dialog" aria-label="Workspace search">

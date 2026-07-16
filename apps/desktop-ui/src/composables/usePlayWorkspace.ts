@@ -9,14 +9,17 @@ import {
 import { usePlaySessionHistory } from './usePlaySessionHistory';
 import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
 import { usePlayTurnStream } from './usePlayTurnStream';
-import { buildPlayEventCardViews } from './playWorldPresentation';
+import {
+  buildPlayEventCardViews,
+  PLAY_KNOWLEDGE_STATE_KEY,
+} from './playWorldPresentation';
 import type {
   CreatePlaySceneRehearsalSessionInput,
   PlayActionKind,
   PlayAdoptionCandidate,
-  PlayAdoptionTarget,
   PlayAgenda,
   PlayEventPolicy,
+  PlayEventVisibility,
   PlayObservation,
   PlayPressure,
   PlayRelativeTimeAdvance,
@@ -56,14 +59,6 @@ export interface PlayStateEntryView {
   value: string;
 }
 
-export interface PlayAdoptionDraftInput {
-  target: PlayAdoptionTarget;
-  summary: string;
-  evidence: string;
-  payload: Record<string, unknown>;
-  sourceObservationIds: string[];
-}
-
 export function usePlayWorkspace(
   workspacePath: string,
   providerConfigured: Readonly<Ref<boolean>>,
@@ -74,9 +69,6 @@ export function usePlayWorkspace(
   const loading = shallowRef(false);
   const creating = shallowRef(false);
   const error = shallowRef('');
-  const adoptionBusyId = shallowRef('');
-  const adoptionCreating = shallowRef(false);
-  const adoptionNotice = shallowRef('');
   const userText = shallowRef('');
   const actionKind = shallowRef<PlayActionKind>('do');
   const timeAdvance = shallowRef<PlayRelativeTimeAdvance | undefined>({
@@ -173,7 +165,6 @@ export function usePlayWorkspace(
       userText.value = '';
       resetTimeAdvance();
       error.value = '';
-      adoptionNotice.value = '';
     },
     onRenamed(session) {
       replaceSession(session);
@@ -229,16 +220,11 @@ export function usePlayWorkspace(
     ),
   );
   const stateEntries = computed<PlayStateEntryView[]>(() =>
-    Object.entries(displaySession.value?.playLocalState ?? {})
-      .filter(([key]) => key !== PLAY_WORLD_MOMENTUM_STATE_KEY)
-      .filter(([key]) =>
-        showSpoilers.value ||
-        displaySession.value?.playLocalStateVisibility[key] === 'playerVisible',
-      )
-      .map(([key, value]) => ({
-        key,
-        value: formatStateValue(value),
-      })),
+    buildPlayStateEntryViews(
+      displaySession.value?.playLocalState,
+      displaySession.value?.playLocalStateVisibility,
+      showSpoilers.value,
+    ),
   );
   const selectedArtifactIds = computed(() =>
     new Set(displaySession.value?.selectedTurnIds ?? []),
@@ -394,7 +380,6 @@ export function usePlayWorkspace(
     if (!interactionBlocked.value && sessions.value.some((session) => session.id === id)) {
       rememberSelectedSession(id);
       error.value = '';
-      adoptionNotice.value = '';
     }
   }
 
@@ -447,7 +432,6 @@ export function usePlayWorkspace(
     }
 
     error.value = '';
-    adoptionNotice.value = '';
 
     const outcome = await submitStreamTurn({
       sessionId: session.id,
@@ -488,7 +472,6 @@ export function usePlayWorkspace(
     }
 
     error.value = '';
-    adoptionNotice.value = '';
     historyRetryingArtifactId.value = artifactId;
     retryProjection.value = { sessionId: session.id, projection };
 
@@ -518,64 +501,6 @@ export function usePlayWorkspace(
     }
   }
 
-  async function createPendingAction(candidate: PlayAdoptionCandidate): Promise<boolean> {
-    const session = selectedSession.value;
-    if (
-      !session ||
-      session.schemaVersion !== 4 ||
-      adoptionBusyId.value ||
-      interactionBlocked.value
-    ) {
-      return false;
-    }
-
-    adoptionBusyId.value = candidate.id;
-    adoptionNotice.value = '';
-    error.value = '';
-
-    try {
-      await api.createPlayAdoptionPendingAction(session.id, candidate.id);
-      adoptionNotice.value = 'PendingAction 已创建，canonical 文件仍保持不变。';
-      return true;
-    } catch (caught) {
-      error.value = toErrorMessage(caught);
-      return false;
-    } finally {
-      adoptionBusyId.value = '';
-    }
-  }
-
-  async function createAdoptionCandidate(input: PlayAdoptionDraftInput): Promise<boolean> {
-    const session = selectedSession.value;
-    if (
-      !session ||
-      session.schemaVersion !== 4 ||
-      adoptionCreating.value ||
-      interactionBlocked.value
-    ) {
-      return false;
-    }
-
-    adoptionCreating.value = true;
-    adoptionNotice.value = '';
-    error.value = '';
-
-    try {
-      const result = await api.addPlayAdoptionCandidate(session.id, {
-        ...input,
-        baseRevision: session.revision,
-      });
-      replaceSession(result.session);
-      adoptionNotice.value = 'Adoption candidate 已准备好；创建 PendingAction 后仍需人工审阅。';
-      return true;
-    } catch (caught) {
-      error.value = toErrorMessage(caught);
-      return false;
-    } finally {
-      adoptionCreating.value = false;
-    }
-  }
-
   function replaceSession(session: PlaySession) {
     sessions.value = sessions.value.map((item) =>
       item.id === session.id && session.revision >= item.revision ? session : item,
@@ -602,9 +527,6 @@ export function usePlayWorkspace(
 
   return {
     actionKind,
-    adoptionBusyId,
-    adoptionCreating,
-    adoptionNotice,
     creating,
     error,
     loading,
@@ -639,10 +561,9 @@ export function usePlayWorkspace(
     visibleScheduledEvents,
     visiblePressures,
     visibleAgendas,
-    createPendingAction,
-    createAdoptionCandidate,
     createSession,
     registerCreatedSession,
+    replaceSession,
     refreshSessions,
     retryCheckpoint,
     renameCheckpoint,
@@ -677,6 +598,22 @@ export function readPlayWorldMomentum(
     pressures: value.pressures,
     agendas: value.agendas,
   };
+}
+
+export function buildPlayStateEntryViews(
+  state: Readonly<Record<string, unknown>> | undefined,
+  visibility: Readonly<Record<string, PlayEventVisibility>> | undefined,
+  showSpoilers: boolean,
+): PlayStateEntryView[] {
+  return Object.entries(state ?? {})
+    .filter(([key]) =>
+      key !== PLAY_WORLD_MOMENTUM_STATE_KEY && key !== PLAY_KNOWLEDGE_STATE_KEY,
+    )
+    .filter(([key]) => showSpoilers || visibility?.[key] === 'playerVisible')
+    .map(([key, value]) => ({
+      key,
+      value: formatStateValue(value),
+    }));
 }
 
 export function normalizeRelativeTimeAdvance(

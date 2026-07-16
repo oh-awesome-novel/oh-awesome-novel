@@ -5,14 +5,25 @@ import {
   buildPlayEventCardViews,
   type PlayEventCardView,
 } from '../../composables/playWorldPresentation';
+import type { PlayAdoptionSeed } from '../../composables/usePlayAdoptionPreview';
 import type { PlayWorldEvent } from '../../composables/useWorkspaceApi';
 import PlayWorldEventCard from './PlayWorldEventCard.vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   cards?: readonly PlayEventCardView[];
   events?: readonly PlayWorldEvent[];
   causeLabelsByEventId?: Readonly<Record<string, readonly string[]>>;
   hasHiddenPlayContent: boolean;
+  adoptionDisabled?: boolean;
+}>(), {
+  cards: undefined,
+  events: undefined,
+  causeLabelsByEventId: undefined,
+  adoptionDisabled: false,
+});
+
+const emit = defineEmits<{
+  prepareAdoption: [seed: PlayAdoptionSeed];
 }>();
 
 const showSpoilers = defineModel<boolean>('showSpoilers', { required: true });
@@ -20,9 +31,7 @@ const displayCards = computed<PlayEventCardView[]>(() => {
   if (props.cards !== undefined) {
     return props.cards
       .filter((card) => showSpoilers.value || card.visibility !== 'playerUnknown')
-      .map((card) => showSpoilers.value
-        ? { ...card }
-        : { ...card, authorReason: undefined });
+      .map((card) => projectCardForLens(card, showSpoilers.value));
   }
 
   return buildPlayEventCardViews({
@@ -41,6 +50,47 @@ const displayCards = computed<PlayEventCardView[]>(() => {
     ),
   }));
 });
+
+function projectCardForLens(
+  card: Readonly<PlayEventCardView>,
+  showAuthorDetails: boolean,
+): PlayEventCardView {
+  if (showAuthorDetails) return { ...card };
+
+  const revealChain = buildPlayerRevealChain(card);
+  const cardWasPlayerProjected = card.projection === 'player';
+  return {
+    id: card.id,
+    title: card.title,
+    impact: card.impact,
+    kindLabel: card.kindLabel,
+    originLabel: card.originLabel,
+    visibility: card.visibility,
+    worldTimeLabel: card.worldTimeLabel,
+    projection: 'player',
+    technicalRefs: [],
+    causeLabels: cardWasPlayerProjected
+      ? [...card.causeLabels]
+      : card.causeLabels.filter((cause) => cause.kind === 'action'),
+    stateImpacts: cardWasPlayerProjected ? [...card.stateImpacts] : [],
+    ...(revealChain ? { revealChain } : {}),
+  };
+}
+
+function buildPlayerRevealChain(
+  card: Readonly<PlayEventCardView>,
+): PlayEventCardView['revealChain'] {
+  if (!card.revealChain) return undefined;
+  return card.visibility === 'rumor'
+    ? {
+        statusLabel: 'Rumor surfaced',
+        explanation: 'This event carries a rumor about an earlier unseen development.',
+      }
+    : {
+        statusLabel: 'Information confirmed',
+        explanation: 'This event confirms information about an earlier unseen development.',
+      };
+}
 
 function mergeLegacyCauseLabels(
   card: Readonly<PlayEventCardView>,
@@ -84,6 +134,8 @@ function mergeLegacyCauseLabels(
         :key="card.id"
         :card="card"
         :show-author-details="showSpoilers"
+        :adoption-disabled="adoptionDisabled"
+        @prepare-adoption="emit('prepareAdoption', $event)"
       />
     </div>
 

@@ -101,6 +101,76 @@ describe('PlayEventFeed', () => {
     expect(wrapper.text()).not.toContain('hidden commander');
   });
 
+  it('synchronously removes hidden reveal subjects when Author view closes', async () => {
+    const cards: PlayEventCardView[] = [{
+      id: 'event-rumor',
+      title: 'A ferryman shares a rumor',
+      impact: 'Travelers report unusual movement beyond the river.',
+      kindLabel: 'Information spread',
+      originLabel: 'Origin · Npc',
+      visibility: 'rumor',
+      worldTimeLabel: 'Turn 2',
+      causeLabels: [{
+        kind: 'sourceEvent',
+        label: 'Earlier event · Hidden source title',
+        ref: 'event-hidden-source',
+      }, {
+        kind: 'related',
+        label: 'Hidden related cause',
+        ref: 'event-hidden-related',
+      }],
+      stateImpacts: [],
+      technicalRefs: [{ label: 'Source event ref', value: 'event-hidden-source' }],
+      projection: 'author',
+      revealChain: {
+        statusLabel: 'Hidden source status',
+        explanation: 'Hidden source explanation.',
+        author: {
+          recordId: 'knowledge-2-1',
+          subjectEventId: 'event-hidden-source',
+          subjectTitle: 'Hidden source title',
+          subjectSummary: 'Hidden source summary.',
+          subjectWorldTimeLabel: 'Turn 1',
+          subjectReason: 'Hidden source reason.',
+          revealedByEventId: 'event-rumor',
+          revealedByTitle: 'A ferryman shares a rumor',
+          previousPlayerProjection: 'playerUnknown',
+          playerProjection: 'rumor',
+          knownByParticipantRefs: ['participant-secret'],
+        },
+      },
+    }];
+    const wrapper = mount(PlayEventFeed, {
+      props: {
+        cards,
+        hasHiddenPlayContent: true,
+        showSpoilers: true,
+      },
+    });
+
+    expect(wrapper.get('[aria-label="Information reveal chain"]').text()).toContain(
+      'Hidden source title',
+    );
+    expect(wrapper.text()).toContain('event-hidden-source');
+    expect(wrapper.text()).toContain('Hidden source summary.');
+    expect(wrapper.text()).toContain('Hidden source reason.');
+
+    await wrapper.setProps({ showSpoilers: false });
+
+    expect(wrapper.get('[aria-label="Information reveal chain"]').text()).toContain(
+      'earlier unseen development',
+    );
+    expect(wrapper.text()).not.toContain('event-hidden-source');
+    expect(wrapper.text()).not.toContain('Hidden source title');
+    expect(wrapper.text()).not.toContain('Hidden source summary.');
+    expect(wrapper.text()).not.toContain('Hidden source reason.');
+    expect(wrapper.text()).not.toContain('Hidden source status');
+    expect(wrapper.text()).not.toContain('Hidden source explanation.');
+    expect(wrapper.text()).not.toContain('Hidden related cause');
+    expect(wrapper.text()).not.toContain('event-hidden-related');
+    expect(wrapper.text()).not.toContain('participant-secret');
+  });
+
   it('renders projected impact, cause, state, time, and author-only diagnostics', async () => {
     const cards: PlayEventCardView[] = [{
       id: 'event-visible',
@@ -110,6 +180,7 @@ describe('PlayEventFeed', () => {
       originLabel: 'Origin · Faction',
       visibility: 'playerVisible',
       worldTimeLabel: 'Nightfall · Turn 3 · + 30 minutes',
+      projection: 'player',
       causeLabels: [{
         kind: 'action',
         label: 'Wait · Stay beside the gate',
@@ -126,6 +197,7 @@ describe('PlayEventFeed', () => {
       originLabel: 'Origin · Npc',
       visibility: 'playerUnknown',
       worldTimeLabel: 'Turn 3',
+      projection: 'author',
       causeLabels: [],
       stateImpacts: [],
       technicalRefs: [],

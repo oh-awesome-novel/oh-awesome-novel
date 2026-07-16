@@ -57,6 +57,9 @@
 - [1100 Project Health Guardrails And Projection Refresh](1100.md)
 - [1130 First Playable Scene Rehearsal](1130.md)
 - [1140 Source-backed Guided Start](1140.md)
+- [1150 Play Outcome And Explicit Writing Handoff](1150.md)
+- [1160 Branch-local Knowledge And Causal Reveal](1160.md)
+- [1170 Evidence-backed Play Adoption Path](1170.md)
 
 ## Needs Review Tasks
 

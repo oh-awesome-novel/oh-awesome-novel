@@ -14,6 +14,7 @@ import type {
   ChapterIndexStatus,
   FileTreeNode,
   PendingAction,
+  PlayWritingReferenceAttachment,
   ProjectHealth,
   WorkspaceOnboardingInput,
   WorkspaceStatus,
@@ -63,6 +64,10 @@ defineProps<{
   chatInput: string;
   chatMessages: UIMessage[];
   chatPendingActions: PendingActionView[];
+  writingReferenceAttachments: PlayWritingReferenceAttachment[];
+  selectedWritingReferenceAttachmentIds: string[];
+  writingReferencesLoading: boolean;
+  writingReferencesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -86,6 +91,8 @@ const emit = defineEmits<{
   updateChatInput: [input: string];
   sendChatInput: [];
   stopChat: [];
+  refreshWritingReferences: [];
+  toggleWritingReference: [id: string];
 }>();
 </script>
 
@@ -162,6 +169,10 @@ const emit = defineEmits<{
         :pending-actions-loading="pendingActionsLoading"
         :pending-actions-error="pendingActionsError"
         :right-panel-shown="rightShown"
+        :writing-reference-attachments="writingReferenceAttachments"
+        :selected-writing-reference-attachment-ids="selectedWritingReferenceAttachmentIds"
+        :writing-references-loading="writingReferencesLoading"
+        :writing-references-error="writingReferencesError"
         @update-chat-input="emit('updateChatInput', $event)"
         @send-chat-input="emit('sendChatInput')"
         @stop-chat="emit('stopChat')"
@@ -171,6 +182,8 @@ const emit = defineEmits<{
         @reject-pending-action="emit('rejectPendingAction', $event)"
         @review-pending-action="emit('reviewPendingAction', $event)"
         @open-pending-action-diff="emit('openPendingActionDiff', $event)"
+        @refresh-writing-references="emit('refreshWritingReferences')"
+        @toggle-writing-reference="emit('toggleWritingReference', $event)"
       />
     </section>
 

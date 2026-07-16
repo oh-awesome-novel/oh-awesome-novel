@@ -59,10 +59,6 @@ describe('createOanClient', () => {
       baseRevision: 0,
       timeAdvance: { amount: 2, unit: 'hour' },
     });
-    await client.createPlayAdoptionPendingAction('play-1', 'adopt-1', {
-      chapterId: '0001/0002',
-      content: '正文',
-    });
 
     expect(calls[0]).toMatchObject({
       url: 'http://backend.test/api/workspaces',
@@ -100,10 +96,6 @@ describe('createOanClient', () => {
       actionKind: 'wait',
       baseRevision: 0,
       timeAdvance: { amount: 2, unit: 'hour' },
-    });
-    expect(calls[5]).toMatchObject({
-      url: 'http://backend.test/api/workspace/play-sessions/play-1/adoption-candidates/adopt-1/pending-action',
-      init: { method: 'POST' },
     });
   });
 

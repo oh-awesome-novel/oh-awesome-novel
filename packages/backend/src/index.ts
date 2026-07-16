@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { createUIMessageStreamResponse } from 'ai';
 import type { LanguageModel, ToolSet, UIMessage } from 'ai';
 import { createAdaptorServer } from '@hono/node-server';
@@ -27,12 +27,17 @@ import {
   initWorkspace,
   importReferenceWork,
   createPlayAdoptionCandidate,
+  createPlayAdoptionCandidateFromDraft,
+  createPlayAdoptionSourceBase,
+  createPlayWritingReferenceAttachment,
   createPlayNarrativeStreamFilter,
   createPlaySceneRehearsalSessionDraft,
   createPlaySessionFromLaunchPackage,
   createPlaySessionDraft,
   createPlayTurnArtifactId,
   formatPlayWorldRefereePrompt,
+  fingerprintPlayOutcomeReport,
+  formatPlayWritingReferenceContext,
   formatProjectHealthMarkdown,
   formatReferenceContextSelectionMarkdown,
   loadAppConfig,
@@ -42,16 +47,25 @@ import {
   loadWorkspaceList,
   listPlaySessions,
   listPlaySessionCheckpoints,
+  listPlayWritingReferenceAttachments,
   listReferenceWorks,
   normalizeLlmProviderConfig,
   normalizePlayRelativeTimeAdvance,
+  normalizePlayAdoptionSeed,
   normalizePlayWorldMomentum,
   preparePlayWorldSettlementRetry,
+  projectPlayOutcomeReport,
+  projectPlayAdoptionCandidate,
+  projectPlayAdoptionDraft,
   readProjectHealth,
   readPlayLaunchPackage,
+  readPlayOutcomeReport,
   readPlaySessionFiles,
+  rebuildPlayAdoptionDraft,
   renamePlaySessionCheckpoint,
   resolvePlaySessionPath,
+  resolvePlayOutcomeReportPath,
+  resolvePlayWritingReferenceAttachmentPath,
   restorePlaySessionCheckpoint,
   removeLlmProviderConfig,
   redactLlmProviderConfig,
@@ -66,7 +80,10 @@ import {
   upsertLlmProviderConfig,
   previewPlayLaunchPackage,
   validatePlayLaunchPackageSources,
+  detachPlayWritingReferenceAttachment,
+  withPlaySessionFileTransaction,
   writePlayLaunchPackage,
+  writePlayOutcomeReport,
   writePlaySessionFiles,
   writeWorkspaceProjections,
 } from '@oh-awesome-novel/core';
@@ -83,6 +100,8 @@ import type {
   PlayActivatedSource,
   PlayActionKind,
   PlayAdoptionCandidate,
+  PlayAdoptionDraft,
+  PlayAdoptionSeed,
   PlayAdoptionTarget,
   PlayEventDensity,
   PlayEventPolicy,
@@ -96,6 +115,9 @@ import type {
   PlayTranscriptTurn,
   PlayWorldMomentum,
   CreatePlaySceneRehearsalSessionInput,
+  PlayOutcomeItem,
+  PlayOutcomeReport,
+  PlayWritingReferenceAttachment,
   ProjectHealth,
   ReferenceAllowedUsage,
   ReferenceRights,
@@ -110,6 +132,7 @@ import {
   streamNovelAgentTurn,
 } from '@oh-awesome-novel/agent';
 import type { AiSdkProviderResolver } from '@oh-awesome-novel/agent';
+import type { NovelAgentPlayWritingReferenceInput } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
   createPlayRehearsalBackendController,
@@ -128,6 +151,9 @@ import {
   createWriteIntentTools,
   gitDiff,
   listPendingActions,
+  prepareWriteIntentPreview,
+  promoteWriteIntentPreview,
+  validateWriteIntentPreview,
   listGitCommits,
   loadYaml,
   readGitStatus,
@@ -137,11 +163,28 @@ import {
   syncGit,
   writeChapterIndexFile,
 } from '@oh-awesome-novel/tools';
+import type {
+  PreviewableWriteIntentToolName,
+  WriteIntentPendingAction,
+} from '@oh-awesome-novel/tools';
+import {
+  createStoredPlayAdoptionPreview,
+  projectStoredPlayAdoptionDiff,
+  projectStoredPlayAdoptionPreview,
+  readStoredPlayAdoptionPreview,
+  writeStoredPlayAdoptionPreview,
+} from './play-adoption-preview.js';
+import type {
+  PlayAdoptionProjection,
+  StoredPlayAdoptionPreview,
+} from './play-adoption-preview.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
 
 class InvalidJsonBodyError extends Error {}
+
+class StalePlayAdoptionPreviewError extends Error {}
 
 export interface NovelBackendOptions {
   workspaceRoot?: string;
@@ -168,6 +211,7 @@ export interface NovelBackendAgentInput {
   request: string;
   workspaceRoot: string;
   messages: UIMessage[];
+  playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
 }
 
 export interface NovelBackendPlayTurnInput {
@@ -427,6 +471,30 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
         await readJsonBody(context),
       )),
   );
+  app.post('/api/workspace/play-sessions/:id/reports/outcome', (context) =>
+    handleGeneratePlayOutcomeReport(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/play-sessions/:id/reports/outcome', (context) =>
+    handleReadPlayOutcomeReport(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.post(
+    '/api/workspace/play-sessions/:id/reports/outcome/items/:itemId/adoption-candidate',
+    (context) => handleCreatePlayOutcomeAdoptionCandidate(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context.req.param('itemId') ?? '',
+      context,
+    ),
+  );
   app.get('/api/workspace/play-sessions/:id', (context) =>
     handleReadPlaySession(options, state, context.req.param('id') ?? '', context));
   app.get('/api/workspace/play-sessions/:id/checkpoints', (context) =>
@@ -453,6 +521,23 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleAddPlayObservation(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/adoption-candidates', (context) =>
     handleAddPlayAdoptionCandidate(options, state, context.req.param('id') ?? '', context));
+  app.post('/api/workspace/play-sessions/:id/adoption-previews', (context) =>
+    handleCreatePlayAdoptionPreview(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.post(
+    '/api/workspace/play-sessions/:id/adoption-previews/:previewId/pending-action',
+    (context) => handlePromotePlayAdoptionPreview(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context.req.param('previewId') ?? '',
+      context,
+    ),
+  );
   app.post('/api/workspace/play-sessions/:id/turns/stream', (context) =>
     handlePlayWorldRefereeTurnStream(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/turns/:artifactId/retry/stream', (context) =>
@@ -479,6 +564,17 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       state,
       context.req.param('id') ?? '',
       context.req.param('candidateId') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/writing-references', (context) =>
+    handleListPlayWritingReferences(options, state, context));
+  app.post('/api/workspace/writing-references', (context) =>
+    handleCreatePlayWritingReference(options, state, context));
+  app.post('/api/workspace/writing-references/:id/detach', (context) =>
+    handleDetachPlayWritingReference(
+      options,
+      state,
+      context.req.param('id') ?? '',
       context,
     ));
   app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
@@ -553,15 +649,46 @@ async function handleAgentChat(
   const body = await readJsonBody(context);
   const messages = Array.isArray(body.messages) ? (body.messages as UIMessage[]) : [];
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
+  const attachmentIds = readPlayWritingReferenceAttachmentIds(body);
 
   if (!requestText.trim()) {
     return jsonResponse(context, 400, { error: 'A user message is required.' });
   }
+  if ('error' in attachmentIds) {
+    return jsonResponse(context, 400, { error: attachmentIds.error });
+  }
+
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  let playWritingReferences: NovelAgentPlayWritingReferenceInput[];
+  try {
+    playWritingReferences = await Promise.all(
+      attachmentIds.value.map(async (attachmentId) => {
+        const reference = await formatPlayWritingReferenceContext(
+          workspaceRoot,
+          attachmentId,
+        );
+        return {
+          attachmentId: reference.attachment.id,
+          sessionId: reference.attachment.sessionId,
+          title: `Play Writing Reference · ${reference.attachment.sessionId}`,
+          path: reference.sourceRef.path
+            ?? resolvePlayWritingReferenceAttachmentPath(workspaceRoot, attachmentId),
+          content: reference.content,
+        };
+      }),
+    );
+  } catch (error) {
+    return jsonResponse(context, 422, {
+      error: error instanceof Error ? error.message : String(error),
+      code: 'invalid_play_writing_reference',
+    });
+  }
 
   const runtimeEvents = await createRuntimeEventStream(options, state, {
     request: requestText,
-    workspaceRoot: requireActiveWorkspaceRoot(options, state),
+    workspaceRoot,
     messages,
+    ...(playWritingReferences.length ? { playWritingReferences } : {}),
   });
   const stream = runtimeEventsToUiMessageStream(runtimeEvents);
 
@@ -2003,6 +2130,342 @@ async function handleAddPlayObservation(
   }
 }
 
+type PlayOutcomeProjection = 'player' | 'director';
+
+async function handleGeneratePlayOutcomeReport(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const request = readPlayOutcomeRequest(body);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+  return runPlayOutcomeReportRequest(
+    options,
+    state,
+    id,
+    request.value,
+    true,
+    context,
+  );
+}
+
+async function handleReadPlayOutcomeReport(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const searchParams = new URL(context.req.url).searchParams;
+  const query: Record<string, unknown> = {};
+  for (const [key, value] of searchParams.entries()) {
+    if (Object.hasOwn(query, key)) {
+      return jsonResponse(context, 400, {
+        error: `Query parameter must not be repeated: ${key}.`,
+      });
+    }
+    query[key] = key === 'baseRevision' && /^\d+$/u.test(value)
+      ? Number(value)
+      : value;
+  }
+  const request = readPlayOutcomeRequest(query);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+  return runPlayOutcomeReportRequest(
+    options,
+    state,
+    id,
+    request.value,
+    false,
+    context,
+  );
+}
+
+async function runPlayOutcomeReportRequest(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  request: { baseRevision: number; projection: PlayOutcomeProjection },
+  generate: boolean,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    id,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      request.baseRevision,
+      session.revision,
+    );
+    if (revisionConflict) return revisionConflict;
+
+    let report: PlayOutcomeReport;
+    let status: 'current' | 'stale' = 'current';
+    let staleReasons: string[] = [];
+    if (generate) {
+      await loadPlayActivatedSourceContext(workspaceRoot, session);
+      report = await writePlayOutcomeReport(workspaceRoot, id);
+    } else {
+      const stored = await readPlayOutcomeReport(workspaceRoot, id);
+      report = stored.report;
+      status = stored.status;
+      staleReasons = stored.staleReasons;
+    }
+
+    if (status === 'current' && report.sessionRevision !== session.revision) {
+      return jsonResponse(context, 409, {
+        error: 'Play session changed before the outcome report could be returned.',
+      });
+    }
+    const projected = projectPlayOutcomeReport(report, request.projection);
+    const projectedStaleReasons = projectPlayOutcomeStaleReasons(
+      staleReasons,
+      request.projection,
+    );
+    return jsonResponse(context, 200, {
+      report: projected,
+      reportFingerprint: fingerprintPlayOutcomeReport(report),
+      projection: request.projection,
+      status,
+      staleReasons: projectedStaleReasons,
+      ...(generate
+        ? {
+            files: [
+              resolvePlayOutcomeReportPath(workspaceRoot, id, 'yaml'),
+              resolvePlayOutcomeReportPath(workspaceRoot, id, 'markdown'),
+            ],
+          }
+        : {}),
+    });
+  } catch (error) {
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+    return jsonResponse(context, status, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function handleCreatePlayOutcomeAdoptionCandidate(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  itemId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const request = readPlayOutcomeAdoptionRequest(body);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+  if (!isSafePlayFactId(itemId)) {
+    return jsonResponse(context, 400, { error: 'Invalid Play outcome item id.' });
+  }
+
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    id,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      request.value.baseRevision,
+      session.revision,
+    );
+    if (revisionConflict) return revisionConflict;
+
+    assertPlayAdoptionSourcesHashBound(session);
+    await loadPlayActivatedSourceContext(workspaceRoot, session);
+
+    const stored = await readPlayOutcomeReport(workspaceRoot, id);
+    if (stored.status !== 'current' || stored.report.sessionRevision !== session.revision) {
+      return jsonResponse(context, 422, {
+        error: 'Play outcome report is stale and must be regenerated.',
+        code: 'stale_play_outcome_report',
+        staleReasons: stored.staleReasons,
+      });
+    }
+    const item = stored.report.items.find((candidate) => candidate.id === itemId);
+    if (!item) {
+      return jsonResponse(context, 404, {
+        error: `Play outcome item not found: ${itemId}`,
+      });
+    }
+
+    const provenance = derivePlayOutcomeCandidateProvenance(session, item);
+
+    const observation: PlayObservation = {
+      id: `outcome-observation-${randomUUID()}`,
+      summary: item.summary,
+      evidence: formatPlayOutcomeItemEvidence(stored.report, item),
+      visibility: item.visibility,
+      sourceTurnIds: provenance.sourceTurnIds,
+      sourceEventIds: provenance.sourceEventIds,
+      canonical: false,
+    };
+    const withObservation = addPlayObservation(session, observation);
+    const candidate = createPlayAdoptionCandidate({
+      id: `outcome-adoption-${randomUUID()}`,
+      target: request.value.target,
+      summary: item.summary,
+      evidence: observation.evidence,
+      ...(request.value.payload ? { payload: request.value.payload } : {}),
+      visibility: item.visibility,
+      sourceObservationIds: [observation.id],
+      sourceTurnIds: provenance.sourceTurnIds,
+      sourceEventIds: provenance.sourceEventIds,
+    });
+    const next = addPlayAdoptionCandidate(withObservation, candidate);
+    await writePlaySessionFiles(workspaceRoot, next, {
+      expectedCurrentSession: session,
+    });
+
+    return jsonResponse(context, 200, { session: next, observation, candidate });
+  } catch (error) {
+    if (error instanceof PlaySessionWriteConflictError) {
+      return jsonResponse(context, 409, {
+        error: 'Play session changed before the outcome adoption candidate could commit.',
+      });
+    }
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+    return jsonResponse(context, status, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function handleListPlayWritingReferences(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  try {
+    const attachments = await listPlayWritingReferenceAttachments(workspaceRoot);
+    return jsonResponse(context, 200, { attachments });
+  } catch (error) {
+    return jsonResponse(context, 422, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function handleCreatePlayWritingReference(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const request = readCreatePlayWritingReferenceRequest(body);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    request.value.sessionId,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, request.value.sessionId);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, request.value.sessionId);
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      request.value.baseRevision,
+      session.revision,
+    );
+    if (revisionConflict) return revisionConflict;
+    await loadPlayActivatedSourceContext(workspaceRoot, session);
+    const attachment = await createPlayWritingReferenceAttachment(workspaceRoot, {
+      id: `play-writing-reference-${randomUUID()}`,
+      sessionId: request.value.sessionId,
+      selectedOutcomeItemRefs: request.value.selectedOutcomeItemIds,
+    });
+    return jsonResponse(context, 201, {
+      attachment,
+      files: [resolvePlayWritingReferenceAttachmentPath(workspaceRoot, attachment.id)],
+    });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const status = code === 'ENOENT' ? 404 : code === 'EEXIST' ? 409 : 422;
+    return jsonResponse(context, status, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function handleDetachPlayWritingReference(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  if (Object.keys(body).length) {
+    return jsonResponse(context, 400, {
+      error: 'Play writing reference detach body must be empty.',
+    });
+  }
+  if (!isSafePlayFactId(id)) {
+    return jsonResponse(context, 400, {
+      error: 'Invalid Play writing reference attachment id.',
+    });
+  }
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  try {
+    const attachment = await detachPlayWritingReferenceAttachment(workspaceRoot, id);
+    return jsonResponse(context, 200, { attachment });
+  } catch (error) {
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+    return jsonResponse(context, status, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleAddPlayAdoptionCandidate(
   options: NovelBackendOptions,
   state: BackendState,
@@ -3073,6 +3536,442 @@ async function loadPlayActivatedSourceContext(
     : '';
 }
 
+async function handleCreatePlayAdoptionPreview(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const request = readPlayAdoptionPreviewRequest(body);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    id,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      request.value.baseRevision,
+      session.revision,
+    );
+    if (revisionConflict) return revisionConflict;
+
+    assertPlayAdoptionSourcesHashBound(session);
+    await loadPlayActivatedSourceContext(workspaceRoot, session);
+    const outcomeReport = await readCurrentPlayAdoptionOutcomeReport(
+      workspaceRoot,
+      session,
+      request.value.seed,
+    );
+    const fullDraft = rebuildPlayAdoptionDraft({
+      session,
+      seed: request.value.seed,
+      projection: 'director',
+      ...(outcomeReport ? { outcomeReport } : {}),
+    });
+    const projectedDraft = projectPlayAdoptionDraft(
+      fullDraft,
+      request.value.projection,
+    );
+    if (!projectedDraft) {
+      return jsonResponse(context, 422, {
+        error: 'The Play adoption preview could not be prepared safely.',
+        code: 'play_adoption_preview_failed',
+      });
+    }
+
+    const recommended = projectedDraft.targetSuggestions.find((suggestion) =>
+      suggestion.recommended);
+    if (!recommended) {
+      throw new Error('Play adoption draft has no recommended target.');
+    }
+    const target = request.value.target ?? recommended.target;
+    const suggestion = projectedDraft.targetSuggestions.find((item) =>
+      item.target === target);
+    if (!suggestion) {
+      return jsonResponse(context, 400, {
+        error: `Play adoption target is not available: ${target}.`,
+      });
+    }
+    const payload = structuredClone(
+      request.value.payload ?? suggestion.defaultPayload,
+    );
+    const toolRequest = createPlayAdoptionToolRequest(target, payload);
+    if ('error' in toolRequest) {
+      return jsonResponse(context, 400, { error: toolRequest.error });
+    }
+    if (toolRequest.toolName !== suggestion.toolName) {
+      throw new Error('Play adoption target does not match its write-intent tool.');
+    }
+
+    const preparedWriteIntent = await prepareWriteIntentPreview({
+      workspaceRoot,
+      toolName: toolRequest.toolName,
+      args: toolRequest.args,
+    });
+    const stored = createStoredPlayAdoptionPreview({
+      sessionId: session.id,
+      baseRevision: session.revision,
+      projection: request.value.projection,
+      candidateId: `adoption-${preparedWriteIntent.id.slice(3)}`,
+      fullDraft,
+      target,
+      payload,
+      preparedWriteIntent,
+    });
+    await writeStoredPlayAdoptionPreview(workspaceRoot, stored, { create: true });
+
+    return jsonResponse(context, 200, {
+      preview: projectStoredPlayAdoptionPreview(stored, projectedDraft),
+    });
+  } catch (error) {
+    return playAdoptionPreviewErrorResponse(
+      context,
+      error,
+      'preview',
+      request.value.projection,
+    );
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function handlePromotePlayAdoptionPreview(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  previewId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  const request = readPlayAdoptionPromotionRequest(body);
+  if ('error' in request) {
+    return jsonResponse(context, 400, { error: request.error });
+  }
+  if (!/^pa_[A-Za-z0-9-]+$/u.test(previewId)) {
+    return jsonResponse(context, 400, { error: 'Play adoption preview id is invalid.' });
+  }
+
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    id,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+
+  let responseProjection: PlayAdoptionProjection | undefined;
+  try {
+    let stored = await readStoredPlayAdoptionPreview(workspaceRoot, previewId);
+    responseProjection = stored.projection;
+    if (
+      stored.id !== previewId ||
+      stored.sessionId !== id ||
+      stored.baseRevision !== request.value.baseRevision ||
+      stored.previewFingerprint !== request.value.fingerprint
+    ) {
+      throw new StalePlayAdoptionPreviewError(
+        'Play adoption preview does not match this session request.',
+      );
+    }
+
+    let session = await readPlaySessionFiles(workspaceRoot, id);
+    const expectedCandidate = createPlayAdoptionCandidateFromDraft({
+      id: stored.candidateId,
+      draft: stored.fullDraft,
+      target: stored.target,
+      payload: stored.payload,
+    });
+    const existingCandidate = session.adoptionCandidates.find((candidate) =>
+      candidate.id === stored.candidateId);
+
+    if (stored.status === 'promoted') {
+      assertPlayAdoptionSourcesHashBound(session);
+      await loadPlayActivatedSourceContext(workspaceRoot, session);
+      const livePendingAction = (await listPendingActions({ workspaceRoot }))
+        .find((action) => action.id === stored.id);
+      if (
+        !stored.pendingAction ||
+        !existingCandidate ||
+        !isDeepStrictEqual(existingCandidate, expectedCandidate) ||
+        !livePendingAction ||
+        !isDeepStrictEqual(livePendingAction, stored.pendingAction) ||
+        session.revision !== stored.baseRevision + 1 ||
+        !isStoredPlayAdoptionBranchCurrent(session, stored)
+      ) {
+        throw new StalePlayAdoptionPreviewError(
+          'Promoted Play adoption preview is no longer current or pending.',
+        );
+      }
+      return playAdoptionPromotionSuccessResponse(
+        context,
+        workspaceRoot,
+        stored,
+        session,
+        existingCandidate,
+        livePendingAction,
+      );
+    }
+
+    assertPlayAdoptionSourcesHashBound(session);
+    await loadPlayActivatedSourceContext(workspaceRoot, session);
+    if (existingCandidate) {
+      if (
+        !isDeepStrictEqual(existingCandidate, expectedCandidate) ||
+        session.revision !== stored.baseRevision + 1
+      ) {
+        throw new StalePlayAdoptionPreviewError(
+          'Play adoption candidate state changed after preview.',
+        );
+      }
+      if (stored.status === 'prepared') {
+        stored = { ...stored, status: 'candidateStored' };
+        await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
+      }
+    } else {
+      if (
+        stored.status !== 'prepared' ||
+        session.revision !== stored.baseRevision
+      ) {
+        throw new StalePlayAdoptionPreviewError(
+          'Play adoption preview is no longer at its prepared session revision.',
+        );
+      }
+      const outcomeReport = await readCurrentPlayAdoptionOutcomeReport(
+        workspaceRoot,
+        session,
+        stored.fullDraft.seed,
+      );
+      const rebuilt = rebuildPlayAdoptionDraft({
+        session,
+        seed: stored.fullDraft.seed,
+        projection: 'director',
+        ...(outcomeReport ? { outcomeReport } : {}),
+      });
+      if (!isDeepStrictEqual(rebuilt, stored.fullDraft)) {
+        throw new StalePlayAdoptionPreviewError(
+          'Play adoption evidence changed after preview.',
+        );
+      }
+
+      await validateWriteIntentPreview({
+        workspaceRoot,
+        preview: stored.preparedWriteIntent,
+      });
+      const next = addPlayAdoptionCandidate(session, expectedCandidate);
+      await writePlaySessionFiles(workspaceRoot, next, {
+        expectedCurrentSession: session,
+      });
+      session = next;
+      stored = { ...stored, status: 'candidateStored' };
+      await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
+    }
+
+    let pendingAction: WriteIntentPendingAction;
+    try {
+      pendingAction = await promoteWriteIntentPreview({
+        workspaceRoot,
+        preview: stored.preparedWriteIntent,
+      });
+    } catch (error) {
+      const existingAction = (await listPendingActions({ workspaceRoot }))
+        .find((action) => action.id === stored.id);
+      if (!existingAction) throw error;
+      pendingAction = existingAction;
+    }
+
+    stored = {
+      ...stored,
+      status: 'promoted',
+      pendingAction,
+    };
+    await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
+
+    return playAdoptionPromotionSuccessResponse(
+      context,
+      workspaceRoot,
+      stored,
+      session,
+      expectedCandidate,
+      pendingAction,
+    );
+  } catch (error) {
+    return playAdoptionPreviewErrorResponse(
+      context,
+      error,
+      'promotion',
+      responseProjection,
+    );
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function readCurrentPlayAdoptionOutcomeReport(
+  workspaceRoot: string,
+  session: PlaySession,
+  seed: PlayAdoptionSeed,
+): Promise<PlayOutcomeReport | undefined> {
+  if (seed.kind !== 'outcome') return undefined;
+  let stored: Awaited<ReturnType<typeof readPlayOutcomeReport>>;
+  try {
+    stored = await readPlayOutcomeReport(workspaceRoot, session.id);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new StalePlayAdoptionPreviewError(
+        'Play outcome report is missing and must be regenerated.',
+      );
+    }
+    throw error;
+  }
+  const fingerprint = fingerprintPlayOutcomeReport(stored.report);
+  if (
+    stored.status !== 'current' ||
+    stored.report.sessionRevision !== session.revision ||
+    fingerprint !== seed.outcomeReportFingerprint
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play outcome report changed or became stale after selection.',
+    );
+  }
+  return stored.report;
+}
+
+function assertPlayAdoptionSourcesHashBound(session: PlaySession): void {
+  if (session.activatedSources.some((source) => source.path && !source.contentHash)) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption requires hash-bound activated sources.',
+    );
+  }
+}
+
+function isStoredPlayAdoptionBranchCurrent(
+  session: PlaySession,
+  stored: StoredPlayAdoptionPreview,
+): boolean {
+  const closure = stored.fullDraft.evidenceClosure;
+  const sourceBase = createPlayAdoptionSourceBase(session.activatedSources);
+  return closure.sessionId === session.id &&
+    isDeepStrictEqual(closure.selectedArtifactTurnRefs, session.selectedTurnIds) &&
+    closure.sourceBaseFingerprint === sourceBase.sourceBaseFingerprint &&
+    isDeepStrictEqual(closure.sourceSnapshots, sourceBase.sourceSnapshots);
+}
+
+async function playAdoptionPromotionSuccessResponse(
+  context: NovelBackendContext,
+  workspaceRoot: string,
+  stored: StoredPlayAdoptionPreview,
+  session: PlaySession,
+  candidate: PlayAdoptionCandidate,
+  pendingAction: WriteIntentPendingAction,
+): Promise<Response> {
+  const projectedCandidate = projectPlayAdoptionCandidate(
+    candidate,
+    stored.projection,
+  );
+  if (!projectedCandidate) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption candidate is hidden from its stored projection.',
+    );
+  }
+  const projectedDiff = stored.projection === 'player'
+    ? projectStoredPlayAdoptionDiff(stored)
+    : pendingAction.diff;
+  return jsonResponse(context, 200, {
+    sessionUpdate: {
+      sessionId: session.id,
+      baseRevision: stored.baseRevision,
+      revision: session.revision,
+    },
+    candidate: projectedCandidate,
+    pendingAction: {
+      id: pendingAction.id,
+      title: pendingAction.title,
+      description: pendingAction.description,
+      touchedFiles: [...pendingAction.touchedFiles],
+      diff: projectedDiff,
+      createdAt: pendingAction.createdAt,
+      status: pendingAction.status,
+    },
+    refresh: await buildPostDecisionRefresh(workspaceRoot),
+  });
+}
+
+function playAdoptionPreviewErrorResponse(
+  context: NovelBackendContext,
+  error: unknown,
+  phase: 'preview' | 'promotion',
+  projection?: PlayAdoptionProjection,
+): Response {
+  if (error instanceof PlayLaunchSourceValidationError) {
+    if (projection !== 'director') {
+      return jsonResponse(context, 409, {
+        error: 'A Play source snapshot changed and must be reviewed again.',
+        code: 'play_launch_source_validation',
+      });
+    }
+    return playLaunchSourceConflictResponse(context, error.diagnostics);
+  }
+  if (projection !== 'director') {
+    if (
+      error instanceof StalePlayAdoptionPreviewError ||
+      error instanceof PlaySessionWriteConflictError ||
+      phase === 'promotion'
+    ) {
+      return jsonResponse(context, 409, {
+        error: 'The Play adoption preview is no longer current and must be prepared again.',
+        code: 'stale_play_adoption_preview',
+      });
+    }
+    return jsonResponse(context, 422, {
+      error: 'The Play adoption preview could not be prepared safely.',
+      code: 'play_adoption_preview_failed',
+    });
+  }
+  if (
+    error instanceof StalePlayAdoptionPreviewError ||
+    error instanceof PlaySessionWriteConflictError
+  ) {
+    return jsonResponse(context, 409, {
+      error: error.message,
+      code: 'stale_play_adoption_preview',
+    });
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    return jsonResponse(context, 404, { error: message });
+  }
+  return jsonResponse(context, phase === 'promotion' ? 409 : 422, {
+    error: message,
+    ...(phase === 'promotion'
+      ? { code: 'stale_play_adoption_preview' }
+      : {}),
+  });
+}
+
 async function handleCreatePlayAdoptionPendingAction(
   options: NovelBackendOptions,
   state: BackendState,
@@ -3098,6 +3997,27 @@ async function handleCreatePlayAdoptionPendingAction(
   if (!candidate) {
     return jsonResponse(context, 404, { error: `Adoption candidate not found: ${candidateId}` });
   }
+  if (isEvidenceBackedPlayAdoptionCandidate(candidate)) {
+    return jsonResponse(context, 409, {
+      error: 'Evidence-backed Play candidates must use the adoption preview and Review flow.',
+      code: 'play_adoption_preview_required',
+    });
+  }
+  if (!isPlayAdoptionCandidateOnCurrentBranch(session, candidate)) {
+    return jsonResponse(context, 409, {
+      error: 'Adoption candidate no longer belongs to the current selected Play branch.',
+      code: 'stale_play_adoption_candidate',
+    });
+  }
+
+  try {
+    await loadPlayActivatedSourceContext(workspaceRoot, session);
+  } catch (error) {
+    if (error instanceof PlayLaunchSourceValidationError) {
+      return playLaunchSourceConflictResponse(context, error.diagnostics);
+    }
+    throw error;
+  }
 
   const payload = isRecord(body.payload) ? body.payload : candidate.payload;
   const toolRequest = createPlayAdoptionToolRequest(candidate.target, payload);
@@ -3117,6 +4037,47 @@ async function handleCreatePlayAdoptionPendingAction(
     pendingActionResult: result,
     refresh: await buildPostDecisionRefresh(workspaceRoot),
   });
+}
+
+function isEvidenceBackedPlayAdoptionCandidate(
+  candidate: PlayAdoptionCandidate,
+): boolean {
+  return candidate.sourceObservationIds.length > 0 ||
+    candidate.sourceTurnIds.length > 0 ||
+    candidate.sourceEventIds.length > 0 ||
+    candidate.seed !== undefined ||
+    candidate.evidenceClosure !== undefined ||
+    candidate.evidenceFingerprint !== undefined;
+}
+
+function isPlayAdoptionCandidateOnCurrentBranch(
+  session: PlaySession,
+  candidate: PlayAdoptionCandidate,
+): boolean {
+  const hasBranchProvenance = candidate.sourceObservationIds.length > 0
+    || candidate.sourceTurnIds.length > 0
+    || candidate.sourceEventIds.length > 0;
+  // Legacy/manual candidates are explicit author-authored proposals rather
+  // than derived branch facts. Only evidence-backed candidates can become
+  // stale through Restore, so keep the established manual flow available.
+  if (!hasBranchProvenance) return true;
+
+  const messageIds = new Set(session.transcript.flatMap((turn) => turn.id ? [turn.id] : []));
+  const eventIds = new Set(session.events.map((event) => event.id));
+  const observationIds = new Set(session.observations.map((observation) => observation.id));
+  const sourceObservations = candidate.sourceObservationIds.flatMap((id) => {
+    const observation = session.observations.find((item) => item.id === id);
+    return observation ? [observation] : [];
+  });
+  return (candidate.sourceTurnIds.length > 0 || candidate.sourceEventIds.length > 0)
+    && candidate.sourceObservationIds.length > 0
+    && sourceObservations.length === candidate.sourceObservationIds.length
+    && candidate.sourceTurnIds.every((id) => messageIds.has(id))
+    && candidate.sourceEventIds.every((id) => eventIds.has(id))
+    && candidate.sourceObservationIds.every((id) => observationIds.has(id))
+    && sourceObservations.every((observation) =>
+      observation.sourceTurnIds.every((id) => messageIds.has(id))
+      && observation.sourceEventIds.every((id) => eventIds.has(id)));
 }
 
 async function handleSaveWorkspaceOnboarding(
@@ -3174,18 +4135,159 @@ async function handlePendingActionDecision(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const gitConfig = await readWorkspaceGitConfig(workspaceRoot);
-  const result = decision === 'accept'
-    ? await acceptPendingAction({
-        workspaceRoot,
-        id,
-        autoCommitOnAccept: gitConfig.autoCommitOnAccept,
-      })
-    : await rejectPendingAction({ workspaceRoot, id });
+  let result: Awaited<ReturnType<typeof acceptPendingAction>> |
+    Awaited<ReturnType<typeof rejectPendingAction>>;
+  try {
+    result = decision === 'accept'
+      ? await acceptPendingActionWithPlayAdoptionValidation({
+          workspaceRoot,
+          state,
+          id,
+          autoCommitOnAccept: gitConfig.autoCommitOnAccept,
+        })
+      : await rejectPendingAction({ workspaceRoot, id });
+  } catch (error) {
+    if (
+      error instanceof StalePlayAdoptionPreviewError ||
+      error instanceof PlaySessionWriteConflictError
+    ) {
+      return jsonResponse(context, 409, {
+        error: error.message,
+        code: 'stale_play_adoption_preview',
+      });
+    }
+    if (error instanceof PlayLaunchSourceValidationError) {
+      return playLaunchSourceConflictResponse(context, error.diagnostics);
+    }
+    throw error;
+  }
 
   return jsonResponse(context, 200, {
     ...result,
     refresh: await buildPostDecisionRefresh(workspaceRoot),
   });
+}
+
+async function acceptPendingActionWithPlayAdoptionValidation(input: {
+  workspaceRoot: string;
+  state: BackendState;
+  id: string;
+  autoCommitOnAccept: boolean;
+}) {
+  const initialStored = await readOptionalStoredPlayAdoptionPreviewForDecision(
+    input.workspaceRoot,
+    input.id,
+  );
+  if (!initialStored) {
+    return acceptPendingAction({
+      workspaceRoot: input.workspaceRoot,
+      id: input.id,
+      autoCommitOnAccept: input.autoCommitOnAccept,
+    });
+  }
+
+  const lockKey = createPlayTurnLockKey(
+    input.workspaceRoot,
+    initialStored.sessionId,
+  );
+  if (input.state.activePlayTurns.has(lockKey)) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption cannot be accepted while its session is being modified.',
+    );
+  }
+  input.state.activePlayTurns.add(lockKey);
+  try {
+    return await withPlaySessionFileTransaction(
+      input.workspaceRoot,
+      initialStored.sessionId,
+      async (transaction) => {
+        let stored: StoredPlayAdoptionPreview;
+        try {
+          stored = await readStoredPlayAdoptionPreview(
+            input.workspaceRoot,
+            input.id,
+          );
+        } catch {
+          throw new StalePlayAdoptionPreviewError(
+            'Play adoption approval record is unavailable or invalid.',
+          );
+        }
+        if (stored.sessionId !== initialStored.sessionId) {
+          throw new StalePlayAdoptionPreviewError(
+            'Play adoption approval changed sessions before acceptance.',
+          );
+        }
+
+        let session: PlaySession;
+        try {
+          session = await transaction.read();
+        } catch {
+          throw new StalePlayAdoptionPreviewError(
+            'Play adoption session is unavailable for acceptance.',
+          );
+        }
+        await assertPlayAdoptionPendingActionCurrent(
+          input.workspaceRoot,
+          stored,
+          session,
+        );
+        return acceptPendingAction({
+          workspaceRoot: input.workspaceRoot,
+          id: input.id,
+          autoCommitOnAccept: input.autoCommitOnAccept,
+        });
+      },
+    );
+  } finally {
+    input.state.activePlayTurns.delete(lockKey);
+  }
+}
+
+async function readOptionalStoredPlayAdoptionPreviewForDecision(
+  workspaceRoot: string,
+  id: string,
+): Promise<StoredPlayAdoptionPreview | undefined> {
+  try {
+    return await readStoredPlayAdoptionPreview(workspaceRoot, id);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption approval record is unavailable or invalid.',
+    );
+  }
+}
+
+async function assertPlayAdoptionPendingActionCurrent(
+  workspaceRoot: string,
+  stored: StoredPlayAdoptionPreview,
+  session: PlaySession,
+): Promise<void> {
+  assertPlayAdoptionSourcesHashBound(session);
+  await loadPlayActivatedSourceContext(workspaceRoot, session);
+  const expectedCandidate = createPlayAdoptionCandidateFromDraft({
+    id: stored.candidateId,
+    draft: stored.fullDraft,
+    target: stored.target,
+    payload: stored.payload,
+  });
+  const candidate = session.adoptionCandidates.find((item) =>
+    item.id === stored.candidateId);
+  const livePendingAction = (await listPendingActions({ workspaceRoot }))
+    .find((action) => action.id === stored.id);
+  if (
+    stored.status !== 'promoted' ||
+    !stored.pendingAction ||
+    !candidate ||
+    !isDeepStrictEqual(candidate, expectedCandidate) ||
+    !livePendingAction ||
+    !isDeepStrictEqual(livePendingAction, stored.pendingAction) ||
+    session.revision !== stored.baseRevision + 1 ||
+    !isStoredPlayAdoptionBranchCurrent(session, stored)
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption evidence is no longer current for acceptance.',
+    );
+  }
 }
 
 async function handleWorkspaceChapterRescan(
@@ -3265,6 +4367,7 @@ async function createRuntimeEventStream(
       skill,
       tools: options.tools,
       referenceSelection,
+      playWritingReferences: input.playWritingReferences,
       projectHealth,
       selectedContext,
       session: { metadata: { title: input.request } },
@@ -4223,6 +5326,295 @@ function readPlayBaseRevision(value: Record<string, unknown>): {
   return { value: baseRevision };
 }
 
+function readPlayOutcomeRequest(value: Record<string, unknown>): {
+  value: { baseRevision: number; projection: PlayOutcomeProjection };
+} | { error: string } {
+  if (!hasOnlyJsonFields(value, ['baseRevision', 'projection'])) {
+    return { error: 'Play outcome request contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  const rawProjection = value.projection;
+  if (
+    rawProjection !== undefined
+    && rawProjection !== 'player'
+    && rawProjection !== 'director'
+  ) {
+    return { error: 'projection must be player or director.' };
+  }
+  return {
+    value: {
+      baseRevision: revision.value,
+      projection: rawProjection ?? 'player',
+    },
+  };
+}
+
+function readPlayAdoptionPreviewRequest(value: Record<string, unknown>): {
+  value: {
+    baseRevision: number;
+    projection: PlayAdoptionProjection;
+    seed: PlayAdoptionSeed;
+    target?: PlayAdoptionTarget;
+    payload?: Record<string, unknown>;
+  };
+} | { error: string } {
+  if (!hasOnlyJsonFields(
+    value,
+    ['baseRevision', 'projection', 'seed', 'target', 'payload'],
+  )) {
+    return { error: 'Play adoption preview request contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  if (value.projection !== 'player' && value.projection !== 'director') {
+    return { error: 'projection must be player or director.' };
+  }
+  let seed: PlayAdoptionSeed;
+  try {
+    seed = normalizePlayAdoptionSeed(value.seed);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  const target = value.target === undefined
+    ? undefined
+    : readPlayAdoptionTarget(value, 'target');
+  if (value.target !== undefined && !target) {
+    return {
+      error: 'target must be chapterDraft, state, timeline, or foreshadow.',
+    };
+  }
+  if (value.payload !== undefined && !isRecord(value.payload)) {
+    return { error: 'payload must be a JSON object.' };
+  }
+  return {
+    value: {
+      baseRevision: revision.value,
+      projection: value.projection,
+      seed,
+      ...(target ? { target } : {}),
+      ...(isRecord(value.payload)
+        ? { payload: structuredClone(value.payload) }
+        : {}),
+    },
+  };
+}
+
+function readPlayAdoptionPromotionRequest(value: Record<string, unknown>): {
+  value: { baseRevision: number; fingerprint: string };
+} | { error: string } {
+  if (!hasOnlyJsonFields(value, ['baseRevision', 'fingerprint'])) {
+    return { error: 'Play adoption promotion request contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  if (
+    typeof value.fingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.fingerprint)
+  ) {
+    return { error: 'Play adoption preview fingerprint is invalid.' };
+  }
+  return {
+    value: {
+      baseRevision: revision.value,
+      fingerprint: value.fingerprint,
+    },
+  };
+}
+
+function projectPlayOutcomeStaleReasons(
+  reasons: readonly string[],
+  projection: PlayOutcomeProjection,
+): string[] {
+  if (projection === 'director') return [...reasons];
+
+  return [...new Set(reasons.map((reason) =>
+    reason.startsWith('sourceContentChanged:')
+    || reason.startsWith('sourceUnavailable:')
+      ? 'sourceSnapshotChanged'
+      : reason))];
+}
+
+function readPlayOutcomeAdoptionRequest(value: Record<string, unknown>): {
+  value: {
+    baseRevision: number;
+    target: PlayAdoptionTarget;
+    payload?: Record<string, unknown>;
+  };
+} | { error: string } {
+  if (!hasOnlyJsonFields(value, ['baseRevision', 'target', 'payload'])) {
+    return { error: 'Play outcome adoption request contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  const target = readPlayAdoptionTarget(value, 'target');
+  if (!target) {
+    return { error: 'target must be chapterDraft, state, timeline, or foreshadow.' };
+  }
+  if (value.payload !== undefined && !isRecord(value.payload)) {
+    return { error: 'payload must be a JSON object.' };
+  }
+  return {
+    value: {
+      baseRevision: revision.value,
+      target,
+      ...(isRecord(value.payload) ? { payload: { ...value.payload } } : {}),
+    },
+  };
+}
+
+function readCreatePlayWritingReferenceRequest(value: Record<string, unknown>): {
+  value: {
+    sessionId: string;
+    baseRevision: number;
+    selectedOutcomeItemIds: string[];
+  };
+} | { error: string } {
+  if (!hasOnlyJsonFields(
+    value,
+    ['sessionId', 'baseRevision', 'selectedOutcomeItemIds'],
+  )) {
+    return { error: 'Play writing reference request contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  if (!isSafePlayFactId(value.sessionId)) {
+    return { error: 'sessionId must be a safe Play session id.' };
+  }
+  if (
+    !Array.isArray(value.selectedOutcomeItemIds)
+    || value.selectedOutcomeItemIds.length === 0
+    || value.selectedOutcomeItemIds.length > 24
+    || !value.selectedOutcomeItemIds.every(isSafePlayFactId)
+    || new Set(value.selectedOutcomeItemIds).size !== value.selectedOutcomeItemIds.length
+  ) {
+    return {
+      error: 'selectedOutcomeItemIds must contain 1 to 24 unique safe item ids.',
+    };
+  }
+  return {
+    value: {
+      sessionId: value.sessionId,
+      baseRevision: revision.value,
+      selectedOutcomeItemIds: [...value.selectedOutcomeItemIds],
+    },
+  };
+}
+
+function readPlayWritingReferenceAttachmentIds(value: Record<string, unknown>): {
+  value: string[];
+} | { error: string } {
+  if (!Object.hasOwn(value, 'writingReferenceAttachmentIds')) {
+    return { value: [] };
+  }
+  const ids = value.writingReferenceAttachmentIds;
+  if (
+    !Array.isArray(ids)
+    || ids.length > 8
+    || !ids.every(isSafePlayFactId)
+    || new Set(ids).size !== ids.length
+  ) {
+    return {
+      error: 'writingReferenceAttachmentIds must contain at most 8 unique safe attachment ids.',
+    };
+  }
+  return { value: [...ids] };
+}
+
+function formatPlayOutcomeItemEvidence(
+  report: PlayOutcomeReport,
+  item: PlayOutcomeItem,
+): string {
+  const refs = [
+    ...item.evidenceRefs,
+    ...item.messageRefs.map((ref) => `message:${ref}`),
+    ...item.eventRefs.map((ref) => `event:${ref}`),
+  ];
+  return [
+    `Play outcome report for session ${report.sessionId}, item ${item.id}.`,
+    refs.length ? `Evidence: ${[...new Set(refs)].join(', ')}.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+function derivePlayOutcomeCandidateProvenance(
+  session: PlaySession,
+  item: PlayOutcomeItem,
+): { sourceTurnIds: string[]; sourceEventIds: string[] } {
+  const selectedArtifactIds = new Set(session.selectedTurnIds);
+  const artifactsById = new Map(
+    session.turnArtifacts.map((artifact) => [artifact.id, artifact]),
+  );
+  const selectedMessageIds = new Set(
+    session.transcript.flatMap((message) => message.id ? [message.id] : []),
+  );
+  const selectedEventIds = new Set(session.events.map((event) => event.id));
+  const sourceTurnIds = new Set(item.messageRefs);
+
+  for (const artifactId of item.artifactTurnRefs) {
+    if (!selectedArtifactIds.has(artifactId)) {
+      throw new Error(
+        `Play outcome item references an out-of-branch artifact: ${artifactId}.`,
+      );
+    }
+    const artifact = artifactsById.get(artifactId);
+    const owningMessage = artifact?.messages.at(-1);
+    if (!owningMessage?.id || !selectedMessageIds.has(owningMessage.id)) {
+      throw new Error(
+        `Play outcome item artifact has no selected message evidence: ${artifactId}.`,
+      );
+    }
+    sourceTurnIds.add(owningMessage.id);
+  }
+  for (const messageId of sourceTurnIds) {
+    if (!selectedMessageIds.has(messageId)) {
+      throw new Error(
+        `Play outcome item references an out-of-branch message: ${messageId}.`,
+      );
+    }
+  }
+  for (const eventId of item.eventRefs) {
+    if (!selectedEventIds.has(eventId)) {
+      throw new Error(
+        `Play outcome item references an out-of-branch event: ${eventId}.`,
+      );
+    }
+  }
+  if (sourceTurnIds.size === 0 && item.eventRefs.length === 0) {
+    throw new Error('Play outcome item has no branch-scoped adoption provenance.');
+  }
+  return {
+    sourceTurnIds: [...sourceTurnIds],
+    sourceEventIds: [...item.eventRefs],
+  };
+}
+
+function hasOnlyJsonFields(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+): boolean {
+  const known = new Set(fields);
+  return Object.keys(value).every((field) => known.has(field));
+}
+
+function isSafePlayFactId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length <= 256
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
+    && !value.includes('..')
+    && !value.includes('/')
+    && !value.includes('\\');
+}
+
 function playRevisionConflictResponse(
   context: NovelBackendContext,
   expectedRevision: number | undefined,
@@ -4418,6 +5810,9 @@ function readPlayActivatedSources(value: Record<string, unknown>): PlayActivated
       return {
         sourceId,
         path: getOptionalString(item, 'path')?.trim(),
+        objectId: getOptionalString(item, 'objectId')?.trim(),
+        contentHash: getOptionalString(item, 'contentHash')?.trim(),
+        role: readPlayActivatedSourceRole(item, 'role'),
         reason,
         budgetLayer: readBudgetLayer(item, 'budgetLayer') ?? 'L2',
         semanticBoundary: readSemanticBoundary(item, 'semanticBoundary') ?? 'compressible',
@@ -4425,6 +5820,17 @@ function readPlayActivatedSources(value: Record<string, unknown>): PlayActivated
       };
     })
     .filter((item): item is PlayActivatedSource => Boolean(item));
+}
+
+function readPlayActivatedSourceRole(
+  value: Record<string, unknown>,
+  key: string,
+): PlayActivatedSource['role'] | undefined {
+  const raw = getOptionalString(value, key);
+  return raw && ['chapter', 'character', 'world', 'timeline', 'state', 'other']
+    .includes(raw)
+    ? raw as PlayActivatedSource['role']
+    : undefined;
 }
 
 function readPlayTranscriptTurn(value: Record<string, unknown>): PlayTranscriptTurn | undefined {
@@ -4501,7 +5907,7 @@ function createPlayAdoptionToolRequest(
   target: PlayAdoptionTarget,
   payload: Record<string, unknown> | undefined,
 ):
-  | { toolName: string; args: Record<string, unknown> }
+  | { toolName: PreviewableWriteIntentToolName; args: Record<string, unknown> }
   | { error: string } {
   if (!payload) {
     return { error: 'Adoption payload is required before creating a PendingAction.' };

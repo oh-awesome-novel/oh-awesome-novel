@@ -217,6 +217,69 @@ export type {
   ReadProjectHealthOptions,
 } from './project-health.js';
 
+// Evidence-backed Play adoption
+export {
+  MAX_PLAY_ADOPTION_EVIDENCE_REFS,
+  MAX_PLAY_ADOPTION_SELECTED_PATH_REFS,
+  MAX_PLAY_ADOPTION_SOURCE_SNAPSHOTS,
+  PLAY_ADOPTION_EVIDENCE_SCHEMA_VERSION,
+  PLAY_ADOPTION_TARGETS,
+  createPlayAdoptionCandidateFromDraft,
+  createPlayAdoptionSourceBase,
+  fingerprintPlayAdoptionEvidenceClosure,
+  normalizePlayAdoptionDraft,
+  normalizePlayAdoptionEvidenceClosure,
+  normalizePlayAdoptionSeed,
+  projectPlayAdoptionCandidate,
+  projectPlayAdoptionDraft,
+  rebuildPlayAdoptionDraft,
+  suggestPlayAdoptionTargets,
+} from './play-adoption.js';
+export type {
+  CreatePlayAdoptionCandidateFromDraftInput,
+  PlayAdoptionSourceBase,
+  PlayAdoptionDraft,
+  PlayAdoptionEvidenceClosure,
+  PlayAdoptionSeed,
+  PlayAdoptionSourceSnapshot,
+  PlayAdoptionTargetSuggestion,
+  PlayAdoptionWriteIntentToolName,
+  RebuildPlayAdoptionDraftInput,
+} from './play-adoption.js';
+
+// Play branch-local knowledge and causal reveal
+export {
+  DEFAULT_PLAY_KNOWLEDGE_REVEAL_CANDIDATE_LIMIT,
+  MAX_PLAY_KNOWLEDGE_CHANGES_PER_TURN,
+  MAX_PLAY_KNOWLEDGE_RECORDS,
+  MAX_PLAY_KNOWLEDGE_REVEAL_CANDIDATE_LIMIT,
+  PLAY_KNOWLEDGE_STATE_KEY,
+  PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION,
+  applyPlayKnowledgeChanges,
+  assertPlayKnowledgeHistory,
+  assertPlayKnowledgeTransition,
+  createEmptyPlayKnowledgeState,
+  isPlayKnowledgeStateVisibility,
+  listPlayKnowledgeRevealCandidates,
+  normalizePlayKnowledgeChanges,
+  normalizePlayKnowledgeState,
+  projectPlayEventRevealRecord,
+  readPlayKnowledgeState,
+  resolvePlayKnowledgeEventProjection,
+} from './play-knowledge.js';
+export type {
+  ApplyPlayKnowledgeChangesInput,
+  AssertPlayKnowledgeHistoryInput,
+  AssertPlayKnowledgeTransitionInput,
+  PlayEventRevealRecord,
+  PlayKnowledgeChange,
+  PlayKnowledgePlayerProjection,
+  PlayKnowledgeProjection,
+  PlayKnowledgeRevealCandidate,
+  PlayKnowledgeState,
+  PlayRevealEventKnowledgeChange,
+} from './play-knowledge.js';
+
 // Play Mode And Tavern-Compatible Import
 export {
   DEFAULT_PLAY_EVENT_POLICY,
@@ -245,6 +308,7 @@ export {
   normalizePlayWorldRefereeSettlement,
   settlePlayWorldRefereeSettlement,
   settlePlayWorldRefereeResponse,
+  withPlaySessionFileTransaction,
   writePlaySessionFiles,
 } from './play-session.js';
 export {
@@ -325,6 +389,7 @@ export type {
   PlayEventVisibility,
   PlaySession,
   PlaySessionFile,
+  PlaySessionFileTransaction,
   PlaySourceTrust,
   PlaySimulationMode,
   PlayTranscriptTurn,
@@ -342,6 +407,62 @@ export type {
   PlaySessionMigrationPreview,
   WritePlaySessionFilesOptions,
 } from './play-session.js';
+export {
+  PLAY_OUTCOME_REPORT_MARKDOWN_FILE,
+  PLAY_OUTCOME_REPORT_SCHEMA_VERSION,
+  PLAY_OUTCOME_REPORT_YAML_FILE,
+  PLAY_OUTCOME_REPORTS_DIRECTORY,
+  createPlayOutcomeReport,
+  createSelectedPlayOutcomeEvidenceIndex,
+  fingerprintPlayOutcomeReport,
+  formatPlayOutcomeReportMarkdown,
+  normalizePlayOutcomeReport,
+  projectPlayOutcomeReport,
+  readPlayOutcomeReport,
+  resolvePlayOutcomeReportPath,
+  writePlayOutcomeReport,
+} from './play-outcome.js';
+export type {
+  CreatePlayOutcomeReportOptions,
+  PlayOutcomeConfidence,
+  PlayOutcomeGoalStatus,
+  PlayOutcomeItem,
+  PlayOutcomeItemKind,
+  PlayOutcomeProjection,
+  PlayOutcomeReport,
+  PlayOutcomeReportFormat,
+  PlayOutcomeReportReadResult,
+  PlayOutcomeReportStaleReason,
+  PlayOutcomeSourceSnapshot,
+  PlayOutcomeTag,
+  SelectedPlayOutcomeEvidenceIndex,
+  SelectedPlayOutcomeEventEvidence,
+  SelectedPlayOutcomeMessageEvidence,
+  SelectedPlayOutcomeObservationEvidence,
+  SelectedPlayOutcomeRehearsalEvidence,
+} from './play-outcome.js';
+export {
+  PLAY_WRITING_REFERENCE_SCHEMA_VERSION,
+  PLAY_WRITING_REFERENCES_DIRECTORY,
+  MAX_PLAY_WRITING_REFERENCE_CONTEXT_CHARS,
+  MAX_PLAY_WRITING_REFERENCE_ITEMS,
+  createPlayWritingReferenceAttachment,
+  detachPlayWritingReferenceAttachment,
+  formatPlayWritingReferenceContext,
+  listPlayWritingReferenceAttachments,
+  normalizePlayWritingReferenceAttachment,
+  readPlayWritingReferenceAttachment,
+  resolvePlayWritingReferenceAttachmentPath,
+  validatePlayWritingReferenceAttachment,
+} from './play-writing-reference.js';
+export type {
+  CreatePlayWritingReferenceAttachmentInput,
+  DetachPlayWritingReferenceAttachmentOptions,
+  PlayWritingReferenceAttachment,
+  PlayWritingReferenceContext,
+  PlayWritingReferenceStatus,
+  ValidatedPlayWritingReferenceAttachment,
+} from './play-writing-reference.js';
 export {
   PLAY_WORLD_MOMENTUM_STATE_KEY,
   applyPlayWorldMomentumChanges,

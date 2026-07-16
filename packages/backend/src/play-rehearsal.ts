@@ -9,6 +9,7 @@ import {
   finalizePlaySceneRehearsalAttempt,
   findPlayAttemptMutationReceipt,
   fingerprintPlayTurnAttemptStepOperation,
+  listPlayKnowledgeRevealCandidates,
   listPlayTurnAttemptRecoveries,
   parsePlayWorldRefereeResponse,
   preparePlayTurnAttemptRetry,
@@ -829,6 +830,14 @@ export function formatPlayRehearsalStepRefereePrompt(input: {
     (count, step) => count + step.settlementContribution.events.length,
     0,
   );
+  const usedKnowledgeSubjectIds = new Set(selectedSteps.flatMap((step) =>
+    step.settlementContribution.knowledgeChanges.map((change) =>
+      change.subjectEventId),
+  ));
+  const revealCandidates = listPlayKnowledgeRevealCandidates({
+    playLocalState: input.session.playLocalState,
+    selectedEvents: selectPlaySessionEvents(input.session),
+  }).filter((candidate) => !usedKnowledgeSubjectIds.has(candidate.subjectEventId));
   const payload = {
     session: {
       id: input.session.id,
@@ -840,6 +849,7 @@ export function formatPlayRehearsalStepRefereePrompt(input: {
       playLocalStateVisibility: input.session.playLocalStateVisibility,
       recentEvents: selectPlaySessionEvents(input.session).slice(-12),
       scheduledEvents: input.session.scheduledEvents,
+      revealCandidates,
     },
     sceneRehearsal: input.session.sceneRehearsal,
     attempt: {
@@ -871,9 +881,10 @@ export function formatPlayRehearsalStepRefereePrompt(input: {
     'The character voice module has already produced actorNarrative. Do not rewrite or contradict it.',
     'You are the only referee allowed to propose Play-local effects.',
     'Return a short player-visible acknowledgement, then exactly one final fenced `oan-play-settlement` JSON object.',
-    'The JSON fields are elapsed, worldTimeAnchor, events, pressureChanges, agendaChanges, scheduledEventChanges, stateDelta, observations, suggestedActions.',
+    'The JSON fields are elapsed, worldTimeAnchor, events, pressureChanges, agendaChanges, scheduledEventChanges, knowledgeChanges, stateDelta, observations, suggestedActions.',
     'This is a contribution, not a committed turn: never include cause.triggerId and never settle hard-due events. The host adds hard-due effects exactly once at Finish.',
     'Do not repeat an event, momentum id, scheduled change, or state key already used by a prior selected contribution.',
+    'Reveal an earlier hidden event only through a typed knowledgeChanges item from session.revealCandidates. Pair it with exactly one informationSpread event whose visibility equals the target and whose cause.sourceEventIds contains the candidate subjectEventId. Never reveal the same subject twice in one attempt.',
     'Use pressureId or agendaId only from eligibleWorldMotion.candidates, and include the matching typed change.',
     'Treat Director objective/risk, another participant\'s private knowledge, playerUnknown events/state/schedules/momentum, and hidden cause details as referee-private context.',
     'For playerVisible or rumor events, title and summary must contain only consequences perceivable at that visibility. Never reveal referee-private context in them or in suggestedActions.',
@@ -1033,6 +1044,45 @@ function assertProvisionalSettlementContribution(
       'invalid_rehearsal_effect',
       `A selected rehearsal step already proposes state key: ${duplicateStateKey}.`,
     );
+  }
+  const usedKnowledgeSubjectIds = new Set(previousContributions.flatMap(
+    (settlement) => settlement.knowledgeChanges.map((change) =>
+      change.subjectEventId),
+  ));
+  const revealCandidateIds = new Set(listPlayKnowledgeRevealCandidates({
+    playLocalState: session.playLocalState,
+    selectedEvents: selectPlaySessionEvents(session),
+  }).map((candidate) => candidate.subjectEventId));
+  const matchedRevealEventIndexes = new Set<number>();
+  for (const change of contribution.knowledgeChanges) {
+    if (
+      usedKnowledgeSubjectIds.has(change.subjectEventId) ||
+      !revealCandidateIds.has(change.subjectEventId)
+    ) {
+      throw new PlayRehearsalRequestError(
+        422,
+        'invalid_rehearsal_effect',
+        `A provisional actor step cannot reveal this event: ${change.subjectEventId}.`,
+      );
+    }
+    const matchingEventIndexes = contribution.events.flatMap((event, index) =>
+      event.kind === 'informationSpread' &&
+        event.visibility === change.playerProjection &&
+        event.cause.sourceEventIds?.includes(change.subjectEventId)
+        ? [index]
+        : []);
+    if (
+      matchingEventIndexes.length !== 1 ||
+      matchedRevealEventIndexes.has(matchingEventIndexes[0]!)
+    ) {
+      throw new PlayRehearsalRequestError(
+        422,
+        'invalid_rehearsal_effect',
+        `A provisional reveal requires exactly one dedicated informationSpread event: ${change.subjectEventId}.`,
+      );
+    }
+    matchedRevealEventIndexes.add(matchingEventIndexes[0]!);
+    usedKnowledgeSubjectIds.add(change.subjectEventId);
   }
   const eligible = evaluatePlaySessionEligibleEvents(session, {
     actionKind: 'do',

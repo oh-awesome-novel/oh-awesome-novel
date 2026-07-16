@@ -3,6 +3,7 @@ import type {
   PlayEventOrigin,
   PlayEventTrigger,
   PlayEventVisibility,
+  PlayKnowledgeChange,
   PlayPressureStatus,
   PlayScheduledEventTemplate,
   PlaySessionV4,
@@ -213,6 +214,7 @@ export interface PlayWorldRefereeSettlement {
   elapsed?: string;
   worldTimeAnchor?: string;
   events: PlayWorldRefereeSettlementEvent[];
+  knowledgeChanges: PlayKnowledgeChange[];
   pressureChanges: PlayPressureChange[];
   agendaChanges: PlayAgendaChange[];
   scheduledEventChanges: PlayWorldRefereeScheduledEventChange[];
@@ -1538,6 +1540,7 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
       'elapsed',
       'worldTimeAnchor',
       'events',
+      'knowledgeChanges',
       'pressureChanges',
       'agendaChanges',
       'scheduledEventChanges',
@@ -1549,6 +1552,10 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
     && (value.worldTimeAnchor === undefined || isNonEmptyString(value.worldTimeAnchor))
     && Array.isArray(value.events)
     && value.events.every(isSettlementEvent)
+    && Array.isArray(value.knowledgeChanges)
+    && value.knowledgeChanges.length <= 8
+    && value.knowledgeChanges.every(isKnowledgeChange)
+    && hasUniqueIds(value.knowledgeChanges, 'subjectEventId')
     && Array.isArray(value.pressureChanges)
     && value.pressureChanges.every(isPressureChange)
     && Array.isArray(value.agendaChanges)
@@ -1558,6 +1565,7 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
     && value.scheduledEventChanges.every(isScheduledEventChange)
     && isRecord(value.stateDelta)
     && !Object.hasOwn(value.stateDelta, 'worldMomentum')
+    && !Object.hasOwn(value.stateDelta, 'playKnowledge')
     && Array.isArray(value.observations)
     && value.observations.every((item) => isRecord(item)
       && hasOnlyKnownFields(item, ['summary', 'evidence'])
@@ -1566,6 +1574,19 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
     && Array.isArray(value.suggestedActions)
     && value.suggestedActions.length <= 6
     && value.suggestedActions.every(isNonEmptyString);
+}
+
+function isKnowledgeChange(value: unknown): value is PlayKnowledgeChange {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'type',
+      'subjectEventId',
+      'playerProjection',
+    ])
+    && value.type === 'revealEvent'
+    && isSafeId(value.subjectEventId)
+    && (value.playerProjection === 'rumor'
+      || value.playerProjection === 'playerVisible');
 }
 
 function isSettlementEvent(value: unknown): boolean {

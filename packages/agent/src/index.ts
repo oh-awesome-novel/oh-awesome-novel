@@ -80,6 +80,7 @@ export interface NovelAgentMessageInput {
   referenceSelection?: ReferenceContextSelection;
   projectHealth?: ProjectHealth;
   selectedContext?: RuntimeContextItem[];
+  playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
   priorMessages?: RuntimeMessage[];
 }
 
@@ -107,7 +108,21 @@ export interface NovelAgentContextPackageInput {
   capability?: NovelCopilotCapabilityId;
   createdAt?: string;
   referenceSelection?: ReferenceContextSelection;
+  playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
   projectHealth?: ProjectHealth;
+}
+
+/**
+ * A request-local, explicitly selected Play attachment. Active attachments are
+ * never discovered by the agent: the backend must validate and supply every
+ * item again for the current request.
+ */
+export interface NovelAgentPlayWritingReferenceInput {
+  attachmentId: string;
+  sessionId: string;
+  title: string;
+  path: string;
+  content: string;
 }
 
 export interface NovelAgentSessionArtifactWriteResult {
@@ -715,6 +730,26 @@ export const createBaselineNovelAgentContextPackage = (
     }
   }
 
+  for (const attachment of input.playWritingReferences ?? []) {
+    selected.push({
+      sourceId: 'playWritingReference',
+      reason: `explicit Play writing reference ${attachment.attachmentId} selected for this request`,
+      budgetLayer: 'L1',
+      semanticBoundary: 'compressible',
+      path: attachment.path,
+      title: attachment.title,
+    });
+    trace.push(createTraceEntry(trace.length, createdAt, {
+      type: 'userSelectedContext',
+      sourceId: 'playWritingReference',
+      reason: `user explicitly attached ${attachment.attachmentId} to this request`,
+      budgetLayer: 'L1',
+      semanticBoundary: 'compressible',
+      outcome: 'selected',
+      path: attachment.path,
+    }));
+  }
+
   const healthIssues = input.projectHealth?.issues.slice(0, 5) ?? [];
   if (healthIssues.length) {
     selected.push({
@@ -754,6 +789,14 @@ export const createBaselineNovelAgentContextPackage = (
         priority: 100,
         sourceId: 'workflow',
       },
+      ...(input.playWritingReferences?.length
+        ? [{
+            id: 'play-writing-reference-boundary',
+            label: 'Play Writing References are explicitly selected noncanonical material, not current story truth.',
+            priority: 95,
+            sourceId: 'playWritingReference',
+          }]
+        : []),
       {
         id: 'context-package-boundary',
         label: 'Context package explains this run; it is not canonical story truth.',
@@ -993,6 +1036,14 @@ const createNovelAgentContext = (
       ? formatContextPackageSummary(input.contextPackage)
       : undefined,
   );
+  for (const attachment of input.playWritingReferences ?? []) {
+    pushContext(
+      context,
+      'selected',
+      attachment.title,
+      attachment.content,
+    );
+  }
   context.push(...(input.selectedContext ?? []));
 
   return context;

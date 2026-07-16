@@ -1,9 +1,16 @@
 <script setup lang="ts">
+import PlayEventRevealChain from './PlayEventRevealChain.vue';
+import type { PlayAdoptionSeed } from '../../composables/usePlayAdoptionPreview';
 import type { PlayEventCardView } from '../../composables/playWorldPresentation';
 
 defineProps<{
   card: Readonly<PlayEventCardView>;
   showAuthorDetails: boolean;
+  adoptionDisabled: boolean;
+}>();
+
+const emit = defineEmits<{
+  prepareAdoption: [seed: PlayAdoptionSeed];
 }>();
 </script>
 
@@ -27,6 +34,12 @@ defineProps<{
         <span>Impact</span>
         <p>{{ card.impact }}</p>
       </section>
+
+      <PlayEventRevealChain
+        v-if="card.revealChain"
+        :chain="card.revealChain"
+        :show-author-details="showAuthorDetails"
+      />
 
       <div v-if="card.causeLabels.length" class="play-event-cause">
         <span>Caused by</span>
@@ -81,6 +94,14 @@ defineProps<{
           </dl>
         </section>
       </details>
+
+      <button
+        class="ghost-button tight-button play-event-adopt"
+        type="button"
+        :disabled="adoptionDisabled"
+        :aria-label="`Bring event to writing: ${card.title}`"
+        @click="emit('prepareAdoption', { kind: 'event', eventId: card.id })"
+      >Bring to writing</button>
     </div>
   </article>
 </template>
@@ -126,6 +147,11 @@ defineProps<{
 }
 
 .play-event-author-details {
+  margin-top: 7px;
+}
+
+.play-event-adopt {
+  justify-self: start;
   margin-top: 7px;
 }
 </style>

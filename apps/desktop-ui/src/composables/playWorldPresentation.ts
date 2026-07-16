@@ -9,6 +9,7 @@ import type {
 } from './useWorkspaceApi';
 
 const PLAY_WORLD_MOMENTUM_STATE_KEY = 'worldMomentum';
+export const PLAY_KNOWLEDGE_STATE_KEY = 'playKnowledge';
 const MAX_PRESENTATION_TEXT = 160;
 
 export type PlayEventCauseLabelKind =
@@ -35,6 +36,26 @@ export interface PlayEventTechnicalRefView {
   value: string;
 }
 
+export interface PlayEventRevealAuthorView {
+  recordId: string;
+  subjectEventId: string;
+  subjectTitle: string;
+  subjectSummary: string;
+  subjectWorldTimeLabel: string;
+  subjectReason?: string;
+  revealedByEventId: string;
+  revealedByTitle: string;
+  previousPlayerProjection: 'playerUnknown' | 'rumor';
+  playerProjection: 'rumor' | 'playerVisible';
+  knownByParticipantRefs: string[];
+}
+
+export interface PlayEventRevealChainView {
+  statusLabel: string;
+  explanation: string;
+  author?: PlayEventRevealAuthorView;
+}
+
 export interface PlayEventCardView {
   id: string;
   title: string;
@@ -46,6 +67,8 @@ export interface PlayEventCardView {
   causeLabels: PlayEventCauseLabelView[];
   stateImpacts: PlayEventStateImpactView[];
   technicalRefs: PlayEventTechnicalRefView[];
+  projection?: 'player' | 'author';
+  revealChain?: PlayEventRevealChainView;
   authorReason?: string;
 }
 
@@ -73,6 +96,9 @@ export function buildPlayEventCardViews(
   input: BuildPlayEventCardViewsInput,
 ): PlayEventCardView[] {
   const eventsById = new Map(input.events.map((event) => [event.id, event]));
+  const artifactsById = new Map(
+    input.artifacts.map((artifact) => [artifact.id, artifact]),
+  );
   const artifactsByEventId = indexArtifactsByEventId(input.artifacts);
   const messagesById = indexMessages(input.artifacts);
 
@@ -95,6 +121,14 @@ export function buildPlayEventCardViews(
         ),
         showSpoilers: input.showSpoilers,
       });
+      const revealChain = buildRevealChain({
+        event,
+        artifact,
+        eventsById,
+        artifactsById,
+        artifactsByEventId,
+        showSpoilers: input.showSpoilers,
+      });
 
       return {
         id: event.id,
@@ -115,11 +149,206 @@ export function buildPlayEventCardViews(
         technicalRefs: input.showSpoilers
           ? buildTechnicalRefs(event, artifact, causeLabels, scheduledEvent)
           : [],
+        projection: input.showSpoilers ? 'author' : 'player',
+        ...(revealChain ? { revealChain } : {}),
         ...(input.showSpoilers && event.cause.reason.trim()
           ? { authorReason: event.cause.reason.trim() }
           : {}),
       };
     });
+}
+
+interface BuildRevealChainInput {
+  event: PlayWorldEvent;
+  artifact?: PlayTurnArtifact;
+  eventsById: ReadonlyMap<string, PlayWorldEvent>;
+  artifactsById: ReadonlyMap<string, PlayTurnArtifact>;
+  artifactsByEventId: ReadonlyMap<string, PlayTurnArtifact>;
+  showSpoilers: boolean;
+}
+
+interface PlayEventRevealRecordEvidence {
+  id: string;
+  kind: 'eventReveal';
+  subjectEventId: string;
+  previousPlayerProjection: 'playerUnknown' | 'rumor';
+  playerProjection: 'rumor' | 'playerVisible';
+  knownByParticipantRefs: string[];
+  revealedAtTurnId: string;
+  revealedByEventId: string;
+  canonical: false;
+}
+
+function buildRevealChain(
+  input: BuildRevealChainInput,
+): PlayEventRevealChainView | undefined {
+  const artifact = input.artifact;
+  if (
+    !artifact?.playLocalStateSnapshot ||
+    !Object.prototype.hasOwnProperty.call(
+      artifact.stateDelta,
+      PLAY_KNOWLEDGE_STATE_KEY,
+    ) ||
+    artifact.playLocalStateVisibilitySnapshot?.[PLAY_KNOWLEDGE_STATE_KEY] !==
+      'playerUnknown' ||
+    input.event.kind !== 'informationSpread'
+  ) {
+    return undefined;
+  }
+
+  const records = readPlayKnowledgeRecords(
+    artifact.playLocalStateSnapshot[PLAY_KNOWLEDGE_STATE_KEY],
+  );
+  const deltaRecords = readPlayKnowledgeRecords(
+    artifact.stateDelta[PLAY_KNOWLEDGE_STATE_KEY],
+  );
+  if (!records || !deltaRecords || !areRevealRecordListsEqual(records, deltaRecords)) {
+    return undefined;
+  }
+  const matches = records.filter((record) =>
+    record.revealedByEventId === input.event.id,
+  );
+  if (matches.length !== 1) return undefined;
+
+  const record = matches[0]!;
+  const subject = input.eventsById.get(record.subjectEventId);
+  const subjectArtifact = input.artifactsByEventId.get(record.subjectEventId);
+  if (
+    !subject ||
+    subject.visibility !== 'playerUnknown' ||
+    !subjectArtifact ||
+    !isStrictArtifactAncestor(
+      subjectArtifact,
+      artifact,
+      input.artifactsById,
+    ) ||
+    record.revealedAtTurnId !== input.event.turnId ||
+    record.playerProjection !== input.event.visibility ||
+    !input.event.cause.sourceEventIds?.includes(subject.id) ||
+    !isValidRevealTransition(record)
+  ) {
+    return undefined;
+  }
+
+  const chain: PlayEventRevealChainView = {
+    statusLabel: record.playerProjection === 'rumor'
+      ? 'Rumor surfaced'
+      : 'Information confirmed',
+    explanation: record.playerProjection === 'rumor'
+      ? 'This event carries a rumor about an earlier unseen development.'
+      : 'This event confirms information about an earlier unseen development.',
+  };
+  if (!input.showSpoilers) return chain;
+
+  return {
+    ...chain,
+    author: {
+      recordId: record.id,
+      subjectEventId: subject.id,
+      subjectTitle: subject.title,
+      subjectSummary: subject.summary,
+      subjectWorldTimeLabel: formatWorldTime(subject),
+      ...(subject.cause.reason.trim()
+        ? { subjectReason: subject.cause.reason.trim() }
+        : {}),
+      revealedByEventId: input.event.id,
+      revealedByTitle: input.event.title,
+      previousPlayerProjection: record.previousPlayerProjection,
+      playerProjection: record.playerProjection,
+      knownByParticipantRefs: [...record.knownByParticipantRefs],
+    },
+  };
+}
+
+function isStrictArtifactAncestor(
+  candidate: Readonly<PlayTurnArtifact>,
+  artifact: Readonly<PlayTurnArtifact>,
+  artifactsById: ReadonlyMap<string, PlayTurnArtifact>,
+): boolean {
+  const visited = new Set<string>([artifact.id]);
+  let parentId = artifact.parentTurnId;
+  while (parentId) {
+    if (visited.has(parentId)) return false;
+    visited.add(parentId);
+
+    const parent = artifactsById.get(parentId);
+    if (!parent) return false;
+    if (parent.id === candidate.id) {
+      return parent.revision < artifact.revision;
+    }
+    parentId = parent.parentTurnId;
+  }
+  return false;
+}
+
+function readPlayKnowledgeRecords(
+  value: unknown,
+): PlayEventRevealRecordEvidence[] | undefined {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['schemaVersion', 'records']) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.records) ||
+    !value.records.every(isPlayEventRevealRecordEvidence)
+  ) {
+    return undefined;
+  }
+  return value.records;
+}
+
+function isPlayEventRevealRecordEvidence(
+  value: unknown,
+): value is PlayEventRevealRecordEvidence {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'id',
+    'kind',
+    'subjectEventId',
+    'previousPlayerProjection',
+    'playerProjection',
+    'knownByParticipantRefs',
+    'revealedAtTurnId',
+    'revealedByEventId',
+    'canonical',
+  ])) {
+    return false;
+  }
+  return isNonEmptyString(value.id) &&
+    value.kind === 'eventReveal' &&
+    isNonEmptyString(value.subjectEventId) &&
+    (value.previousPlayerProjection === 'playerUnknown' ||
+      value.previousPlayerProjection === 'rumor') &&
+    (value.playerProjection === 'rumor' || value.playerProjection === 'playerVisible') &&
+    Array.isArray(value.knownByParticipantRefs) &&
+    value.knownByParticipantRefs.length === 0 &&
+    isNonEmptyString(value.revealedAtTurnId) &&
+    isNonEmptyString(value.revealedByEventId) &&
+    value.canonical === false;
+}
+
+function isValidRevealTransition(record: PlayEventRevealRecordEvidence): boolean {
+  return record.previousPlayerProjection === 'playerUnknown' ||
+    record.playerProjection === 'playerVisible';
+}
+
+function areRevealRecordListsEqual(
+  left: readonly PlayEventRevealRecordEvidence[],
+  right: readonly PlayEventRevealRecordEvidence[],
+): boolean {
+  return left.length === right.length && left.every((record, index) => {
+    const candidate = right[index];
+    return candidate !== undefined &&
+      record.id === candidate.id &&
+      record.kind === candidate.kind &&
+      record.subjectEventId === candidate.subjectEventId &&
+      record.previousPlayerProjection === candidate.previousPlayerProjection &&
+      record.playerProjection === candidate.playerProjection &&
+      record.revealedAtTurnId === candidate.revealedAtTurnId &&
+      record.revealedByEventId === candidate.revealedByEventId &&
+      record.canonical === candidate.canonical &&
+      record.knownByParticipantRefs.length === candidate.knownByParticipantRefs.length &&
+      record.knownByParticipantRefs.every((value, participantIndex) =>
+        value === candidate.knownByParticipantRefs[participantIndex]);
+  });
 }
 
 interface BuildCauseLabelsInput {
@@ -215,6 +444,7 @@ function buildStateImpacts(
 
   const impacts: PlayEventStateImpactView[] = [];
   for (const [stateKey, stateValue] of Object.entries(artifact.stateDelta)) {
+    if (stateKey === PLAY_KNOWLEDGE_STATE_KEY) continue;
     if (stateKey === PLAY_WORLD_MOMENTUM_STATE_KEY) {
       if (hasSafeMomentumImpactEvidence(event, momentum, showSpoilers)) {
         impacts.push({
@@ -550,4 +780,13 @@ function causeLabelKind(kind: PlayEventCauseLabelKind): string {
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key)) &&
+    keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }

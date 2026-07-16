@@ -24,6 +24,7 @@ const emptySettlement = (
   pressureChanges: [],
   agendaChanges: [],
   scheduledEventChanges: [],
+  knowledgeChanges: [],
   stateDelta,
   observations: [],
   suggestedActions: [],

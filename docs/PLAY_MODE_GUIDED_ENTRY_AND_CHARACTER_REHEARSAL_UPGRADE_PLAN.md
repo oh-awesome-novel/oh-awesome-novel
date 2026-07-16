@@ -1,6 +1,6 @@
 # Play Mode 引导入场与角色推演升级计划
 
-> 状态：F1 / F2 Completed / F3 Next
+> 状态：F1 / F2 / F3 Completed / F4 Next
 >
 > 文档目标：在现有顶级 Play 工作区与世界事件底座上，补齐“从小说素材进入可玩场景、按角色知识与行为依据进行推演、由作者逐步导演、结束后形成可追溯写作参考”的产品闭环。
 >
@@ -14,7 +14,7 @@
 >
 > 执行顺序调整：2026-07-15。
 >
-> 当前执行原则：基础设施已经足够。世界事件 M1 与本计划 F1 已于 2026-07-15 完成，世界事件 M2 与本计划 F2 Source-backed Guided Start 已于 2026-07-16 完成；下一功能主线是 F3 Outcome / Writing Handoff，之后再推进 F4 advanced Director controls。耐久性、规模化和通用 transport 加固继续并行，只有被具体切片直接触及时才成为局部门槛。
+> 当前执行原则：基础设施已经足够。世界事件 M1 与本计划 F1 已于 2026-07-15 完成，世界事件 M2–M4、本计划 F2 Source-backed Guided Start 与 F3 Outcome / Writing Handoff 已于 2026-07-16 完成；Play 的下一候选为世界事件 M5 长篇使用与体验收口，F4 advanced Director controls 继续按独立 task 推进。耐久性、规模化和通用 transport 加固继续并行，只有被具体切片直接触及时才成为局部门槛。
 
 ## 1. 结论摘要
 
@@ -87,7 +87,7 @@ Play Mode
 因此，本计划取消“先把 1120 全部 Remaining Review Scope 收口”的统一 Gate，改为三类依赖：
 
 1. **已满足的共用底座**：turn artifact、world settlement、hard-due、stream / cancel / reconcile、checkpoint / variant、visibility、observation / adoption 直接复用，不重复建设。
-2. **按功能触发的局部 correctness gate**：F1 participant perception 必须带不可变、scene-local 的初始知识 evidence snapshot；F4 持久化 `grantKnowledge` 才要求完整 branch-local knowledge / reveal store。attempt finalize 必须复用现有 settlement validator、hard-due evaluator、session revision recheck 与一次提交；持久化 schema 升级旧 session 时必须同时提供 migration preview / backup / confirm / cancel；source-based setup 必须校验 ref、hash、missing / stale。
+2. **按功能触发的局部 correctness gate**：F1 participant perception 必须带不可变、scene-local 的初始知识 evidence snapshot；F4 持久化 `grantKnowledge` 必须复用 M3 已落地的 branch-local knowledge / reveal store，并扩展 participant-scoped typed transition。attempt finalize 必须复用现有 settlement validator、hard-due evaluator、session revision recheck 与一次提交；持久化 schema 升级旧 session 时必须同时提供 migration preview / backup / confirm / cancel；source-based setup 必须校验 ref、hash、missing / stale。
 3. **非阻塞并行加固**：F1 已按局部 correctness gate 增加 cooperative cross-process session / attempt filesystem lock、持锁 CAS、staged attempt publish 与 crash self-healing；fsync、完整跨进程故障矩阵、可重启 terminal registry、graceful shutdown、通用 deadline / backpressure、summary / windowing、旧 endpoint deprecation 与浏览器级旅程仍不阻止 F2–F4。
 
 `pressure / agenda / eligible evaluator` 是世界活性功能，而不是 Guided Start 的前置基础设施。Scene Rehearsal 第一版可以复用现有 hard-due evaluator；当对应体验承诺 NPC / 组织基于 agenda 主动推进时，再把 eligible evaluator 纳入该纵向切片。
@@ -97,7 +97,7 @@ Play Mode
 ```text
 Slice 1：最小可玩 Scene Rehearsal
   -> Slice 2：完整 Guided Start / Scene Contract
-  -> Slice 3：Outcome / Memory 与 Writing Handoff
+  -> Slice 3：Outcome / Writing Handoff
   -> Slice 4：高级 Director controls 与长篇体验收口
 
 并行：1120 correctness / durability / scale hardening
@@ -481,7 +481,7 @@ interface CharacterPerceptionPackage {
 }
 ```
 
-每个角色步骤只能读取该角色的 perception package。F1 的 `initialKnowledgeEvidenceRefs` 必须解析到同一 committed Scene Contract sidecar 内的 versioned `PlaySceneKnowledgeEvidence` record；record 冻结最小必要 fact、participant、visibility、source identity / content hash 或 author provenance，生成 step 时不得重新读取可变 canonical source 来替换该 fact。它不复制整份 canonical 文件，也不声称封存旧回合全部 source bytes。`grantedKnowledgeRefs` 在 F1 保持为空，直到 F4 交付 branch-local knowledge / reveal store 与持久化 `grantKnowledge`。完整 hidden state 与带语义的 omitted trace 只属于 referee / Director；因 visibility 被排除的内容不得在角色 package 中留下“存在隐藏项”的提示。角色可见的 `omissionMetadata` 只用于 budget / semantic boundary，且只能包含通用 reason、数量和不透明引用，不能出现被省略事实的标题、实体、摘要或路径。不得把完整累积 transcript 原样发送给所有角色模块。
+每个角色步骤只能读取该角色的 perception package。F1 的 `initialKnowledgeEvidenceRefs` 必须解析到同一 committed Scene Contract sidecar 内的 versioned `PlaySceneKnowledgeEvidence` record；record 冻结最小必要 fact、participant、visibility、source identity / content hash 或 author provenance，生成 step 时不得重新读取可变 canonical source 来替换该 fact。它不复制整份 canonical 文件，也不声称封存旧回合全部 source bytes。`grantedKnowledgeRefs` 在 F1 保持为空；F4 的持久化 `grantKnowledge` 必须复用 M3 已落地的 branch-local knowledge / reveal store，并增加 participant-scoped evidence。完整 hidden state 与带语义的 omitted trace 只属于 referee / Director；因 visibility 被排除的内容不得在角色 package 中留下“存在隐藏项”的提示。角色可见的 `omissionMetadata` 只用于 budget / semantic boundary，且只能包含通用 reason、数量和不透明引用，不能出现被省略事实的标题、实体、摘要或路径。不得把完整累积 transcript 原样发送给所有角色模块。
 
 ### 7.5 Turn Attempt、Step 与 Round
 
@@ -1106,6 +1106,8 @@ Done Criteria：
 
 ### F3：Outcome And Explicit Writing Handoff
 
+状态：**Completed（2026-07-16）**。实现与验收记录见 `docs/tasks/1150.md` 和 `docs/superpowers/plans/2026-07-16-play-outcome-writing-handoff-f3.md`。
+
 范围：
 
 - 从 committed selected branch 按需生成 evidence-backed outcome report 与 per-character footprint。
@@ -1123,14 +1125,18 @@ Done Criteria：
 
 Outcome 不等待完整 Scene Memory。Memory 可随后作为可重建 projection 与长 session 优化增加，不能反过来阻塞写作回流。
 
+实现记录：selected-branch Outcome schema / fingerprint、v4 / v5 per-character footprint、Player / Director projection、create-only Writing Reference、source / revision / branch stale 校验、显式 request-local Agent context / trace、outcome candidate -> PendingAction 与 Desktop one-shot selector 已落地。Player 镜头在本地与 transport 两层清除全部内部引用；detached / stale attachment 不可消费，未显式选择时零注入。完整 Core / Agent / Backend / Client / Desktop 回归与 Desktop production build 已通过。
+
 ### F4：Advanced Director Controls And Long-session Rehearsal
+
+状态：**Next**。
 
 范围：
 
 - `reviseProjection` 与重新裁决的 `redirectStep` typed artifact。
 - earlier-step fork、provisional overlay evaluator、due-set 重算、suffix invalidation、step variant preservation 与 committed checkpoint / variant 对接。
 - `insertActor`、持久化 `grantKnowledge`、dynamic / hybrid order、停滞检测与 `noMaterialEffect`。
-- branch-local knowledge / reveal store、knowledge / behavior anchor / event inspector 与 Player / Director 双 Lens。
+- 复用 M3 branch-local knowledge / reveal store，扩展 participant `grantKnowledge`、knowledge / behavior anchor / event inspector 与 Player / Director 双 Lens。
 - visibility-aware Scene Memory、stale / rebuild、高级控制的完整键盘 / screen-reader 旅程与长列表体验。
 
 Done Criteria：

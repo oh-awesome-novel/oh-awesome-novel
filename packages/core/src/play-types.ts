@@ -105,6 +105,66 @@ export type PlayAdoptionTarget =
   | 'timeline'
   | 'foreshadow';
 
+export type PlayAdoptionSeed =
+  | {
+      kind: 'event';
+      eventId: string;
+    }
+  | {
+      kind: 'observation';
+      observationId: string;
+    }
+  | {
+      kind: 'outcome';
+      outcomeItemId: string;
+      outcomeReportFingerprint: string;
+    };
+
+export interface PlayAdoptionSourceSnapshot {
+  sourceId: string;
+  path?: string;
+  contentHash?: string;
+}
+
+export interface PlayAdoptionEvidenceClosure {
+  schemaVersion: 1;
+  sessionId: string;
+  sessionRevision: number;
+  selectedArtifactTurnRefs: string[];
+  artifactTurnRefs: string[];
+  messageRefs: string[];
+  eventRefs: string[];
+  observationRefs: string[];
+  evidenceRefs: string[];
+  sourceSnapshots: PlayAdoptionSourceSnapshot[];
+  selectedPathFingerprint: string;
+  sourceBaseFingerprint: string;
+}
+
+export type PlayAdoptionWriteIntentToolName =
+  | 'chapter.createDraft'
+  | 'state.set'
+  | 'timeline.add'
+  | 'foreshadow.create';
+
+export interface PlayAdoptionTargetSuggestion {
+  target: PlayAdoptionTarget;
+  toolName: PlayAdoptionWriteIntentToolName;
+  recommended: boolean;
+  reason: string;
+  defaultPayload: Record<string, unknown>;
+}
+
+export interface PlayAdoptionDraft {
+  seed: PlayAdoptionSeed;
+  summary: string;
+  evidence: string;
+  visibility: PlayEventVisibility;
+  evidenceClosure: PlayAdoptionEvidenceClosure;
+  evidenceFingerprint: string;
+  targetSuggestions: PlayAdoptionTargetSuggestion[];
+}
+
 export interface PlayActivatedSource {
   sourceId: string;
   path?: string;
@@ -196,5 +256,8 @@ export interface PlayAdoptionCandidate {
   sourceObservationIds: string[];
   sourceTurnIds: string[];
   sourceEventIds: string[];
+  seed?: PlayAdoptionSeed;
+  evidenceClosure?: PlayAdoptionEvidenceClosure;
+  evidenceFingerprint?: string;
   requiresPendingAction: true;
 }

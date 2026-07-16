@@ -16,6 +16,7 @@ import {
   listPlayTurnAttemptRecoveries,
   preparePlayWorldSettlementRetry,
   projectSelectedPlayRehearsalEvidence,
+  readPlayKnowledgeState,
   readPlaySessionFiles,
   readPlayTurnAttemptRecovery,
   restorePlaySessionCheckpoint,
@@ -93,11 +94,13 @@ const createInput = (): CreatePlaySceneRehearsalSessionInput => ({
 const emptySettlement = (
   stateDelta: Record<string, unknown>,
   events: PlayWorldRefereeSettlement['events'] = [],
+  knowledgeChanges: PlayWorldRefereeSettlement['knowledgeChanges'] = [],
 ): PlayWorldRefereeSettlement => ({
   events,
   pressureChanges: [],
   agendaChanges: [],
   scheduledEventChanges: [],
+  knowledgeChanges,
   stateDelta,
   observations: [],
   suggestedActions: [],
@@ -157,6 +160,11 @@ async function prepareAttempt(
   attempt: PlayTurnAttempt,
   alice: CharacterPerceptionPackage,
   bob: CharacterPerceptionPackage,
+  options?: {
+    subjectEventId?: string;
+    playerProjection?: 'rumor' | 'playerVisible';
+    includeHiddenEvent?: boolean;
+  },
 ): Promise<PlayTurnAttempt> {
   let current = addPlayTurnAttemptStep(attempt, {
     expectedAttemptRevision: 0,
@@ -183,8 +191,29 @@ async function prepareAttempt(
           title: 'A private suspicion spreads',
           summary: 'A porter quietly questions whether the ticket is valid.',
           visibility: 'rumor',
-          cause: { reason: 'The porter noticed Alice hesitate.' },
-        }],
+          cause: {
+            reason: 'The porter noticed Alice hesitate.',
+            ...(options?.subjectEventId
+              ? { sourceEventIds: [options.subjectEventId] }
+              : {}),
+          },
+        }, ...(options?.includeHiddenEvent
+          ? [{
+              kind: 'npcActed' as const,
+              origin: 'npc' as const,
+              title: 'Inspector changed the signal',
+              summary: 'The inspector secretly changed the signal.',
+              visibility: 'playerUnknown' as const,
+              cause: { reason: 'The inspector advanced an offscreen plan.' },
+            }]
+          : [])],
+        options?.subjectEventId
+          ? [{
+              type: 'revealEvent',
+              subjectEventId: options.subjectEventId,
+              playerProjection: options.playerProjection ?? 'rumor',
+            }]
+          : [],
       ),
     }),
     perception: alice,
@@ -237,6 +266,51 @@ async function prepareAttempt(
     expectedAttemptRevision: 3,
   });
   return current;
+}
+
+async function seedHiddenRehearsalSession(
+  workspaceRoot: string,
+  id: string,
+) {
+  const input = createInput();
+  const draft = createPlaySceneRehearsalSessionDraft({
+    ...input,
+    id,
+    scheduledEvents: [],
+    eventPolicy: { maxExternalEventsPerTurn: 6 },
+  });
+  await writePlaySessionFiles(workspaceRoot, draft);
+  const attempt = await startPlaySceneRehearsalAttempt(workspaceRoot, {
+    sessionId: draft.id,
+    attemptId: `seed-${id}`,
+    baseRevision: 0,
+  });
+  const alice = createCharacterPerceptionPackage(
+    draft.sceneRehearsal!,
+    'participant-alice',
+  );
+  const bob = createCharacterPerceptionPackage(
+    draft.sceneRehearsal!,
+    'participant-bob',
+  );
+  const prepared = await prepareAttempt(
+    workspaceRoot,
+    attempt,
+    alice,
+    bob,
+    { includeHiddenEvent: true },
+  );
+  const finalized = await finalizePlaySceneRehearsalAttempt(workspaceRoot, {
+    sessionId: draft.id,
+    attemptId: prepared.id,
+    baseRevision: 0,
+    expectedAttemptRevision: 4,
+    selectedHeadRef: 'step-bob',
+    idempotencyKey: `finish-${id}`,
+    userText: 'Run the actors while the inspector acts offscreen.',
+    createdAt: '2026-07-15T00:01:00.000Z',
+  });
+  return finalized.session;
 }
 
 describe('Play rehearsal recovery and atomic Finish', () => {
@@ -406,6 +480,7 @@ describe('Play rehearsal recovery and atomic Finish', () => {
         aliceAtGate: true,
         bobAtLock: true,
       });
+      expect(aggregated.knowledgeChanges).toEqual([]);
       const actorTriesToSettleDue = structuredClone(prepared);
       actorTriesToSettleDue.steps[0]!.settlementContribution.events.push({
         kind: 'environmentChanged',
@@ -422,6 +497,18 @@ describe('Play rehearsal recovery and atomic Finish', () => {
         draft,
         actorTriesToSettleDue,
       )).toThrow('cannot settle hard-due event');
+      const duplicateKnowledge = structuredClone(prepared);
+      for (const step of duplicateKnowledge.steps) {
+        step.settlementContribution.knowledgeChanges.push({
+          type: 'revealEvent',
+          subjectEventId: 'hidden-shared-subject',
+          playerProjection: 'rumor',
+        });
+      }
+      expect(() => aggregatePlayTurnAttemptSettlement(
+        draft,
+        duplicateKnowledge,
+      )).toThrow('same knowledge subject more than once');
 
       await expect(finalizePlaySceneRehearsalAttempt(workspaceRoot, {
         sessionId: draft.id,
@@ -657,6 +744,120 @@ describe('Play rehearsal recovery and atomic Finish', () => {
         idempotencyKey: 'finish-request-one',
         userText: 'Run the fixed actor queue.',
       })).rejects.toThrow('already finalized with another request');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes selected-step knowledgeChanges through the shared Finish invariant', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-finish-knowledge-'));
+    try {
+      const hidden = await seedHiddenRehearsalSession(
+        workspaceRoot,
+        'play-finish-knowledge',
+      );
+      const hiddenEvent = hidden.events.find((event) =>
+        event.visibility === 'playerUnknown')!;
+      const attempt = await startPlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: hidden.id,
+        attemptId: 'attempt-finish-knowledge',
+        baseRevision: 1,
+      });
+      const alice = createCharacterPerceptionPackage(
+        hidden.sceneRehearsal!,
+        'participant-alice',
+      );
+      const bob = createCharacterPerceptionPackage(
+        hidden.sceneRehearsal!,
+        'participant-bob',
+      );
+      const prepared = await prepareAttempt(
+        workspaceRoot,
+        attempt,
+        alice,
+        bob,
+        { subjectEventId: hiddenEvent.id },
+      );
+      expect(aggregatePlayTurnAttemptSettlement(hidden, prepared).knowledgeChanges)
+        .toEqual([{
+          type: 'revealEvent',
+          subjectEventId: hiddenEvent.id,
+          playerProjection: 'rumor',
+        }]);
+
+      const finalized = await finalizePlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: hidden.id,
+        attemptId: prepared.id,
+        baseRevision: 1,
+        expectedAttemptRevision: 4,
+        selectedHeadRef: 'step-bob',
+        idempotencyKey: 'finish-knowledge-success',
+        userText: 'Run the actors and let the rumor spread.',
+        createdAt: '2026-07-15T00:02:00.000Z',
+      });
+      expect(readPlayKnowledgeState(finalized.session.playLocalState).records)
+        .toEqual([expect.objectContaining({
+          id: 'knowledge-2-1',
+          subjectEventId: hiddenEvent.id,
+          previousPlayerProjection: 'playerUnknown',
+          playerProjection: 'rumor',
+          revealedByEventId: finalized.artifact.eventIds[1],
+        })]);
+      expect(finalized.artifact.playLocalStateVisibilitySnapshot?.playKnowledge)
+        .toBe('playerUnknown');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps Finish zero-write when a selected-step reveal lacks matching evidence', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-finish-knowledge-invalid-'));
+    try {
+      const hidden = await seedHiddenRehearsalSession(
+        workspaceRoot,
+        'play-finish-knowledge-invalid',
+      );
+      const hiddenEvent = hidden.events.find((event) =>
+        event.visibility === 'playerUnknown')!;
+      const attempt = await startPlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: hidden.id,
+        attemptId: 'attempt-finish-knowledge-invalid',
+        baseRevision: 1,
+      });
+      const alice = createCharacterPerceptionPackage(
+        hidden.sceneRehearsal!,
+        'participant-alice',
+      );
+      const bob = createCharacterPerceptionPackage(
+        hidden.sceneRehearsal!,
+        'participant-bob',
+      );
+      const prepared = await prepareAttempt(
+        workspaceRoot,
+        attempt,
+        alice,
+        bob,
+        {
+          subjectEventId: hiddenEvent.id,
+          playerProjection: 'playerVisible',
+        },
+      );
+
+      await expect(finalizePlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: hidden.id,
+        attemptId: prepared.id,
+        baseRevision: 1,
+        expectedAttemptRevision: 4,
+        selectedHeadRef: 'step-bob',
+        idempotencyKey: 'finish-knowledge-invalid',
+        userText: 'Try to reveal without matching evidence.',
+      })).rejects.toThrow('exactly one matching current informationSpread event');
+      await expect(readPlaySessionFiles(workspaceRoot, hidden.id)).resolves.toEqual(hidden);
+      await expect(readPlayTurnAttemptRecovery(
+        workspaceRoot,
+        hidden.id,
+        prepared.id,
+      )).resolves.toMatchObject({ status: 'prepared', attemptRevision: 4 });
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

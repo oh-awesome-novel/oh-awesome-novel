@@ -28,6 +28,8 @@ const api = vi.hoisted(() => ({
   acceptPlayRehearsalStep: vi.fn(),
   finishPlayRehearsalAttempt: vi.fn(),
   cancelPlayRehearsalAttempt: vi.fn(),
+  getPlayOutcomeReport: vi.fn(),
+  listPlayWritingReferenceAttachments: vi.fn(),
 }));
 
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
@@ -40,6 +42,10 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     vi.resetAllMocks();
     api.listPlayCheckpoints.mockResolvedValue({ checkpoints: [] });
     api.getActivePlayRehearsalAttempt.mockResolvedValue({ attempt: null });
+    api.getPlayOutcomeReport.mockRejectedValue(Object.assign(new Error('missing'), {
+      status: 404,
+    }));
+    api.listPlayWritingReferenceAttachments.mockResolvedValue({ attachments: [] });
     api.cancelPlayActorStep.mockImplementation(
       async (_sessionId: string, _attemptId: string, runId: string) => ({
         status: 'aborted',
@@ -590,12 +596,15 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(wrapper.get<HTMLButtonElement>('.play-session-card').element.disabled).toBe(true);
     expect(wrapper.get<HTMLButtonElement>('button[aria-label="刷新 Play workspace"]').element.disabled)
       .toBe(true);
+    expect(wrapper.find('.play-outcome-panel').exists()).toBe(true);
+    expect(button(wrapper, 'Generate report').attributes('disabled')).toBeDefined();
 
     await button(wrapper, 'Recover attempt truth').trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-recovery').exists()).toBe(false);
       expect(button(wrapper, 'Begin rehearsal attempt').attributes('disabled')).toBeUndefined();
     });
+    expect(button(wrapper, 'Generate report').attributes('disabled')).toBeUndefined();
 
     expect(api.getActivePlayRehearsalAttempt).toHaveBeenCalledTimes(2);
     wrapper.unmount();
@@ -612,6 +621,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(wrapper.find('.play-composer').exists()).toBe(true);
     expect(wrapper.find('.play-history-controls').exists()).toBe(true);
     expect(wrapper.find('.play-adoption-panel').exists()).toBe(true);
+    expect(wrapper.find('.play-outcome-panel').exists()).toBe(true);
     expect(api.getActivePlayRehearsalAttempt).not.toHaveBeenCalled();
     expect(api.listPlayCheckpoints).toHaveBeenCalledWith('play-quick-1');
     wrapper.unmount();

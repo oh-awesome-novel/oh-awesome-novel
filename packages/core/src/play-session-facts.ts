@@ -3,6 +3,17 @@ import { isDeepStrictEqual } from 'node:util';
 import { normalizePlayScheduledEvents } from './play-event-schedule.js';
 import type { PlayScheduledEvent } from './play-event-schedule.js';
 import {
+  fingerprintPlayAdoptionEvidenceClosure,
+  normalizePlayAdoptionEvidenceClosure,
+  normalizePlayAdoptionSeed,
+} from './play-adoption.js';
+import {
+  PLAY_KNOWLEDGE_STATE_KEY,
+  assertPlayKnowledgeHistory,
+  assertPlayKnowledgeTransition,
+  readPlayKnowledgeState,
+} from './play-knowledge.js';
+import {
   collectPlayArtifactAncestorIds,
   hasCompletePlayBranchSnapshot,
   validatePlayScheduledEventHistory,
@@ -136,6 +147,11 @@ export const createPlayAdoptionCandidate = (
   >>,
 ): PlayAdoptionCandidate => ({
   ...input,
+  ...(input.payload ? { payload: structuredClone(input.payload) } : {}),
+  ...(input.seed ? { seed: structuredClone(input.seed) } : {}),
+  ...(input.evidenceClosure
+    ? { evidenceClosure: structuredClone(input.evidenceClosure) }
+    : {}),
   visibility: input.visibility ?? 'playerVisible',
   sourceObservationIds: [...(input.sourceObservationIds ?? [])],
   sourceTurnIds: [...(input.sourceTurnIds ?? [])],
@@ -460,6 +476,20 @@ export function validatePlayTurnFacts(
       messageOwners,
       eventOwners,
     );
+    if (candidate.evidenceClosure) {
+      for (const artifactRef of [
+        ...candidate.evidenceClosure.selectedArtifactTurnRefs,
+        ...candidate.evidenceClosure.artifactTurnRefs,
+      ]) {
+        if (!artifactsById.has(artifactRef)) {
+          throw new Error(
+            `Play adoption candidate ${candidate.id} evidence closure ` +
+            `references unknown artifact: ${artifactRef}.`,
+          );
+        }
+        provenanceArtifactIds.push(artifactRef);
+      }
+    }
     for (const observationId of candidate.sourceObservationIds) {
       const observation = observationsById.get(observationId)!;
       const observationOwnerId = observationOwners.get(observationId);
@@ -805,10 +835,29 @@ function validatePlayBranchSnapshots(input: {
     input.branchBaseSnapshot.playLocalStateVisibility,
     'Play branch base',
   );
+  assertPlayKnowledgeState(
+    input.branchBaseSnapshot.playLocalState,
+    input.branchBaseSnapshot.playLocalStateVisibility,
+    'Play branch base',
+    collectPlayArtifactLineageEvents(
+      input.branchBaseSnapshot.parentTurnId,
+      input.artifactsById,
+      input.eventsById,
+    ),
+  );
   assertPlayWorldMomentumState(
     input.sessionPlayLocalState,
     input.sessionPlayLocalStateVisibility,
     'Play session',
+  );
+  assertPlayKnowledgeState(
+    input.sessionPlayLocalState,
+    input.sessionPlayLocalStateVisibility,
+    'Play session',
+    input.selectedTurnIds.flatMap((artifactId) =>
+      input.artifactsById.get(artifactId)!.eventIds.map((eventId) =>
+        input.eventsById.get(eventId)!),
+    ),
   );
   if (input.sessionWorldClock.revision !== input.currentRevision) {
     throw new Error('Play session world clock revision does not match session revision.');
@@ -892,6 +941,16 @@ function validatePlayBranchSnapshots(input: {
       visibilitySnapshot,
       `Play turn artifact ${artifact.id}`,
     );
+    assertPlayKnowledgeState(
+      stateSnapshot,
+      visibilitySnapshot,
+      `Play turn artifact ${artifact.id}`,
+      collectPlayArtifactLineageEvents(
+        artifact.id,
+        input.artifactsById,
+        input.eventsById,
+      ),
+    );
     if (artifact.revision <= predecessorClock.revision) {
       throw new Error(
         `Play turn artifact ${artifact.id} revision does not advance its predecessor.`,
@@ -953,13 +1012,36 @@ function validatePlayBranchSnapshots(input: {
         stateSnapshot[PLAY_WORLD_MOMENTUM_STATE_KEY],
       );
     }
+    const refereeTurnId = artifact.artifactKind === 'worldSettlement'
+      ? artifact.messages[1]!.id!
+      : artifact.messages[0]!.id!;
+    assertPlayKnowledgeTransition({
+      predecessorPlayLocalState: predecessorState,
+      nextPlayLocalState: stateSnapshot,
+      selectedAncestorEvents: collectPlayArtifactAncestorEvents(
+        artifact,
+        input.artifactsById,
+        input.eventsById,
+      ),
+      currentEvents: artifact.eventIds.map((eventId) => input.eventsById.get(eventId)!),
+      revision: artifact.revision,
+      refereeTurnId,
+      knowledgeDeltaPresent: Object.hasOwn(
+        artifact.stateDelta,
+        PLAY_KNOWLEDGE_STATE_KEY,
+      ),
+      artifactKind: artifact.artifactKind!,
+    });
     const expectedVisibility = { ...predecessorVisibility };
     const settlementVisibility = resolveArtifactSettlementVisibility(
       artifact,
       input.eventsById,
     );
     for (const key of Object.keys(artifact.stateDelta)) {
-      expectedVisibility[key] = key === PLAY_WORLD_MOMENTUM_STATE_KEY
+      expectedVisibility[key] = (
+        key === PLAY_WORLD_MOMENTUM_STATE_KEY ||
+        key === PLAY_KNOWLEDGE_STATE_KEY
+      )
         ? 'playerUnknown'
         : settlementVisibility;
     }
@@ -1079,6 +1161,67 @@ function assertPlayWorldMomentumState(
   if (visibility[PLAY_WORLD_MOMENTUM_STATE_KEY] !== 'playerUnknown') {
     throw new Error(`${label} world momentum must remain referee-only in generic state.`);
   }
+}
+
+function assertPlayKnowledgeState(
+  state: Record<string, unknown>,
+  visibility: Record<string, PlayEventVisibility>,
+  label: string,
+  selectedEvents: readonly PlayWorldEvent[],
+): void {
+  const hasState = Object.hasOwn(state, PLAY_KNOWLEDGE_STATE_KEY);
+  const hasVisibility = Object.hasOwn(visibility, PLAY_KNOWLEDGE_STATE_KEY);
+  if (hasState !== hasVisibility) {
+    throw new Error(`${label} Play knowledge state and visibility must appear together.`);
+  }
+  if (!hasState) {
+    return;
+  }
+  readPlayKnowledgeState(state);
+  assertPlayKnowledgeHistory({
+    playLocalState: state,
+    selectedEvents,
+  });
+  if (visibility[PLAY_KNOWLEDGE_STATE_KEY] !== 'playerUnknown') {
+    throw new Error(`${label} Play knowledge must remain referee-only in generic state.`);
+  }
+}
+
+function collectPlayArtifactAncestorEvents(
+  artifact: PlayTurnArtifact,
+  artifactsById: Map<string, PlayTurnArtifact>,
+  eventsById: Map<string, PlayWorldEvent>,
+): PlayWorldEvent[] {
+  const chain: PlayTurnArtifact[] = [];
+  let current = artifact.parentTurnId
+    ? artifactsById.get(artifact.parentTurnId)
+    : undefined;
+  while (current) {
+    chain.push(current);
+    current = current.parentTurnId
+      ? artifactsById.get(current.parentTurnId)
+      : undefined;
+  }
+  return chain.reverse().flatMap((ancestor) =>
+    ancestor.eventIds.map((eventId) => eventsById.get(eventId)!));
+}
+
+function collectPlayArtifactLineageEvents(
+  headArtifactId: string | undefined,
+  artifactsById: Map<string, PlayTurnArtifact>,
+  eventsById: Map<string, PlayWorldEvent>,
+): PlayWorldEvent[] {
+  if (!headArtifactId) {
+    return [];
+  }
+  const head = artifactsById.get(headArtifactId);
+  if (!head) {
+    return [];
+  }
+  return [
+    ...collectPlayArtifactAncestorEvents(head, artifactsById, eventsById),
+    ...head.eventIds.map((eventId) => eventsById.get(eventId)!),
+  ];
 }
 
 function assertCompletePlayArtifactKind(
@@ -1544,6 +1687,9 @@ export function assertPlayAdoptionCandidate(
   if (!isRecord(value)) {
     throw new Error('Stored Play adoption candidate must be an object.');
   }
+  if (options.strict) {
+    assertOnlyKnownPlayAdoptionCandidateFields(value);
+  }
 
   const id = normalizeStoredPlayFactId(
     value.id,
@@ -1571,32 +1717,120 @@ export function assertPlayAdoptionCandidate(
     throw new Error(`Stored Play adoption candidate ${id} has an invalid payload.`);
   }
 
+  const hasSeed = value.seed !== undefined;
+  const hasClosure = value.evidenceClosure !== undefined;
+  const hasFingerprint = value.evidenceFingerprint !== undefined;
+  if (
+    (hasSeed || hasClosure || hasFingerprint) &&
+    !(hasSeed && hasClosure && hasFingerprint)
+  ) {
+    throw new Error(
+      `Stored Play adoption candidate ${id} requires seed, evidenceClosure, ` +
+      'and evidenceFingerprint together.',
+    );
+  }
+  const seed = hasSeed ? normalizePlayAdoptionSeed(value.seed) : undefined;
+  const evidenceClosure = hasClosure
+    ? normalizePlayAdoptionEvidenceClosure(value.evidenceClosure)
+    : undefined;
+  const evidenceFingerprint = hasFingerprint
+    ? normalizePlayAdoptionEvidenceFingerprint(value.evidenceFingerprint, id!)
+    : undefined;
+  if (
+    evidenceClosure &&
+    fingerprintPlayAdoptionEvidenceClosure(evidenceClosure) !== evidenceFingerprint
+  ) {
+    throw new Error(
+      `Stored Play adoption candidate ${id} evidence fingerprint does not ` +
+      'match its closure.',
+    );
+  }
+
+  const sourceObservationIds = normalizePlayProvenanceIdList(
+    value.sourceObservationIds,
+    'sourceObservationIds',
+    `Play adoption candidate ${id}`,
+    options.strict === true,
+  );
+  const sourceTurnIds = normalizePlayProvenanceIdList(
+    value.sourceTurnIds,
+    'sourceTurnIds',
+    `Play adoption candidate ${id}`,
+    options.strict === true,
+  );
+  const sourceEventIds = normalizePlayProvenanceIdList(
+    value.sourceEventIds,
+    'sourceEventIds',
+    `Play adoption candidate ${id}`,
+    options.strict === true,
+  );
+  if (
+    evidenceClosure &&
+    (
+      !isDeepStrictEqual(sourceObservationIds, evidenceClosure.observationRefs) ||
+      !isDeepStrictEqual(sourceTurnIds, evidenceClosure.messageRefs) ||
+      !isDeepStrictEqual(sourceEventIds, evidenceClosure.eventRefs)
+    )
+  ) {
+    throw new Error(
+      `Stored Play adoption candidate ${id} provenance does not match its ` +
+      'evidence closure.',
+    );
+  }
+
   return createPlayAdoptionCandidate({
     id,
     target,
     summary,
     evidence,
     ...(isRecord(value.payload) ? { payload: { ...value.payload } } : {}),
+    ...(seed ? { seed } : {}),
+    ...(evidenceClosure ? { evidenceClosure } : {}),
+    ...(evidenceFingerprint ? { evidenceFingerprint } : {}),
     visibility: visibility ?? 'playerVisible',
-    sourceObservationIds: normalizePlayProvenanceIdList(
-      value.sourceObservationIds,
-      'sourceObservationIds',
-      `Play adoption candidate ${id}`,
-      options.strict === true,
-    ),
-    sourceTurnIds: normalizePlayProvenanceIdList(
-      value.sourceTurnIds,
-      'sourceTurnIds',
-      `Play adoption candidate ${id}`,
-      options.strict === true,
-    ),
-    sourceEventIds: normalizePlayProvenanceIdList(
-      value.sourceEventIds,
-      'sourceEventIds',
-      `Play adoption candidate ${id}`,
-      options.strict === true,
-    ),
+    sourceObservationIds,
+    sourceTurnIds,
+    sourceEventIds,
   });
+}
+
+function assertOnlyKnownPlayAdoptionCandidateFields(
+  value: Record<string, unknown>,
+): void {
+  const known = new Set([
+    'id',
+    'target',
+    'summary',
+    'evidence',
+    'payload',
+    'visibility',
+    'sourceObservationIds',
+    'sourceTurnIds',
+    'sourceEventIds',
+    'seed',
+    'evidenceClosure',
+    'evidenceFingerprint',
+    'requiresPendingAction',
+  ]);
+  const unknown = Object.keys(value).filter((key) => !known.has(key));
+  if (unknown.length) {
+    throw new Error(
+      `Stored Play adoption candidate contains unknown fields: ${unknown.join(', ')}.`,
+    );
+  }
+}
+
+function normalizePlayAdoptionEvidenceFingerprint(
+  value: unknown,
+  candidateId: string,
+): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new Error(
+      `Stored Play adoption candidate ${candidateId} requires a lowercase ` +
+      'SHA-256 evidenceFingerprint.',
+    );
+  }
+  return value;
 }
 
 function normalizeStoredPlayFactId(

@@ -362,6 +362,144 @@ describe("Play scene-rehearsal HTTP controller", () => {
     );
   });
 
+  it("offers only selected hidden ancestors as reveal candidates and commits a typed reveal at Finish", async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const input = createSessionInput("rehearsal-branch-knowledge");
+    await writePlaySessionFiles(
+      workspaceRoot,
+      createPlaySceneRehearsalSessionDraft(input),
+    );
+    let hiddenEventId = "";
+    let refereeCall = 0;
+    const actor = vi.fn(defaultActor);
+    const referee = vi.fn(async () => {
+      refereeCall += 1;
+      const firstTurn = refereeCall === 1;
+      return [
+        firstTurn
+          ? "The station remains quiet."
+          : "A clipped announcement reaches the platform.",
+        "```oan-play-settlement",
+        JSON.stringify({
+          events: firstTurn
+            ? [{
+                kind: "factionActed",
+                origin: "faction",
+                title: "The syndicate diverts the night train",
+                summary: "A hidden order sends the night train onto another line.",
+                visibility: "playerUnknown",
+                cause: { reason: "The syndicate wants the platform left empty." },
+              }]
+            : [{
+                kind: "informationSpread",
+                origin: "environment",
+                title: "The board announces a diverted train",
+                summary: "The departure board now marks the night train as diverted.",
+                visibility: "playerVisible",
+                cause: {
+                  reason: "The routing update has reached the public board.",
+                  sourceEventIds: [hiddenEventId],
+                },
+              }],
+          pressureChanges: [],
+          agendaChanges: [],
+          scheduledEventChanges: [],
+          knowledgeChanges: firstTurn
+            ? []
+            : [{
+                type: "revealEvent",
+                subjectEventId: hiddenEventId,
+                playerProjection: "playerVisible",
+              }],
+          stateDelta: {},
+          observations: [],
+          suggestedActions: [],
+        }),
+        "```",
+      ].join("\n");
+    });
+    const baseUrl = await startBackend(workspaceRoot, {
+      streamPlayRehearsalActor: actor,
+      runPlayRehearsalReferee: referee,
+    });
+    const hiddenAttempt = await createAttempt(baseUrl, input.id, 0);
+    const hiddenStream = await streamStep(baseUrl, input.id, hiddenAttempt.id, {
+      expectedAttemptRevision: 0,
+      idempotencyKey: "hidden-step",
+      mode: "next",
+    });
+    const hiddenDraft = findEvent(hiddenStream.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+    const hiddenAccepted = await postJson<{ attempt: PlayTurnAttempt }>(
+      `${baseUrl}/api/workspace/play-sessions/${input.id}/attempts/${hiddenAttempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: "hidden-accept",
+        kind: "accept",
+        stepRef: hiddenDraft.id,
+      },
+    );
+    const hiddenFinished = await postJson<{ session: PlaySession }>(
+      `${baseUrl}/api/workspace/play-sessions/${input.id}/attempts/${hiddenAttempt.id}/finalize`,
+      {
+        baseRevision: 0,
+        expectedAttemptRevision: hiddenAccepted.body.attempt.attemptRevision,
+        idempotencyKey: "hidden-finish",
+        selectedHeadRef: hiddenDraft.id,
+      },
+    );
+    expect(hiddenFinished.response.status).toBe(200);
+    const hiddenEvent = hiddenFinished.body.session.events[0]!;
+    hiddenEventId = hiddenEvent.id;
+
+    const attempt = await createAttempt(baseUrl, input.id, 1);
+    const streamed = await streamStep(baseUrl, input.id, attempt.id, {
+      expectedAttemptRevision: 0,
+      idempotencyKey: "knowledge-step",
+      mode: "next",
+    });
+    const prompt = referee.mock.calls[1]![0].prompt;
+    expect(prompt).toContain('"revealCandidates"');
+    expect(prompt).toContain(hiddenEventId);
+    expect(prompt).toContain('"currentPlayerProjection": "playerUnknown"');
+    expect(prompt).toContain("knowledgeChanges");
+    const draft = findEvent(streamed.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+    expect(draft.narrativeBlocks.at(-1)?.content)
+      .toBe("The board announces a diverted train: The departure board now marks the night train as diverted.");
+    expect(JSON.stringify(draft.narrativeBlocks))
+      .not.toContain("syndicate diverts");
+
+    const accepted = await postJson<{ attempt: PlayTurnAttempt }>(
+      `${baseUrl}/api/workspace/play-sessions/${input.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: "knowledge-accept",
+        kind: "accept",
+        stepRef: draft.id,
+      },
+    );
+    const finished = await postJson<{ session: PlaySession }>(
+      `${baseUrl}/api/workspace/play-sessions/${input.id}/attempts/${attempt.id}/finalize`,
+      {
+        baseRevision: 1,
+        expectedAttemptRevision: accepted.body.attempt.attemptRevision,
+        idempotencyKey: "knowledge-finish",
+        selectedHeadRef: draft.id,
+      },
+    );
+    expect(finished.response.status).toBe(200);
+    expect(finished.body.session.playLocalState.playKnowledge).toMatchObject({
+      schemaVersion: 1,
+      records: [expect.objectContaining({
+        subjectEventId: hiddenEventId,
+        previousPlayerProjection: "playerUnknown",
+        playerProjection: "playerVisible",
+      })],
+    });
+    expect(finished.body.session.events[0]).toEqual(hiddenEvent);
+  });
+
   it("uses filesystem CAS across two backends for concurrent Accept and Cancel", async () => {
     const workspaceRoot = await createOanWorkspace();
     const firstBackend = await startBackend(workspaceRoot, {

@@ -243,6 +243,248 @@ describe('buildPlayEventCardViews', () => {
     expect(authorCard.authorReason).toBe('The covert patrol forced a rotation.');
   });
 
+  it('projects a branch-local reveal as generic Player context and a complete Author chain', () => {
+    const hiddenSource = createEvent({
+      id: 'event-hidden-movement',
+      turnId: 'turn-1-referee',
+      title: 'The Ash Guard crossed the river',
+      summary: 'The hidden patrol entered the northern district.',
+      visibility: 'playerUnknown',
+      cause: { reason: 'The secret marshal ordered the crossing.' },
+      worldClock: { turn: 1, revision: 1 },
+    });
+    const revealingEvent = createEvent({
+      id: 'event-rumor-arrives',
+      turnId: 'turn-2-referee',
+      title: 'A ferryman shares a rumor',
+      summary: 'Travelers report unusual movement beyond the river.',
+      kind: 'informationSpread',
+      visibility: 'rumor',
+      cause: {
+        reason: 'A witness carried the news downstream.',
+        sourceEventIds: [hiddenSource.id],
+      },
+      worldClock: { turn: 2, revision: 2 },
+    });
+    const knowledge = createKnowledgeState({
+      subjectEventId: hiddenSource.id,
+      revealedAtTurnId: revealingEvent.turnId,
+      revealedByEventId: revealingEvent.id,
+    });
+    const sourceArtifact = createArtifact({
+      id: 'artifact-source',
+      revision: 1,
+      eventIds: [hiddenSource.id],
+    });
+    const revealArtifact = createArtifact({
+      id: 'artifact-reveal',
+      revision: 2,
+      parentTurnId: sourceArtifact.id,
+      eventIds: [revealingEvent.id],
+      stateDelta: { playKnowledge: knowledge },
+      playLocalStateSnapshot: { playKnowledge: knowledge },
+      playLocalStateVisibilitySnapshot: { playKnowledge: 'playerUnknown' },
+    });
+
+    const playerCards = buildPlayEventCardViews({
+      events: [hiddenSource, revealingEvent],
+      artifacts: [sourceArtifact, revealArtifact],
+      showSpoilers: false,
+    });
+    const playerCard = playerCards[0]!;
+
+    expect(playerCards.map((card) => card.id)).toEqual([revealingEvent.id]);
+    expect(playerCard.revealChain).toEqual({
+      statusLabel: 'Rumor surfaced',
+      explanation: 'This event carries a rumor about an earlier unseen development.',
+    });
+    expect(playerCard.stateImpacts).toEqual([]);
+    expect(JSON.stringify(playerCard)).not.toContain(hiddenSource.id);
+    expect(JSON.stringify(playerCard)).not.toContain(hiddenSource.title);
+    expect(JSON.stringify(playerCard)).not.toContain(hiddenSource.summary);
+    expect(JSON.stringify(playerCard)).not.toContain(hiddenSource.cause.reason);
+
+    const authorCard = buildPlayEventCardViews({
+      events: [hiddenSource, revealingEvent],
+      artifacts: [sourceArtifact, revealArtifact],
+      showSpoilers: true,
+    }).find((card) => card.id === revealingEvent.id)!;
+
+    expect(authorCard.revealChain?.author).toEqual(expect.objectContaining({
+      recordId: 'knowledge-2-1',
+      subjectEventId: hiddenSource.id,
+      subjectTitle: hiddenSource.title,
+      subjectSummary: hiddenSource.summary,
+      subjectReason: hiddenSource.cause.reason,
+      revealedByEventId: revealingEvent.id,
+      revealedByTitle: revealingEvent.title,
+      previousPlayerProjection: 'playerUnknown',
+      playerProjection: 'rumor',
+    }));
+    expect(authorCard.stateImpacts).toEqual([]);
+  });
+
+  it('fails closed for forged knowledge records, mismatched snapshots, and sibling subjects', () => {
+    const hiddenSource = createEvent({
+      id: 'event-hidden-evidence-source',
+      turnId: 'turn-1-referee',
+      title: 'Hidden evidence source',
+      summary: 'Hidden evidence summary.',
+      visibility: 'playerUnknown',
+      cause: { reason: 'Hidden evidence reason.' },
+      worldClock: { turn: 1, revision: 1 },
+    });
+    const revealingEvent = createEvent({
+      id: 'event-evidence-reveal',
+      turnId: 'turn-3-referee',
+      title: 'A public rumor arrives',
+      summary: 'The new event carries only safe public wording.',
+      kind: 'informationSpread',
+      visibility: 'rumor',
+      cause: {
+        reason: 'A public witness shares the news.',
+        sourceEventIds: [hiddenSource.id],
+      },
+      worldClock: { turn: 3, revision: 3 },
+    });
+    const knowledge = createKnowledgeState({
+      subjectEventId: hiddenSource.id,
+      revealedAtTurnId: revealingEvent.turnId,
+      revealedByEventId: revealingEvent.id,
+    });
+    const sourceArtifact = createArtifact({
+      id: 'artifact-evidence-source',
+      revision: 1,
+      eventIds: [hiddenSource.id],
+    });
+    const unrelatedParent = createArtifact({
+      id: 'artifact-unrelated-parent',
+      revision: 2,
+    });
+    const buildCard = (
+      artifactOverrides: Partial<PlayTurnArtifact>,
+      artifacts: readonly PlayTurnArtifact[] = [sourceArtifact],
+    ) => buildPlayEventCardViews({
+      events: [hiddenSource, revealingEvent],
+      artifacts: [
+        ...artifacts,
+        createArtifact({
+          id: 'artifact-evidence-reveal',
+          revision: 3,
+          parentTurnId: sourceArtifact.id,
+          eventIds: [revealingEvent.id],
+          stateDelta: { playKnowledge: knowledge },
+          playLocalStateSnapshot: { playKnowledge: knowledge },
+          playLocalStateVisibilitySnapshot: { playKnowledge: 'playerUnknown' },
+          ...artifactOverrides,
+        }),
+      ],
+      showSpoilers: true,
+    }).find((card) => card.id === revealingEvent.id)!;
+
+    const forgedKnowledge = {
+      ...knowledge,
+      records: knowledge.records.map((record) => ({
+        ...record,
+        knownByParticipantRefs: ['participant-secret'],
+      })),
+    };
+    expect(buildCard({
+      stateDelta: { playKnowledge: forgedKnowledge },
+      playLocalStateSnapshot: { playKnowledge: forgedKnowledge },
+    }).revealChain).toBeUndefined();
+
+    expect(buildCard({
+      stateDelta: {
+        playKnowledge: { schemaVersion: 1, records: [] },
+      },
+    }).revealChain).toBeUndefined();
+
+    expect(buildCard({
+      parentTurnId: unrelatedParent.id,
+    }, [sourceArtifact, unrelatedParent]).revealChain).toBeUndefined();
+  });
+
+  it('uses only selected artifact snapshots after Restore or branch replacement', () => {
+    const hiddenSource = createEvent({
+      id: 'event-hidden-branch-source',
+      turnId: 'turn-1-referee',
+      title: 'Hidden branch source title',
+      summary: 'Hidden branch source summary.',
+      visibility: 'playerUnknown',
+      cause: { reason: 'Hidden branch source reason.' },
+      worldClock: { turn: 1, revision: 1 },
+    });
+    const abandonedReveal = createEvent({
+      id: 'event-abandoned-reveal',
+      turnId: 'turn-2a-referee',
+      title: 'A discarded rumor arrives',
+      summary: 'This information belongs to the old branch.',
+      kind: 'informationSpread',
+      visibility: 'rumor',
+      cause: { reason: 'Old branch only.', sourceEventIds: [hiddenSource.id] },
+      worldClock: { turn: 2, revision: 2 },
+    });
+    const siblingEvent = createEvent({
+      id: 'event-selected-sibling',
+      turnId: 'turn-2b-referee',
+      title: 'The market remains quiet',
+      summary: 'No rumor reaches the selected branch.',
+      worldClock: { turn: 2, revision: 3 },
+    });
+    const abandonedKnowledge = createKnowledgeState({
+      subjectEventId: hiddenSource.id,
+      revealedAtTurnId: abandonedReveal.turnId,
+      revealedByEventId: abandonedReveal.id,
+    });
+    const sourceArtifact = createArtifact({
+      id: 'artifact-root',
+      revision: 1,
+      eventIds: [hiddenSource.id],
+    });
+    const abandonedArtifact = createArtifact({
+      id: 'artifact-abandoned',
+      revision: 2,
+      parentTurnId: sourceArtifact.id,
+      eventIds: [abandonedReveal.id],
+      stateDelta: { playKnowledge: abandonedKnowledge },
+      playLocalStateSnapshot: { playKnowledge: abandonedKnowledge },
+      playLocalStateVisibilitySnapshot: { playKnowledge: 'playerUnknown' },
+    });
+    const siblingArtifact = createArtifact({
+      id: 'artifact-sibling',
+      revision: 3,
+      parentTurnId: sourceArtifact.id,
+      eventIds: [siblingEvent.id],
+      stateDelta: {},
+      playLocalStateSnapshot: {},
+      playLocalStateVisibilitySnapshot: {},
+    });
+
+    const oldBranch = buildPlayEventCardViews({
+      events: [hiddenSource, abandonedReveal],
+      artifacts: [sourceArtifact, abandonedArtifact],
+      showSpoilers: false,
+    });
+    expect(oldBranch[0]?.revealChain).toBeDefined();
+
+    const restoredRoot = buildPlayEventCardViews({
+      events: [hiddenSource],
+      artifacts: [sourceArtifact],
+      showSpoilers: false,
+    });
+    expect(restoredRoot).toEqual([]);
+
+    const selectedSibling = buildPlayEventCardViews({
+      events: [hiddenSource, siblingEvent],
+      artifacts: [sourceArtifact, siblingArtifact],
+      showSpoilers: false,
+    });
+    expect(selectedSibling.map((card) => card.id)).toEqual([siblingEvent.id]);
+    expect(selectedSibling[0]?.revealChain).toBeUndefined();
+    expect(JSON.stringify(selectedSibling)).not.toContain(abandonedReveal.id);
+  });
+
   it('fails closed when legacy artifacts do not carry at-turn evidence', () => {
     const event = createEvent({
       id: 'event-legacy',
@@ -351,6 +593,27 @@ function createArtifact(overrides: Partial<PlayTurnArtifact> = {}): PlayTurnArti
     committedAt: '2026-07-15T04:00:02.000Z',
     canonical: false,
     ...overrides,
+  };
+}
+
+function createKnowledgeState(overrides: {
+  subjectEventId: string;
+  revealedAtTurnId: string;
+  revealedByEventId: string;
+}) {
+  return {
+    schemaVersion: 1 as const,
+    records: [{
+      id: 'knowledge-2-1',
+      kind: 'eventReveal' as const,
+      subjectEventId: overrides.subjectEventId,
+      previousPlayerProjection: 'playerUnknown' as const,
+      playerProjection: 'rumor' as const,
+      knownByParticipantRefs: [],
+      revealedAtTurnId: overrides.revealedAtTurnId,
+      revealedByEventId: overrides.revealedByEventId,
+      canonical: false as const,
+    }],
   };
 }
 

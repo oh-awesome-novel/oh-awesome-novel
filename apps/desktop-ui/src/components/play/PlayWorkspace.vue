@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { shallowRef, toRef } from 'vue';
+import { computed, shallowRef, toRef } from 'vue';
 
+import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
 import PlayComposer from './PlayComposer.vue';
 import PlayEventFeed from './PlayEventFeed.vue';
@@ -8,12 +9,17 @@ import PlayHistoryControls from './PlayHistoryControls.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
+import PlayOutcomePanel from './outcome/PlayOutcomePanel.vue';
 import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
 import PlayRehearsalWorkspace from './rehearsal/PlayRehearsalWorkspace.vue';
+import { usePlayAdoptionPreview } from '../../composables/usePlayAdoptionPreview';
+import type {
+  PlayAdoptionProjection,
+  PlayAdoptionSeed,
+} from '../../composables/usePlayAdoptionPreview';
 import { usePlayWorkspace } from '../../composables/usePlayWorkspace';
 import type {
   FileTreeNode,
-  PlayAdoptionCandidate,
   PlaySession,
   WorkspaceSummary,
 } from '../../composables/useWorkspaceApi';
@@ -34,6 +40,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   configureProvider: [];
   pendingActionCreated: [];
+  reviewPendingAction: [pendingActionId: string];
+  writingReferencesUpdated: [];
 }>();
 
 const providerConfigured = toRef(props, 'providerConfigured');
@@ -41,9 +49,6 @@ const launchOpen = shallowRef(false);
 
 const {
   actionKind,
-  adoptionBusyId,
-  adoptionCreating,
-  adoptionNotice,
   creating,
   error,
   loading,
@@ -76,10 +81,9 @@ const {
   visibleScheduledEvents,
   visiblePressures,
   visibleAgendas,
-  createPendingAction,
-  createAdoptionCandidate,
   createSession,
   registerCreatedSession,
+  replaceSession,
   refreshSessions,
   retryCheckpoint,
   renameCheckpoint,
@@ -116,10 +120,45 @@ const {
   reconcileStep: reconcileRehearsalStep,
 } = rehearsalWorkspace;
 
-async function adoptCandidate(candidate: PlayAdoptionCandidate) {
-  if (await createPendingAction(candidate)) {
-    emit('pendingActionCreated');
-  }
+const rehearsalOutcomeBlocked = computed(() => Boolean(
+  selectedSession.value?.schemaVersion === 5 &&
+  rehearsalAttempt.value &&
+  rehearsalAttempt.value.status !== 'committed' &&
+  rehearsalAttempt.value.status !== 'cancelled',
+));
+const outcomeDisabled = computed(() =>
+  interactionBlocked.value || rehearsalOutcomeBlocked.value,
+);
+const outcomeDisabledReason = computed(() =>
+  rehearsalOutcomeBlocked.value
+    ? 'Finish or cancel the active rehearsal attempt before generating or using an Outcome Report.'
+    : '',
+);
+const adoptionProjection = computed<PlayAdoptionProjection>(() =>
+  showSpoilers.value ? 'director' : 'player',
+);
+const adoptionContextKey = computed(() => JSON.stringify({
+  sessionId: selectedSession.value?.id ?? '',
+  revision: selectedSession.value?.revision ?? -1,
+  selectedPath: displaySession.value?.selectedTurnIds ?? [],
+  retryingArtifactId: historyRetryingArtifactId.value,
+  sources: (selectedSession.value?.activatedSources ?? []).map((source) => ({
+    sourceId: source.sourceId,
+    path: source.path,
+    contentHash: source.contentHash,
+  })),
+}));
+const adoption = usePlayAdoptionPreview({
+  session: selectedSession,
+  projection: adoptionProjection,
+  contextKey: adoptionContextKey,
+  disabled: interactionBlocked,
+  onSessionUpdated: replaceSession,
+  onPendingActionCreated: () => emit('pendingActionCreated'),
+});
+
+function prepareAdoption(seed: PlayAdoptionSeed): void {
+  void adoption.open(seed);
 }
 
 function openLaunch(): void {
@@ -203,36 +242,62 @@ function acceptGuidedSession(session: PlaySession): void {
         @cancel="cancelLaunch"
       />
 
-      <PlayRehearsalWorkspace
+      <div
         v-else-if="selectedSession?.schemaVersion === 5"
         class="play-rehearsal-stage"
-        :scene="rehearsalScene"
-        :clock="rehearsalClock"
-        :attempt="rehearsalAttempt"
-        :queue="rehearsalQueue"
-        :steps="rehearsalSteps"
-        :step-run="rehearsalStepRun"
-        :perception="rehearsalPerception"
-        :visible-events="rehearsalVisibleEvents"
-        :result="rehearsalResult"
-        :capabilities="rehearsalCapabilities"
-        :provider-configured="providerConfigured"
-        :busy="rehearsalBusy"
-        :recovery-required="rehearsalRecoveryRequired"
-        :recovery-message="rehearsalRecoveryMessage"
-        :recovering="rehearsalRecovering"
-        :announcement="rehearsalAnnouncement"
-        :error="rehearsalError"
-        @start-attempt="startRehearsalAttempt"
-        @generate-step="generateRehearsalStep"
-        @stop-step="stopRehearsalStep"
-        @accept="acceptRehearsalStep"
-        @retry="retryRehearsalStep"
-        @finish="finishRehearsalAttempt"
-        @cancel="cancelRehearsalAttempt"
-        @reconcile-step="reconcileRehearsalStep"
-        @configure-provider="emit('configureProvider')"
-      />
+      >
+        <PlayRehearsalWorkspace
+          :scene="rehearsalScene"
+          :clock="rehearsalClock"
+          :attempt="rehearsalAttempt"
+          :queue="rehearsalQueue"
+          :steps="rehearsalSteps"
+          :step-run="rehearsalStepRun"
+          :perception="rehearsalPerception"
+          :visible-events="rehearsalVisibleEvents"
+          :result="rehearsalResult"
+          :capabilities="rehearsalCapabilities"
+          :provider-configured="providerConfigured"
+          :busy="rehearsalBusy"
+          :recovery-required="rehearsalRecoveryRequired"
+          :recovery-message="rehearsalRecoveryMessage"
+          :recovering="rehearsalRecovering"
+          :announcement="rehearsalAnnouncement"
+          :error="rehearsalError"
+          @start-attempt="startRehearsalAttempt"
+          @generate-step="generateRehearsalStep"
+          @stop-step="stopRehearsalStep"
+          @accept="acceptRehearsalStep"
+          @retry="retryRehearsalStep"
+          @finish="finishRehearsalAttempt"
+          @cancel="cancelRehearsalAttempt"
+          @reconcile-step="reconcileRehearsalStep"
+          @configure-provider="emit('configureProvider')"
+        />
+        <PlayOutcomePanel
+          :session="selectedSession"
+          :show-spoilers="showSpoilers"
+          :disabled="outcomeDisabled"
+          :disabled-reason="outcomeDisabledReason"
+          @update-show-spoilers="showSpoilers = $event"
+          @prepare-adoption="prepareAdoption"
+          @writing-references-updated="emit('writingReferencesUpdated')"
+        />
+        <PlayAdoptionDraftForm
+          v-if="adoption.activeSeed.value"
+          :seed="adoption.activeSeed.value"
+          :preview="adoption.preview.value"
+          :pending-action="adoption.pendingAction.value"
+          :previewing="adoption.previewing.value"
+          :confirming="adoption.confirming.value"
+          :disabled="outcomeDisabled"
+          :error="adoption.error.value"
+          @close="adoption.clear"
+          @preview="adoption.requestPreview"
+          @confirm="adoption.confirm"
+          @review="emit('reviewPendingAction', $event)"
+        />
+      </div>
 
       <section v-else-if="selectedSession" class="play-stage-center" aria-label="Play stage">
         <PlayTranscript
@@ -308,16 +373,37 @@ function acceptGuidedSession(session: PlaySession): void {
           v-model:show-spoilers="showSpoilers"
           :cards="eventCards"
           :has-hidden-play-content="hasHiddenPlayContent"
+          :adoption-disabled="interactionBlocked"
+          @prepare-adoption="prepareAdoption"
         />
         <PlayAdoptionPanel
           :observations="visibleObservations"
           :candidates="visibleCandidates"
-          :busy-candidate-id="adoptionBusyId"
-          :creating-candidate="adoptionCreating"
           :disabled="interactionBlocked"
-          :notice="adoptionNotice"
-          @create-candidate="createAdoptionCandidate"
-          @create-pending-action="adoptCandidate"
+          notice=""
+          @prepare-adoption="prepareAdoption"
+        />
+        <PlayOutcomePanel
+          :session="selectedSession"
+          :show-spoilers="showSpoilers"
+          :disabled="outcomeDisabled"
+          @update-show-spoilers="showSpoilers = $event"
+          @prepare-adoption="prepareAdoption"
+          @writing-references-updated="emit('writingReferencesUpdated')"
+        />
+        <PlayAdoptionDraftForm
+          v-if="adoption.activeSeed.value"
+          :seed="adoption.activeSeed.value"
+          :preview="adoption.preview.value"
+          :pending-action="adoption.pendingAction.value"
+          :previewing="adoption.previewing.value"
+          :confirming="adoption.confirming.value"
+          :disabled="interactionBlocked"
+          :error="adoption.error.value"
+          @close="adoption.clear"
+          @preview="adoption.requestPreview"
+          @confirm="adoption.confirm"
+          @review="emit('reviewPendingAction', $event)"
         />
       </aside>
 
@@ -335,6 +421,13 @@ function acceptGuidedSession(session: PlaySession): void {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.play-rehearsal-stage {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 0 12px 16px;
 }
 
 @media (max-width: 860px) {

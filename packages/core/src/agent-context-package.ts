@@ -21,6 +21,7 @@ export const CONTEXT_SOURCE_IDS = [
   'styleGuide',
   'referenceDistilled',
   'playTranscript',
+  'playWritingReference',
 ] as const;
 
 export type ContextSourceId = typeof CONTEXT_SOURCE_IDS[number];

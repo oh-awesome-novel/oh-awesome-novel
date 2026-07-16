@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildPlayStateEntryViews,
   isPlayProvenanceInSelectedBranch,
   normalizeRelativeTimeAdvance,
   readPlayWorldMomentum,
@@ -52,5 +53,31 @@ describe('Play selected-branch projection', () => {
       unit: 'hour',
     });
     expect(normalizeRelativeTimeAdvance({ amount: 0, unit: 'minute' })).toBeUndefined();
+  });
+
+  it('never exposes reserved playKnowledge through the generic state HUD', () => {
+    const state = {
+      publicWeather: 'rain',
+      authorNote: 'north patrol',
+      playKnowledge: {
+        schemaVersion: 1,
+        records: [{ subjectEventId: 'hidden-subject' }],
+      },
+    };
+    const visibility = {
+      publicWeather: 'playerVisible' as const,
+      authorNote: 'playerUnknown' as const,
+      playKnowledge: 'playerUnknown' as const,
+    };
+
+    expect(buildPlayStateEntryViews(state, visibility, false)).toEqual([
+      { key: 'publicWeather', value: 'rain' },
+    ]);
+    expect(buildPlayStateEntryViews(state, visibility, true)).toEqual([
+      { key: 'publicWeather', value: 'rain' },
+      { key: 'authorNote', value: 'north patrol' },
+    ]);
+    expect(JSON.stringify(buildPlayStateEntryViews(state, visibility, true)))
+      .not.toContain('hidden-subject');
   });
 });

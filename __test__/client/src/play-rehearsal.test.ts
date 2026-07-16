@@ -170,6 +170,136 @@ describe('Play rehearsal client contract', () => {
     });
   });
 
+  it('accepts typed actor reveal contributions for host settlement', async () => {
+    const events = createPreparedStreamEvents();
+    const prepared = events[2] as Extract<
+      PlayRehearsalStepStreamEvent,
+      { type: 'play.actor.step.prepared' }
+    >;
+    const step = structuredClone(prepared.step);
+    step.settlementContribution.knowledgeChanges = [{
+      type: 'revealEvent',
+      subjectEventId: 'event-hidden-ancestor',
+      playerProjection: 'rumor',
+    }];
+    step.settlementContribution.events = [{
+      kind: 'informationSpread',
+      origin: 'npc',
+      title: 'A guarded rumor spreads',
+      summary: 'A witness shares only a partial account.',
+      visibility: 'rumor',
+      cause: {
+        reason: 'The witness heard about an earlier offscreen event.',
+        sourceEventIds: ['event-hidden-ancestor'],
+      },
+    }];
+    events[2] = {
+      ...prepared,
+      step,
+      attempt: {
+        ...prepared.attempt,
+        steps: [structuredClone(step)],
+      },
+    };
+    const client = createOanClient({
+      fetch: (async () => sseResponse(events, 'step-run-1')) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(collect(client.streamNextPlayActorStep(
+      'play-1',
+      'attempt-1',
+      {
+        expectedAttemptRevision: 0,
+        idempotencyKey: 'step-key',
+        mode: 'next',
+      },
+    ))).resolves.toEqual(events);
+  });
+
+  it.each([
+    {
+      name: 'missing normalized knowledgeChanges',
+      mutate(settlement: Record<string, unknown>) {
+        delete settlement.knowledgeChanges;
+      },
+    },
+    {
+      name: 'unknown knowledge change field',
+      mutate(settlement: Record<string, unknown>) {
+        settlement.knowledgeChanges = [{
+          type: 'revealEvent',
+          subjectEventId: 'event-hidden-ancestor',
+          playerProjection: 'rumor',
+          forged: true,
+        }];
+      },
+    },
+    {
+      name: 'unknown knowledge projection enum',
+      mutate(settlement: Record<string, unknown>) {
+        settlement.knowledgeChanges = [{
+          type: 'revealEvent',
+          subjectEventId: 'event-hidden-ancestor',
+          playerProjection: 'directorVisible',
+        }];
+      },
+    },
+    {
+      name: 'duplicate knowledge subject',
+      mutate(settlement: Record<string, unknown>) {
+        settlement.knowledgeChanges = [{
+          type: 'revealEvent',
+          subjectEventId: 'event-hidden-ancestor',
+          playerProjection: 'rumor',
+        }, {
+          type: 'revealEvent',
+          subjectEventId: 'event-hidden-ancestor',
+          playerProjection: 'playerVisible',
+        }];
+      },
+    },
+    {
+      name: 'raw reserved playKnowledge write',
+      mutate(settlement: Record<string, unknown>) {
+        (settlement.stateDelta as Record<string, unknown>).playKnowledge = {
+          schemaVersion: 1,
+          records: [],
+        };
+      },
+    },
+  ])('rejects $name in actor settlement contributions', async ({ mutate }) => {
+    const events = createPreparedStreamEvents();
+    const prepared = events[2] as Extract<
+      PlayRehearsalStepStreamEvent,
+      { type: 'play.actor.step.prepared' }
+    >;
+    const step = structuredClone(prepared.step);
+    mutate(step.settlementContribution as unknown as Record<string, unknown>);
+    events[2] = {
+      ...prepared,
+      step,
+      attempt: {
+        ...prepared.attempt,
+        steps: [structuredClone(step)],
+      },
+    };
+    const client = createOanClient({
+      fetch: (async () => sseResponse(events, 'step-run-1')) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(collect(client.streamNextPlayActorStep(
+      'play-1',
+      'attempt-1',
+      {
+        expectedAttemptRevision: 0,
+        idempotencyKey: 'step-key',
+        mode: 'next',
+      },
+    ))).rejects.toThrow(/stream|prepared/iu);
+  });
+
   it.each([
     {
       name: 'changed run identity',
@@ -810,6 +940,7 @@ function createStep(status: CharacterStepDraft['status']): CharacterStepDraft {
     }],
     settlementContribution: {
       events: [],
+      knowledgeChanges: [],
       pressureChanges: [],
       agendaChanges: [],
       scheduledEventChanges: [],

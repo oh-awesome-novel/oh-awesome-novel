@@ -56,15 +56,24 @@ export {
   acceptPendingAction,
   createWriteIntentTools,
   listPendingActions,
+  prepareWriteIntentPreview,
+  promoteWriteIntentPreview,
   rejectPendingAction,
+  validateWriteIntentPreview,
+  WRITE_INTENT_PREVIEW_SCHEMA_VERSION,
 } from './write-intent-tools';
 export type {
   AcceptedPendingAction,
   AcceptPendingActionInput,
   CreateWriteIntentToolsOptions,
+  PreparedWriteIntentPreview,
+  PrepareWriteIntentPreviewInput,
+  PreviewableWriteIntentToolName,
+  PromoteWriteIntentPreviewInput,
   RejectedPendingAction,
   RejectPendingActionInput,
   StoredWriteIntentAction,
+  ValidateWriteIntentPreviewInput,
   WriteIntentPendingAction,
 } from './write-intent-tools';
 

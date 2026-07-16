@@ -7,6 +7,9 @@ import {
   collectPendingActions,
   type PendingActionView,
 } from './useAgentCheckpointChat';
+import type { PlayWritingReferenceAttachment } from './useWorkspaceApi';
+
+export const MAX_WRITING_REFERENCE_ATTACHMENTS_PER_REQUEST = 8;
 
 interface AgentConversationSession {
   id: string;
@@ -31,6 +34,10 @@ export function useAgentConversationSessions() {
   const initialSession = createConversationSession();
   const sessions = shallowRef<AgentConversationSession[]>([initialSession]);
   const activeSessionId = shallowRef(initialSession.id);
+  const writingReferenceAttachments = shallowRef<PlayWritingReferenceAttachment[]>([]);
+  const writingReferencesLoading = shallowRef(false);
+  const writingReferencesError = shallowRef('');
+  const selectedWritingReferenceAttachmentIds = shallowRef<string[]>([]);
 
   const activeSession = computed(() =>
     sessions.value.find((session) => session.id === activeSessionId.value) ?? sessions.value[0],
@@ -62,6 +69,7 @@ export function useAgentConversationSessions() {
   );
 
   function createConversation() {
+    clearSelectedWritingReferences();
     const current = activeSession.value;
     if (current.chat.messages.length === 0 && current.input.value.trim().length === 0) {
       activeSessionId.value = current.id;
@@ -76,8 +84,52 @@ export function useAgentConversationSessions() {
 
   function selectConversation(id: string) {
     if (sessions.value.some((session) => session.id === id)) {
+      clearSelectedWritingReferences();
       activeSessionId.value = id;
     }
+  }
+
+  async function refreshWritingReferences() {
+    writingReferencesLoading.value = true;
+    writingReferencesError.value = '';
+
+    try {
+      const result = await oanClient.listPlayWritingReferenceAttachments();
+      writingReferenceAttachments.value = result.attachments;
+      const activeIds = new Set(
+        result.attachments
+          .filter((attachment) => attachment.status === 'active')
+          .map((attachment) => attachment.id),
+      );
+      selectedWritingReferenceAttachmentIds.value =
+        selectedWritingReferenceAttachmentIds.value.filter((id) => activeIds.has(id));
+    } catch (caught) {
+      writingReferencesError.value = toErrorMessage(caught);
+    } finally {
+      writingReferencesLoading.value = false;
+    }
+  }
+
+  function toggleWritingReferenceAttachment(id: string) {
+    const attachment = writingReferenceAttachments.value.find(
+      (candidate) => candidate.id === id,
+    );
+    if (!attachment || attachment.status !== 'active') {
+      return;
+    }
+
+    if (
+      !selectedWritingReferenceAttachmentIds.value.includes(id) &&
+      selectedWritingReferenceAttachmentIds.value.length >=
+        MAX_WRITING_REFERENCE_ATTACHMENTS_PER_REQUEST
+    ) {
+      return;
+    }
+
+    selectedWritingReferenceAttachmentIds.value =
+      selectedWritingReferenceAttachmentIds.value.includes(id)
+        ? selectedWritingReferenceAttachmentIds.value.filter((candidate) => candidate !== id)
+        : [...selectedWritingReferenceAttachmentIds.value, id];
   }
 
   async function sendCurrentInput() {
@@ -88,10 +140,16 @@ export function useAgentConversationSessions() {
       return;
     }
 
+    const writingReferenceAttachmentIds = [
+      ...selectedWritingReferenceAttachmentIds.value,
+    ];
+    await session.chat.sendMessage(
+      { text },
+      { body: { writingReferenceAttachmentIds } },
+    );
     session.input.value = '';
+    clearSelectedWritingReferences();
     updateTitleFromPrompt(session, text);
-    touchConversation(session);
-    await session.chat.sendMessage({ text });
     touchConversation(session);
   }
 
@@ -106,11 +164,21 @@ export function useAgentConversationSessions() {
     activePendingActions,
     activeStatus,
     conversationSummaries,
+    writingReferenceAttachments,
+    writingReferencesLoading,
+    writingReferencesError,
+    selectedWritingReferenceAttachmentIds,
     createConversation,
+    refreshWritingReferences,
     selectConversation,
     sendCurrentInput,
     stop,
+    toggleWritingReferenceAttachment,
   };
+
+  function clearSelectedWritingReferences() {
+    selectedWritingReferenceAttachmentIds.value = [];
+  }
 }
 
 function createConversationSession(): AgentConversationSession {
@@ -163,4 +231,8 @@ function getConversationPreview(messages: UIMessage[]): string {
     .trim();
 
   return text.length > 42 ? `${text.slice(0, 42)}...` : text;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

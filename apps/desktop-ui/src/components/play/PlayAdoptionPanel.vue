@@ -1,23 +1,19 @@
 <script setup lang="ts">
-import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
+import type { PlayAdoptionSeed } from '../../composables/usePlayAdoptionPreview';
 import type {
   PlayAdoptionCandidate,
   PlayObservation,
 } from '../../composables/useWorkspaceApi';
-import type { PlayAdoptionDraftInput } from '../../composables/usePlayWorkspace';
 
 defineProps<{
-  observations: PlayObservation[];
-  candidates: PlayAdoptionCandidate[];
-  busyCandidateId: string;
-  creatingCandidate: boolean;
+  observations: readonly PlayObservation[];
+  candidates: readonly PlayAdoptionCandidate[];
   disabled: boolean;
   notice: string;
 }>();
 
 const emit = defineEmits<{
-  createCandidate: [input: PlayAdoptionDraftInput];
-  createPendingAction: [candidate: PlayAdoptionCandidate];
+  prepareAdoption: [seed: PlayAdoptionSeed];
 }>();
 </script>
 
@@ -31,23 +27,27 @@ const emit = defineEmits<{
 
     <div v-if="observations.length" class="play-observation-list">
       <article v-for="observation in observations" :key="observation.id">
-        <strong>{{ observation.summary }}</strong>
-        <p>{{ observation.evidence }}</p>
+        <div class="play-observation-copy">
+          <strong>{{ observation.summary }}</strong>
+          <p>{{ observation.evidence }}</p>
+        </div>
+        <button
+          class="ghost-button tight-button"
+          type="button"
+          :disabled="disabled"
+          :aria-label="`Bring observation to writing: ${observation.summary}`"
+          @click="emit('prepareAdoption', {
+            kind: 'observation',
+            observationId: observation.id,
+          })"
+        >Bring to writing</button>
       </article>
     </div>
     <p v-else class="play-muted-copy">值得写回小说的发现会先成为 observation。</p>
 
-    <PlayAdoptionDraftForm
-      v-if="observations.length"
-      :observations="observations"
-      :creating="creatingCandidate"
-      :disabled="disabled"
-      @create-candidate="emit('createCandidate', $event)"
-    />
-
     <header class="play-adoption-heading">
       <span class="play-section-marker" aria-hidden="true">[+]</span>
-      <h2>Adoption</h2>
+      <h2>Adoption history</h2>
       <span>{{ candidates.length }}</span>
     </header>
 
@@ -61,14 +61,7 @@ const emit = defineEmits<{
           <strong>{{ candidate.summary }}</strong>
           <p>{{ candidate.evidence }}</p>
         </div>
-        <button
-          class="ghost-button tight-button"
-          type="button"
-          :disabled="disabled || Boolean(busyCandidateId)"
-          @click="emit('createPendingAction', candidate)"
-        >
-          {{ busyCandidateId === candidate.id ? 'Creating…' : 'Create PendingAction' }}
-        </button>
+        <span class="play-candidate-boundary">noncanonical candidate</span>
       </article>
     </div>
     <p v-else class="play-muted-copy">
@@ -76,3 +69,24 @@ const emit = defineEmits<{
     </p>
   </section>
 </template>
+
+<style scoped>
+.play-observation-list article {
+  display: grid;
+  gap: 7px;
+}
+
+.play-observation-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.play-observation-list button {
+  justify-self: start;
+}
+
+.play-candidate-boundary {
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 9px;
+}
+</style>

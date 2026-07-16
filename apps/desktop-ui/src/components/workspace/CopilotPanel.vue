@@ -6,8 +6,12 @@ import AgentTimeline from '../agent-checkpoint/AgentTimeline.vue';
 import ChatComposer from '../agent-checkpoint/ChatComposer.vue';
 import CompactApprovalTray from '../agent-checkpoint/CompactApprovalTray.vue';
 import PendingActionPanel from '../agent-checkpoint/PendingActionPanel.vue';
+import WritingReferenceSelector from './WritingReferenceSelector.vue';
 import { useAgentTimeline } from '../../composables/useAgentTimeline';
-import type { PendingAction } from '../../composables/useWorkspaceApi';
+import type {
+  PendingAction,
+  PlayWritingReferenceAttachment,
+} from '../../composables/useWorkspaceApi';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 const props = defineProps<{
@@ -21,6 +25,10 @@ const props = defineProps<{
   pendingActionsLoading: boolean;
   pendingActionsError: string;
   rightPanelShown: boolean;
+  writingReferenceAttachments: PlayWritingReferenceAttachment[];
+  selectedWritingReferenceAttachmentIds: string[];
+  writingReferencesLoading: boolean;
+  writingReferencesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -33,6 +41,8 @@ const emit = defineEmits<{
   rejectPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
+  refreshWritingReferences: [];
+  toggleWritingReference: [id: string];
 }>();
 
 const inputModel = computed({
@@ -65,7 +75,6 @@ const decoratedPendingActions = computed(() =>
     decisionError: decisionErrors[action.id],
   })),
 );
-
 watch(
   () => props.queuedPrompt,
   (prompt) => {
@@ -166,6 +175,15 @@ function mergePendingActions(
         @reject="rejectPendingAction"
         @review="emit('reviewPendingAction', $event)"
         @open-diff="emit('openPendingActionDiff', $event)"
+      />
+      <WritingReferenceSelector
+        :attachments="writingReferenceAttachments"
+        :selected-attachment-ids="selectedWritingReferenceAttachmentIds"
+        :loading="writingReferencesLoading"
+        :error="writingReferencesError"
+        :disabled="chatStatus !== 'ready'"
+        @refresh="emit('refreshWritingReferences')"
+        @toggle="emit('toggleWritingReference', $event)"
       />
       <ChatComposer
         v-model="inputModel"

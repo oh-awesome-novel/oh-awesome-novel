@@ -162,4 +162,138 @@ describe('Novel agent message assembly', () => {
     expect(contextPackage?.trace.map((trace) => trace.outcome))
       .toContain('selected');
   });
+
+  it('includes only request-local Play writing references in context and trace', () => {
+    const attachment = {
+      attachmentId: 'writing-ref-1',
+      sessionId: 'play-1',
+      title: 'Play outcome · selected material',
+      path: '.workspace/writing-references/writing-ref-1.yaml',
+      content: 'Selected outcome item: the gate remained sealed.',
+    };
+    const assembly = assembleNovelAgentMessages({
+      ...baseInput,
+      playWritingReferences: [attachment],
+    });
+    const contextPackage = createBaselineNovelAgentContextPackage({
+      request: '/写下一章 请继续',
+      workspace: baseInput.workspace,
+      createdAt: '2026-07-16T00:00:00.000Z',
+      playWritingReferences: [attachment],
+    });
+
+    expect(assembly.context).toContainEqual({
+      kind: 'selected',
+      title: attachment.title,
+      content: attachment.content,
+    });
+    expect(contextPackage?.selected).toContainEqual(expect.objectContaining({
+      sourceId: 'playWritingReference',
+      path: attachment.path,
+    }));
+    expect(contextPackage?.trace).toContainEqual(expect.objectContaining({
+      type: 'userSelectedContext',
+      sourceId: 'playWritingReference',
+      outcome: 'selected',
+    }));
+    expect(contextPackage?.ruleStack).toContainEqual(expect.objectContaining({
+      id: 'play-writing-reference-boundary',
+      sourceId: 'playWritingReference',
+    }));
+
+    const withoutExplicitAttachment = assembleNovelAgentMessages(baseInput);
+    expect(withoutExplicitAttachment.context.some((item) =>
+      item.title === attachment.title)).toBe(false);
+  });
+
+  it('traces every explicitly selected Play attachment while keeping one noncanonical rule boundary', () => {
+    const attachments = [
+      {
+        attachmentId: 'writing-ref-1',
+        sessionId: 'play-1',
+        title: 'Play outcome · gate',
+        path: '.workspace/writing-references/writing-ref-1.yaml',
+        content: 'The selected branch leaves the gate sealed.',
+      },
+      {
+        attachmentId: 'writing-ref-2',
+        sessionId: 'play-2',
+        title: 'Play outcome · porter',
+        path: '.workspace/writing-references/writing-ref-2.yaml',
+        content: 'The selected branch leaves the porter suspicious.',
+      },
+    ];
+    const assembly = assembleNovelAgentMessages({
+      ...baseInput,
+      playWritingReferences: attachments,
+    });
+    const runtimeInput = createRuntimeTurnInput({
+      ...baseInput,
+      playWritingReferences: attachments,
+    });
+    const contextPackage = createBaselineNovelAgentContextPackage({
+      request: '/写下一章 请继续',
+      workspace: baseInput.workspace,
+      createdAt: '2026-07-16T00:00:00.000Z',
+      playWritingReferences: attachments,
+    });
+
+    expect(assembly.context.filter((item) =>
+      attachments.some((attachment) => attachment.title === item.title)))
+      .toEqual(attachments.map((attachment) => ({
+        kind: 'selected',
+        title: attachment.title,
+        content: attachment.content,
+      })));
+    expect(runtimeInput.context?.filter((item) =>
+      item.kind === 'selected' && item.title.startsWith('Play outcome')))
+      .toHaveLength(2);
+    expect(contextPackage?.selected.filter((source) =>
+      source.sourceId === 'playWritingReference'))
+      .toEqual(attachments.map((attachment) => expect.objectContaining({
+        path: attachment.path,
+        title: attachment.title,
+        semanticBoundary: 'compressible',
+      })));
+    expect(contextPackage?.trace.filter((entry) =>
+      entry.sourceId === 'playWritingReference'))
+      .toEqual(attachments.map((attachment) => expect.objectContaining({
+        type: 'userSelectedContext',
+        outcome: 'selected',
+        path: attachment.path,
+        reason: expect.stringContaining(attachment.attachmentId),
+      })));
+    expect(contextPackage?.ruleStack.filter((rule) =>
+      rule.id === 'play-writing-reference-boundary'))
+      .toEqual([
+        expect.objectContaining({
+          label: expect.stringContaining('noncanonical'),
+          sourceId: 'playWritingReference',
+        }),
+      ]);
+    expect(contextPackage?.ruleStack).toContainEqual(expect.objectContaining({
+      id: 'human-approval',
+      label: expect.stringContaining('PendingAction'),
+    }));
+    expect(JSON.stringify(contextPackage?.minimalMemory))
+      .not.toContain('gate sealed');
+  });
+
+  it('does not discover active Play writing references without request-local inputs', () => {
+    const contextPackage = createBaselineNovelAgentContextPackage({
+      request: '/写下一章 请继续',
+      workspace: baseInput.workspace,
+      createdAt: '2026-07-16T00:00:00.000Z',
+    });
+    const runtimeInput = createRuntimeTurnInput(baseInput);
+
+    expect(contextPackage?.selected.some((source) =>
+      source.sourceId === 'playWritingReference')).toBe(false);
+    expect(contextPackage?.trace.some((entry) =>
+      entry.sourceId === 'playWritingReference')).toBe(false);
+    expect(contextPackage?.ruleStack.some((rule) =>
+      rule.id === 'play-writing-reference-boundary')).toBe(false);
+    expect(runtimeInput.context?.some((item) =>
+      item.title.startsWith('Play outcome'))).toBe(false);
+  });
 });

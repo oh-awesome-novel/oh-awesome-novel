@@ -314,10 +314,141 @@ export interface ReferenceContextSelection {
 
 export type PlaySourceTrust = 'canonical' | 'interactionHint' | 'playLocal' | 'modelImprovisation';
 export type PlayAdoptionTarget = 'chapterDraft' | 'state' | 'timeline' | 'foreshadow';
+export type PlayAdoptionProjection = 'player' | 'director';
+export type PlayAdoptionWriteIntentToolName =
+  | 'chapter.createDraft'
+  | 'state.set'
+  | 'timeline.add'
+  | 'foreshadow.create';
+export type PlayAdoptionSeed =
+  | { kind: 'event'; eventId: string }
+  | { kind: 'observation'; observationId: string }
+  | {
+      kind: 'outcome';
+      outcomeItemId: string;
+      outcomeReportFingerprint: string;
+    };
+export interface PlayAdoptionSourceSnapshot {
+  sourceId: string;
+  path?: string;
+  contentHash?: string;
+}
+export interface PlayAdoptionEvidenceClosure {
+  schemaVersion: 1;
+  sessionId: string;
+  sessionRevision: number;
+  selectedArtifactTurnRefs: string[];
+  artifactTurnRefs: string[];
+  messageRefs: string[];
+  eventRefs: string[];
+  observationRefs: string[];
+  evidenceRefs: string[];
+  sourceSnapshots: PlayAdoptionSourceSnapshot[];
+  selectedPathFingerprint: string;
+  sourceBaseFingerprint: string;
+}
+export interface PlayAdoptionTargetSuggestion {
+  target: PlayAdoptionTarget;
+  toolName: PlayAdoptionWriteIntentToolName;
+  recommended: boolean;
+  reason: string;
+  defaultPayload: Record<string, unknown>;
+}
+export interface PlayAdoptionDraft {
+  seed: PlayAdoptionSeed;
+  summary: string;
+  evidence: string;
+  visibility: PlayEventVisibility;
+  evidenceClosure: PlayAdoptionEvidenceClosure;
+  evidenceFingerprint: string;
+  targetSuggestions: PlayAdoptionTargetSuggestion[];
+}
+export interface PlayAdoptionPreview {
+  schemaVersion: 1;
+  id: string;
+  sessionId: string;
+  baseRevision: number;
+  projection: PlayAdoptionProjection;
+  seed: PlayAdoptionSeed;
+  candidateId: string;
+  summary: string;
+  evidence: string;
+  visibility: PlayEventVisibility;
+  evidenceClosure: PlayAdoptionEvidenceClosure;
+  evidenceFingerprint: string;
+  suggestions: PlayAdoptionTargetSuggestion[];
+  target: PlayAdoptionTarget;
+  payload: Record<string, unknown>;
+  touchedFiles: string[];
+  diff: string;
+  fingerprint: string;
+  createdAt: string;
+  canonicalUnchanged: true;
+}
+export interface CreatePlayAdoptionPreviewInput {
+  baseRevision: number;
+  projection: PlayAdoptionProjection;
+  seed: PlayAdoptionSeed;
+  target?: PlayAdoptionTarget;
+  payload?: Record<string, unknown>;
+}
+export interface CreatePlayAdoptionPendingActionInput {
+  baseRevision: number;
+  fingerprint: string;
+}
 export type PlayActionKind = 'say' | 'look' | 'move' | 'do' | 'wait';
 export type PlaySimulationMode = 'conversation' | 'reactiveWorld' | 'activeWorld';
 export type PlayEventDensity = 'quiet' | 'balanced' | 'volatile';
 export type PlayEventVisibility = 'playerVisible' | 'rumor' | 'playerUnknown';
+export const PLAY_KNOWLEDGE_STATE_KEY = 'playKnowledge' as const;
+export const PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION = 1 as const;
+export const MAX_PLAY_KNOWLEDGE_CHANGES_PER_TURN = 8 as const;
+export const MAX_PLAY_KNOWLEDGE_RECORDS = 512 as const;
+export type PlayKnowledgePlayerProjection = PlayEventVisibility;
+export interface PlayEventRevealRecord {
+  id: string;
+  kind: 'eventReveal';
+  subjectEventId: string;
+  previousPlayerProjection: 'playerUnknown' | 'rumor';
+  playerProjection: 'rumor' | 'playerVisible';
+  knownByParticipantRefs: [];
+  revealedAtTurnId: string;
+  revealedByEventId: string;
+  canonical: false;
+}
+export interface PlayKnowledgeState {
+  schemaVersion: 1;
+  records: PlayEventRevealRecord[];
+}
+export interface PlayRevealEventKnowledgeChange {
+  type: 'revealEvent';
+  subjectEventId: string;
+  playerProjection: 'rumor' | 'playerVisible';
+}
+export type PlayKnowledgeChange = PlayRevealEventKnowledgeChange;
+export interface PlayKnowledgeRevealCandidate {
+  subjectEventId: string;
+  currentPlayerProjection: 'playerUnknown' | 'rumor';
+  kind: PlayWorldEventKind;
+  origin: PlayEventOrigin;
+  title: string;
+  summary: string;
+  reason: string;
+  worldClock: PlayWorldClock;
+}
+export type PlayKnowledgeProjection =
+  | {
+      lens: 'player';
+      kind: 'eventReveal';
+      playerProjection: 'rumor' | 'playerVisible';
+      revealedAtTurnId: string;
+      revealedByEventId: string;
+      causalLabel: 'revealsEarlierOffscreenChange' | 'confirmsEarlierRumor';
+    }
+  | {
+      lens: 'author';
+      record: PlayEventRevealRecord;
+    };
 export type PlayTimeAdvanceUnit = 'minute' | 'hour' | 'day';
 export interface PlayRelativeTimeAdvance {
   amount: number;
@@ -685,7 +816,104 @@ export interface PlayAdoptionCandidate {
   sourceObservationIds: string[];
   sourceTurnIds: string[];
   sourceEventIds: string[];
+  seed?: PlayAdoptionSeed;
+  evidenceClosure?: PlayAdoptionEvidenceClosure;
+  evidenceFingerprint?: string;
   requiresPendingAction: true;
+}
+
+export type PlayOutcomeProjection = 'player' | 'director';
+export type PlayOutcomeReportStatus = 'current' | 'stale';
+export type PlayOutcomeItemKind =
+  | 'sceneSummary'
+  | 'goalAssessment'
+  | 'participantFootprint'
+  | 'worldChange'
+  | 'writingMaterial';
+export type PlayOutcomeConfidence = 'confirmed' | 'inferred' | 'authorProvided';
+export type PlayOutcomeGoalStatus = 'reached' | 'partial' | 'missed' | 'changed';
+export type PlayOutcomeTag =
+  | 'goal'
+  | 'divergence'
+  | 'consistency'
+  | 'worldChange'
+  | 'participantFootprint'
+  | 'writingMaterial';
+
+export interface PlayOutcomeSourceSnapshot {
+  sourceId: string;
+  path?: string;
+  contentHash?: string;
+}
+
+export interface PlayOutcomeItem {
+  id: string;
+  kind: PlayOutcomeItemKind;
+  summary: string;
+  visibility: PlayEventVisibility;
+  confidence: PlayOutcomeConfidence;
+  goalStatus?: PlayOutcomeGoalStatus;
+  tags: PlayOutcomeTag[];
+  artifactTurnRefs: string[];
+  messageRefs: string[];
+  eventRefs: string[];
+  observationRefs: string[];
+  evidenceRefs: string[];
+  sourceRefs: string[];
+  participantRefs: string[];
+}
+
+export interface PlayOutcomeReport {
+  schemaVersion: 1;
+  sessionId: string;
+  sceneId?: string;
+  createdAt: string;
+  sessionRevision: number;
+  selectedArtifactTurnRefs: string[];
+  sourceSnapshots: PlayOutcomeSourceSnapshot[];
+  items: PlayOutcomeItem[];
+}
+
+export type PlayOutcomeReportStaleReason =
+  | 'sessionRevisionChanged'
+  | 'selectedBranchChanged'
+  | 'sourceSnapshotChanged'
+  | `sourceContentChanged:${string}`
+  | `sourceUnavailable:${string}`;
+
+export interface PlayOutcomeReportResult {
+  report: PlayOutcomeReport;
+  reportFingerprint: string;
+  projection: PlayOutcomeProjection;
+  status: PlayOutcomeReportStatus;
+  staleReasons: PlayOutcomeReportStaleReason[];
+}
+
+export interface PlayOutcomeReportGenerateResult extends PlayOutcomeReportResult {
+  files: string[];
+}
+
+export type PlayWritingReferenceStatus = 'active' | 'detached' | 'stale';
+
+export interface PlayWritingReferenceAttachment {
+  schemaVersion: 1;
+  id: string;
+  sessionId: string;
+  reportRef: string;
+  reportFingerprint: string;
+  selectedOutcomeItemRefs: string[];
+  selectedArtifactTurnRefs: string[];
+  evidenceClosureRefs: string[];
+  sourceSnapshots: PlayOutcomeSourceSnapshot[];
+  status: PlayWritingReferenceStatus;
+  createdAt: string;
+  detachedAt?: string;
+}
+
+export interface CreatePlayWritingReferenceAttachmentInput {
+  sessionId: string;
+  baseRevision: number;
+  selectedOutcomeItemIds: string[];
 }
 
 export interface PlaySessionV4 {
@@ -949,7 +1177,37 @@ export interface PendingAction {
   shadowWrites?: Array<{
     targetFile: string;
     shadowFile: string;
+    originalHash?: string;
+    draftHash?: string;
+    targetExisted?: boolean;
   }>;
+}
+
+export interface PlayAdoptionPreviewResult {
+  preview: PlayAdoptionPreview;
+}
+
+export interface PlayAdoptionSessionUpdate {
+  sessionId: string;
+  baseRevision: number;
+  revision: number;
+}
+
+export interface PlayAdoptionPendingActionReceipt {
+  id: string;
+  title: string;
+  description: string;
+  touchedFiles: string[];
+  diff: string;
+  createdAt: string;
+  status: 'pending';
+}
+
+export interface PlayAdoptionPendingActionResult {
+  sessionUpdate: PlayAdoptionSessionUpdate;
+  candidate: PlayAdoptionCandidate;
+  pendingAction: PlayAdoptionPendingActionReceipt;
+  refresh: WorkspaceDecisionRefresh;
 }
 
 export interface AcceptedPendingAction {
@@ -1060,6 +1318,36 @@ export interface OanClient extends PlayRehearsalClientMethods {
     files: string[];
   }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  generatePlayOutcomeReport(id: string, input: {
+    baseRevision: number;
+    projection?: PlayOutcomeProjection;
+  }): Promise<PlayOutcomeReportGenerateResult>;
+  getPlayOutcomeReport(id: string, input: {
+    baseRevision: number;
+    projection?: PlayOutcomeProjection;
+  }): Promise<PlayOutcomeReportResult>;
+  createPlayOutcomeAdoptionCandidate(
+    id: string,
+    itemId: string,
+    input: {
+      baseRevision: number;
+      target: PlayAdoptionTarget;
+      payload?: Record<string, unknown>;
+    },
+  ): Promise<{
+    session: PlaySession;
+    observation: PlayObservation;
+    candidate: PlayAdoptionCandidate;
+  }>;
+  createPlayWritingReferenceAttachment(
+    input: CreatePlayWritingReferenceAttachmentInput,
+  ): Promise<{ attachment: PlayWritingReferenceAttachment; files: string[] }>;
+  listPlayWritingReferenceAttachments(): Promise<{
+    attachments: PlayWritingReferenceAttachment[];
+  }>;
+  detachPlayWritingReferenceAttachment(id: string): Promise<{
+    attachment: PlayWritingReferenceAttachment;
+  }>;
   listPlayCheckpoints(id: string): Promise<{ checkpoints: PlayCheckpointSummary[] }>;
   restorePlayCheckpoint(
     id: string,
@@ -1118,15 +1406,15 @@ export interface OanClient extends PlayRehearsalClientMethods {
     sourceObservationIds?: string[];
     baseRevision?: number;
   }): Promise<{ session: PlaySession; candidate: PlayAdoptionCandidate }>;
+  createPlayAdoptionPreview(
+    id: string,
+    input: CreatePlayAdoptionPreviewInput,
+  ): Promise<PlayAdoptionPreviewResult>;
   createPlayAdoptionPendingAction(
     id: string,
-    candidateId: string,
-    payload?: Record<string, unknown>,
-  ): Promise<{
-    candidate: PlayAdoptionCandidate;
-    pendingActionResult: unknown;
-    refresh: WorkspaceDecisionRefresh;
-  }>;
+    previewId: string,
+    input: CreatePlayAdoptionPendingActionInput,
+  ): Promise<PlayAdoptionPendingActionResult>;
   saveWorkspaceOnboarding(input: WorkspaceOnboardingInput): Promise<{
     workspace: WorkspaceSummary;
     config: unknown;
@@ -1387,6 +1675,62 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
       ).then((value) => parsePlaySessionResponse(value, id)),
+    generatePlayOutcomeReport: (id, input) => {
+      const normalized = normalizePlayOutcomeRequest(id, input);
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(normalized.sessionId)}/reports/outcome`,
+        { method: 'POST', body: normalized.body },
+      ).then((value) => parsePlayOutcomeReportResponse(
+        value,
+        normalized.sessionId,
+        normalized.body.projection,
+        true,
+      ));
+    },
+    getPlayOutcomeReport: (id, input) => {
+      const normalized = normalizePlayOutcomeRequest(id, input);
+      const query = new URLSearchParams({
+        baseRevision: String(normalized.body.baseRevision),
+        projection: normalized.body.projection,
+      });
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(normalized.sessionId)}/reports/outcome?${query.toString()}`,
+      ).then((value) => parsePlayOutcomeReportResponse(
+        value,
+        normalized.sessionId,
+        normalized.body.projection,
+        false,
+      ));
+    },
+    createPlayOutcomeAdoptionCandidate: (id, itemId, input) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      const outcomeItemId = requireSafePlayClientId(itemId, 'Play outcome item id');
+      const body = normalizePlayOutcomeAdoptionRequest(input);
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/reports/outcome/items/${encodeURIComponent(outcomeItemId)}/adoption-candidate`,
+        { method: 'POST', body },
+      ).then((value) => parsePlayOutcomeAdoptionResponse(value, sessionId));
+    },
+    createPlayWritingReferenceAttachment: (input) => {
+      const body = normalizeCreatePlayWritingReferenceRequest(input);
+      return requestJson<unknown>('/api/workspace/writing-references', {
+        method: 'POST',
+        body,
+      }).then(parsePlayWritingReferenceCreateResponse);
+    },
+    listPlayWritingReferenceAttachments: () =>
+      requestJson<unknown>('/api/workspace/writing-references')
+        .then(parsePlayWritingReferenceListResponse),
+    detachPlayWritingReferenceAttachment: (id) => {
+      const attachmentId = requireSafePlayClientId(
+        id,
+        'Play writing reference attachment id',
+      );
+      return requestJson<unknown>(
+        `/api/workspace/writing-references/${encodeURIComponent(attachmentId)}/detach`,
+        { method: 'POST', body: {} },
+      ).then((value) => parsePlayWritingReferenceDetachResponse(value, attachmentId));
+    },
     listPlayCheckpoints: (id) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints`,
@@ -1470,18 +1814,24 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
           body: candidate,
         },
       ).then((value) => parsePlayAdoptionCandidateResponse(value, id)),
-    createPlayAdoptionPendingAction: (id, candidateId, payload) =>
-      requestJson<{
-        candidate: PlayAdoptionCandidate;
-        pendingActionResult: unknown;
-        refresh: WorkspaceDecisionRefresh;
-      }>(
-        `/api/workspace/play-sessions/${encodeURIComponent(id)}/adoption-candidates/${encodeURIComponent(candidateId)}/pending-action`,
-        {
-          method: 'POST',
-          body: payload ? { payload } : {},
-        },
-      ),
+    createPlayAdoptionPreview: (id, input) => {
+      const normalized = normalizePlayAdoptionPreviewRequest(id, input);
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(normalized.sessionId)}/adoption-previews`,
+        { method: 'POST', body: normalized.body },
+      ).then((value) => parsePlayAdoptionPreviewResponse(value, normalized));
+    },
+    createPlayAdoptionPendingAction: (id, previewId, input) => {
+      const normalized = normalizePlayAdoptionPendingActionRequest(
+        id,
+        previewId,
+        input,
+      );
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(normalized.sessionId)}/adoption-previews/${encodeURIComponent(normalized.previewId)}/pending-action`,
+        { method: 'POST', body: normalized.body },
+      ).then((value) => parsePlayAdoptionPendingActionResponse(value, normalized));
+    },
     saveWorkspaceOnboarding: (input) =>
       requestJson<{ workspace: WorkspaceSummary; config: unknown }>('/api/workspace/onboarding', {
         method: 'POST',
@@ -2203,6 +2553,1041 @@ function parsePlaySessionResponse(
   return value as unknown as { session: PlaySession };
 }
 
+function normalizePlayOutcomeRequest(
+  id: string,
+  input: { baseRevision: number; projection?: PlayOutcomeProjection },
+): {
+  sessionId: string;
+  body: { baseRevision: number; projection: PlayOutcomeProjection };
+} {
+  const sessionId = requireSafePlayClientId(id, 'Play session id');
+  if (!isNonNegativeSafeInteger(input.baseRevision)) {
+    throw new Error('Play outcome baseRevision must be a non-negative integer.');
+  }
+  if (
+    input.projection !== undefined
+    && input.projection !== 'player'
+    && input.projection !== 'director'
+  ) {
+    throw new Error('Play outcome projection must be player or director.');
+  }
+  return {
+    sessionId,
+    body: {
+      baseRevision: input.baseRevision,
+      projection: input.projection ?? 'player',
+    },
+  };
+}
+
+interface NormalizedPlayAdoptionPreviewRequest {
+  sessionId: string;
+  body: CreatePlayAdoptionPreviewInput;
+}
+
+interface NormalizedPlayAdoptionPendingActionRequest {
+  sessionId: string;
+  previewId: string;
+  body: CreatePlayAdoptionPendingActionInput;
+}
+
+function normalizePlayAdoptionPreviewRequest(
+  id: string,
+  input: CreatePlayAdoptionPreviewInput,
+): NormalizedPlayAdoptionPreviewRequest {
+  const sessionId = requireSafePlayClientId(id, 'Play session id');
+  if (
+    !isRecord(input)
+    || !hasOnlyKnownFields(input, [
+      'baseRevision',
+      'projection',
+      'seed',
+      'target',
+      'payload',
+    ])
+    || !isNonNegativeSafeInteger(input.baseRevision)
+    || !isPlayAdoptionProjection(input.projection)
+    || !isPlayAdoptionSeedEnvelope(input.seed)
+    || (input.target !== undefined && !isPlayAdoptionTarget(input.target))
+    || (input.payload !== undefined && !isStrictJsonRecord(input.payload))
+  ) {
+    throw new Error('Play adoption preview request is invalid.');
+  }
+  if (
+    input.payload !== undefined
+    && (
+      input.target === undefined
+      || !isPlayAdoptionPayloadForTarget(input.target, input.payload)
+    )
+  ) {
+    throw new Error('Play adoption preview payload does not match its target.');
+  }
+  return {
+    sessionId,
+    body: structuredClone(input),
+  };
+}
+
+function normalizePlayAdoptionPendingActionRequest(
+  id: string,
+  previewId: string,
+  input: CreatePlayAdoptionPendingActionInput,
+): NormalizedPlayAdoptionPendingActionRequest {
+  const sessionId = requireSafePlayClientId(id, 'Play session id');
+  if (!isPlayAdoptionPreviewId(previewId)) {
+    throw new Error('Play adoption preview id is invalid.');
+  }
+  if (
+    !isRecord(input)
+    || !hasOnlyKnownFields(input, ['baseRevision', 'fingerprint'])
+    || !isNonNegativeSafeInteger(input.baseRevision)
+    || !isSha256Hex(input.fingerprint)
+  ) {
+    throw new Error('Play adoption PendingAction request is invalid.');
+  }
+  return {
+    sessionId,
+    previewId,
+    body: structuredClone(input),
+  };
+}
+
+function parsePlayAdoptionPreviewResponse(
+  value: unknown,
+  request: NormalizedPlayAdoptionPreviewRequest,
+): PlayAdoptionPreviewResult {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['preview'])
+    || !isPlayAdoptionPreviewEnvelope(value.preview, request)
+  ) {
+    throw new Error('Play adoption preview returned an invalid payload.');
+  }
+  return value as unknown as PlayAdoptionPreviewResult;
+}
+
+function isPlayAdoptionPreviewEnvelope(
+  value: unknown,
+  request: NormalizedPlayAdoptionPreviewRequest,
+): value is PlayAdoptionPreview {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'id',
+      'sessionId',
+      'baseRevision',
+      'projection',
+      'seed',
+      'candidateId',
+      'summary',
+      'evidence',
+      'visibility',
+      'evidenceClosure',
+      'evidenceFingerprint',
+      'suggestions',
+      'target',
+      'payload',
+      'touchedFiles',
+      'diff',
+      'fingerprint',
+      'createdAt',
+      'canonicalUnchanged',
+    ])
+    || value.schemaVersion !== 1
+    || !isPlayAdoptionPreviewId(value.id)
+    || value.sessionId !== request.sessionId
+    || value.baseRevision !== request.body.baseRevision
+    || value.projection !== request.body.projection
+    || !isPlayAdoptionSeedEnvelope(value.seed)
+    || !isDeepEqualJson(value.seed, request.body.seed)
+    || !isSafePlayFactId(value.candidateId)
+    || !isBoundedNonEmptyString(value.summary, 4_000)
+    || !isBoundedNonEmptyString(value.evidence, 8_000)
+    || !isPlayVisibility(value.visibility)
+    || !isPlayAdoptionEvidenceClosureEnvelope(
+      value.evidenceClosure,
+      request.sessionId,
+      request.body.baseRevision,
+      request.body.projection,
+    )
+    || !isSha256Hex(value.evidenceFingerprint)
+    || !isPlayAdoptionTargetSuggestionList(value.suggestions)
+    || !isPlayAdoptionTarget(value.target)
+    || !isPlayAdoptionPayloadForTarget(value.target, value.payload)
+    || !isPlayAdoptionTouchedFiles(value.touchedFiles, value.target, value.payload)
+    || !isPlayAdoptionDiff(value.diff, value.touchedFiles)
+    || !isSha256Hex(value.fingerprint)
+    || !isValidPlayTimestamp(value.createdAt)
+    || value.canonicalUnchanged !== true
+  ) {
+    return false;
+  }
+
+  const selectedSuggestion = value.suggestions.find((suggestion) =>
+    suggestion.target === value.target);
+  const recommended = value.suggestions.find((suggestion) => suggestion.recommended);
+  if (
+    !selectedSuggestion
+    || !recommended
+    || (request.body.target !== undefined
+      ? value.target !== request.body.target
+      : value.target !== recommended.target)
+    || (request.body.payload !== undefined
+      ? !isDeepEqualJson(value.payload, request.body.payload)
+      : !isDeepEqualJson(value.payload, selectedSuggestion.defaultPayload))
+  ) {
+    return false;
+  }
+
+  if (value.projection === 'player') {
+    const closure = value.evidenceClosure;
+    return value.visibility !== 'playerUnknown'
+      && closure.selectedArtifactTurnRefs.length === 0
+      && closure.artifactTurnRefs.length === 0
+      && closure.messageRefs.length === 0
+      && closure.eventRefs.length === 0
+      && closure.observationRefs.length === 0
+      && closure.evidenceRefs.length === 0
+      && closure.sourceSnapshots.length === 0;
+  }
+  return true;
+}
+
+function isPlayAdoptionSeedEnvelope(value: unknown): value is PlayAdoptionSeed {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'event') {
+    return hasOnlyKnownFields(value, ['kind', 'eventId'])
+      && isSafePlayFactId(value.eventId);
+  }
+  if (value.kind === 'observation') {
+    return hasOnlyKnownFields(value, ['kind', 'observationId'])
+      && isSafePlayFactId(value.observationId);
+  }
+  return value.kind === 'outcome'
+    && hasOnlyKnownFields(value, [
+      'kind',
+      'outcomeItemId',
+      'outcomeReportFingerprint',
+    ])
+    && isSafePlayFactId(value.outcomeItemId)
+    && isSha256Hex(value.outcomeReportFingerprint);
+}
+
+function isPlayAdoptionEvidenceClosureEnvelope(
+  value: unknown,
+  sessionId?: string,
+  sessionRevision?: number,
+  projection?: PlayAdoptionProjection,
+): value is PlayAdoptionEvidenceClosure {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'sessionId',
+      'sessionRevision',
+      'selectedArtifactTurnRefs',
+      'artifactTurnRefs',
+      'messageRefs',
+      'eventRefs',
+      'observationRefs',
+      'evidenceRefs',
+      'sourceSnapshots',
+      'selectedPathFingerprint',
+      'sourceBaseFingerprint',
+    ])
+    || value.schemaVersion !== 1
+    || !isSafePlayFactId(value.sessionId)
+    || (sessionId !== undefined && value.sessionId !== sessionId)
+    || !isNonNegativeSafeInteger(value.sessionRevision)
+    || (sessionRevision !== undefined && value.sessionRevision !== sessionRevision)
+    || !isBoundedUniqueSafePlayIdArray(value.selectedArtifactTurnRefs, 512)
+    || !isBoundedUniqueSafePlayIdArray(value.artifactTurnRefs, 24)
+    || !isBoundedUniqueSafePlayIdArray(value.messageRefs, 24)
+    || !isBoundedUniqueSafePlayIdArray(value.eventRefs, 24)
+    || !isBoundedUniqueSafePlayIdArray(value.observationRefs, 24)
+    || !isBoundedUniqueSafePlayIdArray(value.evidenceRefs, 24)
+    || !Array.isArray(value.sourceSnapshots)
+    || value.sourceSnapshots.length > 24
+    || !value.sourceSnapshots.every(isPlayAdoptionSourceSnapshotEnvelope)
+    || new Set(value.sourceSnapshots.map((source) => source.sourceId)).size
+      !== value.sourceSnapshots.length
+    || !isStableSourceSnapshotOrder(value.sourceSnapshots)
+    || !isSha256Hex(value.selectedPathFingerprint)
+    || !isSha256Hex(value.sourceBaseFingerprint)
+  ) {
+    return false;
+  }
+  const selected = new Set(value.selectedArtifactTurnRefs);
+  if (value.artifactTurnRefs.some((ref) => !selected.has(ref))) return false;
+  return projection !== 'player' || (
+    value.selectedArtifactTurnRefs.length === 0
+    && value.artifactTurnRefs.length === 0
+    && value.messageRefs.length === 0
+    && value.eventRefs.length === 0
+    && value.observationRefs.length === 0
+    && value.evidenceRefs.length === 0
+    && value.sourceSnapshots.length === 0
+  );
+}
+
+function isPlayAdoptionSourceSnapshotEnvelope(
+  value: unknown,
+): value is PlayAdoptionSourceSnapshot {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['sourceId', 'path', 'contentHash'])
+    && isBoundedNonEmptyString(value.sourceId, 512)
+    && value.sourceId === value.sourceId.trim()
+    && (value.path === undefined
+      || (isBoundedNonEmptyString(value.path, 1_000) && value.path === value.path.trim()))
+    && (value.contentHash === undefined || isSha256Hex(value.contentHash));
+}
+
+function isStableSourceSnapshotOrder(
+  value: readonly PlayAdoptionSourceSnapshot[],
+): boolean {
+  return value.every((source, index) =>
+    index === 0 || value[index - 1]!.sourceId.localeCompare(source.sourceId) < 0);
+}
+
+function isPlayAdoptionTargetSuggestionList(
+  value: unknown,
+): value is PlayAdoptionTargetSuggestion[] {
+  const targets = [
+    'chapterDraft',
+    'state',
+    'timeline',
+    'foreshadow',
+  ] as const satisfies readonly PlayAdoptionTarget[];
+  const tools: Record<PlayAdoptionTarget, PlayAdoptionWriteIntentToolName> = {
+    chapterDraft: 'chapter.createDraft',
+    state: 'state.set',
+    timeline: 'timeline.add',
+    foreshadow: 'foreshadow.create',
+  };
+  if (!Array.isArray(value) || value.length !== targets.length) return false;
+  let recommended = 0;
+  for (const [index, entry] of value.entries()) {
+    const target = targets[index]!;
+    if (
+      !isRecord(entry)
+      || !hasOnlyKnownFields(entry, [
+        'target',
+        'toolName',
+        'recommended',
+        'reason',
+        'defaultPayload',
+      ])
+      || entry.target !== target
+      || entry.toolName !== tools[target]
+      || typeof entry.recommended !== 'boolean'
+      || !isBoundedNonEmptyString(entry.reason, 1_000)
+      || entry.reason !== entry.reason.trim()
+      || !isPlayAdoptionPayloadForTarget(target, entry.defaultPayload)
+    ) {
+      return false;
+    }
+    if (entry.recommended) recommended += 1;
+  }
+  return recommended === 1;
+}
+
+function isPlayAdoptionPayloadForTarget(
+  target: PlayAdoptionTarget,
+  value: unknown,
+): value is Record<string, unknown> {
+  if (!isStrictJsonRecord(value)) return false;
+  if (target === 'chapterDraft') {
+    if (
+      !hasOnlyKnownFields(value, ['chapterId', 'title', 'content', 'file', 'mode'])
+      || typeof value.chapterId !== 'string'
+      || !/^\d{4}\/\d{4}$/u.test(value.chapterId)
+      || value.chapterId.endsWith('/0000')
+      || typeof value.content !== 'string'
+      || !value.content.trim()
+      || (value.title !== undefined && typeof value.title !== 'string')
+      || (value.mode !== undefined && value.mode !== 'create' && value.mode !== 'replace')
+    ) {
+      return false;
+    }
+    if (value.file !== undefined) {
+      const expected = `${value.chapterId}.md`;
+      if (value.file !== expected && value.file !== `chapters/${expected}`) return false;
+    }
+    return true;
+  }
+  if (target === 'state') {
+    return hasOnlyKnownFields(value, ['file', 'path', 'value'])
+      && isSafeWorkspaceRelativePath(value.file)
+      && isNonEmptyTrimmedString(value.path)
+      && Object.hasOwn(value, 'value')
+      && isStrictJsonValue(value.value);
+  }
+  const valueField = target === 'timeline' ? 'event' : 'item';
+  return hasOnlyKnownFields(value, ['file', 'path', valueField])
+    && (value.file === undefined || isSafeWorkspaceRelativePath(value.file))
+    && (value.path === undefined || isNonEmptyTrimmedString(value.path))
+    && Object.hasOwn(value, valueField)
+    && isStrictJsonValue(value[valueField]);
+}
+
+function isPlayAdoptionTouchedFiles(
+  value: unknown,
+  target: PlayAdoptionTarget,
+  payload: Record<string, unknown>,
+): value is string[] {
+  if (
+    !Array.isArray(value)
+    || value.length !== 1
+    || !isSafeWorkspaceRelativePath(value[0])
+  ) {
+    return false;
+  }
+  let expected: string;
+  if (target === 'chapterDraft') {
+    expected = `chapters/${String(payload.chapterId)}.md`;
+  } else {
+    const file = typeof payload.file === 'string'
+      ? payload.file
+      : target === 'timeline'
+        ? 'events.yaml'
+        : 'active.yaml';
+    expected = `${target}/${file}`;
+  }
+  return value[0] === expected;
+}
+
+function isPlayAdoptionDiff(value: unknown, touchedFiles: string[]): value is string {
+  if (typeof value !== 'string' || value.length > 8 * 1024 * 1024) return false;
+  if (!value) return true;
+  const headers = value.split('\n').filter((line) => line.startsWith('diff --git '));
+  return headers.length === touchedFiles.length
+    && touchedFiles.every((file) =>
+      headers.includes(`diff --git a/${file} b/${file}`));
+}
+
+function isPlayAdoptionProjection(value: unknown): value is PlayAdoptionProjection {
+  return value === 'player' || value === 'director';
+}
+
+function isPlayAdoptionPreviewId(value: unknown): value is string {
+  return typeof value === 'string' && /^pa_[a-f0-9-]+$/u.test(value);
+}
+
+function isBoundedUniqueSafePlayIdArray(
+  value: unknown,
+  maximum: number,
+): value is string[] {
+  return isUniqueSafePlayIdArray(value) && value.length <= maximum;
+}
+
+function isSafeWorkspaceRelativePath(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 1_000
+    && value === value.trim()
+    && !value.startsWith('/')
+    && !value.includes('\\')
+    && value.split('/').every((segment) => segment.length > 0 && !segment.startsWith('.'));
+}
+
+function isNonEmptyTrimmedString(value: unknown): value is string {
+  return isNonEmptyString(value) && value === value.trim();
+}
+
+function isStrictJsonRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value)
+    && (Object.getPrototypeOf(value) === Object.prototype
+      || Object.getPrototypeOf(value) === null)
+    && isStrictJsonValue(value);
+}
+
+function isStrictJsonValue(
+  value: unknown,
+  ancestors: Set<object> = new Set<object>(),
+): boolean {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+  ) {
+    return true;
+  }
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object' || ancestors.has(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  ancestors.add(value);
+  try {
+    return Array.isArray(value)
+      ? value.every((entry) => isStrictJsonValue(entry, ancestors))
+      : Object.values(value as Record<string, unknown>)
+        .every((entry) => isStrictJsonValue(entry, ancestors));
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function parsePlayAdoptionPendingActionResponse(
+  value: unknown,
+  request: NormalizedPlayAdoptionPendingActionRequest,
+): PlayAdoptionPendingActionResult {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'sessionUpdate',
+      'candidate',
+      'pendingAction',
+      'refresh',
+    ])
+    || !isPlayAdoptionSessionUpdateEnvelope(
+      value.sessionUpdate,
+      request.sessionId,
+      request.body.baseRevision,
+    )
+    || !isPlayAdoptionCandidateEnvelope(value.candidate)
+    || value.candidate.id !== `adoption-${request.previewId.slice(3)}`
+    || !isPlayAdoptionPendingActionEnvelope(
+      value.pendingAction,
+      request.previewId,
+      value.candidate,
+    )
+    || !isWorkspaceDecisionRefreshEnvelope(value.refresh)
+  ) {
+    throw new Error('Play adoption PendingAction returned an invalid payload.');
+  }
+  return value as unknown as PlayAdoptionPendingActionResult;
+}
+
+function isPlayAdoptionSessionUpdateEnvelope(
+  value: unknown,
+  sessionId: string,
+  baseRevision: number,
+): value is PlayAdoptionSessionUpdate {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['sessionId', 'baseRevision', 'revision'])
+    && value.sessionId === sessionId
+    && value.baseRevision === baseRevision
+    && value.revision === baseRevision + 1;
+}
+
+function isPlayAdoptionPendingActionEnvelope(
+  value: unknown,
+  previewId: string,
+  candidate: PlayAdoptionCandidate,
+): value is PlayAdoptionPendingActionReceipt {
+  const touchedFiles = isRecord(value) ? value.touchedFiles : undefined;
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'title',
+      'description',
+      'touchedFiles',
+      'diff',
+      'createdAt',
+      'status',
+    ])
+    || value.id !== previewId
+    || !isBoundedNonEmptyString(value.title, 1_000)
+    || !isBoundedNonEmptyString(value.description, 4_000)
+    || !candidate.payload
+    || !isPlayAdoptionTouchedFiles(
+      touchedFiles,
+      candidate.target,
+      candidate.payload,
+    )
+    || !isPlayAdoptionDiff(value.diff, touchedFiles)
+    || !isValidPlayTimestamp(value.createdAt)
+    || value.status !== 'pending'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isWorkspaceDecisionRefreshEnvelope(
+  value: unknown,
+): value is WorkspaceDecisionRefresh {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['workspaceStatus', 'projectHealth'])
+    || !isWorkspaceStatusEnvelope(value.workspaceStatus)
+    || !isProjectHealthEnvelope(value.projectHealth)
+  ) {
+    return false;
+  }
+  return value.workspaceStatus.pendingActionCount
+    === value.projectHealth.pendingActionCount;
+}
+
+function isWorkspaceStatusEnvelope(value: unknown): value is WorkspaceStatus {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['pendingActionCount', 'git', 'gitConfig'])
+    && isNonNegativeSafeInteger(value.pendingActionCount)
+    && isGitWorkspaceStatusEnvelope(value.git)
+    && isRecord(value.gitConfig)
+    && hasOnlyKnownFields(value.gitConfig, ['autoCommitOnAccept'])
+    && typeof value.gitConfig.autoCommitOnAccept === 'boolean';
+}
+
+function isGitWorkspaceStatusEnvelope(value: unknown): value is GitWorkspaceStatus {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'available',
+      'source',
+      'version',
+      'repository',
+      'branch',
+      'head',
+      'status',
+      'dirty',
+      'files',
+      'error',
+    ])
+    || typeof value.available !== 'boolean'
+    || value.source !== 'global'
+    || (value.version !== undefined && typeof value.version !== 'string')
+    || typeof value.repository !== 'boolean'
+    || (value.branch !== undefined && typeof value.branch !== 'string')
+    || (value.head !== undefined && typeof value.head !== 'string')
+    || (value.status !== 'clean' && value.status !== 'dirty' && value.status !== 'unknown')
+    || (value.dirty !== null && typeof value.dirty !== 'boolean')
+    || !Array.isArray(value.files)
+    || !value.files.every(isGitFileStatusEnvelope)
+    || (value.error !== undefined && !isGitCommandErrorEnvelope(value.error))
+  ) {
+    return false;
+  }
+  return value.status === 'clean'
+    ? value.dirty === false
+    : value.status === 'dirty'
+      ? value.dirty === true
+      : value.dirty === null;
+}
+
+function isGitFileStatusEnvelope(value: unknown): value is GitFileStatus {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['path', 'indexStatus', 'worktreeStatus', 'raw'])
+    && isNonEmptyString(value.path)
+    && typeof value.indexStatus === 'string'
+    && typeof value.worktreeStatus === 'string'
+    && typeof value.raw === 'string';
+}
+
+function isGitCommandErrorEnvelope(value: unknown): value is GitCommandError {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['code', 'message', 'stderr'])
+    && (
+      value.code === 'git_unavailable'
+      || value.code === 'not_git_repository'
+      || value.code === 'identity_missing'
+      || value.code === 'remote_missing'
+      || value.code === 'auth_failed'
+      || value.code === 'conflict'
+      || value.code === 'invalid_input'
+      || value.code === 'git_failed'
+    )
+    && isNonEmptyString(value.message)
+    && (value.stderr === undefined || typeof value.stderr === 'string');
+}
+
+function isProjectHealthEnvelope(value: unknown): value is ProjectHealth {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'generatedAt',
+      'missingCharacterCards',
+      'chaptersWithoutSummaries',
+      'activeHookCount',
+      'latestStateStale',
+      'timelineGapCount',
+      'pendingActionCount',
+      'issues',
+    ])
+    && isValidPlayTimestamp(value.generatedAt)
+    && isUniqueNonEmptyStringArray(value.missingCharacterCards)
+    && isUniqueNonEmptyStringArray(value.chaptersWithoutSummaries)
+    && isNonNegativeSafeInteger(value.activeHookCount)
+    && typeof value.latestStateStale === 'boolean'
+    && isNonNegativeSafeInteger(value.timelineGapCount)
+    && isNonNegativeSafeInteger(value.pendingActionCount)
+    && Array.isArray(value.issues)
+    && value.issues.every(isProjectHealthIssueEnvelope)
+    && new Set(value.issues.map((issue) => issue.id)).size === value.issues.length;
+}
+
+function isProjectHealthIssueEnvelope(value: unknown): value is ProjectHealthIssue {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['id', 'severity', 'title', 'detail', 'path'])
+    && isBoundedNonEmptyString(value.id, 1_000)
+    && (value.severity === 'info' || value.severity === 'warning' || value.severity === 'error')
+    && isNonEmptyString(value.title)
+    && isNonEmptyString(value.detail)
+    && (value.path === undefined || typeof value.path === 'string');
+}
+
+function normalizePlayOutcomeAdoptionRequest(input: {
+  baseRevision: number;
+  target: PlayAdoptionTarget;
+  payload?: Record<string, unknown>;
+}): {
+  baseRevision: number;
+  target: PlayAdoptionTarget;
+  payload?: Record<string, unknown>;
+} {
+  if (
+    !isNonNegativeSafeInteger(input.baseRevision)
+    || !isPlayAdoptionTarget(input.target)
+    || (input.payload !== undefined && !isRecord(input.payload))
+  ) {
+    throw new Error('Play outcome adoption request is invalid.');
+  }
+  return structuredClone(input);
+}
+
+function isPlayAdoptionTarget(value: unknown): value is PlayAdoptionTarget {
+  return value === 'chapterDraft'
+    || value === 'state'
+    || value === 'timeline'
+    || value === 'foreshadow';
+}
+
+function isValidPlayTimestamp(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 128
+    && Number.isFinite(Date.parse(value));
+}
+
+function normalizeCreatePlayWritingReferenceRequest(
+  input: CreatePlayWritingReferenceAttachmentInput,
+): CreatePlayWritingReferenceAttachmentInput {
+  if (
+    !isSafePlayFactId(input.sessionId)
+    || !isNonNegativeSafeInteger(input.baseRevision)
+    || !isUniqueSafePlayIdArray(input.selectedOutcomeItemIds)
+    || input.selectedOutcomeItemIds.length === 0
+    || input.selectedOutcomeItemIds.length > 24
+  ) {
+    throw new Error('Play writing reference request is invalid.');
+  }
+  return structuredClone(input);
+}
+
+function requireSafePlayClientId(value: unknown, label: string): string {
+  if (!isSafePlayFactId(value)) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function parsePlayOutcomeReportResponse(
+  value: unknown,
+  sessionId: string,
+  projection: PlayOutcomeProjection,
+  requireFiles: true,
+): PlayOutcomeReportGenerateResult;
+function parsePlayOutcomeReportResponse(
+  value: unknown,
+  sessionId: string,
+  projection: PlayOutcomeProjection,
+  requireFiles: false,
+): PlayOutcomeReportResult;
+function parsePlayOutcomeReportResponse(
+  value: unknown,
+  sessionId: string,
+  projection: PlayOutcomeProjection,
+  requireFiles: boolean,
+): PlayOutcomeReportGenerateResult | PlayOutcomeReportResult {
+  const expectedFields = requireFiles
+    ? ['report', 'reportFingerprint', 'projection', 'status', 'staleReasons', 'files']
+    : ['report', 'reportFingerprint', 'projection', 'status', 'staleReasons'];
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, expectedFields)
+    || value.projection !== projection
+    || (value.status !== 'current' && value.status !== 'stale')
+    || !isPlayOutcomeReportEnvelope(value.report, sessionId, projection)
+    || !isSha256Hex(value.reportFingerprint)
+    || !isPlayOutcomeStaleReasonList(value.staleReasons, projection)
+    || (value.status === 'current' && value.staleReasons.length !== 0)
+    || (value.status === 'stale' && value.staleReasons.length === 0)
+    || (requireFiles && (!isStringArray(value.files) || value.files.length !== 2))
+  ) {
+    throw new Error('Play outcome report returned an invalid payload.');
+  }
+  return value as unknown as PlayOutcomeReportGenerateResult | PlayOutcomeReportResult;
+}
+
+function isPlayOutcomeReportEnvelope(
+  value: unknown,
+  sessionId: string,
+  projection: PlayOutcomeProjection,
+): value is PlayOutcomeReport {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'sessionId',
+      'sceneId',
+      'createdAt',
+      'sessionRevision',
+      'selectedArtifactTurnRefs',
+      'sourceSnapshots',
+      'items',
+    ])
+    && value.schemaVersion === 1
+    && value.sessionId === sessionId
+    && (value.sceneId === undefined || isSafePlayFactId(value.sceneId))
+    && isValidPlayTimestamp(value.createdAt)
+    && isNonNegativeSafeInteger(value.sessionRevision)
+    && isUniqueSafePlayIdArray(value.selectedArtifactTurnRefs)
+    && Array.isArray(value.sourceSnapshots)
+    && value.sourceSnapshots.every(isPlayOutcomeSourceSnapshotEnvelope)
+    && new Set(value.sourceSnapshots.map((snapshot) => snapshot.sourceId)).size
+      === value.sourceSnapshots.length
+    && Array.isArray(value.items)
+    && value.items.every((item) => isPlayOutcomeItemEnvelope(item, projection))
+    && hasUniqueEntityIds(value.items)
+    && (projection !== 'player' || (
+      value.selectedArtifactTurnRefs.length === 0
+      && value.sourceSnapshots.length === 0
+      && value.items.every((item) =>
+        item.visibility !== 'playerUnknown'
+        && item.artifactTurnRefs.length === 0
+        && item.messageRefs.length === 0
+        && item.eventRefs.length === 0
+        && item.observationRefs.length === 0
+        && item.sourceRefs.length === 0
+        && item.evidenceRefs.length === 0
+        && item.participantRefs.length === 0)
+    ));
+}
+
+function isPlayOutcomeSourceSnapshotEnvelope(
+  value: unknown,
+): value is PlayOutcomeSourceSnapshot {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['sourceId', 'path', 'contentHash'])
+    && isBoundedNonEmptyString(value.sourceId, 512)
+    && (value.path === undefined || isNonEmptyString(value.path))
+    && (value.contentHash === undefined || /^[a-f0-9]{64}$/u.test(String(value.contentHash)));
+}
+
+function isPlayOutcomeItemEnvelope(
+  value: unknown,
+  projection: PlayOutcomeProjection,
+): value is PlayOutcomeItem {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'kind',
+      'summary',
+      'visibility',
+      'confidence',
+      'goalStatus',
+      'tags',
+      'artifactTurnRefs',
+      'messageRefs',
+      'eventRefs',
+      'observationRefs',
+      'evidenceRefs',
+      'sourceRefs',
+      'participantRefs',
+    ])
+    || !isSafePlayFactId(value.id)
+    || !isPlayOutcomeItemKind(value.kind)
+    || !isNonEmptyString(value.summary)
+    || !isPlayVisibility(value.visibility)
+    || !isPlayOutcomeConfidence(value.confidence)
+    || !isPlayOutcomeTagList(value.tags)
+    || !isUniqueSafePlayIdArray(value.artifactTurnRefs)
+    || !isUniqueSafePlayIdArray(value.messageRefs)
+    || !isUniqueSafePlayIdArray(value.eventRefs)
+    || !isUniqueSafePlayIdArray(value.observationRefs)
+    || !isUniqueSafePlayIdArray(value.evidenceRefs)
+    || !isUniqueSafePlayIdArray(value.sourceRefs)
+    || !isUniqueSafePlayIdArray(value.participantRefs)
+    || (projection === 'director' && value.artifactTurnRefs.length === 0)
+    || value.tags.length === 0
+  ) {
+    return false;
+  }
+  return value.kind === 'goalAssessment'
+    ? isPlayOutcomeGoalStatus(value.goalStatus)
+    : value.goalStatus === undefined;
+}
+
+function isPlayOutcomeItemKind(value: unknown): value is PlayOutcomeItemKind {
+  return value === 'sceneSummary'
+    || value === 'goalAssessment'
+    || value === 'participantFootprint'
+    || value === 'worldChange'
+    || value === 'writingMaterial';
+}
+
+function isPlayOutcomeConfidence(value: unknown): value is PlayOutcomeConfidence {
+  return value === 'confirmed' || value === 'inferred' || value === 'authorProvided';
+}
+
+function isPlayOutcomeGoalStatus(value: unknown): value is PlayOutcomeGoalStatus {
+  return value === 'reached' || value === 'partial' || value === 'missed' || value === 'changed';
+}
+
+function isPlayOutcomeTagList(value: unknown): value is PlayOutcomeTag[] {
+  return Array.isArray(value)
+    && value.every((tag) =>
+      tag === 'goal'
+      || tag === 'divergence'
+      || tag === 'consistency'
+      || tag === 'worldChange'
+      || tag === 'participantFootprint'
+      || tag === 'writingMaterial')
+    && new Set(value).size === value.length;
+}
+
+function isPlayOutcomeStaleReasonList(
+  value: unknown,
+  projection: PlayOutcomeProjection,
+): value is PlayOutcomeReportStaleReason[] {
+  return Array.isArray(value)
+    && value.every((reason) =>
+      reason === 'sessionRevisionChanged'
+      || reason === 'selectedBranchChanged'
+      || reason === 'sourceSnapshotChanged'
+      || (projection === 'director' && typeof reason === 'string' && (
+        reason.startsWith('sourceContentChanged:')
+        || reason.startsWith('sourceUnavailable:')
+      )))
+    && new Set(value).size === value.length;
+}
+
+function parsePlayOutcomeAdoptionResponse(
+  value: unknown,
+  sessionId: string,
+): {
+  session: PlaySession;
+  observation: PlayObservation;
+  candidate: PlayAdoptionCandidate;
+} {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['session', 'observation', 'candidate'])
+    || !isPlaySessionEnvelope(value.session, sessionId)
+    || !isPlayObservationEnvelope(value.observation)
+    || !isPlayAdoptionCandidateEnvelope(value.candidate)
+    || !value.candidate.sourceObservationIds.includes(value.observation.id)
+    || !value.session.observations.some((item) =>
+      isDeepEqualJson(item, value.observation))
+    || !value.session.adoptionCandidates.some((item) =>
+      isDeepEqualJson(item, value.candidate))
+  ) {
+    throw new Error('Play outcome adoption returned an invalid payload.');
+  }
+  return value as unknown as {
+    session: PlaySession;
+    observation: PlayObservation;
+    candidate: PlayAdoptionCandidate;
+  };
+}
+
+function parsePlayWritingReferenceCreateResponse(value: unknown): {
+  attachment: PlayWritingReferenceAttachment;
+  files: string[];
+} {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['attachment', 'files'])
+    || !isPlayWritingReferenceAttachmentEnvelope(value.attachment)
+    || value.attachment.status !== 'active'
+    || !isStringArray(value.files)
+    || value.files.length !== 1
+  ) {
+    throw new Error('Play writing reference creation returned an invalid payload.');
+  }
+  return value as unknown as {
+    attachment: PlayWritingReferenceAttachment;
+    files: string[];
+  };
+}
+
+function parsePlayWritingReferenceListResponse(value: unknown): {
+  attachments: PlayWritingReferenceAttachment[];
+} {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['attachments'])
+    || !Array.isArray(value.attachments)
+    || !value.attachments.every(isPlayWritingReferenceAttachmentEnvelope)
+    || !hasUniqueEntityIds(value.attachments)
+  ) {
+    throw new Error('Play writing reference list returned an invalid payload.');
+  }
+  return value as unknown as { attachments: PlayWritingReferenceAttachment[] };
+}
+
+function parsePlayWritingReferenceDetachResponse(
+  value: unknown,
+  attachmentId: string,
+): { attachment: PlayWritingReferenceAttachment } {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['attachment'])
+    || !isPlayWritingReferenceAttachmentEnvelope(value.attachment)
+    || value.attachment.id !== attachmentId
+    || value.attachment.status !== 'detached'
+    || value.attachment.detachedAt === undefined
+  ) {
+    throw new Error('Play writing reference detach returned an invalid payload.');
+  }
+  return value as unknown as { attachment: PlayWritingReferenceAttachment };
+}
+
+function isPlayWritingReferenceAttachmentEnvelope(
+  value: unknown,
+): value is PlayWritingReferenceAttachment {
+  if (!isRecord(value)) return false;
+  return hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'id',
+      'sessionId',
+      'reportRef',
+      'reportFingerprint',
+      'selectedOutcomeItemRefs',
+      'selectedArtifactTurnRefs',
+      'evidenceClosureRefs',
+      'sourceSnapshots',
+      'status',
+      'createdAt',
+      'detachedAt',
+    ])
+    && value.schemaVersion === 1
+    && isSafePlayFactId(value.id)
+    && isSafePlayFactId(value.sessionId)
+    && value.reportRef === `.workspace/play-sessions/${value.sessionId}/reports/outcome.yaml`
+    && typeof value.reportFingerprint === 'string'
+    && /^[a-f0-9]{64}$/u.test(value.reportFingerprint)
+    && isUniqueSafePlayIdArray(value.selectedOutcomeItemRefs)
+    && value.selectedOutcomeItemRefs.length > 0
+    && value.selectedOutcomeItemRefs.length <= 24
+    && isUniqueSafePlayIdArray(value.selectedArtifactTurnRefs)
+    && isUniquePlayEvidenceClosureRefArray(value.evidenceClosureRefs)
+    && value.evidenceClosureRefs.length > 0
+    && Array.isArray(value.sourceSnapshots)
+    && value.sourceSnapshots.every(isPlayOutcomeSourceSnapshotEnvelope)
+    && new Set(value.sourceSnapshots.map((source) => source.sourceId)).size
+      === value.sourceSnapshots.length
+    && (value.status === 'active' || value.status === 'detached' || value.status === 'stale')
+    && isValidPlayTimestamp(value.createdAt)
+    && (value.detachedAt === undefined || isValidPlayTimestamp(value.detachedAt))
+    && (value.status === 'detached'
+      ? value.detachedAt !== undefined
+      : value.detachedAt === undefined);
+}
+
 function parsePlaySessionCreateResponse(
   value: unknown,
   requestedSessionId?: string,
@@ -2479,7 +3864,7 @@ function isPlaySessionV4Envelope(
     && isRecord(value.metadataExtensions)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
-    && hasValidPlayWorldMomentumState(
+    && hasValidPlayReservedState(
       value.playLocalState,
       value.playLocalStateVisibility,
     )
@@ -2871,7 +4256,15 @@ function hasConsistentPlayV2Artifact(
   const predecessorSuggestedActions = parentComplete
     ? parent.suggestedActions
     : branchBaseSnapshot.suggestedActions;
-  if (artifact.revision <= predecessorClock.revision) {
+  if (
+    artifact.revision <= predecessorClock.revision ||
+    !hasValidPlayKnowledgeTransition(
+      artifact,
+      predecessorState,
+      artifactsById,
+      eventsById,
+    )
+  ) {
     return false;
   }
   const expectedTurn = predecessorClock.turn +
@@ -2890,7 +4283,8 @@ function hasConsistentPlayV2Artifact(
         ? 'rumor'
         : 'playerVisible';
   for (const key of Object.keys(artifact.stateDelta)) {
-    expectedVisibility[key] = key === 'worldMomentum'
+    expectedVisibility[key] = key === 'worldMomentum' ||
+        key === PLAY_KNOWLEDGE_STATE_KEY
       ? 'playerUnknown'
       : settlementVisibility;
   }
@@ -3046,6 +4440,104 @@ function hasValidPlayBranchBaseScheduleSeeds(
     event.occurredEventIds === undefined &&
     event.resolvedAtTurnId === undefined &&
     event.resolutionReason === undefined);
+}
+
+function hasValidPlayKnowledgeTransition(
+  artifact: PlayTurnArtifact,
+  predecessorState: Record<string, unknown>,
+  artifactsById: Map<string, PlayTurnArtifact>,
+  eventsById: Map<string, PlayWorldEvent>,
+): boolean {
+  const predecessorKnowledge = Object.hasOwn(
+    predecessorState,
+    PLAY_KNOWLEDGE_STATE_KEY,
+  )
+    ? predecessorState[PLAY_KNOWLEDGE_STATE_KEY]
+    : { schemaVersion: 1, records: [] };
+  if (!isPlayKnowledgeState(predecessorKnowledge)) {
+    return false;
+  }
+
+  if (!Object.hasOwn(artifact.stateDelta, PLAY_KNOWLEDGE_STATE_KEY)) {
+    return true;
+  }
+  const nextKnowledge = artifact.stateDelta[PLAY_KNOWLEDGE_STATE_KEY];
+  if (
+    artifact.artifactKind !== 'worldSettlement' ||
+    !isPlayKnowledgeState(nextKnowledge) ||
+    nextKnowledge.records.length <= predecessorKnowledge.records.length
+  ) {
+    return false;
+  }
+
+  const appendedRecords = nextKnowledge.records.slice(
+    predecessorKnowledge.records.length,
+  );
+  if (
+    appendedRecords.length > MAX_PLAY_KNOWLEDGE_CHANGES_PER_TURN ||
+    !predecessorKnowledge.records.every((record, index) =>
+      isDeepEqualJson(record, nextKnowledge.records[index]))
+  ) {
+    return false;
+  }
+
+  const refereeTurnId = artifact.messages[1]?.id;
+  if (!refereeTurnId) {
+    return false;
+  }
+  const projections = new Map<string, PlayKnowledgePlayerProjection>();
+  for (const record of predecessorKnowledge.records) {
+    projections.set(record.subjectEventId, record.playerProjection);
+  }
+  const changedSubjects = new Set<string>();
+  const usedRevealEvents = new Set<string>();
+
+  for (const [index, record] of appendedRecords.entries()) {
+    const previousProjection = projections.get(record.subjectEventId) ??
+      'playerUnknown';
+    const subjectEvent = eventsById.get(record.subjectEventId);
+    const subjectOwner = findPlayEventOwner(
+      record.subjectEventId,
+      artifactsById,
+    );
+    const matchingRevealEvents = artifact.eventIds
+      .map((eventId) => eventsById.get(eventId))
+      .filter((event): event is PlayWorldEvent =>
+        event !== undefined &&
+        event.kind === 'informationSpread' &&
+        event.visibility === record.playerProjection &&
+        event.cause.sourceEventIds?.includes(record.subjectEventId) === true);
+    const revealEvent = matchingRevealEvents[0];
+
+    if (
+      record.id !== `knowledge-${artifact.revision}-${index + 1}` ||
+      changedSubjects.has(record.subjectEventId) ||
+      record.previousPlayerProjection !== previousProjection ||
+      !subjectEvent ||
+      subjectEvent.visibility !== 'playerUnknown' ||
+      !subjectOwner ||
+      subjectOwner.id === artifact.id ||
+      !isPlayArtifactAncestorOrSelf(
+        subjectOwner.id,
+        artifact,
+        artifactsById,
+      ) ||
+      matchingRevealEvents.length !== 1 ||
+      !revealEvent ||
+      usedRevealEvents.has(revealEvent.id) ||
+      record.revealedAtTurnId !== refereeTurnId ||
+      record.revealedByEventId !== revealEvent.id ||
+      revealEvent.turnId !== refereeTurnId
+    ) {
+      return false;
+    }
+
+    changedSubjects.add(record.subjectEventId);
+    usedRevealEvents.add(revealEvent.id);
+    projections.set(record.subjectEventId, record.playerProjection);
+  }
+
+  return true;
 }
 
 function findPlayEventOwner(
@@ -3264,7 +4756,7 @@ function isPlayBranchBaseSnapshotEnvelope(
     && isPlayWorldClock(value.worldClock)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
-    && hasValidPlayWorldMomentumState(
+    && hasValidPlayReservedState(
       value.playLocalState,
       value.playLocalStateVisibility,
     )
@@ -3412,7 +4904,7 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
       || isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot))
     && (
       value.playLocalStateSnapshot === undefined ||
-      hasValidPlayWorldMomentumState(
+      hasValidPlayReservedState(
         value.playLocalStateSnapshot,
         value.playLocalStateVisibilitySnapshot,
       )
@@ -3434,7 +4926,7 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
         : value.rehearsalEvidenceRefs === undefined
     )
     && isRecord(value.stateDelta)
-    && hasValidPlayWorldMomentumDelta(value.stateDelta)
+    && hasValidPlayReservedStateDelta(value.stateDelta)
     && isUniqueNonEmptyStringArray(value.suggestedActions)
     && isNonEmptyString(value.committedAt)
     && value.canonical === false;
@@ -4202,20 +5694,52 @@ function isPlayObservationEnvelope(value: unknown): value is PlayObservation {
 }
 
 function isPlayAdoptionCandidateEnvelope(value: unknown): value is PlayAdoptionCandidate {
-  return isRecord(value)
-    && isSafePlayFactId(value.id)
-    && (value.target === 'chapterDraft'
-      || value.target === 'state'
-      || value.target === 'timeline'
-      || value.target === 'foreshadow')
-    && isNonEmptyString(value.summary)
-    && typeof value.evidence === 'string'
-    && (value.payload === undefined || isRecord(value.payload))
-    && isPlayVisibility(value.visibility)
-    && isUniqueSafePlayIdArray(value.sourceObservationIds)
-    && isUniqueSafePlayIdArray(value.sourceTurnIds)
-    && isUniqueSafePlayIdArray(value.sourceEventIds)
-    && value.requiresPendingAction === true;
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'target',
+      'summary',
+      'evidence',
+      'payload',
+      'visibility',
+      'sourceObservationIds',
+      'sourceTurnIds',
+      'sourceEventIds',
+      'seed',
+      'evidenceClosure',
+      'evidenceFingerprint',
+      'requiresPendingAction',
+    ])
+    || !isSafePlayFactId(value.id)
+    || !isPlayAdoptionTarget(value.target)
+    || !isNonEmptyString(value.summary)
+    || !isNonEmptyString(value.evidence)
+    || (value.payload !== undefined && !isStrictJsonRecord(value.payload))
+    || !isPlayVisibility(value.visibility)
+    || !isUniqueSafePlayIdArray(value.sourceObservationIds)
+    || !isUniqueSafePlayIdArray(value.sourceTurnIds)
+    || !isUniqueSafePlayIdArray(value.sourceEventIds)
+    || value.requiresPendingAction !== true
+  ) {
+    return false;
+  }
+  const hasSeed = value.seed !== undefined;
+  const hasClosure = value.evidenceClosure !== undefined;
+  const hasFingerprint = value.evidenceFingerprint !== undefined;
+  if (!(hasSeed || hasClosure || hasFingerprint)) return true;
+  return hasSeed
+    && hasClosure
+    && hasFingerprint
+    && isPlayAdoptionSeedEnvelope(value.seed)
+    && isPlayAdoptionEvidenceClosureEnvelope(value.evidenceClosure)
+    && isSha256Hex(value.evidenceFingerprint)
+    && isDeepEqualJson(
+      value.sourceObservationIds,
+      value.evidenceClosure.observationRefs,
+    )
+    && isDeepEqualJson(value.sourceTurnIds, value.evidenceClosure.messageRefs)
+    && isDeepEqualJson(value.sourceEventIds, value.evidenceClosure.eventRefs);
 }
 
 function isPlayVisibilityMap(value: unknown): value is Record<string, PlayEventVisibility> {
@@ -4248,6 +5772,14 @@ function formatPlayRelativeTimeAdvance(value: PlayRelativeTimeAdvance): string {
   return `P${value.amount}D`;
 }
 
+function hasValidPlayReservedState(
+  state: Record<string, unknown>,
+  visibility: unknown,
+): boolean {
+  return hasValidPlayWorldMomentumState(state, visibility) &&
+    hasValidPlayKnowledgeState(state, visibility);
+}
+
 function hasValidPlayWorldMomentumState(
   state: Record<string, unknown>,
   visibility: unknown,
@@ -4264,9 +5796,118 @@ function hasValidPlayWorldMomentumState(
     && visibility.worldMomentum === 'playerUnknown';
 }
 
-function hasValidPlayWorldMomentumDelta(stateDelta: Record<string, unknown>): boolean {
-  return !Object.prototype.hasOwnProperty.call(stateDelta, 'worldMomentum')
-    || isPlayWorldMomentum(stateDelta.worldMomentum);
+function hasValidPlayKnowledgeState(
+  state: Record<string, unknown>,
+  visibility: unknown,
+): boolean {
+  const hasKnowledge = Object.hasOwn(state, PLAY_KNOWLEDGE_STATE_KEY);
+  const visibilityHasKnowledge = isRecord(visibility) &&
+    Object.hasOwn(visibility, PLAY_KNOWLEDGE_STATE_KEY);
+  if (!hasKnowledge) {
+    return !visibilityHasKnowledge;
+  }
+
+  return isPlayKnowledgeState(state[PLAY_KNOWLEDGE_STATE_KEY]) &&
+    isRecord(visibility) &&
+    visibility[PLAY_KNOWLEDGE_STATE_KEY] === 'playerUnknown';
+}
+
+function hasValidPlayReservedStateDelta(
+  stateDelta: Record<string, unknown>,
+): boolean {
+  return (
+    !Object.hasOwn(stateDelta, 'worldMomentum') ||
+    isPlayWorldMomentum(stateDelta.worldMomentum)
+  ) && (
+    !Object.hasOwn(stateDelta, PLAY_KNOWLEDGE_STATE_KEY) ||
+    isPlayKnowledgeState(stateDelta[PLAY_KNOWLEDGE_STATE_KEY])
+  );
+}
+
+function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['schemaVersion', 'records']) ||
+    value.schemaVersion !== PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION ||
+    !Array.isArray(value.records) ||
+    value.records.length > MAX_PLAY_KNOWLEDGE_RECORDS ||
+    !value.records.every(isPlayEventRevealRecord)
+  ) {
+    return false;
+  }
+
+  const recordIds = new Set<string>();
+  const revealEventIds = new Set<string>();
+  const projections = new Map<string, PlayKnowledgePlayerProjection>();
+  const subjectCounts = new Map<string, number>();
+  let previousRevision = -1;
+  let previousLocalIndex = 0;
+
+  for (const record of value.records) {
+    const idMatch = /^knowledge-(0|[1-9][0-9]*)-([1-9][0-9]*)$/u.exec(
+      record.id,
+    );
+    if (!idMatch) {
+      return false;
+    }
+    const revision = Number(idMatch[1]);
+    const localIndex = Number(idMatch[2]);
+    const previousProjection = projections.get(record.subjectEventId) ??
+      'playerUnknown';
+    const subjectCount = subjectCounts.get(record.subjectEventId) ?? 0;
+    if (
+      !Number.isSafeInteger(revision) ||
+      !Number.isSafeInteger(localIndex) ||
+      revision < previousRevision ||
+      (revision === previousRevision
+        ? localIndex !== previousLocalIndex + 1
+        : localIndex !== 1) ||
+      recordIds.has(record.id) ||
+      revealEventIds.has(record.revealedByEventId) ||
+      subjectCount >= 2 ||
+      record.previousPlayerProjection !== previousProjection
+    ) {
+      return false;
+    }
+    recordIds.add(record.id);
+    revealEventIds.add(record.revealedByEventId);
+    projections.set(record.subjectEventId, record.playerProjection);
+    subjectCounts.set(record.subjectEventId, subjectCount + 1);
+    previousRevision = revision;
+    previousLocalIndex = localIndex;
+  }
+  return true;
+}
+
+function isPlayEventRevealRecord(
+  value: unknown,
+): value is PlayEventRevealRecord {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'kind',
+      'subjectEventId',
+      'previousPlayerProjection',
+      'playerProjection',
+      'knownByParticipantRefs',
+      'revealedAtTurnId',
+      'revealedByEventId',
+      'canonical',
+    ])
+    && isSafePlayFactId(value.id)
+    && value.kind === 'eventReveal'
+    && isSafePlayFactId(value.subjectEventId)
+    && (value.previousPlayerProjection === 'playerUnknown'
+      || value.previousPlayerProjection === 'rumor')
+    && (value.playerProjection === 'rumor'
+      || value.playerProjection === 'playerVisible')
+    && !(value.previousPlayerProjection === 'rumor'
+      && value.playerProjection === 'rumor')
+    && Array.isArray(value.knownByParticipantRefs)
+    && value.knownByParticipantRefs.length === 0
+    && isSafePlayFactId(value.revealedAtTurnId)
+    && isSafePlayFactId(value.revealedByEventId)
+    && value.canonical === false;
 }
 
 function isPlayWorldMomentum(value: unknown): value is PlayWorldMomentum {
@@ -4434,6 +6075,15 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isBoundedNonEmptyString(
+  value: unknown,
+  maximumLength: number,
+): value is string {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && value.length <= maximumLength;
+}
+
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -4467,6 +6117,15 @@ function isUniqueSafePlayIdArray(value: unknown): value is string[] {
 function isUniqueNonEmptyStringArray(value: unknown): value is string[] {
   return Array.isArray(value)
     && value.every(isNonEmptyString)
+    && new Set(value).size === value.length;
+}
+
+function isUniquePlayEvidenceClosureRefArray(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.every((item) => typeof item === 'string'
+      && /^(artifact|message|event|observation|evidence|source|participant):[A-Za-z0-9][A-Za-z0-9._-]*$/u
+        .test(item)
+      && !item.includes('..'))
     && new Set(value).size === value.length;
 }
 

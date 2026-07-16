@@ -675,7 +675,7 @@ describe('usePlayTurnStream', () => {
     expect(source).toContain('{{ announcement }}');
     expect(source).toContain(':busy="interactionBlocked"');
     expect(source).toContain('<PlayHistoryControls');
-    expect(source).toContain(':disabled="disabled || Boolean(busyCandidateId)"');
+    expect(source).toContain('Preview canonical diff');
   });
 });
 

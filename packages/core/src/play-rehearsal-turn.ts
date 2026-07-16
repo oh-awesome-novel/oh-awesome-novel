@@ -143,6 +143,8 @@ export function aggregatePlayTurnAttemptSettlement(
   const agendaChanges: PlayWorldRefereeSettlement['agendaChanges'] = [];
   const scheduledEventChanges:
     PlayWorldRefereeSettlement['scheduledEventChanges'] = [];
+  const knowledgeChanges: PlayWorldRefereeSettlement['knowledgeChanges'] = [];
+  const changedKnowledgeSubjectIds = new Set<string>();
   const stateDelta: Record<string, unknown> = {};
   const observations: PlayWorldRefereeSettlement['observations'] = [];
   let suggestedActions: string[] = [];
@@ -163,6 +165,17 @@ export function aggregatePlayTurnAttemptSettlement(
     pressureChanges.push(...structuredClone(contribution.pressureChanges));
     agendaChanges.push(...structuredClone(contribution.agendaChanges));
     scheduledEventChanges.push(...structuredClone(contribution.scheduledEventChanges));
+    for (const change of contribution.knowledgeChanges) {
+      if (changedKnowledgeSubjectIds.has(change.subjectEventId)) {
+        throw new PlayTurnAttemptError(
+          'invalidTransition',
+          `Selected Play steps reveal the same knowledge subject more than once: ` +
+          `${change.subjectEventId}.`,
+        );
+      }
+      changedKnowledgeSubjectIds.add(change.subjectEventId);
+      knowledgeChanges.push(structuredClone(change));
+    }
     for (const [key, value] of Object.entries(contribution.stateDelta)) {
       if (Object.hasOwn(stateDelta, key)) {
         throw new PlayTurnAttemptError(
@@ -205,6 +218,7 @@ export function aggregatePlayTurnAttemptSettlement(
     pressureChanges,
     agendaChanges,
     scheduledEventChanges,
+    knowledgeChanges,
     stateDelta,
     observations,
     suggestedActions,
