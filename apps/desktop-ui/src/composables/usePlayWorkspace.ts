@@ -9,6 +9,7 @@ import {
 import { usePlaySessionHistory } from './usePlaySessionHistory';
 import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
 import { usePlayTurnStream } from './usePlayTurnStream';
+import { buildPlayEventCardViews } from './playWorldPresentation';
 import type {
   CreatePlaySceneRehearsalSessionInput,
   PlayActionKind,
@@ -19,6 +20,7 @@ import type {
   PlayObservation,
   PlayPressure,
   PlayRelativeTimeAdvance,
+  PlayScheduledEvent,
   PlaySession,
 } from './useWorkspaceApi';
 
@@ -155,8 +157,10 @@ export function usePlayWorkspace(
   const {
     checkpoints: historyCheckpoints,
     busyArtifactId: historyBusyArtifactId,
+    namingCheckpointId: historyNamingCheckpointId,
     loading: historyLoading,
     notice: historyNotice,
+    rename: renameCheckpoint,
     restore: restoreCheckpoint,
   } = usePlaySessionHistory({
     client: api,
@@ -170,6 +174,10 @@ export function usePlayWorkspace(
       resetTimeAdvance();
       error.value = '';
       adoptionNotice.value = '';
+    },
+    onRenamed(session) {
+      replaceSession(session);
+      error.value = '';
     },
     onError(caught) {
       error.value = toErrorMessage(caught);
@@ -225,7 +233,7 @@ export function usePlayWorkspace(
       .filter(([key]) => key !== PLAY_WORLD_MOMENTUM_STATE_KEY)
       .filter(([key]) =>
         showSpoilers.value ||
-        displaySession.value?.playLocalStateVisibility[key] !== 'playerUnknown',
+        displaySession.value?.playLocalStateVisibility[key] === 'playerVisible',
       )
       .map(([key, value]) => ({
         key,
@@ -291,35 +299,18 @@ export function usePlayWorkspace(
       right.createdAt.localeCompare(left.createdAt) || right.sequence - left.sequence,
     ),
   );
-  const causeLabelsByEventId = computed<Record<string, string[]>>(() => {
-    const pressuresById = new Map(
-      spoilerProjectedPressures.value.map((pressure) => [pressure.id, pressure]),
-    );
-    const agendasById = new Map(
-      spoilerProjectedAgendas.value.map((agenda) => [agenda.id, agenda]),
-    );
-
-    return Object.fromEntries(projectedEvents.value.map((event) => {
-      const labels: string[] = [];
-      const pressure = event.cause.pressureId
-        ? pressuresById.get(event.cause.pressureId)
-        : undefined;
-      const agenda = event.cause.agendaId
-        ? agendasById.get(event.cause.agendaId)
-        : undefined;
-
-      if (pressure) {
-        labels.push(`Pressure · ${pressure.label}`);
-      }
-      if (agenda) {
-        labels.push(
-          `Agenda · ${agenda.ownerEntityId}: ${agenda.nextMove ?? agenda.goal}`,
-        );
-      }
-
-      return [event.id, [...new Set(labels)]];
-    }));
-  });
+  const eventCards = computed(() => buildPlayEventCardViews({
+    events: sortedEvents.value,
+    artifacts: (displaySession.value?.turnArtifacts ?? []).filter((artifact) =>
+      selectedArtifactIds.value.has(artifact.id)),
+    showSpoilers: showSpoilers.value,
+  }));
+  const causeLabelsByEventId = computed<Record<string, string[]>>(() =>
+    Object.fromEntries(eventCards.value.map((card) => [
+      card.id,
+      card.causeLabels.map((cause) => cause.label),
+    ])),
+  );
   const visibleObservations = computed(() =>
     projectedObservations.value.filter(
       (observation) => showSpoilers.value || observation.visibility !== 'playerUnknown',
@@ -340,7 +331,8 @@ export function usePlayWorkspace(
         (right.priority ?? 0) - (left.priority ?? 0) ||
         left.scheduledAtTurn - right.scheduledAtTurn ||
         (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
-      ),
+      )
+      .map((event) => projectScheduledEventForView(event, showSpoilers.value)),
   );
   const hasHiddenPlayContent = computed(() => {
     const session = displaySession.value;
@@ -352,7 +344,7 @@ export function usePlayWorkspace(
       Object.keys(session.playLocalStateVisibility).some(
         (key) =>
           key !== PLAY_WORLD_MOMENTUM_STATE_KEY &&
-          session.playLocalStateVisibility[key] === 'playerUnknown',
+          session.playLocalStateVisibility[key] !== 'playerVisible',
       ) || projectedEvents.value.some((event) => event.visibility === 'playerUnknown')
       || projectedObservations.value.some((observation) =>
         observation.visibility === 'playerUnknown')
@@ -408,7 +400,7 @@ export function usePlayWorkspace(
 
   async function createSession(input: PlaySessionCreateRequest) {
     if (interactionBlocked.value) {
-      return;
+      return undefined;
     }
 
     creating.value = true;
@@ -416,16 +408,23 @@ export function usePlayWorkspace(
 
     try {
       const result = await api.createPlaySession(input);
-      sessions.value = [
-        result.session,
-        ...sessions.value.filter((session) => session.id !== result.session.id),
-      ];
-      rememberSelectedSession(result.session.id);
+      registerCreatedSession(result.session);
+      return result.session;
     } catch (caught) {
       error.value = toErrorMessage(caught);
+      return undefined;
     } finally {
       creating.value = false;
     }
+  }
+
+  function registerCreatedSession(session: PlaySession): void {
+    sessions.value = [
+      session,
+      ...sessions.value.filter((candidate) => candidate.id !== session.id),
+    ];
+    rememberSelectedSession(session.id);
+    error.value = '';
   }
 
   async function submitTurn() {
@@ -618,6 +617,7 @@ export function usePlayWorkspace(
     refreshBlocked,
     historyCheckpoints,
     historyBusyArtifactId,
+    historyNamingCheckpointId,
     historyRetryingArtifactId: readonly(historyRetryingArtifactId),
     historyLoading,
     historyNotice,
@@ -629,6 +629,7 @@ export function usePlayWorkspace(
     hasHiddenPlayContent,
     sessions,
     sortedEvents,
+    eventCards,
     causeLabelsByEventId,
     stateEntries,
     suggestedActions,
@@ -641,8 +642,10 @@ export function usePlayWorkspace(
     createPendingAction,
     createAdoptionCandidate,
     createSession,
+    registerCreatedSession,
     refreshSessions,
     retryCheckpoint,
+    renameCheckpoint,
     restoreCheckpoint,
     selectSession,
     stopTurn,
@@ -690,6 +693,23 @@ export function normalizeRelativeTimeAdvance(
   }
 
   return { ...value };
+}
+
+export function projectScheduledEventForView(
+  event: Readonly<PlayScheduledEvent>,
+  showSpoilers: boolean,
+): PlayScheduledEvent {
+  if (showSpoilers || event.trigger.type !== 'flagEquals') {
+    return event;
+  }
+  return {
+    ...event,
+    trigger: {
+      type: 'flagEquals',
+      path: 'tracked world condition',
+      value: 'matched',
+    },
+  };
 }
 
 function relativeTimeAdvanceMinutes(value: PlayRelativeTimeAdvance): number {

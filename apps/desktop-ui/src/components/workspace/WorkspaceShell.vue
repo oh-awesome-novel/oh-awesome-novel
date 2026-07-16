@@ -496,6 +496,9 @@ function applyDecisionRefresh(
       v-show="mode === 'play'"
       :workspace="workspace"
       :provider-configured="providerConfigured"
+      :files="tree"
+      :files-loading="treeLoading"
+      :files-error="treeError"
       @configure-provider="emit('configureProvider')"
       @pending-action-created="refreshPendingActionSurface"
     />

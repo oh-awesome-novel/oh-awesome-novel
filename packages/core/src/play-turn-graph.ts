@@ -18,14 +18,25 @@ export type PlayCheckpointStatus =
   | 'selectedAncestor'
   | 'variant';
 
+export type PlayCheckpointKind = 'initialWorld' | 'turn';
+
+export const PLAY_INITIAL_WORLD_CHECKPOINT_ID = 'initial-world' as const;
+export const PLAY_CHECKPOINT_NAMES_METADATA_KEY = 'playCheckpointNames' as const;
+
+const MAX_PLAY_CHECKPOINT_NAME_LENGTH = 80;
+
 export interface PlayCheckpointSummary {
-  artifactId: string;
-  parentArtifactId?: string;
+  checkpointId: string;
+  kind: PlayCheckpointKind;
+  artifactId?: string;
+  parentCheckpointId?: string;
   selectedTurnIds: string[];
+  depth: number;
   revision: number;
   worldTurn: number;
   committedAt: string;
   preview: string;
+  name?: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
   retryable: boolean;
@@ -33,9 +44,10 @@ export interface PlayCheckpointSummary {
 }
 
 /**
- * Lists the implicit checkpoints already carried by the immutable turn graph.
- * No parallel checkpoint state is created: complete v2 branch snapshots and the
- * legacy branch-base head are the only restorable facts.
+ * Lists checkpoints already carried by the immutable turn graph and its
+ * branch-base snapshot. No parallel checkpoint state is created: the virtual
+ * initial world, complete v2 branch snapshots, and the legacy branch-base head
+ * are the only restorable facts.
  */
 export function listPlaySessionCheckpoints(
   session: PlaySession,
@@ -44,8 +56,15 @@ export function listPlaySessionCheckpoints(
   const artifactsById = indexPlayTurnArtifacts(facts.turnArtifacts);
   const selectedArtifactIds = new Set(facts.selectedTurnIds);
   const currentArtifactId = facts.selectedTurnIds.at(-1);
+  const hasInitialWorldCheckpoint =
+    facts.branchBaseSnapshot.parentTurnId === undefined;
+  const checkpointNames = readPlayCheckpointNames(
+    session,
+    facts.turnArtifacts,
+    hasInitialWorldCheckpoint,
+  );
 
-  return facts.turnArtifacts
+  const turnCheckpoints = facts.turnArtifacts
     .map((artifact) => {
       const status: PlayCheckpointStatus = artifact.id === currentArtifactId
         ? 'current'
@@ -68,15 +87,29 @@ export function listPlaySessionCheckpoints(
           : 0;
 
       return {
+        checkpointId: artifact.id,
+        kind: 'turn' as const,
         artifactId: artifact.id,
         ...(artifact.parentTurnId
-          ? { parentArtifactId: artifact.parentTurnId }
-          : {}),
+          ? { parentCheckpointId: artifact.parentTurnId }
+          : hasInitialWorldCheckpoint
+            ? { parentCheckpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID }
+            : {}),
         selectedTurnIds,
+        depth: Math.max(
+          0,
+          selectedTurnIds.length - (hasInitialWorldCheckpoint ? 0 : 1),
+        ),
         revision: artifact.revision,
         worldTurn,
         committedAt: artifact.committedAt,
-        preview: formatPlayCheckpointPreview(artifact),
+        preview: formatPlayCheckpointPreview(artifact, {
+          importedStartingPoint: branchBaseHead && !completeSnapshot,
+          worldTurn,
+        }),
+        ...(checkpointNames[artifact.id]
+          ? { name: checkpointNames[artifact.id] }
+          : {}),
         status,
         restorable: status !== 'current' && (completeSnapshot || branchBaseHead),
         retryable:
@@ -89,22 +122,74 @@ export function listPlaySessionCheckpoints(
     .toSorted((left, right) =>
       left.revision - right.revision ||
       left.committedAt.localeCompare(right.committedAt) ||
-      left.artifactId.localeCompare(right.artifactId),
+      left.checkpointId.localeCompare(right.checkpointId),
     );
+
+  if (!hasInitialWorldCheckpoint) {
+    return turnCheckpoints;
+  }
+
+  const initialStatus: PlayCheckpointStatus = facts.selectedTurnIds.length === 0
+    ? 'current'
+    : 'selectedAncestor';
+  const initialCheckpoint: PlayCheckpointSummary = {
+    checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+    kind: 'initialWorld',
+    selectedTurnIds: [],
+    depth: 0,
+    revision: facts.branchBaseSnapshot.worldClock.revision,
+    worldTurn: facts.branchBaseSnapshot.worldClock.turn,
+    committedAt: session.createdAt,
+    preview: 'Initial world',
+    ...(checkpointNames[PLAY_INITIAL_WORLD_CHECKPOINT_ID]
+      ? { name: checkpointNames[PLAY_INITIAL_WORLD_CHECKPOINT_ID] }
+      : {}),
+    status: initialStatus,
+    restorable: initialStatus !== 'current',
+    retryable: false,
+    canonical: false,
+  };
+
+  // Preserve the established artifact ordering as a stable prefix for callers
+  // that already consume the implicit turn list. Timeline consumers should use
+  // parentCheckpointId / depth rather than array position to render the root.
+  return [...turnCheckpoints, initialCheckpoint];
 }
 
 /**
- * Restores the selected projection to an implicit turn checkpoint while
+ * Restores the selected projection to a turn or initial-world checkpoint while
  * retaining every historical artifact and ledger fact. Restoring is a new
  * Play-local mutation, so the session revision advances monotonically even
  * though the selected world clock and projections move to an older branch.
  */
 export function restorePlaySessionCheckpoint(
   session: PlaySession,
-  artifactId: string,
+  checkpointId: string,
 ): PlaySession {
-  const safeArtifactId = assertSafePlayTurnArtifactId(artifactId);
   const facts = materializePlayTurnFacts(session);
+  const hasInitialWorldCheckpoint =
+    facts.branchBaseSnapshot.parentTurnId === undefined;
+  readPlayCheckpointNames(
+    session,
+    facts.turnArtifacts,
+    hasInitialWorldCheckpoint,
+  );
+
+  if (checkpointId === PLAY_INITIAL_WORLD_CHECKPOINT_ID) {
+    if (!hasInitialWorldCheckpoint) {
+      throw new Error('Play initial-world checkpoint is unavailable for this session.');
+    }
+    if (facts.selectedTurnIds.length === 0) {
+      throw new Error(
+        `Play checkpoint is already current: ${PLAY_INITIAL_WORLD_CHECKPOINT_ID}.`,
+      );
+    }
+    return projectPlaySessionToTurnHead(session, undefined, {
+      advanceRevision: true,
+    });
+  }
+
+  const safeArtifactId = assertSafePlayTurnArtifactId(checkpointId);
   const artifactsById = indexPlayTurnArtifacts(facts.turnArtifacts);
   const artifact = artifactsById.get(safeArtifactId);
   if (!artifact) {
@@ -117,6 +202,54 @@ export function restorePlaySessionCheckpoint(
   return projectPlaySessionToTurnHead(session, safeArtifactId, {
     advanceRevision: true,
   });
+}
+
+/**
+ * Adds or replaces a user-facing name annotation for an immutable checkpoint.
+ * The annotation lives in session metadata rather than a parallel checkpoint
+ * fact store. Callers remain responsible for the filesystem CAS / staged write.
+ */
+export function renamePlaySessionCheckpoint(
+  session: PlaySession,
+  checkpointId: string,
+  name: string,
+): PlaySession {
+  const facts = materializePlayTurnFacts(session);
+  const hasInitialWorldCheckpoint =
+    facts.branchBaseSnapshot.parentTurnId === undefined;
+  const checkpointNames = readPlayCheckpointNames(
+    session,
+    facts.turnArtifacts,
+    hasInitialWorldCheckpoint,
+  );
+  const safeCheckpointId = assertKnownPlayCheckpointId(
+    checkpointId,
+    facts.turnArtifacts,
+    hasInitialWorldCheckpoint,
+  );
+  const normalizedName = normalizePlayCheckpointName(name);
+  const revision = resolvePlaySessionRevision(session, facts.turnArtifacts) + 1;
+  const renamed: PlaySession = {
+    ...session,
+    revision,
+    metadataExtensions: {
+      ...(session.metadataExtensions ?? {}),
+      [PLAY_CHECKPOINT_NAMES_METADATA_KEY]: {
+        ...checkpointNames,
+        [safeCheckpointId]: normalizedName,
+      },
+    },
+    worldClock: {
+      ...session.worldClock,
+      revision,
+    },
+  };
+
+  // Re-run both the selected projection and annotation validation before the
+  // caller can stage this Play-local metadata mutation.
+  materializePlayTurnFacts(renamed);
+  listPlaySessionCheckpoints(renamed);
+  return renamed;
 }
 
 /**
@@ -251,13 +384,91 @@ function isPlayBranchBaseHead(
   return artifact.id === branchBaseParentTurnId;
 }
 
-function formatPlayCheckpointPreview(artifact: PlayTurnArtifact): string {
+function formatPlayCheckpointPreview(
+  artifact: PlayTurnArtifact,
+  options: { importedStartingPoint: boolean; worldTurn: number },
+): string {
   // A checkpoint list is player-visible by default. Only the user's own input
   // is safe to summarize here; referee or narrator output can contain hidden
   // world facts and must stay behind the normal visibility projections.
   const content = artifact.input?.raw.trim().replace(/\s+/gu, ' ') ?? '';
   if (!content) {
-    return artifact.id;
+    return options.importedStartingPoint
+      ? 'Imported starting point'
+      : `World turn ${options.worldTurn}`;
   }
   return content.length > 160 ? `${content.slice(0, 157)}...` : content;
+}
+
+function readPlayCheckpointNames(
+  session: PlaySession,
+  artifacts: PlayTurnArtifact[],
+  hasInitialWorldCheckpoint: boolean,
+): Record<string, string> {
+  const value = session.metadataExtensions?.[PLAY_CHECKPOINT_NAMES_METADATA_KEY];
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error('Play checkpoint names metadata must be an object.');
+  }
+
+  const names: Record<string, string> = {};
+  for (const [checkpointId, storedName] of Object.entries(value)) {
+    const safeCheckpointId = assertKnownPlayCheckpointId(
+      checkpointId,
+      artifacts,
+      hasInitialWorldCheckpoint,
+    );
+    const normalizedName = normalizePlayCheckpointName(storedName);
+    if (normalizedName !== storedName) {
+      throw new Error(
+        `Play checkpoint name metadata is not normalized: ${safeCheckpointId}.`,
+      );
+    }
+    names[safeCheckpointId] = normalizedName;
+  }
+  return names;
+}
+
+function assertKnownPlayCheckpointId(
+  checkpointId: string,
+  artifacts: PlayTurnArtifact[],
+  hasInitialWorldCheckpoint: boolean,
+): string {
+  if (checkpointId === PLAY_INITIAL_WORLD_CHECKPOINT_ID) {
+    if (!hasInitialWorldCheckpoint) {
+      throw new Error('Play initial-world checkpoint is unavailable for this session.');
+    }
+    return checkpointId;
+  }
+
+  const safeArtifactId = assertSafePlayTurnArtifactId(checkpointId);
+  if (!artifacts.some((artifact) => artifact.id === safeArtifactId)) {
+    throw new Error(`Play checkpoint references an unknown artifact: ${safeArtifactId}.`);
+  }
+  return safeArtifactId;
+}
+
+function normalizePlayCheckpointName(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('Play checkpoint name must be a string.');
+  }
+  const name = value.trim();
+  if (!name) {
+    throw new Error('Play checkpoint name must not be empty.');
+  }
+  if (name.length > MAX_PLAY_CHECKPOINT_NAME_LENGTH) {
+    throw new Error(
+      `Play checkpoint name must be at most ${MAX_PLAY_CHECKPOINT_NAME_LENGTH} characters.`,
+    );
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(name)) {
+    throw new Error('Play checkpoint name must not contain control characters.');
+  }
+  return name;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

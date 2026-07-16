@@ -48,7 +48,62 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     );
   });
 
-  it('runs New session through guided setup, creation lock, rehearsal and Finish', async () => {
+  it('creates Quick Immersive only after submit and focuses each launch step', async () => {
+    const initialJourney = createJourneySession();
+    const createdJourney: PlaySession = {
+      ...createJourneySession(),
+      id: 'play-quick-2',
+      title: 'Night station',
+      sceneStart: 'The last train arrives.',
+    };
+    api.listPlaySessions.mockResolvedValue({ sessions: [initialJourney] });
+    api.createPlaySession.mockResolvedValue({ session: createdJourney });
+
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    const newSession = buttonContaining(wrapper, 'New session');
+    newSession.element.focus();
+    await newSession.trigger('click');
+
+    expect(wrapper.get('.play-session-rail').find('.play-purpose-picker').exists()).toBe(false);
+    expect(wrapper.find('.play-purpose-picker').exists()).toBe(true);
+    expect(api.createPlaySession).not.toHaveBeenCalled();
+
+    await buttonContaining(wrapper, 'Immersive Journey').trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(buttonContaining(wrapper, 'Quick Start').element);
+    expect(api.createPlaySession).not.toHaveBeenCalled();
+
+    await buttonContaining(wrapper, 'Quick Start').trigger('click');
+    await flushPromises();
+    const form = wrapper.get('.play-create-form');
+    const title = form.get('input[placeholder="雨夜码头"]');
+    expect(document.activeElement).toBe(title.element);
+
+    await title.setValue('Night station');
+    await form.get('textarea[placeholder="从一个可行动的瞬间开始"]').setValue(
+      'The last train arrives.',
+    );
+    expect(api.createPlaySession).not.toHaveBeenCalled();
+
+    await form.trigger('submit');
+    await vi.waitFor(() => expect(api.createPlaySession).toHaveBeenCalledOnce());
+
+    const input = api.createPlaySession.mock.calls[0]![0];
+    expect(input).toEqual(expect.objectContaining({
+      title: 'Night station',
+      sceneStart: 'The last train arrives.',
+    }));
+    expect(input).not.toHaveProperty('purpose');
+    expect(input).not.toHaveProperty('startMode');
+    await vi.waitFor(() => {
+      expect(wrapper.find('.play-launch-flow').exists()).toBe(false);
+    });
+    wrapper.unmount();
+  });
+
+  it('runs New session through Quick Rehearsal, creation lock, rehearsal and Finish', async () => {
     const initialJourney = createJourneySession();
     const rehearsalSession = createRehearsalSession();
     const committed = createCommittedFixture(rehearsalSession);
@@ -67,14 +122,14 @@ describe('PlayWorkspace scene rehearsal integration', () => {
       ): AsyncIterable<PlayRehearsalStepStreamEvent> {
         const receipt = createMutationReceipt(input.idempotencyKey, 1, 'step-1');
         const prepared = createDraftAttempt(receipt);
-        options?.onStepRunId?.('step-run-guided');
-        yield stepEvent('step-run-guided', 1, {
+        options?.onStepRunId?.('step-run-quick');
+        yield stepEvent('step-run-quick', 1, {
           type: 'play.actor.step.started',
           baseAttemptRevision: 0,
           participantRef: 'participant-mara',
           mode: 'next',
         });
-        yield stepEvent('step-run-guided', 2, {
+        yield stepEvent('step-run-quick', 2, {
           type: 'play.actor.step.prepared',
           attempt: prepared,
           step: prepared.steps[0]!,
@@ -119,6 +174,13 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     await flushPromises();
     await buttonContaining(wrapper, 'New session').trigger('click');
     await buttonContaining(wrapper, 'Scene Rehearsal').trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(buttonContaining(wrapper, 'Quick Start').element);
+    expect(api.createPlaySession).not.toHaveBeenCalled();
+
+    await buttonContaining(wrapper, 'Quick Start').trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('[name="scene-title"]').element);
     await wrapper.get('[name="scene-title"]').setValue('Last train');
     await wrapper.get('[name="scene-location"]').setValue('Platform nine');
     await wrapper.get('[name="scene-opening"]').setValue('The doors begin to close.');
@@ -138,7 +200,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     expect(api.createPlaySession).toHaveBeenCalledWith(expect.objectContaining({
       purpose: 'sceneRehearsal',
-      startMode: 'guided',
+      startMode: 'quick',
       title: 'Last train',
       characters: ['Mara'],
       sceneContract: expect.objectContaining({
@@ -156,8 +218,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
       expect(wrapper.find('.play-rehearsal-workspace').exists()).toBe(true);
       expect(button(wrapper, 'Begin rehearsal attempt').attributes('disabled')).toBeUndefined();
     });
-    expect(wrapper.find('.play-create-flow').exists()).toBe(false);
-    expect(document.activeElement).toBe(button(wrapper, 'Begin rehearsal attempt').element);
+    expect(wrapper.find('.play-launch-flow').exists()).toBe(false);
 
     await button(wrapper, 'Begin rehearsal attempt').trigger('click');
     await button(wrapper, 'Generate current actor step').trigger('click');
@@ -580,7 +641,7 @@ function createRehearsalSession(): PlayRehearsalSessionV5 {
       schemaVersion: 1,
       sessionId: 'play-rehearsal-1',
       purpose: 'sceneRehearsal',
-      startMode: 'guided',
+      startMode: 'quick',
       activeSceneRef: 'scene-last-train',
       sceneContract: {
         sceneId: 'scene-last-train',

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { toRef } from 'vue';
+import { shallowRef, toRef } from 'vue';
 
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
 import PlayComposer from './PlayComposer.vue';
@@ -8,14 +8,28 @@ import PlayHistoryControls from './PlayHistoryControls.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
+import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
 import PlayRehearsalWorkspace from './rehearsal/PlayRehearsalWorkspace.vue';
 import { usePlayWorkspace } from '../../composables/usePlayWorkspace';
-import type { PlayAdoptionCandidate, WorkspaceSummary } from '../../composables/useWorkspaceApi';
+import type {
+  FileTreeNode,
+  PlayAdoptionCandidate,
+  PlaySession,
+  WorkspaceSummary,
+} from '../../composables/useWorkspaceApi';
+import type { PlaySessionCreateRequest } from '../../composables/usePlayWorkspace';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   workspace: WorkspaceSummary;
   providerConfigured: boolean;
-}>();
+  files?: FileTreeNode[];
+  filesLoading?: boolean;
+  filesError?: string;
+}>(), {
+  files: () => [],
+  filesLoading: false,
+  filesError: '',
+});
 
 const emit = defineEmits<{
   configureProvider: [];
@@ -23,6 +37,7 @@ const emit = defineEmits<{
 }>();
 
 const providerConfigured = toRef(props, 'providerConfigured');
+const launchOpen = shallowRef(false);
 
 const {
   actionKind,
@@ -41,6 +56,7 @@ const {
   refreshBlocked,
   historyCheckpoints,
   historyBusyArtifactId,
+  historyNamingCheckpointId,
   historyRetryingArtifactId,
   historyLoading,
   historyNotice,
@@ -51,8 +67,7 @@ const {
   showSpoilers,
   hasHiddenPlayContent,
   sessions,
-  sortedEvents,
-  causeLabelsByEventId,
+  eventCards,
   stateEntries,
   suggestedActions,
   userText,
@@ -64,8 +79,10 @@ const {
   createPendingAction,
   createAdoptionCandidate,
   createSession,
+  registerCreatedSession,
   refreshSessions,
   retryCheckpoint,
+  renameCheckpoint,
   restoreCheckpoint,
   selectSession,
   stopTurn,
@@ -104,6 +121,28 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
     emit('pendingActionCreated');
   }
 }
+
+function openLaunch(): void {
+  if (!interactionBlocked.value) launchOpen.value = true;
+}
+
+function cancelLaunch(): void {
+  launchOpen.value = false;
+}
+
+function openSession(id: string): void {
+  launchOpen.value = false;
+  selectSession(id);
+}
+
+async function createQuickSession(input: PlaySessionCreateRequest): Promise<void> {
+  if (await createSession(input)) launchOpen.value = false;
+}
+
+function acceptGuidedSession(session: PlaySession): void {
+  registerCreatedSession(session);
+  launchOpen.value = false;
+}
 </script>
 
 <template>
@@ -115,11 +154,13 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         <small>Play-local rehearsal · canonical truth remains protected</small>
       </div>
       <div class="play-workspace-status">
-        <span v-if="selectedSession">
+        <span v-if="selectedSession && !launchOpen">
           {{ selectedSession.eventPolicy.simulationMode }} · {{ selectedSession.eventPolicy.density }}
         </span>
         <span :class="{ 'play-status-live': sending || rehearsalBusy }">
-          {{ selectedSession?.schemaVersion === 5
+          {{ launchOpen
+            ? 'Preparing a new Play entry'
+            : selectedSession?.schemaVersion === 5
             ? rehearsalAnnouncement || 'Rehearsal ready'
             : provisionalTurn?.statusMessage || turnAnnouncement || 'Ready' }}
         </span>
@@ -144,13 +185,26 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         :creating="creating"
         :busy="interactionBlocked"
         :refresh-disabled="refreshBlocked"
-        @select-session="selectSession"
-        @create-session="createSession"
+        @select-session="openSession"
+        @new-session="openLaunch"
         @refresh="refreshSessions"
       />
 
+      <PlayLaunchFlow
+        v-if="launchOpen"
+        class="play-launch-stage"
+        :files="files"
+        :files-loading="filesLoading"
+        :files-error="filesError"
+        :creating="creating"
+        :busy="interactionBlocked"
+        @quick-create="createQuickSession"
+        @created="acceptGuidedSession"
+        @cancel="cancelLaunch"
+      />
+
       <PlayRehearsalWorkspace
-        v-if="selectedSession?.schemaVersion === 5"
+        v-else-if="selectedSession?.schemaVersion === 5"
         class="play-rehearsal-stage"
         :scene="rehearsalScene"
         :clock="rehearsalClock"
@@ -220,7 +274,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
       </section>
 
       <aside
-        v-if="selectedSession?.schemaVersion === 4"
+        v-if="!launchOpen && selectedSession?.schemaVersion === 4"
         class="play-world-inspector"
         aria-label="Play world inspector"
       >
@@ -230,12 +284,14 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
           :loading="historyLoading"
           :busy-artifact-id="historyBusyArtifactId"
           :retrying-artifact-id="historyRetryingArtifactId"
+          :naming-checkpoint-id="historyNamingCheckpointId"
           :retry-disabled="!providerConfigured"
           retry-disabled-reason="Configure a provider to Retry this settlement."
           :blocked="interactionBlocked"
           :notice="historyNotice"
           @restore="restoreCheckpoint"
           @retry="retryCheckpoint"
+          @name="renameCheckpoint"
         />
         <PlayWorldHud
           :clock="displaySession?.worldClock ?? selectedSession.worldClock"
@@ -250,8 +306,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         />
         <PlayEventFeed
           v-model:show-spoilers="showSpoilers"
-          :events="sortedEvents"
-          :cause-labels-by-event-id="causeLabelsByEventId"
+          :cards="eventCards"
           :has-hidden-play-content="hasHiddenPlayContent"
         />
         <PlayAdoptionPanel
@@ -266,7 +321,7 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
         />
       </aside>
 
-      <aside v-else-if="!selectedSession" class="play-world-inspector play-inspector-empty">
+      <aside v-else-if="!launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
         World HUD will appear after a session is selected.
       </aside>
     </div>
@@ -274,7 +329,8 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
 </template>
 
 <style scoped>
-.play-rehearsal-stage {
+.play-rehearsal-stage,
+.play-launch-stage {
   grid-column: 2 / -1;
   min-width: 0;
   min-height: 0;
@@ -282,7 +338,8 @@ async function adoptCandidate(candidate: PlayAdoptionCandidate) {
 }
 
 @media (max-width: 860px) {
-  .play-rehearsal-stage {
+  .play-rehearsal-stage,
+  .play-launch-stage {
     grid-column: 1;
   }
 }

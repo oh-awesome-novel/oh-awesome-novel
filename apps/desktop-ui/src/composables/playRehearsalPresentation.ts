@@ -133,7 +133,7 @@ export function buildPlayRehearsalSessionInput(
       density: submission.scene.density,
     },
     purpose: 'sceneRehearsal',
-    startMode: 'guided',
+    startMode: submission.startMode,
     sceneContract: {
       sceneId,
       worldClock: { turn: 0, revision: 0 },

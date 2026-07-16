@@ -1,27 +1,59 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import {
+  buildPlayEventCardViews,
+  type PlayEventCardView,
+} from '../../composables/playWorldPresentation';
 import type { PlayWorldEvent } from '../../composables/useWorkspaceApi';
+import PlayWorldEventCard from './PlayWorldEventCard.vue';
 
 const props = defineProps<{
-  events: PlayWorldEvent[];
-  causeLabelsByEventId: Record<string, string[]>;
+  cards?: readonly PlayEventCardView[];
+  events?: readonly PlayWorldEvent[];
+  causeLabelsByEventId?: Readonly<Record<string, readonly string[]>>;
   hasHiddenPlayContent: boolean;
 }>();
 
 const showSpoilers = defineModel<boolean>('showSpoilers', { required: true });
-const visibleEvents = computed(() =>
-  showSpoilers.value
-    ? props.events
-    : props.events.filter((event) => event.visibility !== 'playerUnknown'),
-);
+const displayCards = computed<PlayEventCardView[]>(() => {
+  if (props.cards !== undefined) {
+    return props.cards
+      .filter((card) => showSpoilers.value || card.visibility !== 'playerUnknown')
+      .map((card) => showSpoilers.value
+        ? { ...card }
+        : { ...card, authorReason: undefined });
+  }
 
-function eventKindLabel(value: string): string {
-  return value.replace(/([a-z])([A-Z])/gu, '$1 $2');
-}
+  return buildPlayEventCardViews({
+    events: props.events ?? [],
+    artifacts: [],
+    scheduledEvents: [],
+    pressures: [],
+    agendas: [],
+    stateVisibility: {},
+    showSpoilers: showSpoilers.value,
+  }).map((card) => ({
+    ...card,
+    causeLabels: mergeLegacyCauseLabels(
+      card,
+      props.causeLabelsByEventId?.[card.id] ?? [],
+    ),
+  }));
+});
 
-function causeLabels(eventId: string): string[] {
-  return props.causeLabelsByEventId[eventId] ?? [];
+function mergeLegacyCauseLabels(
+  card: Readonly<PlayEventCardView>,
+  legacyLabels: readonly string[],
+): PlayEventCardView['causeLabels'] {
+  const labels = [...card.causeLabels];
+  const seen = new Set(labels.map((cause) => cause.label));
+  for (const label of legacyLabels) {
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    labels.push({ kind: 'related', label, ref: `legacy:${label}` });
+  }
+  return labels;
 }
 </script>
 
@@ -46,35 +78,13 @@ function causeLabels(eventId: string): string[] {
       </button>
     </header>
 
-    <div v-if="visibleEvents.length" class="play-event-list">
-      <article
-        v-for="event in visibleEvents"
-        :key="event.id"
-        class="play-event-card"
-        :class="`play-event-${event.visibility}`"
-      >
-        <div class="play-event-line" aria-hidden="true"></div>
-        <div class="play-event-body">
-          <div class="play-event-meta">
-            <span>Turn {{ event.worldClock.turn }}</span>
-            <span>{{ eventKindLabel(event.kind) }}</span>
-            <span>{{ event.origin }}</span>
-            <span>{{ event.visibility }}</span>
-          </div>
-          <h3>{{ event.title }}</h3>
-          <p>{{ event.summary }}</p>
-          <div v-if="causeLabels(event.id).length" class="play-event-cause">
-            <span>Caused by</span>
-            <ul>
-              <li v-for="label in causeLabels(event.id)" :key="label">{{ label }}</li>
-            </ul>
-          </div>
-          <details v-if="showSpoilers">
-            <summary>Author cause detail</summary>
-            <p>{{ event.cause.reason }}</p>
-          </details>
-        </div>
-      </article>
+    <div v-if="displayCards.length" class="play-event-list">
+      <PlayWorldEventCard
+        v-for="card in displayCards"
+        :key="card.id"
+        :card="card"
+        :show-author-details="showSpoilers"
+      />
     </div>
 
     <div v-else class="play-event-empty">

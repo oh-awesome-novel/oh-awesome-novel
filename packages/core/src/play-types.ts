@@ -108,6 +108,12 @@ export type PlayAdoptionTarget =
 export interface PlayActivatedSource {
   sourceId: string;
   path?: string;
+  /** Stable object identity captured by a source-backed Guided Start. */
+  objectId?: string;
+  /** SHA-256 of the exact source bytes captured when the setup was confirmed. */
+  contentHash?: string;
+  /** The source's role in a Guided Start launch package. */
+  role?: 'chapter' | 'character' | 'world' | 'timeline' | 'state' | 'other';
   reason: string;
   budgetLayer: ContextBudgetLayer;
   semanticBoundary: SemanticBoundary;

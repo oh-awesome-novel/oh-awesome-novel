@@ -49,7 +49,7 @@ export type PlayRehearsalCastErrors = Record<
 
 export interface PlayRehearsalSetupSubmission {
   purpose: 'sceneRehearsal';
-  startMode: 'guided';
+  startMode: 'quick';
   scene: PlayRehearsalSceneDraft;
   participants: PlayRehearsalParticipantDraft[];
   actorOrder: string[];

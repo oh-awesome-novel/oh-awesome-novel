@@ -4,6 +4,8 @@ import {
   createOanClient,
   type OanDesktopBridge,
   type PlayAdoptionCandidate,
+  type PlayLaunchPackage,
+  type PlayLaunchPackagePreviewInput,
   type PlayObservation,
   type PlayScheduledEvent,
   type PlayTurnStreamEvent,
@@ -105,15 +107,18 @@ describe('createOanClient', () => {
     });
   });
 
-  it('routes Play checkpoint list and restore through typed client methods', async () => {
+  it('routes Play checkpoint list, restore, and naming through typed client methods', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const restorePayload = createPlayCheckpointRestorePayload();
+    const renamePayload = createPlayCheckpointRenamePayload();
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, init });
       const body = url.endsWith('/restore')
         ? restorePayload
-        : { checkpoints: restorePayload.checkpoints };
+        : url.endsWith('/name')
+          ? renamePayload
+          : { checkpoints: restorePayload.checkpoints };
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -133,6 +138,11 @@ describe('createOanClient', () => {
       'turn-artifact-1',
       { baseRevision: 1 },
     )).resolves.toEqual(restorePayload);
+    await expect(client.renamePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1, name: 'Gate still open' },
+    )).resolves.toEqual(renamePayload);
 
     expect(calls[0]).toMatchObject({
       url: 'http://backend.test/api/workspace/play-sessions/play-1/checkpoints',
@@ -143,6 +153,235 @@ describe('createOanClient', () => {
       init: { method: 'POST' },
     });
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ baseRevision: 1 });
+    expect(calls[2]).toMatchObject({
+      url: 'http://backend.test/api/workspace/play-sessions/play-1/checkpoints/turn-artifact-1/name',
+      init: { method: 'POST' },
+    });
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      baseRevision: 1,
+      name: 'Gate still open',
+    });
+  });
+
+  it('routes source-backed Guided Play setup and start through strict typed methods', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const previewInput = createPlayLaunchPreviewInputFixture();
+    const launchPackage = createPlayLaunchPackageFixture();
+    const guidedSession = createEmptyPlaySessionEnvelope();
+    guidedSession.id = 'play-guided';
+    guidedSession.activatedSources = [{
+      sourceId: 'chapter-opening',
+      path: 'chapters/0001/0001.md',
+      objectId: '0001/0001',
+      contentHash: 'a'.repeat(64),
+      role: 'chapter',
+      reason: 'Opening scene source',
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+      trust: 'canonical',
+    }];
+    guidedSession.metadataExtensions = {
+      playLaunch: {
+        setupId: launchPackage.id,
+        setupSchemaVersion: 1,
+        purpose: 'immersiveJourney',
+        startMode: 'guided',
+      },
+    };
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      const body = url.endsWith('/preview')
+        ? { launchPackage }
+        : url.endsWith('/api/workspace/play-setups')
+          ? {
+              launchPackage,
+              files: [`.workspace/play-setups/${launchPackage.id}/setup.yaml`],
+            }
+          : url.endsWith(`/play-setups/${launchPackage.id}`)
+            ? { launchPackage }
+            : { session: guidedSession, files: [] };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.previewPlayLaunchPackage(previewInput)).resolves.toEqual({
+      launchPackage,
+    });
+    await expect(client.createPlayLaunchPackage(launchPackage)).resolves.toEqual({
+      launchPackage,
+      files: [`.workspace/play-setups/${launchPackage.id}/setup.yaml`],
+    });
+    await expect(client.getPlayLaunchPackage(launchPackage.id)).resolves.toEqual({
+      launchPackage,
+    });
+    await expect(client.startPlaySessionFromLaunchPackage({
+      launchPackageId: launchPackage.id,
+      id: 'play-guided',
+    })).resolves.toEqual({ session: guidedSession, files: [] });
+
+    expect(calls).toMatchObject([
+      {
+        url: 'http://backend.test/api/workspace/play-setups/preview',
+        init: { method: 'POST' },
+      },
+      {
+        url: 'http://backend.test/api/workspace/play-setups',
+        init: { method: 'POST' },
+      },
+      {
+        url: `http://backend.test/api/workspace/play-setups/${launchPackage.id}`,
+        init: { method: 'GET' },
+      },
+      {
+        url: 'http://backend.test/api/workspace/play-sessions',
+        init: { method: 'POST' },
+      },
+    ]);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual(previewInput);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual(launchPackage);
+    expect(JSON.parse(String(calls[3]?.init?.body))).toEqual({
+      launchPackageId: launchPackage.id,
+      id: 'play-guided',
+    });
+  });
+
+  it('fails closed on malformed Guided Play packages, requests, and session provenance', async () => {
+    const launchPackage = createPlayLaunchPackageFixture();
+    const malformedPackages: unknown[] = [
+      { ...launchPackage, unexpected: true },
+      {
+        ...launchPackage,
+        sourceBase: {
+          activatedSources: [{
+            ...launchPackage.sourceBase.activatedSources[0],
+            contentHash: 'A'.repeat(64),
+          }],
+        },
+      },
+      {
+        ...launchPackage,
+        sourceBase: {
+          activatedSources: [{
+            ...launchPackage.sourceBase.activatedSources[0],
+            status: 'missing',
+          }],
+        },
+      },
+      {
+        ...launchPackage,
+        entryPoint: { ...launchPackage.entryPoint, sourceRefs: ['unknown-source'] },
+      },
+      {
+        ...launchPackage,
+        purpose: 'sceneRehearsal',
+      },
+      {
+        ...launchPackage,
+        diagnostics: [{
+          id: 'diagnostic-stale',
+          code: 'staleSource',
+          severity: 'error',
+          message: 'Source changed.',
+          sourceId: 'chapter-opening',
+          path: 'chapters/0001/0001.md',
+        }],
+      },
+    ];
+
+    for (const malformed of malformedPackages) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { launchPackage: malformed }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.getPlayLaunchPackage('setup-guided'))
+        .rejects.toThrow('Play launch package request returned an invalid payload');
+    }
+
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const requestClient = createOanClient({
+      fetch: createFetchMock(calls, {}),
+      systemTheme: () => 'dark',
+    });
+    await expect(requestClient.previewPlayLaunchPackage({
+      ...createPlayLaunchPreviewInputFixture(),
+      unexpected: true,
+    } as PlayLaunchPackagePreviewInput)).rejects.toThrow(
+      'Play launch preview request is invalid',
+    );
+    await expect(requestClient.startPlaySessionFromLaunchPackage({
+      launchPackageId: '../unsafe',
+    })).rejects.toThrow('Play launch session request is invalid');
+    expect(calls).toHaveLength(0);
+
+    const validSession = createEmptyPlaySessionEnvelope();
+    validSession.id = 'play-guided';
+    validSession.activatedSources = [{
+      sourceId: 'chapter-opening',
+      path: 'chapters/0001/0001.md',
+      objectId: '0001/0001',
+      contentHash: 'a'.repeat(64),
+      role: 'chapter',
+      reason: 'Opening scene source',
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+      trust: 'canonical',
+    }];
+    validSession.metadataExtensions = {
+      playLaunch: {
+        setupId: 'setup-guided',
+        setupSchemaVersion: 1,
+        purpose: 'immersiveJourney',
+        startMode: 'guided',
+      },
+    };
+    const malformedSessions = [
+      (() => {
+        const value = structuredClone(validSession);
+        value.metadataExtensions = {};
+        return value;
+      })(),
+      (() => {
+        const value = structuredClone(validSession);
+        (value.metadataExtensions.playLaunch as Record<string, unknown>).purpose =
+          'sceneRehearsal';
+        return value;
+      })(),
+      (() => {
+        const value = structuredClone(validSession);
+        delete value.activatedSources[0]!.role;
+        return value;
+      })(),
+      (() => {
+        const value = structuredClone(validSession);
+        (value.metadataExtensions.playLaunch as Record<string, unknown>).unexpected = true;
+        return value;
+      })(),
+    ];
+    for (const malformed of malformedSessions) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { session: malformed, files: [] }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.startPlaySessionFromLaunchPackage({
+        launchPackageId: 'setup-guided',
+        id: 'play-guided',
+      })).rejects.toThrow();
+    }
+
+    const ordinaryClient = createOanClient({
+      fetch: createFetchMock([], { session: malformedSessions[1] }),
+      systemTheme: () => 'dark',
+    });
+    await expect(ordinaryClient.getPlaySession('play-guided'))
+      .rejects.toThrow('Play session request returned an invalid payload');
   });
 
   it('surfaces backend error messages from JSON error responses', async () => {
@@ -1006,23 +1245,33 @@ describe('createOanClient', () => {
   });
 
   it('rejects malformed Play checkpoint summaries at the network boundary', async () => {
-    const valid = createPlayCheckpointRestorePayload().checkpoints[0]!;
+    const validPayload = createPlayCheckpointRestorePayload();
+    const valid = validPayload.checkpoints[0]!;
+    const initial = validPayload.checkpoints[1]!;
     const malformed = [
       { ...valid, unexpected: true },
-      { ...valid, artifactId: '../unsafe', selectedTurnIds: ['../unsafe'] },
+      {
+        ...valid,
+        checkpointId: '../unsafe',
+        artifactId: '../unsafe',
+        selectedTurnIds: ['../unsafe'],
+      },
       { ...valid, selectedTurnIds: [valid.artifactId, valid.artifactId] },
-      { ...valid, parentArtifactId: 'not-the-path-parent' },
+      { ...valid, artifactId: 'different-artifact' },
+      { ...valid, parentCheckpointId: 'not-the-path-parent' },
+      { ...valid, depth: 0 },
       { ...valid, revision: -1 },
       { ...valid, worldTurn: -1 },
       { ...valid, status: 'stale' },
       { ...valid, canonical: true },
       { ...valid, restorable: true },
       { ...valid, retryable: 'yes' },
+      { ...valid, name: ' Padded ' },
     ];
 
     for (const checkpoint of malformed) {
       const client = createOanClient({
-        fetch: createFetchMock([], { checkpoints: [checkpoint] }),
+        fetch: createFetchMock([], { checkpoints: [checkpoint, initial] }),
         systemTheme: () => 'dark',
       });
       await expect(client.listPlayCheckpoints('play-1'))
@@ -1030,7 +1279,25 @@ describe('createOanClient', () => {
         .toThrow('Play checkpoint list returned an invalid payload');
     }
 
-    for (const checkpoints of [[valid, structuredClone(valid)]]) {
+    const malformedInitials = [
+      { ...initial, kind: 'turn', artifactId: 'initial-world' },
+      { ...initial, parentCheckpointId: 'turn-artifact-1' },
+      { ...initial, selectedTurnIds: ['turn-artifact-1'] },
+      { ...initial, depth: 1 },
+      { ...initial, status: 'variant' },
+      { ...initial, retryable: true },
+    ];
+    for (const malformedInitial of malformedInitials) {
+      const client = createOanClient({
+        fetch: createFetchMock([], { checkpoints: [valid, malformedInitial] }),
+        systemTheme: () => 'dark',
+      });
+      await expect(client.listPlayCheckpoints('play-1'))
+        .rejects
+        .toThrow('Play checkpoint list returned an invalid payload');
+    }
+
+    for (const checkpoints of [[valid, structuredClone(valid), initial]]) {
       const client = createOanClient({
         fetch: createFetchMock([], { checkpoints }),
         systemTheme: () => 'dark',
@@ -1041,11 +1308,11 @@ describe('createOanClient', () => {
     }
   });
 
-  it('accepts an all-variant checkpoint list for a virtual-base selection', async () => {
+  it('accepts a real initial-world current checkpoint for a virtual-base selection', async () => {
     const checkpoint = {
-      ...createPlayCheckpointRestorePayload().checkpoints[0]!,
-      status: 'variant' as const,
-      restorable: true,
+      ...createPlayCheckpointRestorePayload().checkpoints[1]!,
+      status: 'current' as const,
+      restorable: false,
     };
     const client = createOanClient({
       fetch: createFetchMock([], { checkpoints: [checkpoint] }),
@@ -1061,6 +1328,7 @@ describe('createOanClient', () => {
     const payload = createPlayCheckpointRestorePayload();
     payload.checkpoints[0]!.selectedTurnIds = ['different-artifact'];
     payload.checkpoints[0]!.artifactId = 'different-artifact';
+    payload.checkpoints[0]!.checkpointId = 'different-artifact';
     const client = createOanClient({
       fetch: createFetchMock([], payload),
       systemTheme: () => 'dark',
@@ -1106,6 +1374,8 @@ describe('createOanClient', () => {
     const noCurrent = createPlayCheckpointRestorePayload();
     noCurrent.checkpoints[0]!.status = 'variant';
     noCurrent.checkpoints[0]!.restorable = true;
+    noCurrent.checkpoints[1]!.status = 'current';
+    noCurrent.checkpoints[1]!.restorable = false;
     const noCurrentClient = createOanClient({
       fetch: createFetchMock([], noCurrent),
       systemTheme: () => 'dark',
@@ -1115,6 +1385,44 @@ describe('createOanClient', () => {
       'turn-artifact-1',
       { baseRevision: 1 },
     )).rejects.toThrow('Play checkpoint restore returned an inconsistent payload');
+  });
+
+  it('validates initial-world restore and checkpoint naming responses against session truth', async () => {
+    const initialRestore = createPlayInitialCheckpointRestorePayload();
+    const initialClient = createOanClient({
+      fetch: createFetchMock([], initialRestore),
+      systemTheme: () => 'dark',
+    });
+    await expect(initialClient.restorePlayCheckpoint(
+      'play-1',
+      'initial-world',
+      { baseRevision: 1 },
+    )).resolves.toEqual(initialRestore);
+
+    const wrongName = createPlayCheckpointRenamePayload();
+    wrongName.checkpoints[0]!.name = 'Different name';
+    const wrongNameClient = createOanClient({
+      fetch: createFetchMock([], wrongName),
+      systemTheme: () => 'dark',
+    });
+    await expect(wrongNameClient.renamePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1, name: 'Gate still open' },
+    )).rejects.toThrow('Play checkpoint name returned an inconsistent payload');
+
+    const nonIncrementing = createPlayCheckpointRenamePayload();
+    nonIncrementing.session.revision = 1;
+    nonIncrementing.session.worldClock.revision = 1;
+    const revisionClient = createOanClient({
+      fetch: createFetchMock([], nonIncrementing),
+      systemTheme: () => 'dark',
+    });
+    await expect(revisionClient.renamePlayCheckpoint(
+      'play-1',
+      'turn-artifact-1',
+      { baseRevision: 1, name: 'Gate still open' },
+    )).rejects.toThrow('Play checkpoint name returned an inconsistent payload');
   });
 
   it('routes Play stop through the explicit server cancellation endpoint', async () => {
@@ -1287,6 +1595,75 @@ describe('createOanClient', () => {
     await expect(client.selectDirectory()).resolves.toBeUndefined();
   });
 });
+
+function createPlayLaunchPreviewInputFixture(): PlayLaunchPackagePreviewInput {
+  return {
+    id: 'setup-guided',
+    createdAt: '2026-07-16T00:00:00.000Z',
+    title: 'Guided gate journey',
+    purpose: 'immersiveJourney',
+    startMode: 'guided',
+    simulationMode: 'reactiveWorld',
+    density: 'balanced',
+    sources: [{
+      sourceId: 'chapter-opening',
+      path: 'chapters/0001/0001.md',
+      role: 'chapter',
+      reason: 'Opening scene source',
+    }],
+    entryPoint: {
+      id: 'entry-gate',
+      label: 'At the gate',
+      opening: 'Rain falls over the gate.',
+      sourceRefs: ['chapter-opening'],
+      objective: {
+        value: 'Reach the platform.',
+        provenance: { kind: 'sourceBacked', sourceRefs: ['chapter-opening'] },
+      },
+    },
+    identity: {
+      kind: 'player',
+      persona: 'A traveler trying to catch the last train.',
+    },
+    participantRoles: [],
+  };
+}
+
+function createPlayLaunchPackageFixture(): PlayLaunchPackage {
+  const input = createPlayLaunchPreviewInputFixture();
+  return {
+    schemaVersion: 1,
+    id: input.id!,
+    createdAt: input.createdAt!,
+    title: input.title,
+    purpose: input.purpose,
+    startMode: 'guided',
+    eventPolicy: {
+      simulationMode: input.simulationMode,
+      density: input.density,
+    },
+    sourceBase: {
+      activatedSources: [{
+        sourceId: 'chapter-opening',
+        path: 'chapters/0001/0001.md',
+        objectId: '0001/0001',
+        role: 'chapter',
+        reason: 'Opening scene source',
+        budgetLayer: 'L2',
+        semanticBoundary: 'compressible',
+        trust: 'canonical',
+        status: 'ready',
+        contentHash: 'a'.repeat(64),
+        excerpt: '# Chapter One',
+      }],
+    },
+    entryPoint: structuredClone(input.entryPoint),
+    identity: structuredClone(input.identity),
+    participantRoles: [],
+    diagnostics: [],
+    canonical: false,
+  };
+}
 
 function createFetchMock(
   calls: Array<{ url: string; init?: RequestInit }>,
@@ -1642,8 +2019,12 @@ function createPlayCheckpointRestorePayload() {
   session.revision = 2;
   session.worldClock.revision = 2;
   const checkpoint = {
+    checkpointId: 'turn-artifact-1',
+    kind: 'turn' as const,
     artifactId: 'turn-artifact-1',
+    parentCheckpointId: 'initial-world',
     selectedTurnIds: ['turn-artifact-1'],
+    depth: 1,
     revision: 1,
     worldTurn: 1,
     committedAt: '2026-07-15T01:00:00.000Z',
@@ -1653,11 +2034,57 @@ function createPlayCheckpointRestorePayload() {
     retryable: true,
     canonical: false as const,
   };
+  const initial = {
+    checkpointId: 'initial-world',
+    kind: 'initialWorld' as const,
+    selectedTurnIds: [] as string[],
+    depth: 0,
+    revision: 0,
+    worldTurn: 0,
+    committedAt: session.createdAt,
+    preview: 'Initial world',
+    status: 'selectedAncestor' as const,
+    restorable: true,
+    retryable: false,
+    canonical: false as const,
+  };
 
   return {
     session,
-    checkpoints: [checkpoint],
-    restoredArtifactId: checkpoint.artifactId,
+    checkpoints: [checkpoint, initial],
+    restoredCheckpointId: checkpoint.checkpointId,
+  };
+}
+
+function createPlayInitialCheckpointRestorePayload() {
+  const payload = createPlayCheckpointRestorePayload();
+  payload.session.selectedTurnIds = [];
+  payload.session.transcript = [];
+  payload.session.worldClock = { turn: 0, revision: 2 };
+  payload.session.playLocalState = {};
+  payload.session.playLocalStateVisibility = {};
+  payload.session.scheduledEvents = [];
+  payload.session.suggestedActions = [];
+  payload.checkpoints[0]!.status = 'variant';
+  payload.checkpoints[0]!.restorable = true;
+  payload.checkpoints[1]!.status = 'current';
+  payload.checkpoints[1]!.restorable = false;
+  payload.restoredCheckpointId = 'initial-world';
+  return payload;
+}
+
+function createPlayCheckpointRenamePayload() {
+  const payload = createPlayCheckpointRestorePayload();
+  payload.checkpoints[0]!.name = 'Gate still open';
+  payload.session.metadataExtensions = {
+    playCheckpointNames: {
+      'turn-artifact-1': 'Gate still open',
+    },
+  };
+  return {
+    session: payload.session,
+    checkpoints: payload.checkpoints,
+    renamedCheckpointId: 'turn-artifact-1',
   };
 }
 

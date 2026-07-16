@@ -20,7 +20,7 @@ describe('Play rehearsal setup', () => {
     expect(wrapper.text()).toContain('Scene Rehearsal');
   });
 
-  it('keeps Scene and Cast local until the Review confirmation', async () => {
+  it('keeps compact Quick setup local until the Review confirmation', async () => {
     const wrapper = mount(PlayRehearsalSetup, {
       attachTo: document.body,
     });
@@ -65,7 +65,7 @@ describe('Play rehearsal setup', () => {
     expect(wrapper.emitted('create')).toHaveLength(1);
     expect(wrapper.emitted('create')?.[0]?.[0]).toEqual({
       purpose: 'sceneRehearsal',
-      startMode: 'guided',
+      startMode: 'quick',
       scene: {
         title: 'Last train',
         opening: 'The doors begin to close.',

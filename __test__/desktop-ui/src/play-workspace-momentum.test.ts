@@ -40,12 +40,22 @@ describe('PlayWorkspace world momentum', () => {
     expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Station lockdown');
     expect(wrapper.get('[aria-label="World momentum"]').text()).not.toContain('Hidden command');
     expect(wrapper.get('.play-event-cause').text()).toContain('Pressure · Station lockdown');
+    expect(wrapper.text()).toContain('PLAYER-VISIBLE-STATE');
+    expect(wrapper.text()).not.toContain('RUMOR-STATE-MUST-NOT-LEAK');
+    expect(wrapper.text()).not.toContain('HIDDEN-STATE-MUST-NOT-LEAK');
+    expect(wrapper.text()).toContain('tracked world condition = matched');
+    expect(wrapper.text()).not.toContain('secrets.commandCode');
+    expect(wrapper.text()).not.toContain('AUTHOR-CODE-9417');
     expect(wrapper.text()).not.toContain('worldMomentum');
     expect(wrapper.text()).not.toContain('A commander secretly ordered the guards.');
 
     await wrapper.get('[role="switch"]').trigger('click');
     expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Hidden command');
+    expect(wrapper.text()).toContain('RUMOR-STATE-MUST-NOT-LEAK');
+    expect(wrapper.text()).toContain('HIDDEN-STATE-MUST-NOT-LEAK');
+    expect(wrapper.text()).toContain('secrets.commandCode = AUTHOR-CODE-9417');
     expect(wrapper.get('details').text()).toContain('A commander secretly ordered the guards.');
+    expect(wrapper.get('details').text()).toContain('event-1');
     wrapper.unmount();
   });
 
@@ -58,6 +68,11 @@ describe('PlayWorkspace world momentum', () => {
       agendas: unknown[];
     };
     momentum.agendas = [];
+    delete session.playLocalState.rumorSignal;
+    delete session.playLocalState.hiddenSignal;
+    delete session.playLocalStateVisibility.rumorSignal;
+    delete session.playLocalStateVisibility.hiddenSignal;
+    session.scheduledEvents = [];
     api.listPlaySessions.mockResolvedValue({ sessions: [session] });
 
     const wrapper = mountWorkspace();
@@ -65,6 +80,28 @@ describe('PlayWorkspace world momentum', () => {
 
     expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Station lockdown');
     expect(wrapper.find('[role="switch"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps rumor state paths behind Author view even without player-unknown state', async () => {
+    const session = createSession();
+    session.turnArtifacts = [];
+    session.selectedTurnIds = [];
+    session.events = [];
+    session.scheduledEvents = [];
+    delete session.playLocalState.hiddenSignal;
+    delete session.playLocalStateVisibility.hiddenSignal;
+    const momentum = session.playLocalState.worldMomentum as { agendas: unknown[] };
+    momentum.agendas = [];
+    api.listPlaySessions.mockResolvedValue({ sessions: [session] });
+
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('RUMOR-STATE-MUST-NOT-LEAK');
+    expect(wrapper.find('[role="switch"]').exists()).toBe(true);
+    await wrapper.get('[role="switch"]').trigger('click');
+    expect(wrapper.text()).toContain('RUMOR-STATE-MUST-NOT-LEAK');
     wrapper.unmount();
   });
 
@@ -116,6 +153,60 @@ function mountWorkspace() {
 }
 
 function createSession(): PlaySession {
+  const pressure = {
+    id: 'pressure-1',
+    kind: 'deadline' as const,
+    label: 'Station lockdown',
+    status: 'active' as const,
+    causeRefs: ['event-1'],
+    nextConsequence: 'The east gate closes.',
+    visibility: 'playerVisible' as const,
+  };
+  const hiddenAgenda = {
+    id: 'agenda-hidden',
+    ownerEntityId: 'Hidden command',
+    goal: 'Trap the witness',
+    nextMove: 'Seal the platform',
+    blockers: [],
+    status: 'active' as const,
+    visibility: 'playerUnknown' as const,
+    updatedAtTurnId: 'turn-1',
+  };
+  const momentum = { pressures: [pressure], agendas: [hiddenAgenda] };
+  const scheduledEvent = {
+    id: 'scheduled-secret-flag',
+    label: 'Condition-driven station change',
+    trigger: {
+      type: 'flagEquals' as const,
+      path: 'secrets.commandCode',
+      value: 'AUTHOR-CODE-9417',
+    },
+    template: {
+      kind: 'factionActed' as const,
+      origin: 'faction' as const,
+      title: 'The station changes',
+      summary: 'A visible station change is pending.',
+      visibility: 'playerVisible' as const,
+    },
+    status: 'scheduled' as const,
+    scheduledAtTurn: 0,
+    scheduledAtRevision: 0,
+  };
+  const localState = {
+    location: 'platform',
+    visibleSignal: 'PLAYER-VISIBLE-STATE',
+    rumorSignal: 'RUMOR-STATE-MUST-NOT-LEAK',
+    hiddenSignal: 'HIDDEN-STATE-MUST-NOT-LEAK',
+    worldMomentum: momentum,
+  };
+  const localStateVisibility = {
+    location: 'playerVisible' as const,
+    visibleSignal: 'playerVisible' as const,
+    rumorSignal: 'rumor' as const,
+    hiddenSignal: 'playerUnknown' as const,
+    worldMomentum: 'playerUnknown' as const,
+  };
+
   return {
     schemaVersion: 4,
     id: 'play-1',
@@ -136,10 +227,10 @@ function createSession(): PlaySession {
       worldClock: { turn: 1, revision: 1 },
       eventIds: ['event-1'],
       dueScheduledEventIds: [],
-      scheduledEventIds: [],
-      scheduledEventSnapshots: [],
-      playLocalStateSnapshot: {},
-      playLocalStateVisibilitySnapshot: {},
+      scheduledEventIds: [scheduledEvent.id],
+      scheduledEventSnapshots: [scheduledEvent],
+      playLocalStateSnapshot: localState,
+      playLocalStateVisibilitySnapshot: localStateVisibility,
       observationIds: [],
       stateDelta: {},
       suggestedActions: [],
@@ -150,40 +241,14 @@ function createSession(): PlaySession {
     branchSnapshotRequiredFromRevision: 0,
     branchBaseSnapshot: {
       worldClock: { turn: 0, revision: 0 },
-      playLocalState: {},
-      playLocalStateVisibility: {},
-      scheduledEvents: [],
+      playLocalState: localState,
+      playLocalStateVisibility: localStateVisibility,
+      scheduledEvents: [scheduledEvent],
       suggestedActions: [],
     },
     metadataExtensions: {},
-    playLocalState: {
-      location: 'platform',
-      worldMomentum: {
-        pressures: [{
-          id: 'pressure-1',
-          kind: 'deadline',
-          label: 'Station lockdown',
-          status: 'active',
-          causeRefs: ['turn-1'],
-          nextConsequence: 'The east gate closes.',
-          visibility: 'playerVisible',
-        }],
-        agendas: [{
-          id: 'agenda-hidden',
-          ownerEntityId: 'Hidden command',
-          goal: 'Trap the witness',
-          nextMove: 'Seal the platform',
-          blockers: [],
-          status: 'active',
-          visibility: 'playerUnknown',
-          updatedAtTurnId: 'turn-1',
-        }],
-      },
-    },
-    playLocalStateVisibility: {
-      location: 'playerVisible',
-      worldMomentum: 'playerUnknown',
-    },
+    playLocalState: localState,
+    playLocalStateVisibility: localStateVisibility,
     worldClock: { turn: 1, revision: 1 },
     eventPolicy: {
       simulationMode: 'reactiveWorld',
@@ -209,7 +274,7 @@ function createSession(): PlaySession {
       createdAt: '2026-07-15T00:00:00.000Z',
       canonical: false,
     }],
-    scheduledEvents: [],
+    scheduledEvents: [scheduledEvent],
     suggestedActions: [],
     activatedSources: [],
     observations: [],

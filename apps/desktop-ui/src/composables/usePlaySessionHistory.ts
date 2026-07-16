@@ -13,9 +13,18 @@ export interface PlaySessionHistoryClient {
   }>;
   restorePlayCheckpoint(
     id: string,
-    artifactId: string,
+    checkpointId: string,
     input: { baseRevision: number },
   ): Promise<PlayCheckpointRestoreResult>;
+  renamePlayCheckpoint?(
+    id: string,
+    checkpointId: string,
+    input: { baseRevision: number; name: string },
+  ): Promise<{
+    session: PlaySession;
+    checkpoints: PlayCheckpointSummary[];
+    renamedCheckpointId: string;
+  }>;
 }
 
 export interface UsePlaySessionHistoryOptions {
@@ -23,12 +32,14 @@ export interface UsePlaySessionHistoryOptions {
   selectedSession: ComputedRef<PlaySession | undefined>;
   blocked: ComputedRef<boolean>;
   onRestored(session: PlaySession): void;
+  onRenamed?(session: PlaySession): void;
   onError(error: unknown): void;
 }
 
 export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
   const checkpoints = shallowRef<PlayCheckpointSummary[]>([]);
   const busyArtifactId = shallowRef('');
+  const namingCheckpointId = shallowRef('');
   const loading = shallowRef(false);
   const notice = shallowRef('');
   let loadGeneration = 0;
@@ -100,27 +111,29 @@ export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
     }
   }
 
-  async function restore(artifactId: string): Promise<boolean> {
+  async function restore(checkpointId: string): Promise<boolean> {
     const session = options.selectedSession.value;
-    const checkpoint = checkpoints.value.find((item) => item.artifactId === artifactId);
+    const checkpoint = checkpoints.value.find((item) =>
+      checkpointIdOf(item) === checkpointId);
     if (
       !session ||
-      !artifactId ||
+      !checkpointId ||
       options.blocked.value ||
       loading.value ||
       busyArtifactId.value ||
+      namingCheckpointId.value ||
       !checkpoint?.restorable
     ) {
       return false;
     }
 
-    busyArtifactId.value = artifactId;
+    busyArtifactId.value = checkpointId;
     notice.value = '';
 
     try {
       const result = await options.client.restorePlayCheckpoint(
         session.id,
-        artifactId,
+        checkpointId,
         { baseRevision: session.revision },
       );
 
@@ -138,14 +151,79 @@ export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
     }
   }
 
+  async function rename(checkpointId: string, name: string): Promise<boolean> {
+    const session = options.selectedSession.value;
+    const checkpoint = checkpoints.value.find((item) =>
+      checkpointIdOf(item) === checkpointId);
+    const normalizedName = name.trim();
+    if (
+      !session ||
+      !checkpoint ||
+      !normalizedName ||
+      normalizedName.length > 80 ||
+      normalizedName === checkpointNameOf(checkpoint) ||
+      options.blocked.value ||
+      loading.value ||
+      busyArtifactId.value ||
+      namingCheckpointId.value
+    ) {
+      return false;
+    }
+
+    const renamePlayCheckpoint = options.client.renamePlayCheckpoint;
+    if (!renamePlayCheckpoint) {
+      options.onError(new Error('Play checkpoint naming is unavailable.'));
+      return false;
+    }
+
+    namingCheckpointId.value = checkpointId;
+    notice.value = '';
+
+    try {
+      const result = await renamePlayCheckpoint(
+        session.id,
+        checkpointId,
+        { baseRevision: session.revision, name: normalizedName },
+      );
+
+      loadGeneration += 1;
+      checkpoints.value = result.checkpoints;
+      loadedSessionKey = sessionKey(result.session);
+      notice.value = 'Worldline point named.';
+      (options.onRenamed ?? options.onRestored)(result.session);
+      return true;
+    } catch (error) {
+      options.onError(error);
+      return false;
+    } finally {
+      namingCheckpointId.value = '';
+    }
+  }
+
   return {
     checkpoints: readonly(checkpoints),
     busyArtifactId: readonly(busyArtifactId),
     loading: readonly(loading),
+    namingCheckpointId: readonly(namingCheckpointId),
     notice: readonly(notice),
     load,
+    rename,
     restore,
   };
+}
+
+function checkpointIdOf(checkpoint: PlayCheckpointSummary): string {
+  const checkpointId = 'checkpointId' in checkpoint
+    ? checkpoint.checkpointId
+    : undefined;
+  return typeof checkpointId === 'string'
+    ? checkpointId
+    : checkpoint.artifactId ?? '';
+}
+
+function checkpointNameOf(checkpoint: PlayCheckpointSummary): string {
+  const name = 'name' in checkpoint ? checkpoint.name : undefined;
+  return typeof name === 'string' ? name.trim() : '';
 }
 
 function sessionKey(session: Pick<PlaySession, 'id' | 'revision'> | undefined): string {

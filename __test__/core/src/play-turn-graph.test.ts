@@ -4,11 +4,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PLAY_CHECKPOINT_NAMES_METADATA_KEY,
+  PLAY_INITIAL_WORLD_CHECKPOINT_ID,
   addPlayTranscriptTurn,
   createLegacyPlayTurnArtifacts,
   createPlaySessionDraft,
   listPlaySessionCheckpoints,
   readPlaySessionFiles,
+  renamePlaySessionCheckpoint,
   restorePlaySessionCheckpoint,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
@@ -99,14 +102,43 @@ const createTwoTurnBranch = (): PlaySession => {
 };
 
 describe('Play turn graph checkpoints', () => {
+  it('exposes the virtual branch base as a real initial-world checkpoint', () => {
+    const session = createPlaySessionDraft({
+      id: 'play-initial-world',
+      title: 'Initial world',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      sceneStart: 'A silent station',
+      characters: [],
+    });
+
+    expect(listPlaySessionCheckpoints(session)).toEqual([{
+      checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+      kind: 'initialWorld',
+      selectedTurnIds: [],
+      depth: 0,
+      revision: 0,
+      worldTurn: 0,
+      committedAt: '2026-07-15T00:00:00.000Z',
+      preview: 'Initial world',
+      status: 'current',
+      restorable: false,
+      retryable: false,
+      canonical: false,
+    }]);
+  });
+
   it('lists only safe implicit checkpoints with branch-relative status', () => {
     const session = createTwoTurnBranch();
     const checkpoints = listPlaySessionCheckpoints(session);
 
     expect(checkpoints).toEqual([
       expect.objectContaining({
+        checkpointId: 'turn-artifact-1',
+        kind: 'turn',
         artifactId: 'turn-artifact-1',
+        parentCheckpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
         selectedTurnIds: ['turn-artifact-1'],
+        depth: 1,
         revision: 1,
         worldTurn: 1,
         preview: 'Wait by the gate.',
@@ -115,15 +147,26 @@ describe('Play turn graph checkpoints', () => {
         canonical: false,
       }),
       expect.objectContaining({
+        checkpointId: 'turn-artifact-2',
+        kind: 'turn',
         artifactId: 'turn-artifact-2',
-        parentArtifactId: 'turn-artifact-1',
+        parentCheckpointId: 'turn-artifact-1',
         selectedTurnIds: ['turn-artifact-1', 'turn-artifact-2'],
+        depth: 2,
         revision: 2,
         worldTurn: 2,
         preview: 'Leave the platform.',
         status: 'current',
         restorable: false,
         canonical: false,
+      }),
+      expect.objectContaining({
+        checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+        kind: 'initialWorld',
+        selectedTurnIds: [],
+        depth: 0,
+        status: 'selectedAncestor',
+        restorable: true,
       }),
     ]);
   });
@@ -159,9 +202,209 @@ describe('Play turn graph checkpoints', () => {
       ].join('\n'),
     });
 
-    const [checkpoint] = listPlaySessionCheckpoints(session);
+    const checkpoint = listPlaySessionCheckpoints(session).find(
+      (candidate) => candidate.kind === 'turn',
+    );
     expect(checkpoint?.preview).toBe('Wait quietly.');
     expect(checkpoint?.preview).not.toContain('watcher');
+  });
+
+  it('uses a nontechnical world-turn preview when a checkpoint has no input', () => {
+    const session = addPlayTranscriptTurn(createTwoTurnBranch(), {
+      speaker: 'narrator',
+      content: 'The platform clock continues ticking.',
+      createdAt: '2026-07-15T00:03:00.000Z',
+    });
+    const noInputArtifact = session.turnArtifacts.at(-1)!;
+    const checkpoint = listPlaySessionCheckpoints(session).find(
+      (candidate) => candidate.checkpointId === noInputArtifact.id,
+    );
+
+    expect(checkpoint?.preview).toBe('World turn 2');
+    expect(checkpoint?.preview).not.toContain(noInputArtifact.id);
+  });
+
+  it('restores the initial world and creates a new root without deleting old roots', () => {
+    const original = createTwoTurnBranch();
+    const restored = restorePlaySessionCheckpoint(
+      original,
+      PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+    );
+
+    expect(restored).toMatchObject({
+      revision: 3,
+      selectedTurnIds: [],
+      transcript: [],
+      playLocalState: {},
+      playLocalStateVisibility: {},
+      worldClock: { turn: 0, revision: 3 },
+      scheduledEvents: [],
+      suggestedActions: [],
+    });
+    expect(restored.turnArtifacts).toHaveLength(2);
+    expect(restored.events).toHaveLength(2);
+    expect(listPlaySessionCheckpoints(restored)).toEqual([
+      expect.objectContaining({
+        checkpointId: 'turn-artifact-1',
+        status: 'variant',
+        restorable: true,
+      }),
+      expect.objectContaining({
+        checkpointId: 'turn-artifact-2',
+        status: 'variant',
+        restorable: true,
+      }),
+      expect.objectContaining({
+        checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+        kind: 'initialWorld',
+        status: 'current',
+        restorable: false,
+      }),
+    ]);
+
+    const newRoot = settlePlayWorldRefereeResponse({
+      session: restored,
+      userText: 'Take the service stairs instead.',
+      actionKind: 'move',
+      createdAt: '2026-07-15T00:03:00.000Z',
+      refereeResponse: refereeResponse({
+        narrative: 'The service stairs lead below the tracks.',
+        eventTitle: 'Service stairs entered',
+        state: 'stairs',
+        suggestion: 'Follow the maintenance lights',
+      }),
+    });
+
+    expect(newRoot.selectedTurnIds).toEqual(['turn-artifact-4']);
+    expect(newRoot.turnArtifacts.at(-1)).toMatchObject({
+      id: 'turn-artifact-4',
+    });
+    expect(newRoot.turnArtifacts.at(-1)).not.toHaveProperty('parentTurnId');
+    expect(newRoot.turnArtifacts).toHaveLength(3);
+    expect(listPlaySessionCheckpoints(newRoot)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkpointId: 'turn-artifact-1',
+          parentCheckpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+          status: 'variant',
+        }),
+        expect.objectContaining({
+          checkpointId: 'turn-artifact-4',
+          parentCheckpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+          status: 'current',
+        }),
+      ]),
+    );
+  });
+
+  it('stores validated checkpoint names as metadata annotations and round-trips them', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-checkpoint-name-'));
+    try {
+      const original = createTwoTurnBranch();
+      const snapshot = structuredClone(original);
+      const namedInitial = renamePlaySessionCheckpoint(
+        original,
+        PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+        '  Before the station changed  ',
+      );
+      const namedTurn = renamePlaySessionCheckpoint(
+        namedInitial,
+        'turn-artifact-1',
+        'Gate still open',
+      );
+
+      expect(original).toEqual(snapshot);
+      expect(namedTurn).toMatchObject({
+        revision: 4,
+        worldClock: { turn: 2, revision: 4 },
+        metadataExtensions: {
+          [PLAY_CHECKPOINT_NAMES_METADATA_KEY]: {
+            [PLAY_INITIAL_WORLD_CHECKPOINT_ID]: 'Before the station changed',
+            'turn-artifact-1': 'Gate still open',
+          },
+        },
+      });
+      expect(listPlaySessionCheckpoints(namedTurn)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+            name: 'Before the station changed',
+          }),
+          expect.objectContaining({
+            checkpointId: 'turn-artifact-1',
+            name: 'Gate still open',
+          }),
+        ]),
+      );
+
+      await writePlaySessionFiles(workspaceRoot, namedTurn);
+      const reread = await readPlaySessionFiles(workspaceRoot, namedTurn.id);
+      expect(listPlaySessionCheckpoints(reread)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            checkpointId: PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+            name: 'Before the station changed',
+          }),
+          expect.objectContaining({
+            checkpointId: 'turn-artifact-1',
+            name: 'Gate still open',
+          }),
+        ]),
+      );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed for unknown names, unsafe ids, and malformed name metadata', () => {
+    const session = createTwoTurnBranch();
+    expect(() => renamePlaySessionCheckpoint(session, 'missing-artifact', 'Missing'))
+      .toThrow('references an unknown artifact');
+    expect(() => renamePlaySessionCheckpoint(session, '../unsafe', 'Unsafe'))
+      .toThrow('Invalid Play turn artifact id');
+    expect(() => renamePlaySessionCheckpoint(session, 'turn-artifact-1', ''))
+      .toThrow('must not be empty');
+    expect(() => renamePlaySessionCheckpoint(
+      session,
+      'turn-artifact-1',
+      'line\nbreak',
+    )).toThrow('must not contain control characters');
+    expect(() => renamePlaySessionCheckpoint(
+      session,
+      'turn-artifact-1',
+      'x'.repeat(81),
+    )).toThrow('at most 80 characters');
+
+    const malformedContainer: PlaySession = {
+      ...session,
+      metadataExtensions: {
+        [PLAY_CHECKPOINT_NAMES_METADATA_KEY]: [],
+      },
+    };
+    expect(() => listPlaySessionCheckpoints(malformedContainer))
+      .toThrow('names metadata must be an object');
+
+    const unknownTarget: PlaySession = {
+      ...session,
+      metadataExtensions: {
+        [PLAY_CHECKPOINT_NAMES_METADATA_KEY]: {
+          'missing-artifact': 'Unknown',
+        },
+      },
+    };
+    expect(() => listPlaySessionCheckpoints(unknownTarget))
+      .toThrow('references an unknown artifact');
+
+    const nonNormalized: PlaySession = {
+      ...session,
+      metadataExtensions: {
+        [PLAY_CHECKPOINT_NAMES_METADATA_KEY]: {
+          'turn-artifact-1': ' Padded ',
+        },
+      },
+    };
+    expect(() => restorePlaySessionCheckpoint(nonNormalized, 'turn-artifact-1'))
+      .toThrow('name metadata is not normalized');
   });
 
   it('restores every selected projection, keeps ledgers, and persists the result', async () => {
@@ -251,6 +494,16 @@ describe('Play turn graph checkpoints', () => {
 
   it('rejects current, unknown, unsafe, and snapshot-less checkpoint targets', () => {
     const session = createTwoTurnBranch();
+    const emptySession = createPlaySessionDraft({
+      id: 'play-current-initial',
+      title: 'Current initial',
+      sceneStart: 'Initial scene',
+      characters: [],
+    });
+    expect(() => restorePlaySessionCheckpoint(
+      emptySession,
+      PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+    )).toThrow('is already current');
     expect(() => restorePlaySessionCheckpoint(
       session,
       session.selectedTurnIds.at(-1)!,
@@ -310,10 +563,17 @@ describe('Play turn graph checkpoints', () => {
         }),
         expect.objectContaining({
           artifactId: legacyArtifacts[1]!.id,
+          checkpointId: legacyArtifacts[1]!.id,
+          kind: 'turn',
+          preview: 'Imported starting point',
           restorable: true,
         }),
       ]),
     );
+    expect(() => restorePlaySessionCheckpoint(
+      completeHead,
+      PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+    )).toThrow('initial-world checkpoint is unavailable');
     expect(() => restorePlaySessionCheckpoint(
       completeHead,
       legacyArtifacts[0]!.id,

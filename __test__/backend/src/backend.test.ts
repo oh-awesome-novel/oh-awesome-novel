@@ -546,6 +546,545 @@ describe('novel HTTP backend', () => {
       .toThrow();
   });
 
+  it('previews, confirms, reads, and starts source-backed Guided Play for both purposes', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    await mkdir(join(workspaceRoot, 'characters/heroine'), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, 'characters/heroine/character.md'),
+      '# Heroine\n\nShe keeps watch at the gate.\n',
+      'utf-8',
+    );
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+
+    const immersiveInput = createPlayLaunchPreviewInput(
+      'setup-guided-journey',
+      'immersiveJourney',
+    );
+    const immersivePreview = await fetchJson<{
+      launchPackage: Record<string, unknown> & {
+        id: string;
+        sourceBase: { activatedSources: Array<Record<string, unknown>> };
+      };
+    }>(`${backend.url}/api/workspace/play-setups/preview`, {
+      method: 'POST',
+      body: JSON.stringify(immersiveInput),
+    });
+    expect(immersivePreview.launchPackage).toMatchObject({
+      schemaVersion: 1,
+      id: 'setup-guided-journey',
+      purpose: 'immersiveJourney',
+      startMode: 'guided',
+      canonical: false,
+      sourceBase: {
+        activatedSources: [expect.objectContaining({
+          sourceId: 'chapter-opening',
+          path: 'chapters/0001/0001.md',
+          objectId: '0001/0001',
+          role: 'chapter',
+          status: 'ready',
+          contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        })],
+      },
+    });
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-setups/setup-guided-journey/setup.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-sessions/play-guided-journey/session.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+
+    const confirmed = await fetchJson<{
+      launchPackage: typeof immersivePreview.launchPackage;
+      files: string[];
+    }>(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      body: JSON.stringify(immersivePreview.launchPackage),
+    });
+    expect(confirmed).toEqual({
+      launchPackage: immersivePreview.launchPackage,
+      files: ['.workspace/play-setups/setup-guided-journey/setup.yaml'],
+    });
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/play-setups/setup-guided-journey`,
+    )).resolves.toEqual({ launchPackage: immersivePreview.launchPackage });
+
+    const immersive = await fetchJson<{
+      session: {
+        schemaVersion: number;
+        id: string;
+        activatedSources: Array<Record<string, unknown>>;
+        metadataExtensions: Record<string, unknown>;
+      };
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        launchPackageId: 'setup-guided-journey',
+        id: 'play-guided-journey',
+      }),
+    });
+    expect(immersive.session).toMatchObject({
+      schemaVersion: 4,
+      id: 'play-guided-journey',
+      activatedSources: [expect.objectContaining({
+        sourceId: 'chapter-opening',
+        role: 'chapter',
+        contentHash: immersivePreview.launchPackage.sourceBase.activatedSources[0]
+          ?.contentHash,
+      })],
+      metadataExtensions: {
+        playLaunch: {
+          setupId: 'setup-guided-journey',
+          setupSchemaVersion: 1,
+          purpose: 'immersiveJourney',
+          startMode: 'guided',
+        },
+      },
+    });
+
+    const rehearsalInput = createPlayLaunchPreviewInput(
+      'setup-guided-rehearsal',
+      'sceneRehearsal',
+    );
+    const rehearsalPreview = await fetchJson<{
+      launchPackage: Record<string, unknown>;
+    }>(`${backend.url}/api/workspace/play-setups/preview`, {
+      method: 'POST',
+      body: JSON.stringify(rehearsalInput),
+    });
+    await fetchJson(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      body: JSON.stringify(rehearsalPreview.launchPackage),
+    });
+    const rehearsal = await fetchJson<{
+      session: {
+        schemaVersion: number;
+        id: string;
+        sceneRehearsal: { purpose: string; startMode: string };
+        metadataExtensions: Record<string, unknown>;
+      };
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        launchPackageId: 'setup-guided-rehearsal',
+        id: 'play-guided-rehearsal',
+      }),
+    });
+    expect(rehearsal.session).toMatchObject({
+      schemaVersion: 5,
+      id: 'play-guided-rehearsal',
+      sceneRehearsal: {
+        purpose: 'sceneRehearsal',
+        startMode: 'guided',
+      },
+      metadataExtensions: {
+        playLaunch: {
+          setupId: 'setup-guided-rehearsal',
+          purpose: 'sceneRehearsal',
+          startMode: 'guided',
+        },
+      },
+    });
+
+    const compactQuick = await fetchJson<{
+      session: { schemaVersion: number; sceneRehearsal: { startMode: string } };
+    }>(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify(createCompactSceneRehearsalCreateInput(
+        'play-compact-quick',
+      )),
+    });
+    expect(compactQuick.session).toMatchObject({
+      schemaVersion: 5,
+      sceneRehearsal: { startMode: 'quick' },
+    });
+  });
+
+  it('returns one conflict for concurrent create-only writers sharing a session id', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const firstBackend = await startNovelHttpBackend({ workspaceRoot });
+    const secondBackend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(firstBackend, secondBackend);
+    const firstInput = {
+      ...createCompactSceneRehearsalCreateInput('play-concurrent-create'),
+      title: 'First backend contender',
+    };
+    const secondInput = {
+      ...createCompactSceneRehearsalCreateInput('play-concurrent-create'),
+      title: 'Second backend contender',
+    };
+
+    const responses = await Promise.all([
+      fetch(`${firstBackend.url}/api/workspace/play-sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(firstInput),
+      }),
+      fetch(`${secondBackend.url}/api/workspace/play-sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(secondInput),
+      }),
+    ]);
+    expect(responses.map((response) => response.status).toSorted()).toEqual([200, 409]);
+    const winner = responses.find((response) => response.status === 200)!;
+    const loser = responses.find((response) => response.status === 409)!;
+    const winnerBody = await winner.json() as { session: { title: string } };
+    await expect(loser.json()).resolves.toMatchObject({
+      error: expect.stringContaining('already exists'),
+    });
+
+    const reopened = await fetchJson<{ session: { title: string } }>(
+      `${firstBackend.url}/api/workspace/play-sessions/play-concurrent-create`,
+    );
+    expect(reopened.session.title).toBe(winnerBody.session.title);
+  });
+
+  it('blocks stale Guided Play packages before setup, start, or source context use', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async () => {
+        providerCalls += 1;
+        return [
+          'Nothing changes.',
+          '```oan-play-settlement',
+          JSON.stringify({
+            events: [],
+            stateDelta: {},
+            observations: [],
+            suggestedActions: [],
+          }),
+          '```',
+        ].join('\n');
+      },
+    });
+    servers.push(backend);
+    const sourcePath = join(workspaceRoot, 'chapters/0001/0001.md');
+
+    const stalePreview = await fetchJson<{ launchPackage: Record<string, unknown> }>(
+      `${backend.url}/api/workspace/play-setups/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify(createPlayLaunchPreviewInput(
+          'setup-stale-preview',
+          'immersiveJourney',
+        )),
+      },
+    );
+    await writeFile(sourcePath, '# Changed after preview\n', 'utf-8');
+    const staleCreate = await fetch(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(stalePreview.launchPackage),
+    });
+    expect(staleCreate.status).toBe(409);
+    await expect(staleCreate.json()).resolves.toMatchObject({
+      code: 'play_launch_source_validation',
+      diagnostics: [expect.objectContaining({
+        code: 'staleSource',
+        severity: 'error',
+        expectedContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        actualContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      })],
+    });
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-setups/setup-stale-preview/setup.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+
+    const currentPreview = await fetchJson<{ launchPackage: Record<string, unknown> }>(
+      `${backend.url}/api/workspace/play-setups/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify(createPlayLaunchPreviewInput(
+          'setup-stale-start',
+          'immersiveJourney',
+        )),
+      },
+    );
+    await fetchJson(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      body: JSON.stringify(currentPreview.launchPackage),
+    });
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        launchPackageId: 'setup-stale-start',
+        id: 'play-guided-before-stale',
+      }),
+    });
+
+    await writeFile(sourcePath, 'x'.repeat(1_000_001), 'utf-8');
+    const staleSetupReopen = await fetch(
+      `${backend.url}/api/workspace/play-setups/setup-stale-start`,
+    );
+    expect(staleSetupReopen.status).toBe(409);
+    await expect(staleSetupReopen.json()).resolves.toMatchObject({
+      code: 'play_launch_source_validation',
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'sourceTooLarge', severity: 'error' }),
+      ]),
+    });
+    const staleSessionReopen = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-guided-before-stale`,
+    );
+    expect(staleSessionReopen.status).toBe(409);
+    await expect(staleSessionReopen.json()).resolves.toMatchObject({
+      code: 'play_launch_source_validation',
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'sourceTooLarge', severity: 'error' }),
+      ]),
+    });
+    const staleStart = await fetch(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        launchPackageId: 'setup-stale-start',
+        id: 'play-must-not-exist',
+      }),
+    });
+    expect(staleStart.status).toBe(409);
+    await expect(staleStart.json()).resolves.toMatchObject({
+      code: 'play_launch_source_validation',
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'sourceTooLarge' }),
+      ]),
+    });
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-sessions/play-must-not-exist/session.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+
+    const turn = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-guided-before-stale/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: 'Look around.',
+          actionKind: 'look',
+          baseRevision: 0,
+        }),
+      },
+    );
+    expect(turn.status).toBe(422);
+    expect(providerCalls).toBe(0);
+  });
+
+  it('validates every Guided source beyond the prompt-content budget', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    let providerRequest = '';
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runPlayTurn: async ({ request }) => {
+        providerCalls += 1;
+        providerRequest = request;
+        return [
+          'The world remains still.',
+          '```oan-play-settlement',
+          JSON.stringify({
+            events: [],
+            stateDelta: {},
+            observations: [],
+            suggestedActions: [],
+          }),
+          '```',
+        ].join('\n');
+      },
+    });
+    servers.push(backend);
+
+    const sourceInputs: Array<Record<string, string>> = [{
+      sourceId: 'chapter-opening',
+      path: 'chapters/0001/0001.md',
+      role: 'chapter',
+      reason: 'Opening scene source',
+    }];
+    await mkdir(join(workspaceRoot, 'world'), { recursive: true });
+    const ninthPath = 'world/guided-context-8.md';
+    const ninthOriginal = '# Guided context 8\n';
+    for (let index = 1; index <= 8; index += 1) {
+      const relativePath = `world/guided-context-${index}.md`;
+      await writeFile(
+        join(workspaceRoot, relativePath),
+        `# Guided context ${index}\n`,
+        'utf-8',
+      );
+      sourceInputs.push({
+        sourceId: `world-context-${index}`,
+        path: relativePath,
+        role: 'world',
+        reason: `World context ${index}`,
+      });
+    }
+    const input = createPlayLaunchPreviewInput(
+      'setup-nine-sources',
+      'immersiveJourney',
+    ) as Record<string, unknown> & {
+      sources: Array<Record<string, string>>;
+      entryPoint: Record<string, unknown> & { sourceRefs: string[] };
+    };
+    input.sources = sourceInputs;
+    input.entryPoint.sourceRefs = sourceInputs.map((source) => source.sourceId!);
+
+    const preview = await fetchJson<{ launchPackage: Record<string, unknown> }>(
+      `${backend.url}/api/workspace/play-setups/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    await fetchJson(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      body: JSON.stringify(preview.launchPackage),
+    });
+
+    await writeFile(join(workspaceRoot, ninthPath), '# Stale before start\n', 'utf-8');
+    const blockedStart = await fetch(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        launchPackageId: 'setup-nine-sources',
+        id: 'play-nine-sources',
+      }),
+    });
+    expect(blockedStart.status).toBe(409);
+    await expect(blockedStart.json()).resolves.toMatchObject({
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'staleSource',
+          sourceId: 'world-context-8',
+        }),
+      ]),
+    });
+
+    await writeFile(join(workspaceRoot, ninthPath), ninthOriginal, 'utf-8');
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        launchPackageId: 'setup-nine-sources',
+        id: 'play-nine-sources',
+      }),
+    });
+    const validTurn = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-nine-sources/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: 'Look around.',
+          actionKind: 'look',
+          baseRevision: 0,
+        }),
+      },
+    );
+    expect(validTurn.status).toBe(200);
+    expect(providerCalls).toBe(1);
+    expect(providerRequest).toContain(
+      'Validated 1 additional activated sources; omitted by context budget.',
+    );
+    await writeFile(join(workspaceRoot, ninthPath), '# Stale during Play\n', 'utf-8');
+    const turn = await fetch(
+      `${backend.url}/api/workspace/play-sessions/play-nine-sources/world-referee-turn`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userText: 'Continue.',
+          actionKind: 'look',
+          baseRevision: 1,
+        }),
+      },
+    );
+    expect(turn.status).toBe(422);
+    expect(providerCalls).toBe(1);
+  });
+
+  it('rejects malformed Play setup and launch-session payloads without writing truth', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const input = createPlayLaunchPreviewInput(
+      'setup-malformed',
+      'immersiveJourney',
+    );
+
+    const malformedPreview = await fetch(
+      `${backend.url}/api/workspace/play-setups/preview`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...input, unexpected: true }),
+      },
+    );
+    expect(malformedPreview.status).toBe(400);
+
+    const preview = await fetchJson<{ launchPackage: Record<string, unknown> }>(
+      `${backend.url}/api/workspace/play-setups/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    const tamperedExcerpt = structuredClone(preview.launchPackage) as {
+      sourceBase: { activatedSources: Array<Record<string, unknown>> };
+    };
+    tamperedExcerpt.sourceBase.activatedSources[0]!.excerpt = 'Forged excerpt';
+    const forgedExcerptCreate = await fetch(
+      `${backend.url}/api/workspace/play-setups`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(tamperedExcerpt),
+      },
+    );
+    expect(forgedExcerptCreate.status).toBe(409);
+
+    const tamperedDiagnostics = structuredClone(preview.launchPackage) as {
+      diagnostics: Array<Record<string, unknown>>;
+    };
+    tamperedDiagnostics.diagnostics.push({
+      id: 'diagnostic-forged-warning',
+      code: 'invalidSource',
+      severity: 'warning',
+      message: 'Forged client diagnostic',
+    });
+    const forgedDiagnosticsCreate = await fetch(
+      `${backend.url}/api/workspace/play-setups`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(tamperedDiagnostics),
+      },
+    );
+    expect(forgedDiagnosticsCreate.status).toBe(409);
+
+    const malformedCreate = await fetch(`${backend.url}/api/workspace/play-setups`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...preview.launchPackage, unexpected: true }),
+    });
+    expect(malformedCreate.status).toBe(400);
+
+    const malformedStart = await fetch(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        launchPackageId: 'setup-malformed',
+        id: 'play-malformed',
+        title: 'must not enter the Quick branch',
+      }),
+    });
+    expect(malformedStart.status).toBe(400);
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-setups/setup-malformed/setup.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+    await expect(readFile(
+      join(workspaceRoot, '.workspace/play-sessions/play-malformed/session.yaml'),
+      'utf-8',
+    )).rejects.toThrow();
+  });
+
   it('commits an injected Play referee settlement to Play-local world state only', async () => {
     const workspaceRoot = await createOanWorkspace();
     const canonicalChapterPath = join(workspaceRoot, 'chapters/0001/0001.md');
@@ -1060,30 +1599,50 @@ describe('novel HTTP backend', () => {
 
     const listed = await fetchJson<{
       checkpoints: Array<{
-        artifactId: string;
+        checkpointId: string;
+        kind: string;
+        artifactId?: string;
+        parentCheckpointId?: string;
+        depth: number;
         selectedTurnIds: string[];
         status: string;
         restorable: boolean;
       }>;
     }>(`${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/checkpoints`);
-    expect(listed.checkpoints).toHaveLength(2);
+    expect(listed.checkpoints).toHaveLength(3);
     expect(listed.checkpoints).toEqual([
       expect.objectContaining({
+        checkpointId: 'turn-artifact-1',
+        kind: 'turn',
         artifactId: 'turn-artifact-1',
+        parentCheckpointId: 'initial-world',
+        depth: 1,
         selectedTurnIds: ['turn-artifact-1'],
         status: 'selectedAncestor',
         restorable: true,
       }),
       expect.objectContaining({
+        checkpointId: 'turn-artifact-2',
+        kind: 'turn',
         artifactId: 'turn-artifact-2',
+        parentCheckpointId: 'turn-artifact-1',
+        depth: 2,
         selectedTurnIds: ['turn-artifact-1', 'turn-artifact-2'],
         status: 'current',
         restorable: false,
       }),
+      expect.objectContaining({
+        checkpointId: 'initial-world',
+        kind: 'initialWorld',
+        depth: 0,
+        selectedTurnIds: [],
+        status: 'selectedAncestor',
+        restorable: true,
+      }),
     ]);
 
     const restored = await fetchJson<{
-      restoredArtifactId: string;
+      restoredCheckpointId: string;
       session: {
         revision: number;
         selectedTurnIds: string[];
@@ -1093,7 +1652,7 @@ describe('novel HTTP backend', () => {
         scheduledEvents: Array<{ id: string; status: string }>;
         suggestedActions: string[];
       };
-      checkpoints: Array<{ artifactId: string; status: string; restorable: boolean }>;
+      checkpoints: Array<{ checkpointId: string; status: string; restorable: boolean }>;
     }>(
       `${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/checkpoints/turn-artifact-1/restore`,
       {
@@ -1103,7 +1662,7 @@ describe('novel HTTP backend', () => {
     );
 
     expect(restored).toMatchObject({
-      restoredArtifactId: 'turn-artifact-1',
+      restoredCheckpointId: 'turn-artifact-1',
       session: {
         revision: 3,
         selectedTurnIds: ['turn-artifact-1'],
@@ -1114,13 +1673,18 @@ describe('novel HTTP backend', () => {
       },
       checkpoints: [
         expect.objectContaining({
-          artifactId: 'turn-artifact-1',
+          checkpointId: 'turn-artifact-1',
           status: 'current',
           restorable: false,
         }),
         expect.objectContaining({
-          artifactId: 'turn-artifact-2',
+          checkpointId: 'turn-artifact-2',
           status: 'variant',
+          restorable: true,
+        }),
+        expect.objectContaining({
+          checkpointId: 'initial-world',
+          status: 'selectedAncestor',
           restorable: true,
         }),
       ],
@@ -1129,6 +1693,44 @@ describe('novel HTTP backend', () => {
       '观察闸门',
       '站台闸门暂时保持开启。',
     ]);
+
+    const initial = await fetchJson<{
+      restoredCheckpointId: string;
+      session: {
+        revision: number;
+        selectedTurnIds: string[];
+        transcript: Array<{ content: string }>;
+        worldClock: { turn: number; revision: number };
+      };
+      checkpoints: Array<{ checkpointId: string; status: string; restorable: boolean }>;
+    }>(
+      `${backend.url}/api/workspace/play-sessions/play-checkpoint-restore/checkpoints/initial-world/restore`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ baseRevision: 3 }),
+      },
+    );
+    expect(initial).toMatchObject({
+      restoredCheckpointId: 'initial-world',
+      session: {
+        revision: 4,
+        selectedTurnIds: [],
+        transcript: [],
+        worldClock: { turn: 0, revision: 4 },
+      },
+      checkpoints: expect.arrayContaining([
+        expect.objectContaining({
+          checkpointId: 'initial-world',
+          status: 'current',
+          restorable: false,
+        }),
+        expect.objectContaining({
+          checkpointId: 'turn-artifact-1',
+          status: 'variant',
+          restorable: true,
+        }),
+      ]),
+    });
   });
 
   it('requires a current baseRevision and leaves Play checkpoints unchanged on restore errors', async () => {
@@ -1225,6 +1827,213 @@ describe('novel HTTP backend', () => {
           expect.objectContaining({ content: 'First' }),
           expect.objectContaining({ content: 'Second' }),
         ],
+      },
+    });
+  });
+
+  it('names initial and turn checkpoints through revision-checked staged mutations', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/play-checkpoint-name`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: 'play-checkpoint-name',
+        title: 'Checkpoint names',
+        sceneStart: 'Archive',
+      }),
+    });
+    await fetchJson(`${sessionEndpoint}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({ speaker: 'note', content: 'First', baseRevision: 0 }),
+    });
+
+    const nameEndpoint = `${sessionEndpoint}/checkpoints/turn-artifact-1/name`;
+    const missingRevision = await fetch(nameEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Archive opened' }),
+    });
+    expect(missingRevision.status).toBe(400);
+    const missingName = await fetch(nameEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 1 }),
+    });
+    expect(missingName.status).toBe(400);
+    const unknownField = await fetch(nameEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 1, name: 'Archive opened', force: true }),
+    });
+    expect(unknownField.status).toBe(400);
+
+    const renamed = await fetchJson<{
+      renamedCheckpointId: string;
+      session: {
+        revision: number;
+        worldClock: { revision: number };
+        metadataExtensions: Record<string, unknown>;
+      };
+      checkpoints: Array<{ checkpointId: string; name?: string }>;
+    }>(nameEndpoint, {
+      method: 'POST',
+      body: JSON.stringify({ baseRevision: 1, name: '  Archive opened  ' }),
+    });
+    expect(renamed).toMatchObject({
+      renamedCheckpointId: 'turn-artifact-1',
+      session: {
+        revision: 2,
+        worldClock: { revision: 2 },
+        metadataExtensions: {
+          playCheckpointNames: {
+            'turn-artifact-1': 'Archive opened',
+          },
+        },
+      },
+      checkpoints: expect.arrayContaining([
+        expect.objectContaining({
+          checkpointId: 'turn-artifact-1',
+          name: 'Archive opened',
+        }),
+      ]),
+    });
+
+    const stale = await fetch(nameEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 1, name: 'Stale overwrite' }),
+    });
+    expect(stale.status).toBe(409);
+
+    const namedInitial = await fetchJson<{
+      renamedCheckpointId: string;
+      session: { revision: number; worldClock: { revision: number } };
+      checkpoints: Array<{ checkpointId: string; name?: string }>;
+    }>(`${sessionEndpoint}/checkpoints/initial-world/name`, {
+      method: 'POST',
+      body: JSON.stringify({ baseRevision: 2, name: 'Before the archive opened' }),
+    });
+    expect(namedInitial).toMatchObject({
+      renamedCheckpointId: 'initial-world',
+      session: { revision: 3, worldClock: { revision: 3 } },
+      checkpoints: expect.arrayContaining([
+        expect.objectContaining({
+          checkpointId: 'initial-world',
+          name: 'Before the archive opened',
+        }),
+        expect.objectContaining({
+          checkpointId: 'turn-artifact-1',
+          name: 'Archive opened',
+        }),
+      ]),
+    });
+
+    const invalidName = await fetch(nameEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 3, name: 'line\nbreak' }),
+    });
+    expect(invalidName.status).toBe(400);
+    const unknownTarget = await fetch(
+      `${sessionEndpoint}/checkpoints/missing-artifact/name`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 3, name: 'Missing' }),
+      },
+    );
+    expect(unknownTarget.status).toBe(404);
+
+    await expect(fetchJson(sessionEndpoint)).resolves.toMatchObject({
+      session: {
+        revision: 3,
+        metadataExtensions: {
+          playCheckpointNames: {
+            'turn-artifact-1': 'Archive opened',
+            'initial-world': 'Before the archive opened',
+          },
+        },
+      },
+    });
+  });
+
+  it('rejects checkpoint naming while a Scene Rehearsal attempt is active', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const sessionId = 'play-checkpoint-active-attempt';
+    const sessionEndpoint = `${backend.url}/api/workspace/play-sessions/${sessionId}`;
+
+    await fetchJson(`${backend.url}/api/workspace/play-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: sessionId,
+        title: 'Checkpoint attempt conflict',
+        sceneStart: 'The station gate is about to close.',
+        purpose: 'sceneRehearsal',
+        startMode: 'guided',
+        sceneContract: {
+          sceneId: 'scene-gate',
+          worldClock: { turn: 0, revision: 0 },
+          clockProvenance: { kind: 'newSessionInitial', sourceRefs: [] },
+          objective: {
+            value: 'Test whether Alice leaves.',
+            provenance: {
+              kind: 'authorProvided',
+              providedAt: '2026-07-15T00:00:00.000Z',
+            },
+          },
+          risk: {
+            value: 'The gate closes first.',
+            provenance: {
+              kind: 'authorProvided',
+              providedAt: '2026-07-15T00:00:00.000Z',
+            },
+          },
+          participantRefs: ['participant-alice'],
+          orderStrategy: 'directorFixed',
+        },
+        participants: [{
+          participantRef: 'participant-alice',
+          displayName: 'Alice',
+          initialKnowledgeEvidenceRefs: ['knowledge-ticket'],
+        }],
+        initialKnowledgeEvidence: [{
+          id: 'knowledge-ticket',
+          participantRef: 'participant-alice',
+          visibility: 'playerVisible',
+          fact: 'Alice knows she holds the valid ticket.',
+          provenance: {
+            kind: 'authorProvided',
+            providedAt: '2026-07-15T00:00:00.000Z',
+          },
+        }],
+      }),
+    });
+    await fetchJson(`${sessionEndpoint}/attempts`, {
+      method: 'POST',
+      body: JSON.stringify({ baseRevision: 0 }),
+    });
+
+    const response = await fetch(
+      `${sessionEndpoint}/checkpoints/initial-world/name`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseRevision: 0, name: 'Blocked name' }),
+      },
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'active_attempt',
+    });
+    await expect(fetchJson(sessionEndpoint)).resolves.toMatchObject({
+      session: {
+        revision: 0,
+        metadataExtensions: {},
       },
     });
   });
@@ -2506,6 +3315,112 @@ describe('novel HTTP backend', () => {
       });
   });
 });
+
+function createPlayLaunchPreviewInput(
+  id: string,
+  purpose: 'immersiveJourney' | 'sceneRehearsal',
+): Record<string, unknown> {
+  const rehearsal = purpose === 'sceneRehearsal';
+  const sources = [{
+    sourceId: 'chapter-opening',
+    path: 'chapters/0001/0001.md',
+    role: 'chapter',
+    reason: 'Opening scene source',
+  }];
+  if (rehearsal) {
+    sources.push({
+      sourceId: 'character-heroine',
+      path: 'characters/heroine/character.md',
+      role: 'character',
+      reason: 'Canonical participant source',
+    });
+  }
+  const sourceRefs = sources.map((source) => source.sourceId);
+  return {
+    id,
+    createdAt: '2026-07-16T00:00:00.000Z',
+    title: rehearsal ? 'Gate Scene Rehearsal' : 'Guided Gate Journey',
+    purpose,
+    startMode: 'guided',
+    simulationMode: rehearsal ? 'conversation' : 'reactiveWorld',
+    density: 'balanced',
+    sources,
+    entryPoint: {
+      id: rehearsal ? 'scene-gate' : 'entry-gate',
+      label: 'At the gate',
+      opening: 'Rain falls over the gate as the last train approaches.',
+      sourceRefs,
+      worldTime: {
+        value: 'Late evening',
+        provenance: {
+          kind: 'authorProvided',
+          providedAt: '2026-07-16T00:00:00.000Z',
+        },
+      },
+      objective: {
+        value: rehearsal ? 'Test whether the heroine leaves.' : 'Reach the platform.',
+        provenance: { kind: 'sourceBacked', sourceRefs: ['chapter-opening'] },
+      },
+      risk: {
+        value: 'The gate may close first.',
+        provenance: { kind: 'sourceBacked', sourceRefs: ['chapter-opening'] },
+      },
+    },
+    identity: rehearsal
+      ? {
+          kind: 'director',
+          directorPurpose: 'Test the heroine reaction without changing canon.',
+        }
+      : { kind: 'player', persona: 'A traveler trying to catch the train.' },
+    participantRoles: rehearsal
+      ? [{
+          participantRef: 'participant-heroine',
+          displayName: 'Heroine',
+          canonicalCharacterRef: 'heroine',
+          sourceRefs: ['character-heroine'],
+          position: 'Beside the closing gate',
+          currentGoal: 'Decide whether to board',
+          initialKnowledge: [{
+            id: 'knowledge-last-train',
+            fact: 'This is the last train tonight.',
+            visibility: 'playerVisible',
+            sourceRefs: ['chapter-opening'],
+          }],
+        }]
+      : [],
+  };
+}
+
+function createCompactSceneRehearsalCreateInput(id: string): Record<string, unknown> {
+  return {
+    id,
+    title: 'Compact rehearsal',
+    sceneStart: 'The station gate is about to close.',
+    purpose: 'sceneRehearsal',
+    sceneContract: {
+      sceneId: 'scene-compact',
+      worldClock: { turn: 0, revision: 0 },
+      clockProvenance: { kind: 'newSessionInitial', sourceRefs: [] },
+      participantRefs: ['participant-alice'],
+      orderStrategy: 'directorFixed',
+    },
+    participants: [{
+      participantRef: 'participant-alice',
+      displayName: 'Alice',
+      initialKnowledgeEvidenceRefs: ['knowledge-ticket'],
+    }],
+    initialKnowledgeEvidence: [{
+      id: 'knowledge-ticket',
+      participantRef: 'participant-alice',
+      visibility: 'playerVisible',
+      fact: 'Alice holds the valid ticket.',
+      provenance: {
+        kind: 'authorProvided',
+        providedAt: '2026-07-16T00:00:00.000Z',
+      },
+    }],
+  };
+}
 
 async function createTempWorkspace(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'oan-backend-'));

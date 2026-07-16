@@ -88,6 +88,44 @@ const momentumSettlementResponse = (
 ].join('\n');
 
 describe('Play session filesystem slice', () => {
+  it('admits exactly one concurrent create-only writer for a session id', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-create-only-'));
+    try {
+      const first = createPlaySessionDraft({
+        id: 'play-create-only',
+        title: 'First contender',
+        sceneStart: 'First scene',
+        characters: [],
+      });
+      const second = createPlaySessionDraft({
+        id: 'play-create-only',
+        title: 'Second contender',
+        sceneStart: 'Second scene',
+        characters: [],
+      });
+      const results = await Promise.allSettled([
+        writePlaySessionFiles(workspaceRoot, first, { expectedAbsent: true }),
+        writePlaySessionFiles(workspaceRoot, second, { expectedAbsent: true }),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const rejected = results.find((result) => result.status === 'rejected');
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        reason: expect.objectContaining({
+          name: 'PlaySessionWriteConflictError',
+        }),
+      });
+      const stored = await readPlaySessionFiles(workspaceRoot, first.id);
+      expect(['First contender', 'Second contender']).toContain(stored.title);
+      expect(stored.sceneStart).toBe(
+        stored.title === 'First contender' ? 'First scene' : 'Second scene',
+      );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the settlement fence out of provisional narrative across every chunk boundary', () => {
     const expected = '雨声压低了站台上的谈话。\n';
     for (const fence of [

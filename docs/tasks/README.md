@@ -56,6 +56,7 @@
 - [1080 Reference Context Selector And Loading Map](1080.md)
 - [1100 Project Health Guardrails And Projection Refresh](1100.md)
 - [1130 First Playable Scene Rehearsal](1130.md)
+- [1140 Source-backed Guided Start](1140.md)
 
 ## Needs Review Tasks
 

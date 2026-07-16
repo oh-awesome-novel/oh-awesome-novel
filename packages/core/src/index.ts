@@ -248,6 +248,52 @@ export {
   writePlaySessionFiles,
 } from './play-session.js';
 export {
+  MAX_PLAY_LAUNCH_SOURCE_BYTES,
+  MAX_PLAY_LAUNCH_SOURCE_EXCERPT,
+  PLAY_LAUNCH_PACKAGE_SCHEMA_VERSION,
+  PLAY_LAUNCH_SETUP_DIRECTORY,
+  PLAY_LAUNCH_SETUP_FILE,
+  PlayLaunchSourceValidationError,
+  normalizePlayLaunchPackage,
+  previewPlayLaunchPackage,
+  readPlayLaunchPackage,
+  resolvePlayLaunchSetupPath,
+  validatePlayLaunchPackageSources,
+  writePlayLaunchPackage,
+} from './play-launch.js';
+export type {
+  PlayLaunchDiagnostic,
+  PlayLaunchDiagnosticCode,
+  PlayLaunchEntryPointInput,
+  PlayLaunchIdentityInput,
+  PlayLaunchKnowledgeBoundaryInput,
+  PlayLaunchPackage,
+  PlayLaunchPackagePreviewInput,
+  PlayLaunchParticipantRoleInput,
+  PlayLaunchSceneValue,
+  PlayLaunchSource,
+  PlayLaunchSourceInput,
+  PlayLaunchSourceRole,
+  PlayLaunchSourceStatus,
+} from './play-launch.js';
+export {
+  PLAY_LAUNCH_SESSION_METADATA_KEY,
+  createPlaySessionFromLaunchPackage,
+  getPlayLaunchSessionMetadata,
+  getPlaySessionPurpose,
+  getPlaySessionStartMode,
+} from './play-launch-session.js';
+export type {
+  CreatePlaySessionFromLaunchPackageOptions,
+  PlayLaunchSessionMetadata,
+} from './play-launch-session.js';
+export {
+  PLAY_CHECKPOINT_NAMES_METADATA_KEY,
+  PLAY_INITIAL_WORLD_CHECKPOINT_ID,
+  renamePlaySessionCheckpoint,
+} from './play-turn-graph.js';
+export type { PlayCheckpointKind } from './play-turn-graph.js';
+export {
   auditTavernCardSafety,
   createOanTavernImportPreview,
   extractTavernCardJsonFromPng,

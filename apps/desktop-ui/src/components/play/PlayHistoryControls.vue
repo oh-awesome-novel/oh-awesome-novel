@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  shallowRef,
-  useId,
-  useTemplateRef,
-  watch,
-} from 'vue';
+import { computed, useId } from 'vue';
 import type { DeepReadonly } from 'vue';
 
 import type { PlayCheckpointSummary } from '../../composables/useWorkspaceApi';
+import PlayWorldlineNode from './PlayWorldlineNode.vue';
+
+type HistoryCheckpoint = DeepReadonly<PlayCheckpointSummary> & {
+  checkpointId?: string;
+  kind?: 'initialWorld' | 'turn';
+  parentCheckpointId?: string;
+  depth?: number;
+  name?: string;
+};
 
 const props = withDefaults(defineProps<{
   checkpoints: DeepReadonly<PlayCheckpointSummary[]>;
@@ -17,65 +19,40 @@ const props = withDefaults(defineProps<{
   loading: boolean;
   busyArtifactId: string;
   retryingArtifactId?: string;
+  namingCheckpointId?: string;
   retryDisabled?: boolean;
   retryDisabledReason?: string;
   blocked: boolean;
   notice: string;
 }>(), {
   retryingArtifactId: '',
+  namingCheckpointId: '',
   retryDisabled: false,
   retryDisabledReason: 'Configure a provider to Retry this settlement.',
 });
 
 const emit = defineEmits<{
-  restore: [artifactId: string];
-  retry: [artifactId: string];
+  restore: [checkpointId: string];
+  retry: [checkpointId: string];
+  name: [checkpointId: string, name: string];
 }>();
 
-type PendingActionKind = 'restore' | 'retry';
-
-interface PendingHistoryAction {
-  kind: PendingActionKind;
-  artifactId: string;
-}
-
-interface HistoryGroup {
-  id: 'checkpoints' | 'variants';
-  title: 'Checkpoints' | 'Variants';
-  emptyText: string;
-  items: DeepReadonly<PlayCheckpointSummary[]>;
-}
-
-const headingId = `${useId()}-play-history-heading`;
-const pendingAction = shallowRef<PendingHistoryAction>();
-const restoreButtons = useTemplateRef<HTMLButtonElement[]>('restoreButtons');
-const retryButtons = useTemplateRef<HTMLButtonElement[]>('retryButtons');
-const confirmActionButtons = useTemplateRef<HTMLButtonElement[]>('confirmActionButtons');
-
-const groups = computed<HistoryGroup[]>(() => [
-  {
-    id: 'checkpoints',
-    title: 'Checkpoints',
-    emptyText: 'No checkpoints on the selected path.',
-    items: props.checkpoints.filter((checkpoint) => checkpoint.status !== 'variant'),
-  },
-  {
-    id: 'variants',
-    title: 'Variants',
-    emptyText: 'No retained variants.',
-    items: props.checkpoints.filter((checkpoint) => checkpoint.status === 'variant'),
-  },
-]);
-
+const headingId = `${useId()}-play-worldline-heading`;
+const worldline = computed(() => orderWorldline(
+  props.checkpoints as readonly HistoryCheckpoint[],
+));
 const statusMessage = computed(() => {
   if (props.loading) {
-    return 'Loading Play history…';
+    return 'Loading worldline…';
   }
   if (props.retryingArtifactId) {
     return 'Retrying from before the original turn… The existing result remains a variant.';
   }
   if (props.busyArtifactId) {
-    return 'Restoring checkpoint…';
+    return 'Restoring worldline…';
+  }
+  if (props.namingCheckpointId) {
+    return 'Saving worldline point name…';
   }
   const retryNotice = props.retryDisabled && props.checkpoints.some(
     (checkpoint) => checkpoint.retryable,
@@ -85,81 +62,95 @@ const statusMessage = computed(() => {
   return [props.notice, retryNotice].filter(Boolean).join(' ');
 });
 
-watch(
-  () => props.sessionRevision,
-  () => {
-    pendingAction.value = undefined;
-  },
-);
-
-function checkpointLabel(checkpoint: DeepReadonly<PlayCheckpointSummary>): string {
-  return checkpoint.preview.trim() || `Revision ${checkpoint.revision}`;
+function forwardName(checkpointId: string, name: string): void {
+  emit('name', checkpointId, name);
 }
 
-function checkpointStatus(checkpoint: DeepReadonly<PlayCheckpointSummary>): string {
-  switch (checkpoint.status) {
-    case 'current': return 'Current';
-    case 'selectedAncestor': return 'Selected path';
-    case 'variant': return 'Variant';
-  }
-}
+function orderWorldline(
+  checkpoints: readonly HistoryCheckpoint[],
+): HistoryCheckpoint[] {
+  const byId = new Map(checkpoints.map((checkpoint) => [
+    checkpointIdOf(checkpoint),
+    checkpoint,
+  ]));
+  const childrenByParent = new Map<string, HistoryCheckpoint[]>();
+  const roots: HistoryCheckpoint[] = [];
 
-function formatTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-}
-
-function isActionUnavailable(kind: PendingActionKind): boolean {
-  return props.blocked ||
-    props.loading ||
-    Boolean(props.busyArtifactId) ||
-    Boolean(props.retryingArtifactId) ||
-    (kind === 'retry' && props.retryDisabled);
-}
-
-async function requestAction(kind: PendingActionKind, artifactId: string): Promise<void> {
-  if (isActionUnavailable(kind)) {
-    return;
+  for (const checkpoint of checkpoints) {
+    const parentId = parentCheckpointIdOf(checkpoint);
+    if (!parentId || !byId.has(parentId)) {
+      roots.push(checkpoint);
+      continue;
+    }
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(checkpoint);
+    childrenByParent.set(parentId, children);
   }
 
-  pendingAction.value = { kind, artifactId };
-  await nextTick();
-  confirmActionButtons.value?.[0]?.focus();
+  roots.sort(compareWorldlineNodes);
+  for (const children of childrenByParent.values()) {
+    children.sort(compareWorldlineNodes);
+  }
+
+  const ordered: HistoryCheckpoint[] = [];
+  const visited = new Set<string>();
+  const visit = (checkpoint: HistoryCheckpoint): void => {
+    const checkpointId = checkpointIdOf(checkpoint);
+    if (!checkpointId || visited.has(checkpointId)) return;
+    visited.add(checkpointId);
+    ordered.push(checkpoint);
+    for (const child of childrenByParent.get(checkpointId) ?? []) {
+      visit(child);
+    }
+  };
+
+  for (const root of roots) visit(root);
+  for (const checkpoint of [...checkpoints].sort(compareWorldlineNodes)) {
+    visit(checkpoint);
+  }
+  return ordered;
 }
 
-async function cancelAction(): Promise<void> {
-  const action = pendingAction.value;
-  if (!action) {
-    return;
-  }
-
-  pendingAction.value = undefined;
-  await nextTick();
-  const buttons = action.kind === 'retry' ? retryButtons.value : restoreButtons.value;
-  buttons
-    ?.find((button) => button.dataset.artifactId === action.artifactId)
-    ?.focus();
+function compareWorldlineNodes(
+  left: HistoryCheckpoint,
+  right: HistoryCheckpoint,
+): number {
+  const leftInitial = checkpointKindOf(left) === 'initialWorld' ? 0 : 1;
+  const rightInitial = checkpointKindOf(right) === 'initialWorld' ? 0 : 1;
+  return leftInitial - rightInitial ||
+    statusOrder(left.status) - statusOrder(right.status) ||
+    checkpointDepthOf(left) - checkpointDepthOf(right) ||
+    left.revision - right.revision ||
+    left.committedAt.localeCompare(right.committedAt) ||
+    checkpointIdOf(left).localeCompare(checkpointIdOf(right));
 }
 
-function confirmAction(): void {
-  const action = pendingAction.value;
-  if (!action || isActionUnavailable(action.kind)) {
-    return;
-  }
+function statusOrder(status: PlayCheckpointSummary['status']): number {
+  return status === 'variant' ? 1 : 0;
+}
 
-  pendingAction.value = undefined;
-  if (action.kind === 'retry') {
-    emit('retry', action.artifactId);
-  } else {
-    emit('restore', action.artifactId);
-  }
+function checkpointIdOf(checkpoint: HistoryCheckpoint): string {
+  return checkpoint.checkpointId ?? checkpoint.artifactId ?? '';
+}
+
+function checkpointKindOf(
+  checkpoint: HistoryCheckpoint,
+): 'initialWorld' | 'turn' {
+  return checkpoint.kind ?? (
+    checkpointIdOf(checkpoint) === 'initial-world' ? 'initialWorld' : 'turn'
+  );
+}
+
+function parentCheckpointIdOf(checkpoint: HistoryCheckpoint): string | undefined {
+  if (checkpoint.parentCheckpointId) return checkpoint.parentCheckpointId;
+  const legacyParentId = 'parentArtifactId' in checkpoint
+    ? checkpoint.parentArtifactId
+    : undefined;
+  return typeof legacyParentId === 'string' ? legacyParentId : undefined;
+}
+
+function checkpointDepthOf(checkpoint: HistoryCheckpoint): number {
+  return checkpoint.depth ?? checkpoint.selectedTurnIds.length;
 }
 </script>
 
@@ -167,95 +158,34 @@ function confirmAction(): void {
   <section
     class="play-history-controls"
     :aria-labelledby="headingId"
-    :aria-busy="loading || Boolean(busyArtifactId) || Boolean(retryingArtifactId)"
+    :aria-busy="loading || Boolean(busyArtifactId) || Boolean(retryingArtifactId) || Boolean(namingCheckpointId)"
   >
     <header class="play-history-heading">
-      <h3 :id="headingId">Checkpoints / Variants</h3>
-      <span>Session revision {{ sessionRevision }}</span>
+      <h3 :id="headingId">Worldline</h3>
+      <span>Current path and retained outcomes</span>
     </header>
 
-    <section
-      v-for="group in groups"
-      :key="group.id"
-      class="play-history-group"
-      :aria-label="group.title"
-    >
-      <h4>{{ group.title }}</h4>
-      <ul v-if="group.items.length" class="play-history-list">
-        <li
-          v-for="checkpoint in group.items"
-          :key="checkpoint.artifactId"
-          class="play-history-item"
-          :aria-current="checkpoint.status === 'current' ? 'true' : undefined"
-        >
-          <div class="play-history-item-copy">
-            <strong>{{ checkpointLabel(checkpoint) }}</strong>
-            <span>{{ checkpointStatus(checkpoint) }}</span>
-            <small>
-              Revision {{ checkpoint.revision }} · World turn {{ checkpoint.worldTurn }} ·
-              {{ formatTime(checkpoint.committedAt) }}
-            </small>
-          </div>
-
-          <div
-            v-if="pendingAction?.artifactId !== checkpoint.artifactId"
-            class="play-history-actions"
-          >
-            <button
-              v-if="checkpoint.restorable"
-              ref="restoreButtons"
-              class="play-history-restore"
-              type="button"
-              :data-artifact-id="checkpoint.artifactId"
-              :disabled="isActionUnavailable('restore')"
-              :aria-label="`Restore ${checkpointLabel(checkpoint)}`"
-              @click="requestAction('restore', checkpoint.artifactId)"
-            >
-              {{ busyArtifactId === checkpoint.artifactId ? 'Restoring…' : 'Restore' }}
-            </button>
-            <button
-              v-if="checkpoint.retryable"
-              ref="retryButtons"
-              class="play-history-retry"
-              type="button"
-              :data-artifact-id="checkpoint.artifactId"
-              :disabled="isActionUnavailable('retry')"
-              :title="retryDisabled ? retryDisabledReason : undefined"
-              :aria-label="`Retry ${checkpointLabel(checkpoint)} from before the turn`"
-              @click="requestAction('retry', checkpoint.artifactId)"
-            >
-              {{ retryingArtifactId === checkpoint.artifactId ? 'Retrying…' : 'Retry' }}
-            </button>
-          </div>
-
-          <div
-            v-if="pendingAction?.artifactId === checkpoint.artifactId"
-            class="play-history-confirmation"
-            role="group"
-            :aria-label="pendingAction.kind === 'retry' ? 'Confirm settlement Retry' : 'Confirm checkpoint restore'"
-            @keydown.esc.stop.prevent="cancelAction"
-          >
-            <p v-if="pendingAction.kind === 'retry'">
-              Retry from before this turn? The existing result is preserved as a variant.
-            </p>
-            <p v-else>Restore this checkpoint? Later turns remain variants and are not deleted.</p>
-            <div class="play-history-confirmation-actions">
-              <button type="button" @click="cancelAction">Cancel</button>
-              <button
-                ref="confirmActionButtons"
-                class="play-history-confirm"
-                type="button"
-                :disabled="isActionUnavailable(pendingAction.kind)"
-                @click="confirmAction"
-              >
-                {{ pendingAction.kind === 'retry' ? 'Confirm Retry' : 'Confirm restore' }}
-              </button>
-            </div>
-          </div>
-        </li>
-      </ul>
-      <p v-else class="play-history-empty">{{ group.emptyText }}</p>
-    </section>
+    <ol v-if="worldline.length" class="play-history-list play-worldline-list">
+      <PlayWorldlineNode
+        v-for="checkpoint in worldline"
+        :key="checkpointIdOf(checkpoint)"
+        :checkpoint="checkpoint"
+        :session-revision="sessionRevision"
+        :loading="loading"
+        :busy-checkpoint-id="busyArtifactId"
+        :retrying-checkpoint-id="retryingArtifactId"
+        :naming-checkpoint-id="namingCheckpointId"
+        :retry-disabled="retryDisabled"
+        :retry-disabled-reason="retryDisabledReason"
+        :blocked="blocked"
+        @restore="emit('restore', $event)"
+        @retry="emit('retry', $event)"
+        @name="forwardName"
+      />
+    </ol>
+    <p v-else class="play-history-empty">
+      No worldline points are available yet.
+    </p>
 
     <p
       class="play-history-status"

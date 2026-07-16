@@ -160,7 +160,7 @@ export function usePlayRehearsalSetup(
 
     return {
       purpose: 'sceneRehearsal',
-      startMode: 'guided',
+      startMode: 'quick',
       scene: normalizeScene(sceneDraft.value),
       participants: normalizedParticipants,
       actorOrder: normalizedParticipants.map((participant) => participant.participantRef),

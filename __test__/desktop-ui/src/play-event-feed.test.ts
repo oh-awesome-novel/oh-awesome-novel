@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 
 import PlayEventFeed from '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue';
+import type { PlayEventCardView } from '../../../apps/desktop-ui/src/composables/playWorldPresentation';
 
 describe('PlayEventFeed', () => {
   it('exposes the global author-view switch when only hidden Play content exists', async () => {
@@ -98,5 +99,61 @@ describe('PlayEventFeed', () => {
     expect(wrapper.get('.play-event-cause').text()).toContain('Station lockdown');
     expect(wrapper.get('.play-event-cause').text()).toContain('lock the east gate');
     expect(wrapper.text()).not.toContain('hidden commander');
+  });
+
+  it('renders projected impact, cause, state, time, and author-only diagnostics', async () => {
+    const cards: PlayEventCardView[] = [{
+      id: 'event-visible',
+      title: 'The east gate closes',
+      impact: 'Guards seal the station exit.',
+      kindLabel: 'Faction acted',
+      originLabel: 'Origin · Faction',
+      visibility: 'playerVisible',
+      worldTimeLabel: 'Nightfall · Turn 3 · + 30 minutes',
+      causeLabels: [{
+        kind: 'action',
+        label: 'Wait · Stay beside the gate',
+        ref: 'turn-3-player',
+      }],
+      stateImpacts: [{ path: 'location.gate', value: 'closed' }],
+      technicalRefs: [{ label: 'Artifact', value: 'artifact-3' }],
+      authorReason: 'The hidden commander ordered the lockdown.',
+    }, {
+      id: 'event-hidden',
+      title: 'A hidden patrol moves',
+      impact: 'The patrol takes the northern route.',
+      kindLabel: 'Npc acted',
+      originLabel: 'Origin · Npc',
+      visibility: 'playerUnknown',
+      worldTimeLabel: 'Turn 3',
+      causeLabels: [],
+      stateImpacts: [],
+      technicalRefs: [],
+      authorReason: 'An unrevealed order sent them north.',
+    }];
+    const wrapper = mount(PlayEventFeed, {
+      props: {
+        cards,
+        hasHiddenPlayContent: true,
+        showSpoilers: false,
+      },
+    });
+
+    expect(wrapper.get('[aria-label="Event impact"]').text()).toContain('Impact');
+    expect(wrapper.text()).toContain('Guards seal the station exit.');
+    expect(wrapper.text()).toContain('Nightfall · Turn 3 · + 30 minutes');
+    expect(wrapper.text()).toContain('Origin · Faction');
+    expect(wrapper.get('.play-event-cause').text()).toContain('Stay beside the gate');
+    expect(wrapper.get('[aria-label="Turn state changes"]').text()).toContain('location.gate');
+    expect(wrapper.text()).not.toContain('hidden commander');
+    expect(wrapper.text()).not.toContain('artifact-3');
+    expect(wrapper.text()).not.toContain('A hidden patrol moves');
+
+    await wrapper.get('[role="switch"]').trigger('click');
+    await wrapper.setProps({ showSpoilers: true });
+
+    expect(wrapper.text()).toContain('A hidden patrol moves');
+    expect(wrapper.get('[aria-label="Author cause"]').text()).toContain('hidden commander');
+    expect(wrapper.get('[aria-label="Technical references"]').text()).toContain('artifact-3');
   });
 });

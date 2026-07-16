@@ -10,6 +10,7 @@ import type {
   CreatePlaySceneRehearsalSessionInput,
   PlayRehearsalClientMethods,
   PlayRehearsalSessionV5,
+  PlaySessionPurpose,
 } from './play-rehearsal.js';
 
 export {
@@ -466,10 +467,166 @@ export interface PlayScheduledEvent {
 export interface PlayActivatedSource {
   sourceId: string;
   path?: string;
+  objectId?: string;
+  contentHash?: string;
+  role?: PlayLaunchSourceRole;
   reason: string;
   budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
   semanticBoundary: 'protected' | 'compressible' | 'excluded';
   trust: PlaySourceTrust;
+}
+
+export type PlayLaunchSourceRole =
+  | 'chapter'
+  | 'character'
+  | 'world'
+  | 'timeline'
+  | 'state'
+  | 'other';
+
+export type PlayLaunchSourceStatus = 'ready' | 'missing' | 'invalid';
+
+export type PlayLaunchDiagnosticCode =
+  | 'invalidSource'
+  | 'missingSource'
+  | 'staleSource'
+  | 'sourceTooLarge'
+  | 'binarySource'
+  | 'participantWithoutCharacterSource'
+  | 'participantCharacterMismatch';
+
+export interface PlayLaunchSourceInput {
+  sourceId: string;
+  path: string;
+  role: PlayLaunchSourceRole;
+  reason?: string;
+}
+
+export interface PlayLaunchSceneValue {
+  value: string;
+  provenance:
+    | { kind: 'sourceBacked'; sourceRefs: string[] }
+    | { kind: 'authorProvided'; providedAt: string };
+}
+
+export interface PlayLaunchEntryPointInput {
+  id: string;
+  label: string;
+  opening: string;
+  sourceRefs: string[];
+  location?: PlayLaunchSceneValue;
+  worldTime?: PlayLaunchSceneValue;
+  atmosphere?: PlayLaunchSceneValue;
+  trigger?: PlayLaunchSceneValue;
+  objective?: PlayLaunchSceneValue;
+  risk?: PlayLaunchSceneValue;
+}
+
+export interface PlayLaunchIdentityInput {
+  kind: 'player' | 'director';
+  persona?: string;
+  directorPurpose?: string;
+}
+
+export interface PlayLaunchKnowledgeBoundaryInput {
+  id: string;
+  fact: string;
+  visibility: PlayEventVisibility;
+  sourceRefs: string[];
+}
+
+export interface PlayLaunchParticipantRoleInput {
+  participantRef: string;
+  displayName: string;
+  canonicalCharacterRef?: string;
+  sourceRefs: string[];
+  position?: string;
+  currentGoal?: string;
+  initialKnowledge: PlayLaunchKnowledgeBoundaryInput[];
+}
+
+export interface PlayLaunchPackagePreviewInput {
+  id?: string;
+  createdAt?: string;
+  title: string;
+  purpose: PlaySessionPurpose;
+  startMode: 'guided';
+  simulationMode: PlaySimulationMode;
+  density: PlayEventDensity;
+  sources: PlayLaunchSourceInput[];
+  entryPoint: PlayLaunchEntryPointInput;
+  identity: PlayLaunchIdentityInput;
+  participantRoles: PlayLaunchParticipantRoleInput[];
+}
+
+export interface PlayLaunchSource {
+  sourceId: string;
+  path: string;
+  objectId?: string;
+  role: PlayLaunchSourceRole;
+  reason: string;
+  budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
+  semanticBoundary: 'protected' | 'compressible' | 'excluded';
+  trust: PlaySourceTrust;
+  status: PlayLaunchSourceStatus;
+  contentHash?: string;
+  excerpt?: string;
+}
+
+export interface PlayLaunchDiagnostic {
+  id: string;
+  code: PlayLaunchDiagnosticCode;
+  severity: 'warning' | 'error';
+  message: string;
+  sourceId?: string;
+  path?: string;
+  participantRef?: string;
+  expectedContentHash?: string;
+  actualContentHash?: string;
+}
+
+export interface PlayLaunchPackage {
+  schemaVersion: 1;
+  id: string;
+  createdAt: string;
+  title: string;
+  purpose: PlaySessionPurpose;
+  startMode: 'guided';
+  eventPolicy: {
+    simulationMode: PlaySimulationMode;
+    density: PlayEventDensity;
+  };
+  sourceBase: { activatedSources: PlayLaunchSource[] };
+  entryPoint: PlayLaunchEntryPointInput;
+  identity: PlayLaunchIdentityInput;
+  participantRoles: PlayLaunchParticipantRoleInput[];
+  diagnostics: PlayLaunchDiagnostic[];
+  canonical: false;
+}
+
+export interface PlayLaunchPackagePreviewResult {
+  launchPackage: PlayLaunchPackage;
+}
+
+export interface PlayLaunchPackageCreateResult {
+  launchPackage: PlayLaunchPackage;
+  files: string[];
+}
+
+export interface PlayLaunchPackageReadResult {
+  launchPackage: PlayLaunchPackage;
+}
+
+export interface StartPlaySessionFromLaunchPackageInput {
+  launchPackageId: string;
+  id?: string;
+}
+
+export interface PlayLaunchSessionMetadata {
+  setupId: string;
+  setupSchemaVersion: 1;
+  purpose: PlaySessionPurpose;
+  startMode: 'guided';
 }
 
 export interface PlayTranscriptTurn {
@@ -561,15 +718,22 @@ export interface PlaySessionV4 {
 export type PlaySession = PlaySessionV4 | PlayRehearsalSessionV5;
 
 export type PlayCheckpointStatus = 'current' | 'selectedAncestor' | 'variant';
+export type PlayCheckpointKind = 'initialWorld' | 'turn';
+
+export const PLAY_INITIAL_WORLD_CHECKPOINT_ID = 'initial-world' as const;
 
 export interface PlayCheckpointSummary {
-  artifactId: string;
-  parentArtifactId?: string;
+  checkpointId: string;
+  kind: PlayCheckpointKind;
+  artifactId?: string;
+  parentCheckpointId?: string;
   selectedTurnIds: string[];
+  depth: number;
   revision: number;
   worldTurn: number;
   committedAt: string;
   preview: string;
+  name?: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
   retryable: boolean;
@@ -579,7 +743,13 @@ export interface PlayCheckpointSummary {
 export interface PlayCheckpointRestoreResult {
   session: PlaySession;
   checkpoints: PlayCheckpointSummary[];
-  restoredArtifactId: string;
+  restoredCheckpointId: string;
+}
+
+export interface PlayCheckpointRenameResult {
+  session: PlaySession;
+  checkpoints: PlayCheckpointSummary[];
+  renamedCheckpointId: string;
 }
 
 export interface PlayTurnStreamEventBase {
@@ -865,6 +1035,16 @@ export interface OanClient extends PlayRehearsalClientMethods {
   }>;
   getProjectHealth(): Promise<{ health: ProjectHealth }>;
   rebuildProjections(): Promise<ProjectionRebuildResult>;
+  previewPlayLaunchPackage(
+    input: PlayLaunchPackagePreviewInput,
+  ): Promise<PlayLaunchPackagePreviewResult>;
+  createPlayLaunchPackage(
+    launchPackage: PlayLaunchPackage,
+  ): Promise<PlayLaunchPackageCreateResult>;
+  getPlayLaunchPackage(id: string): Promise<PlayLaunchPackageReadResult>;
+  startPlaySessionFromLaunchPackage(
+    input: StartPlaySessionFromLaunchPackageInput,
+  ): Promise<{ session: PlaySession; files: string[] }>;
   listPlaySessions(): Promise<{ sessions: PlaySession[] }>;
   createPlaySession(input: {
     id?: string;
@@ -883,9 +1063,14 @@ export interface OanClient extends PlayRehearsalClientMethods {
   listPlayCheckpoints(id: string): Promise<{ checkpoints: PlayCheckpointSummary[] }>;
   restorePlayCheckpoint(
     id: string,
-    artifactId: string,
+    checkpointId: string,
     input: { baseRevision: number },
   ): Promise<PlayCheckpointRestoreResult>;
+  renamePlayCheckpoint(
+    id: string,
+    checkpointId: string,
+    input: { baseRevision: number; name: string },
+  ): Promise<PlayCheckpointRenameResult>;
   runPlayWorldRefereeTurn(id: string, input: {
     userText: string;
     actionKind?: PlayActionKind;
@@ -1154,6 +1339,37 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<ProjectionRebuildResult>('/api/workspace/projections/rebuild', {
         method: 'POST',
       }),
+    previewPlayLaunchPackage: async (input) => {
+      const normalized = normalizePlayLaunchPackagePreviewRequest(input);
+      const value = await requestJson<unknown>('/api/workspace/play-setups/preview', {
+        method: 'POST',
+        body: normalized,
+      });
+      return parsePlayLaunchPackagePreviewResponse(value, normalized);
+    },
+    createPlayLaunchPackage: async (launchPackage) => {
+      const normalized = normalizePlayLaunchPackageCreateRequest(launchPackage);
+      const value = await requestJson<unknown>('/api/workspace/play-setups', {
+        method: 'POST',
+        body: normalized,
+      });
+      return parsePlayLaunchPackageCreateResponse(value, normalized);
+    },
+    getPlayLaunchPackage: async (id) => {
+      const setupId = assertPlayLaunchSafeId(id, 'setup id');
+      const value = await requestJson<unknown>(
+        `/api/workspace/play-setups/${encodeURIComponent(setupId)}`,
+      );
+      return parsePlayLaunchPackageReadResponse(value, setupId);
+    },
+    startPlaySessionFromLaunchPackage: async (input) => {
+      const normalized = normalizePlayLaunchSessionStartRequest(input);
+      const value = await requestJson<unknown>('/api/workspace/play-sessions', {
+        method: 'POST',
+        body: normalized,
+      });
+      return parsePlayLaunchSessionCreateResponse(value, normalized);
+    },
     listPlaySessions: () =>
       requestJson<unknown>('/api/workspace/play-sessions')
         .then(parsePlaySessionListResponse),
@@ -1175,9 +1391,9 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints`,
       ).then(parsePlayCheckpointListResponse),
-    restorePlayCheckpoint: (id, artifactId, input) =>
+    restorePlayCheckpoint: (id, checkpointId, input) =>
       requestJson<unknown>(
-        `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(artifactId)}/restore`,
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`,
         {
           method: 'POST',
           body: input,
@@ -1185,7 +1401,20 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       ).then((value) => parsePlayCheckpointRestoreResponse(
         value,
         id,
-        artifactId,
+        checkpointId,
+      )),
+    renamePlayCheckpoint: (id, checkpointId, input) =>
+      requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(checkpointId)}/name`,
+        {
+          method: 'POST',
+          body: input,
+        },
+      ).then((value) => parsePlayCheckpointRenameResponse(
+        value,
+        id,
+        checkpointId,
+        input,
       )),
     runPlayWorldRefereeTurn: (id, input) =>
       requestJson<unknown>(
@@ -1716,13 +1945,13 @@ function parsePlayCheckpointListResponse(
 function parsePlayCheckpointRestoreResponse(
   value: unknown,
   sessionId: string,
-  artifactId: string,
+  checkpointId: string,
 ): PlayCheckpointRestoreResult {
   if (
     !isRecord(value) ||
-    !hasOnlyKnownFields(value, ['session', 'checkpoints', 'restoredArtifactId']) ||
-    value.restoredArtifactId !== artifactId ||
-    !isSafePlayFactId(value.restoredArtifactId) ||
+    !hasOnlyKnownFields(value, ['session', 'checkpoints', 'restoredCheckpointId']) ||
+    value.restoredCheckpointId !== checkpointId ||
+    !isSafePlayCheckpointId(value.restoredCheckpointId) ||
     !isPlaySessionEnvelope(value.session, sessionId) ||
     !isPlayCheckpointSummaryList(value.checkpoints)
   ) {
@@ -1732,23 +1961,17 @@ function parsePlayCheckpointRestoreResponse(
   const session = value.session;
   const checkpoints = value.checkpoints;
   const restored = checkpoints.find((checkpoint) =>
-    checkpoint.artifactId === artifactId);
+    checkpoint.checkpointId === checkpointId);
   const currentCheckpoints = checkpoints.filter((checkpoint) =>
     checkpoint.status === 'current');
-  const restoredArtifact = session.turnArtifacts.find((artifact) =>
-    artifact.id === artifactId);
   if (
     !restored ||
-    !restoredArtifact ||
     restored.status !== 'current' ||
     restored.restorable ||
     currentCheckpoints.length !== 1 ||
-    session.selectedTurnIds.at(-1) !== artifactId ||
     !isDeepEqualJson(session.selectedTurnIds, restored.selectedTurnIds) ||
     session.worldClock.turn !== restored.worldTurn ||
-    restored.revision !== restoredArtifact.revision ||
-    restored.parentArtifactId !== restoredArtifact.parentTurnId ||
-    restored.committedAt !== restoredArtifact.committedAt ||
+    !doesCheckpointMatchSession(restored, checkpoints, session) ||
     restored.revision >= session.revision
   ) {
     throw new Error('Play checkpoint restore returned an inconsistent payload.');
@@ -1757,21 +1980,96 @@ function parsePlayCheckpointRestoreResponse(
   return value as unknown as PlayCheckpointRestoreResult;
 }
 
+function parsePlayCheckpointRenameResponse(
+  value: unknown,
+  sessionId: string,
+  checkpointId: string,
+  input: { baseRevision: number; name: string },
+): PlayCheckpointRenameResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['session', 'checkpoints', 'renamedCheckpointId']) ||
+    value.renamedCheckpointId !== checkpointId ||
+    !isSafePlayCheckpointId(value.renamedCheckpointId) ||
+    !isPlaySessionEnvelope(value.session, sessionId) ||
+    !isPlayCheckpointSummaryList(value.checkpoints)
+  ) {
+    throw new Error('Play checkpoint name returned an invalid payload.');
+  }
+
+  const session = value.session;
+  const checkpoints = value.checkpoints;
+  const renamed = checkpoints.find((checkpoint) =>
+    checkpoint.checkpointId === checkpointId);
+  const current = checkpoints.find((checkpoint) => checkpoint.status === 'current');
+  if (
+    !renamed ||
+    renamed.name !== input.name.trim() ||
+    session.revision !== input.baseRevision + 1 ||
+    !current ||
+    !isDeepEqualJson(session.selectedTurnIds, current.selectedTurnIds) ||
+    session.worldClock.turn !== current.worldTurn ||
+    !doesCheckpointMatchSession(current, checkpoints, session)
+  ) {
+    throw new Error('Play checkpoint name returned an inconsistent payload.');
+  }
+
+  return value as unknown as PlayCheckpointRenameResult;
+}
+
 function isPlayCheckpointSummaryList(
   value: unknown,
 ): value is PlayCheckpointSummary[] {
   if (
     !Array.isArray(value) ||
     !value.every(isPlayCheckpointSummaryEnvelope) ||
-    new Set(value.map((checkpoint) => checkpoint.artifactId)).size !== value.length
+    new Set(value.map((checkpoint) => checkpoint.checkpointId)).size !== value.length
   ) {
     return false;
   }
 
+  const initialCheckpoints = value.filter((checkpoint) =>
+    checkpoint.kind === 'initialWorld');
+  if (initialCheckpoints.length > 1) {
+    return false;
+  }
+  const hasInitialWorld = initialCheckpoints.length === 1;
+  const checkpointsById = new Map(value.map((checkpoint) => [
+    checkpoint.checkpointId,
+    checkpoint,
+  ]));
   const currentCheckpoints = value.filter((checkpoint) =>
     checkpoint.status === 'current');
-  return currentCheckpoints.length <= 1 &&
-    currentCheckpoints.every((checkpoint) => !checkpoint.restorable);
+  if (currentCheckpoints.length !== 1 || currentCheckpoints[0]!.restorable) {
+    return false;
+  }
+  const current = currentCheckpoints[0]!;
+  const currentPath = new Set(current.selectedTurnIds);
+
+  return value.every((checkpoint) => {
+    if (checkpoint.kind === 'initialWorld') {
+      return checkpoint.status === (
+        current.kind === 'initialWorld' ? 'current' : 'selectedAncestor'
+      );
+    }
+
+    const expectedParent = checkpoint.selectedTurnIds.length > 1
+      ? checkpoint.selectedTurnIds.at(-2)
+      : hasInitialWorld
+        ? PLAY_INITIAL_WORLD_CHECKPOINT_ID
+        : undefined;
+    const expectedStatus: PlayCheckpointStatus = checkpoint.checkpointId ===
+      current.checkpointId
+      ? 'current'
+      : currentPath.has(checkpoint.checkpointId)
+        ? 'selectedAncestor'
+        : 'variant';
+    return checkpoint.parentCheckpointId === expectedParent &&
+      (expectedParent === undefined || checkpointsById.has(expectedParent)) &&
+      checkpoint.depth === checkpoint.selectedTurnIds.length -
+        (hasInitialWorld ? 0 : 1) &&
+      checkpoint.status === expectedStatus;
+  });
 }
 
 function isPlayCheckpointSummaryEnvelope(
@@ -1780,28 +2078,34 @@ function isPlayCheckpointSummaryEnvelope(
   if (
     !isRecord(value) ||
     !hasOnlyKnownFields(value, [
+      'checkpointId',
+      'kind',
       'artifactId',
-      'parentArtifactId',
+      'parentCheckpointId',
       'selectedTurnIds',
+      'depth',
       'revision',
       'worldTurn',
       'committedAt',
       'preview',
+      'name',
       'status',
       'restorable',
       'retryable',
       'canonical',
     ]) ||
-    !isSafePlayFactId(value.artifactId) ||
-    (value.parentArtifactId !== undefined && !isSafePlayFactId(value.parentArtifactId)) ||
+    !isSafePlayCheckpointId(value.checkpointId) ||
+    (value.kind !== 'initialWorld' && value.kind !== 'turn') ||
+    (value.artifactId !== undefined && !isSafePlayFactId(value.artifactId)) ||
+    (value.parentCheckpointId !== undefined &&
+      !isSafePlayCheckpointId(value.parentCheckpointId)) ||
     !isUniqueSafePlayIdArray(value.selectedTurnIds) ||
-    value.selectedTurnIds.length === 0 ||
-    value.selectedTurnIds.at(-1) !== value.artifactId ||
-    value.selectedTurnIds.at(-2) !== value.parentArtifactId ||
+    !isNonNegativeSafeInteger(value.depth) ||
     !isNonNegativeSafeInteger(value.revision) ||
     !isNonNegativeSafeInteger(value.worldTurn) ||
     !isNonEmptyString(value.committedAt) ||
     !isNonEmptyString(value.preview) ||
+    (value.name !== undefined && !isValidPlayCheckpointName(value.name)) ||
     (
       value.status !== 'current' &&
       value.status !== 'selectedAncestor' &&
@@ -1814,7 +2118,60 @@ function isPlayCheckpointSummaryEnvelope(
     return false;
   }
 
-  return true;
+  if (value.kind === 'initialWorld') {
+    return value.checkpointId === PLAY_INITIAL_WORLD_CHECKPOINT_ID &&
+      value.artifactId === undefined &&
+      value.parentCheckpointId === undefined &&
+      value.selectedTurnIds.length === 0 &&
+      value.depth === 0 &&
+      value.retryable === false &&
+      value.status !== 'variant';
+  }
+
+  return value.artifactId === value.checkpointId &&
+    value.selectedTurnIds.length > 0 &&
+    value.selectedTurnIds.at(-1) === value.artifactId &&
+    value.checkpointId !== PLAY_INITIAL_WORLD_CHECKPOINT_ID;
+}
+
+function doesCheckpointMatchSession(
+  checkpoint: PlayCheckpointSummary,
+  checkpoints: PlayCheckpointSummary[],
+  session: PlaySession,
+): boolean {
+  if (checkpoint.kind === 'initialWorld') {
+    return checkpoint.checkpointId === PLAY_INITIAL_WORLD_CHECKPOINT_ID &&
+      session.selectedTurnIds.length === 0 &&
+      checkpoint.revision === session.branchBaseSnapshot.worldClock.revision &&
+      checkpoint.worldTurn === session.branchBaseSnapshot.worldClock.turn &&
+      checkpoint.committedAt === session.createdAt;
+  }
+
+  const artifact = session.turnArtifacts.find((candidate) =>
+    candidate.id === checkpoint.artifactId);
+  if (!artifact || session.selectedTurnIds.at(-1) !== artifact.id) {
+    return false;
+  }
+  const expectedParentCheckpointId = artifact.parentTurnId ?? (
+    checkpoints.some((candidate) => candidate.kind === 'initialWorld')
+      ? PLAY_INITIAL_WORLD_CHECKPOINT_ID
+      : undefined
+  );
+  return checkpoint.revision === artifact.revision &&
+    checkpoint.parentCheckpointId === expectedParentCheckpointId &&
+    checkpoint.committedAt === artifact.committedAt;
+}
+
+function isSafePlayCheckpointId(value: unknown): value is string {
+  return value === PLAY_INITIAL_WORLD_CHECKPOINT_ID || isSafePlayFactId(value);
+}
+
+function isValidPlayCheckpointName(value: unknown): value is string {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.trim() &&
+    value.length <= 80 &&
+    !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
 function parsePlaySessionListResponse(
@@ -1879,6 +2236,100 @@ function normalizePlaySessionCreateRequest(
     body,
     ...(requestedSessionId ? { requestedSessionId } : {}),
   };
+}
+
+function normalizePlayLaunchPackagePreviewRequest(
+  input: PlayLaunchPackagePreviewInput,
+): PlayLaunchPackagePreviewInput {
+  if (!isPlayLaunchPackagePreviewInput(input)) {
+    throw new Error('Play launch preview request is invalid.');
+  }
+  return structuredClone(input);
+}
+
+function normalizePlayLaunchPackageCreateRequest(
+  launchPackage: PlayLaunchPackage,
+): PlayLaunchPackage {
+  if (!isPlayLaunchPackageEnvelope(launchPackage)) {
+    throw new Error('Play launch package create request is invalid.');
+  }
+  return structuredClone(launchPackage);
+}
+
+function normalizePlayLaunchSessionStartRequest(
+  input: StartPlaySessionFromLaunchPackageInput,
+): StartPlaySessionFromLaunchPackageInput {
+  if (
+    !isRecord(input) ||
+    !hasOnlyKnownFields(input, ['launchPackageId', 'id']) ||
+    !isPlayLaunchSafeId(input.launchPackageId) ||
+    (input.id !== undefined && !isPlayLaunchSafeId(input.id))
+  ) {
+    throw new Error('Play launch session request is invalid.');
+  }
+  return structuredClone(input);
+}
+
+function parsePlayLaunchPackagePreviewResponse(
+  value: unknown,
+  input: PlayLaunchPackagePreviewInput,
+): PlayLaunchPackagePreviewResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['launchPackage']) ||
+    !isPlayLaunchPackageEnvelope(value.launchPackage) ||
+    !doesPlayLaunchPreviewMatchRequest(value.launchPackage, input)
+  ) {
+    throw new Error('Play launch preview returned an invalid payload.');
+  }
+  return value as unknown as PlayLaunchPackagePreviewResult;
+}
+
+function parsePlayLaunchPackageCreateResponse(
+  value: unknown,
+  request: PlayLaunchPackage,
+): PlayLaunchPackageCreateResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['launchPackage', 'files']) ||
+    !isPlayLaunchPackageEnvelope(value.launchPackage) ||
+    !isDeepEqualJson(value.launchPackage, request) ||
+    !isStringArray(value.files) ||
+    value.files.length !== 1 ||
+    value.files[0] !== `.workspace/play-setups/${request.id}/setup.yaml`
+  ) {
+    throw new Error('Play launch package creation returned an invalid payload.');
+  }
+  return value as unknown as PlayLaunchPackageCreateResult;
+}
+
+function parsePlayLaunchPackageReadResponse(
+  value: unknown,
+  setupId: string,
+): PlayLaunchPackageReadResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['launchPackage']) ||
+    !isPlayLaunchPackageEnvelope(value.launchPackage) ||
+    value.launchPackage.id !== setupId
+  ) {
+    throw new Error('Play launch package request returned an invalid payload.');
+  }
+  return value as unknown as PlayLaunchPackageReadResult;
+}
+
+function parsePlayLaunchSessionCreateResponse(
+  value: unknown,
+  request: StartPlaySessionFromLaunchPackageInput,
+): { session: PlaySession; files: string[] } {
+  const result = parsePlaySessionCreateResponse(value, request.id);
+  if (!hasConsistentPlayLaunchSessionMetadata(
+    result.session,
+    request.launchPackageId,
+  )) {
+    throw new Error('Play launch session creation returned an invalid payload.');
+  }
+  return result;
 }
 
 function parsePlayWorldRefereeTurnResponse(
@@ -1966,9 +2417,12 @@ function isPlaySessionEnvelope(
       sessionId,
       revision,
       isPlaySessionV4Envelope,
+    ) && hasValidOptionalPlayLaunchSessionMetadata(
+      value as unknown as PlaySession,
     );
   }
-  return isPlaySessionV4Envelope(value, sessionId, revision);
+  return isPlaySessionV4Envelope(value, sessionId, revision) &&
+    hasValidOptionalPlayLaunchSessionMetadata(value);
 }
 
 function isPlaySessionV4Envelope(
@@ -3107,10 +3561,621 @@ function isPlayScheduledEventTemplate(
     && isPlayVisibility(value.visibility);
 }
 
-function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSource {
+const PLAY_LAUNCH_SCENE_VALUE_FIELDS = [
+  'location',
+  'worldTime',
+  'atmosphere',
+  'trigger',
+  'objective',
+  'risk',
+] as const;
+
+function isPlayLaunchPackagePreviewInput(
+  value: unknown,
+): value is PlayLaunchPackagePreviewInput {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'createdAt',
+      'title',
+      'purpose',
+      'startMode',
+      'simulationMode',
+      'density',
+      'sources',
+      'entryPoint',
+      'identity',
+      'participantRoles',
+    ]) ||
+    (value.id !== undefined && !isPlayLaunchSafeId(value.id)) ||
+    (value.createdAt !== undefined && !isPlayLaunchText(value.createdAt, 128)) ||
+    !isPlayLaunchText(value.title, 200) ||
+    !isPlayLaunchPurpose(value.purpose) ||
+    value.startMode !== 'guided' ||
+    !isPlayLaunchSimulationMode(value.simulationMode) ||
+    !isPlayLaunchDensity(value.density) ||
+    !Array.isArray(value.sources) ||
+    value.sources.length < 1 ||
+    value.sources.length > 24 ||
+    !value.sources.every(isPlayLaunchSourceInput) ||
+    !hasUniquePlayLaunchValues(value.sources, 'sourceId') ||
+    !hasUniquePlayLaunchValues(value.sources, 'path') ||
+    !isPlayLaunchEntryPoint(value.entryPoint) ||
+    !isPlayLaunchIdentity(value.identity) ||
+    !isPlayLaunchParticipantList(value.participantRoles)
+  ) return false;
+
+  const sources = value.sources as PlayLaunchSourceInput[];
+  const sourceIds = new Set(sources.map((source) => source.sourceId));
+  const participants = value.participantRoles as PlayLaunchParticipantRoleInput[];
+  return isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
+    && (value.purpose !== 'sceneRehearsal' || participants.length > 0)
+    && hasKnownPlayLaunchSourceRefs(value.entryPoint, participants, sourceIds)
+    && participants.every((participant) =>
+      !participant.canonicalCharacterRef || participant.sourceRefs.some((sourceRef) => {
+        const source = sources.find((item) => item.sourceId === sourceRef);
+        return source?.role === 'character' &&
+          derivePlayLaunchObjectId(source.path, source.role) ===
+            participant.canonicalCharacterRef;
+      }));
+}
+
+function isPlayLaunchPackageEnvelope(value: unknown): value is PlayLaunchPackage {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'id',
+      'createdAt',
+      'title',
+      'purpose',
+      'startMode',
+      'eventPolicy',
+      'sourceBase',
+      'entryPoint',
+      'identity',
+      'participantRoles',
+      'diagnostics',
+      'canonical',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    !isPlayLaunchSafeId(value.id) ||
+    !isPlayLaunchText(value.createdAt, 128) ||
+    !isPlayLaunchText(value.title, 200) ||
+    !isPlayLaunchPurpose(value.purpose) ||
+    value.startMode !== 'guided' ||
+    !isRecord(value.eventPolicy) ||
+    !hasOnlyKnownFields(value.eventPolicy, ['simulationMode', 'density']) ||
+    !isPlayLaunchSimulationMode(value.eventPolicy.simulationMode) ||
+    !isPlayLaunchDensity(value.eventPolicy.density) ||
+    !isRecord(value.sourceBase) ||
+    !hasOnlyKnownFields(value.sourceBase, ['activatedSources']) ||
+    !Array.isArray(value.sourceBase.activatedSources) ||
+    value.sourceBase.activatedSources.length < 1 ||
+    value.sourceBase.activatedSources.length > 24 ||
+    !value.sourceBase.activatedSources.every(isPlayLaunchSource) ||
+    !hasUniquePlayLaunchValues(value.sourceBase.activatedSources, 'sourceId') ||
+    !hasUniquePlayLaunchValues(value.sourceBase.activatedSources, 'path') ||
+    !isPlayLaunchEntryPoint(value.entryPoint) ||
+    !isPlayLaunchIdentity(value.identity) ||
+    !isPlayLaunchParticipantList(value.participantRoles) ||
+    !Array.isArray(value.diagnostics) ||
+    value.diagnostics.length > 128 ||
+    !value.diagnostics.every(isPlayLaunchDiagnostic) ||
+    !hasUniquePlayLaunchValues(value.diagnostics, 'id') ||
+    !hasSortedPlayLaunchDiagnostics(value.diagnostics) ||
+    value.canonical !== false
+  ) return false;
+
+  const sources = value.sourceBase.activatedSources as PlayLaunchSource[];
+  const sourceIds = new Set(sources.map((source) => source.sourceId));
+  const participants = value.participantRoles as PlayLaunchParticipantRoleInput[];
+  const participantIds = new Set(participants.map((item) => item.participantRef));
+  const diagnostics = value.diagnostics as PlayLaunchDiagnostic[];
+  return isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
+    && (value.purpose !== 'sceneRehearsal' || participants.length > 0)
+    && hasKnownPlayLaunchSourceRefs(value.entryPoint, participants, sourceIds)
+    && participants.every((participant) =>
+      !participant.canonicalCharacterRef || participant.sourceRefs.some((sourceRef) => {
+        const source = sources.find((item) => item.sourceId === sourceRef);
+        return source?.role === 'character' &&
+          source.objectId === participant.canonicalCharacterRef;
+      }))
+    && diagnostics.every((diagnostic) =>
+      (diagnostic.sourceId === undefined || sourceIds.has(diagnostic.sourceId)) &&
+      (diagnostic.participantRef === undefined ||
+        participantIds.has(diagnostic.participantRef)) &&
+      (diagnostic.sourceId === undefined || diagnostic.path === undefined ||
+        sources.find((source) => source.sourceId === diagnostic.sourceId)?.path ===
+          diagnostic.path))
+    && sources.every((source) => {
+      if (source.status === 'ready') return true;
+      return diagnostics.some((diagnostic) =>
+        diagnostic.sourceId === source.sourceId &&
+        diagnostic.severity === 'error' &&
+        (source.status === 'missing'
+          ? diagnostic.code === 'missingSource'
+          : diagnostic.code === 'invalidSource' ||
+            diagnostic.code === 'sourceTooLarge' ||
+            diagnostic.code === 'binarySource'));
+    });
+}
+
+function isPlayLaunchSourceInput(value: unknown): value is PlayLaunchSourceInput {
   return isRecord(value)
-    && isNonEmptyString(value.sourceId)
+    && hasOnlyKnownFields(value, ['sourceId', 'path', 'role', 'reason'])
+    && isPlayLaunchSafeId(value.sourceId)
+    && isPlayLaunchSourcePath(value.path)
+    && isPlayLaunchSourceRole(value.role)
+    && doesPlayLaunchPathMatchRole(value.path, value.role)
+    && (value.reason === undefined || isPlayLaunchText(value.reason, 500));
+}
+
+function isPlayLaunchSource(value: unknown): value is PlayLaunchSource {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'sourceId',
+      'path',
+      'objectId',
+      'role',
+      'reason',
+      'budgetLayer',
+      'semanticBoundary',
+      'trust',
+      'status',
+      'contentHash',
+      'excerpt',
+    ]) ||
+    !isPlayLaunchSafeId(value.sourceId) ||
+    !isPlayLaunchSourcePath(value.path) ||
+    !isPlayLaunchSourceRole(value.role) ||
+    !doesPlayLaunchPathMatchRole(value.path, value.role) ||
+    !isPlayLaunchText(value.reason, 500) ||
+    !isPlayLaunchBudgetLayer(value.budgetLayer) ||
+    !isPlayLaunchSemanticBoundary(value.semanticBoundary) ||
+    !isPlayLaunchSourceTrust(value.trust) ||
+    !isPlayLaunchSourceStatus(value.status)
+  ) return false;
+
+  const expectedObjectId = derivePlayLaunchObjectId(value.path, value.role);
+  if (
+    value.objectId !== expectedObjectId ||
+    (value.objectId !== undefined && !isPlayLaunchObjectId(value.objectId))
+  ) return false;
+  if (value.status === 'ready') {
+    return isSha256Hex(value.contentHash) &&
+      isPlayLaunchText(value.excerpt, 2_000);
+  }
+  return value.contentHash === undefined && value.excerpt === undefined;
+}
+
+function isPlayLaunchEntryPoint(
+  value: unknown,
+): value is PlayLaunchEntryPointInput {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'label',
+      'opening',
+      'sourceRefs',
+      ...PLAY_LAUNCH_SCENE_VALUE_FIELDS,
+    ]) ||
+    !isPlayLaunchSafeId(value.id) ||
+    !isPlayLaunchText(value.label, 200) ||
+    !isPlayLaunchText(value.opening, 12_000) ||
+    !isPlayLaunchRefList(value.sourceRefs, 24) ||
+    value.sourceRefs.length === 0
+  ) return false;
+  return PLAY_LAUNCH_SCENE_VALUE_FIELDS.every((field) =>
+    value[field] === undefined || isPlayLaunchSceneValue(value[field], field));
+}
+
+function isPlayLaunchSceneValue(
+  value: unknown,
+  label: string,
+): value is PlayLaunchSceneValue {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['value', 'provenance']) ||
+    !isPlayLaunchText(value.value, 2_000) ||
+    !isRecord(value.provenance)
+  ) return false;
+  if (value.provenance.kind === 'sourceBacked') {
+    return hasOnlyKnownFields(value.provenance, ['kind', 'sourceRefs']) &&
+      isPlayLaunchRefList(value.provenance.sourceRefs, 24);
+  }
+  return value.provenance.kind === 'authorProvided' &&
+    hasOnlyKnownFields(value.provenance, ['kind', 'providedAt']) &&
+    isPlayLaunchText(value.provenance.providedAt, 128) &&
+    label.length > 0;
+}
+
+function isPlayLaunchIdentity(value: unknown): value is PlayLaunchIdentityInput {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['kind', 'persona', 'directorPurpose']) ||
+    (value.kind !== 'player' && value.kind !== 'director') ||
+    (value.persona !== undefined && !isPlayLaunchText(value.persona, 2_000)) ||
+    (value.directorPurpose !== undefined &&
+      !isPlayLaunchText(value.directorPurpose, 2_000))
+  ) return false;
+  return value.kind !== 'director' || isPlayLaunchText(value.directorPurpose, 2_000);
+}
+
+function isPlayLaunchParticipantList(
+  value: unknown,
+): value is PlayLaunchParticipantRoleInput[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 16 ||
+    !value.every(isPlayLaunchParticipant) ||
+    !hasUniquePlayLaunchValues(value, 'participantRef')
+  ) return false;
+  const knowledgeIds = value.flatMap((participant) =>
+    participant.initialKnowledge.map((knowledge) => knowledge.id));
+  return new Set(knowledgeIds).size === knowledgeIds.length;
+}
+
+function isPlayLaunchParticipant(
+  value: unknown,
+): value is PlayLaunchParticipantRoleInput {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'participantRef',
+      'displayName',
+      'canonicalCharacterRef',
+      'sourceRefs',
+      'position',
+      'currentGoal',
+      'initialKnowledge',
+    ])
+    && isPlayLaunchSafeId(value.participantRef)
+    && isPlayLaunchText(value.displayName, 200)
+    && (value.canonicalCharacterRef === undefined ||
+      isPlayLaunchSafeId(value.canonicalCharacterRef))
+    && isPlayLaunchRefList(value.sourceRefs, 24)
+    && (value.position === undefined || isPlayLaunchText(value.position, 1_000))
+    && (value.currentGoal === undefined || isPlayLaunchText(value.currentGoal, 2_000))
+    && Array.isArray(value.initialKnowledge)
+    && value.initialKnowledge.length <= 32
+    && value.initialKnowledge.every(isPlayLaunchKnowledgeBoundary);
+}
+
+function isPlayLaunchKnowledgeBoundary(
+  value: unknown,
+): value is PlayLaunchKnowledgeBoundaryInput {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['id', 'fact', 'visibility', 'sourceRefs'])
+    && isPlayLaunchSafeId(value.id)
+    && isPlayLaunchText(value.fact, 2_000)
+    && isPlayVisibility(value.visibility)
+    && isPlayLaunchRefList(value.sourceRefs, 24);
+}
+
+function isPlayLaunchDiagnostic(value: unknown): value is PlayLaunchDiagnostic {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'code',
+      'severity',
+      'message',
+      'sourceId',
+      'path',
+      'participantRef',
+      'expectedContentHash',
+      'actualContentHash',
+    ]) ||
+    !isPlayLaunchSafeId(value.id) ||
+    !isPlayLaunchDiagnosticCode(value.code) ||
+    (value.severity !== 'warning' && value.severity !== 'error') ||
+    !isPlayLaunchText(value.message, 1_000) ||
+    (value.sourceId !== undefined && !isPlayLaunchSafeId(value.sourceId)) ||
+    (value.path !== undefined && !isPlayLaunchSourcePath(value.path)) ||
+    (value.participantRef !== undefined &&
+      !isPlayLaunchSafeId(value.participantRef))
+  ) return false;
+  if (value.code === 'staleSource') {
+    return isSha256Hex(value.expectedContentHash) &&
+      isSha256Hex(value.actualContentHash) &&
+      value.expectedContentHash !== value.actualContentHash;
+  }
+  return value.expectedContentHash === undefined &&
+    value.actualContentHash === undefined;
+}
+
+function doesPlayLaunchPreviewMatchRequest(
+  launchPackage: PlayLaunchPackage,
+  input: PlayLaunchPackagePreviewInput,
+): boolean {
+  if (
+    (input.id !== undefined && launchPackage.id !== input.id) ||
+    (input.createdAt !== undefined && launchPackage.createdAt !== input.createdAt) ||
+    launchPackage.title !== input.title ||
+    launchPackage.purpose !== input.purpose ||
+    launchPackage.startMode !== input.startMode ||
+    launchPackage.eventPolicy.simulationMode !== input.simulationMode ||
+    launchPackage.eventPolicy.density !== input.density ||
+    !isDeepEqualJson(launchPackage.entryPoint, input.entryPoint) ||
+    !isDeepEqualJson(launchPackage.identity, input.identity) ||
+    !isDeepEqualJson(launchPackage.participantRoles, input.participantRoles) ||
+    launchPackage.sourceBase.activatedSources.length !== input.sources.length
+  ) return false;
+  return launchPackage.sourceBase.activatedSources.every((source, index) => {
+    const requested = input.sources[index];
+    return requested !== undefined &&
+      source.sourceId === requested.sourceId &&
+      source.path === requested.path &&
+      source.role === requested.role &&
+      source.reason === (requested.reason ??
+        `Guided Start ${requested.role} source`);
+  });
+}
+
+function hasKnownPlayLaunchSourceRefs(
+  entryPoint: PlayLaunchEntryPointInput,
+  participants: PlayLaunchParticipantRoleInput[],
+  sourceIds: Set<string>,
+): boolean {
+  const refs = [
+    ...entryPoint.sourceRefs,
+    ...PLAY_LAUNCH_SCENE_VALUE_FIELDS.flatMap((field) => {
+      const sceneValue = entryPoint[field];
+      return sceneValue?.provenance.kind === 'sourceBacked'
+        ? sceneValue.provenance.sourceRefs
+        : [];
+    }),
+    ...participants.flatMap((participant) => [
+      ...participant.sourceRefs,
+      ...participant.initialKnowledge.flatMap((knowledge) => knowledge.sourceRefs),
+    ]),
+  ];
+  return refs.every((ref) => sourceIds.has(ref));
+}
+
+function hasSortedPlayLaunchDiagnostics(value: unknown[]): boolean {
+  const diagnostics = value as PlayLaunchDiagnostic[];
+  return diagnostics.every((diagnostic, index) => {
+    const previous = diagnostics[index - 1];
+    return previous === undefined ||
+      previous.severity.localeCompare(diagnostic.severity) < 0 ||
+      (previous.severity === diagnostic.severity &&
+        previous.id.localeCompare(diagnostic.id) < 0);
+  });
+}
+
+function hasUniquePlayLaunchValues(
+  value: unknown[],
+  field: string,
+): boolean {
+  const values = value.map((item) => isRecord(item) ? item[field] : undefined);
+  return values.every((item): item is string => typeof item === 'string') &&
+    new Set(values).size === values.length;
+}
+
+function isPlayLaunchRefList(value: unknown, maximum: number): value is string[] {
+  return Array.isArray(value) &&
+    value.length <= maximum &&
+    value.every(isPlayLaunchSafeId) &&
+    new Set(value).size === value.length;
+}
+
+function isPlayLaunchIdentityPurposePair(
+  purpose: PlaySessionPurpose,
+  identity: PlayLaunchIdentityInput,
+): boolean {
+  return purpose === 'immersiveJourney'
+    ? identity.kind === 'player'
+    : identity.kind === 'director';
+}
+
+function isPlayLaunchPurpose(value: unknown): value is PlaySessionPurpose {
+  return value === 'immersiveJourney' || value === 'sceneRehearsal';
+}
+
+function isPlayLaunchSimulationMode(value: unknown): value is PlaySimulationMode {
+  return value === 'conversation' ||
+    value === 'reactiveWorld' ||
+    value === 'activeWorld';
+}
+
+function isPlayLaunchDensity(value: unknown): value is PlayEventDensity {
+  return value === 'quiet' || value === 'balanced' || value === 'volatile';
+}
+
+function isPlayLaunchSourceRole(value: unknown): value is PlayLaunchSourceRole {
+  return value === 'chapter' ||
+    value === 'character' ||
+    value === 'world' ||
+    value === 'timeline' ||
+    value === 'state' ||
+    value === 'other';
+}
+
+function isPlayLaunchSourceStatus(value: unknown): value is PlayLaunchSourceStatus {
+  return value === 'ready' || value === 'missing' || value === 'invalid';
+}
+
+function isPlayLaunchDiagnosticCode(
+  value: unknown,
+): value is PlayLaunchDiagnosticCode {
+  return value === 'invalidSource' ||
+    value === 'missingSource' ||
+    value === 'staleSource' ||
+    value === 'sourceTooLarge' ||
+    value === 'binarySource' ||
+    value === 'participantWithoutCharacterSource' ||
+    value === 'participantCharacterMismatch';
+}
+
+function isPlayLaunchBudgetLayer(value: unknown): boolean {
+  return value === 'L0' || value === 'L1' || value === 'L2' || value === 'L3';
+}
+
+function isPlayLaunchSemanticBoundary(value: unknown): boolean {
+  return value === 'protected' || value === 'compressible' || value === 'excluded';
+}
+
+function isPlayLaunchSourceTrust(value: unknown): value is PlaySourceTrust {
+  return value === 'canonical' ||
+    value === 'interactionHint' ||
+    value === 'playLocal' ||
+    value === 'modelImprovisation';
+}
+
+function isPlayLaunchText(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' &&
+    value.trim() === value &&
+    value.length >= 1 &&
+    value.length <= maximum;
+}
+
+function isPlayLaunchSafeId(value: unknown): value is string {
+  return isPlayLaunchText(value, 200) &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value) &&
+    !value.includes('..') &&
+    !value.includes('/') &&
+    !value.includes('\\');
+}
+
+function assertPlayLaunchSafeId(value: unknown, label: string): string {
+  if (!isPlayLaunchSafeId(value)) {
+    throw new Error(`Play launch ${label} is invalid.`);
+  }
+  return value;
+}
+
+function isPlayLaunchSourcePath(value: unknown): value is string {
+  if (
+    !isPlayLaunchText(value, 1_000) ||
+    value.startsWith('/') ||
+    /^[A-Za-z]:\//u.test(value) ||
+    value.includes('\\')
+  ) return false;
+  return value.split('/').every((part) =>
+    part.length > 0 && part !== '..' && !part.startsWith('.'));
+}
+
+function isPlayLaunchObjectId(value: unknown): value is string {
+  return isPlayLaunchText(value, 300) &&
+    !value.includes('\\') &&
+    value.split('/').every((part) =>
+      /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(part) && part !== '..');
+}
+
+function doesPlayLaunchPathMatchRole(
+  path: string,
+  role: PlayLaunchSourceRole,
+): boolean {
+  const root = role === 'chapter'
+    ? 'chapters'
+    : role === 'character'
+      ? 'characters'
+      : role === 'world'
+        ? 'world'
+        : role === 'timeline'
+          ? 'timeline'
+          : role === 'state'
+            ? 'state'
+            : undefined;
+  return root === undefined || path.split('/')[0] === root;
+}
+
+function derivePlayLaunchObjectId(
+  path: string,
+  role: PlayLaunchSourceRole,
+): string | undefined {
+  if (role === 'other') return undefined;
+  const parts = path.split('/');
+  const identityParts = role === 'character' ? parts.slice(1, 2) : parts.slice(1);
+  if (!identityParts.length) return undefined;
+  const last = identityParts.at(-1)!;
+  const extensionIndex = last.lastIndexOf('.');
+  identityParts[identityParts.length - 1] = extensionIndex > 0
+    ? last.slice(0, extensionIndex)
+    : last;
+  const candidate = identityParts.join('/');
+  return isPlayLaunchObjectId(candidate) ? candidate : undefined;
+}
+
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function hasValidOptionalPlayLaunchSessionMetadata(
+  session: PlaySession,
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(
+    session.metadataExtensions,
+    'playLaunch',
+  )) return true;
+  return hasConsistentPlayLaunchSessionMetadata(session);
+}
+
+function hasConsistentPlayLaunchSessionMetadata(
+  session: PlaySession,
+  expectedSetupId?: string,
+): boolean {
+  const metadata = session.metadataExtensions.playLaunch;
+  if (
+    !isRecord(metadata) ||
+    !hasOnlyKnownFields(metadata, [
+      'setupId',
+      'setupSchemaVersion',
+      'purpose',
+      'startMode',
+    ]) ||
+    !isPlayLaunchSafeId(metadata.setupId) ||
+    (expectedSetupId !== undefined && metadata.setupId !== expectedSetupId) ||
+    metadata.setupSchemaVersion !== 1 ||
+    !isPlayLaunchPurpose(metadata.purpose) ||
+    metadata.startMode !== 'guided' ||
+    (session.schemaVersion === 4 && metadata.purpose !== 'immersiveJourney') ||
+    (session.schemaVersion === 5 && metadata.purpose !== 'sceneRehearsal')
+  ) return false;
+
+  const sourceIds = session.activatedSources.map((source) => source.sourceId);
+  return sourceIds.length > 0 &&
+    new Set(sourceIds).size === sourceIds.length &&
+    session.activatedSources.every((source) =>
+      isSha256Hex(source.contentHash) &&
+      isPlayLaunchSourceRole(source.role) &&
+      isPlayLaunchSourcePath(source.path));
+}
+
+function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSource {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'sourceId',
+    'path',
+    'objectId',
+    'contentHash',
+    'role',
+    'reason',
+    'budgetLayer',
+    'semanticBoundary',
+    'trust',
+  ])) return false;
+  const guided = value.objectId !== undefined ||
+    value.contentHash !== undefined ||
+    value.role !== undefined;
+  const guidedPath = typeof value.path === 'string' ? value.path : undefined;
+  const guidedRole = isPlayLaunchSourceRole(value.role) ? value.role : undefined;
+  const guidedIdentityValid = !guided || (
+    isPlayLaunchSourcePath(guidedPath) &&
+    guidedRole !== undefined &&
+    isSha256Hex(value.contentHash) &&
+    doesPlayLaunchPathMatchRole(guidedPath, guidedRole) &&
+    value.objectId === derivePlayLaunchObjectId(guidedPath, guidedRole)
+  );
+  return isNonEmptyString(value.sourceId)
+    && (!guided || isPlayLaunchSafeId(value.sourceId))
     && (value.path === undefined || isNonEmptyString(value.path))
+    && (value.objectId === undefined || isPlayLaunchObjectId(value.objectId))
+    && guidedIdentityValid
+    && isNonEmptyString(value.sourceId)
     && isNonEmptyString(value.reason)
     && (value.budgetLayer === 'L0'
       || value.budgetLayer === 'L1'

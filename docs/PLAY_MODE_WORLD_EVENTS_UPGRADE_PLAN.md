@@ -12,7 +12,7 @@
 >
 > 执行顺序调整：2026-07-15。
 >
-> 当前执行原则：现有 session / artifact / staged snapshot、专用 SSE、checkpoint / restore / Retry 与顶级 Play 工作区已经满足继续交付产品功能的门槛。M1 的 Pressure / Agenda、eligible evaluator、typed 相对时间推进与 HUD，以及跨计划 F1 Scene Rehearsal 均已于 2026-07-15 落地；下一功能可以从世界事件 M2 或角色推演 F2 继续。事务耐久性、迁移 UI 或长列表性能工作仍作为并行 correctness lane，不再充当全部功能的全局前置 Gate。
+> 当前执行原则：现有 session / artifact / staged snapshot、专用 SSE 与顶级 Play 工作区已经满足继续交付产品功能的门槛。M1 与跨计划 F1 已于 2026-07-15 落地；M2 worldline / event explanation 与跨计划 F2 Source-backed Guided Start 已于 2026-07-16 落地。下一功能主线进入 M3 branch-local knowledge / reveal 或角色推演 F3 Outcome / Writing Handoff；事务耐久性、迁移 UI 与长列表性能仍作为并行 correctness lane。
 
 ## 1. 结论摘要
 
@@ -78,9 +78,9 @@ Play Mode
 执行判断：上述底座已经能够安全支撑新的 Play 功能，不需要等 `docs/tasks/1120.md` 的所有 Remaining Review Scope 全部关闭后再继续。接下来的主线按用户价值排序：
 
 1. 已完成角色推演计划 F1：复用世界动力与相对时间能力形成第一个可玩的 Scene Rehearsal。
-2. 回到 M2，让事件原因、影响、隐藏变化与后续 reveal 在 HUD / Event Feed 中更易理解；或按角色推演计划进入 F2 Source-backed Guided Start。
-3. 让命名 checkpoint、初始世界入口、variant timeline 与 Retry / Restore 形成非技术化的分支探索体验。
-4. 让 Play 结果更容易生成带证据的 observation / adoption candidate，并进入现有人工审批链路。
+2. 已完成 M2：事件原因 / 影响卡片、命名 checkpoint、初始世界入口、variant worldline 与 Retry / Restore 已形成非技术化的分支探索体验。
+3. 已完成跨计划 F2：真实 workspace source 可经五步 Guided Start 创建 v4 Journey 或 v5 Rehearsal，Quick Start 保持兼容。
+4. 下一步补 branch-local knowledge / reveal，或让 Play 结果生成带证据的 outcome / writing handoff 并进入现有人工审批链路。
 5. 再按真实长篇使用压力补 context trace、source drift、summary / windowing 与完整旅程自动化。
 
 F1 已因实际并发边界补入 cooperative cross-process session / attempt filesystem lock、持锁 CAS、staged attempt publish 与 crash self-healing。产品层 migration confirmation、fsync、完整跨进程故障矩阵、可重启 terminal registry、deadline / backpressure 等仍由 `docs/tasks/1120.md` 追踪，并保持为并行 correctness lane。
@@ -817,6 +817,8 @@ Play observation / event
 
 ### M2：让用户看懂并控制世界线
 
+状态：**Completed（2026-07-16）**。实现与验收记录见 `docs/tasks/1120.md` 和 `docs/superpowers/plans/2026-07-16-play-worldline-m2.md`。
+
 范围：
 
 - 事件卡显示原因、影响、世界时间、相关实体与 pressure / agenda / action refs。
@@ -963,7 +965,7 @@ Play observation / event
 - [x] hard-due evaluator 与 immediate consequence 的 typed event / cause 基础已落地。
 - [x] Pressure / Agenda 与 eligible event evaluator 形成可玩的世界推进闭环。
 - [x] event origin、cause、visibility 与 world time 已进入结构化结算和投影校验。
-- [ ] 更严格的 typed state-delta refs 与事件原因 UI 解释完成。
+- [ ] 更严格的通用 typed state-delta refs 完成；M2 的 spoiler-safe 事件原因 / 影响 UI 已落地。
 - [x] hidden event 的保存、Player / Author 投影与 adoption 防泄漏规则已明确。
 - [x] Scene Rehearsal 的 per-step event partition、独立 host hard-due notice、exact derived content、selected aggregate projection 与 Client strict guard 已落地；`rumor` / hidden 不会被 notice 意外升级。
 - [ ] branch-local knowledge、显式 reveal link 与随分支恢复完成。
@@ -971,7 +973,8 @@ Play observation / event
 - [ ] fsync、完整跨进程故障注入矩阵与可重启 terminal truth 作为并行加固闭环。
 - [x] provisional stream 与 committed turn 在 UI 上有清晰区别；Stop 通过服务端 cancel confirmation 与 commit barrier 处理。
 - [x] checkpoint / variant / Retry 已覆盖 transcript、state、events、schedule 与 suggestions。
-- [ ] 命名 / 可见初始 checkpoint，以及 knowledge / reveal / source trace 的分支语义完成。
+- [x] 命名 checkpoint、可见初始世界与统一 worldline 已完成。
+- [ ] knowledge / reveal / source trace 的分支语义完成。
 - [x] canonical adoption 继续经过 PendingAction / diff / human approval。
 
 ## 21. 最终建议
@@ -980,8 +983,8 @@ Play observation / event
 
 1. 已完成：Pressure / Agenda + eligible evaluator + 明确的相对等待 / 推进时间，让世界确实会继续变化。
 2. 已完成：F1 Scene Rehearsal，让角色受限感知、导演控制与一次原子 Finish 成为可玩的纵向功能。
-3. 下一候选：世界事件 M2 的原因 / 影响 / branch timeline，或角色推演 F2 Source-backed Guided Start。
-4. branch-local knowledge 与 reveal link，让隐藏变化可以安全地先发生、后揭示。
-5. 更短的 evidence-backed adoption 路径，让值得保留的 Play 结果进入人工审批。
+3. 已完成：M2 原因 / 影响 / worldline 与 F2 Source-backed Guided Start。
+4. 下一候选：branch-local knowledge 与 reveal link，让隐藏变化可以安全地先发生、后揭示。
+5. 下一候选：更短的 evidence-backed outcome / adoption 路径，让值得保留的 Play 结果进入人工审批。
 
 这五项按纵向切片交付时，Play Mode 才会从“已经具备正确底座”继续成长为“世界会回应、作者能控制、结果可用于写作”的顶级功能。耐久性和规模化加固保持并行推进，但不再默认抢占功能主线。

@@ -285,6 +285,11 @@ export interface WritePlaySessionFilesOptions {
    * same lock is held through the staged directory swap.
    */
   expectedCurrentSession?: PlaySession;
+  /**
+   * Create-only guard. After the cross-process write lock and recovery have
+   * completed, the write fails if an authoritative session already exists.
+   */
+  expectedAbsent?: boolean;
 }
 
 export interface PlaySessionFileTransaction {
@@ -492,6 +497,22 @@ export const withPlaySessionFileTransaction = async <T>(
       write: async (session, options = {}) => {
         if (session.id !== sessionId) {
           throw new Error('Play session transaction cannot cross sessions.');
+        }
+        if (options.expectedAbsent && options.expectedCurrentSession) {
+          throw new Error(
+            'Play session writes cannot require both expectedAbsent and expectedCurrentSession.',
+          );
+        }
+        if (options.expectedAbsent) {
+          try {
+            await readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId);
+            throw new PlaySessionWriteConflictError(
+              `Play session already exists: ${sessionId}`,
+            );
+          } catch (error) {
+            if (error instanceof PlaySessionWriteConflictError) throw error;
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
         }
         if (options.expectedCurrentSession) {
           const authoritative = await readPlaySessionFilesWithoutRecovery(
@@ -882,6 +903,33 @@ const readPlaySessionFilesWithoutRecovery = async (
       ? { sceneRehearsal, rehearsalScenes }
       : {}),
   };
+  const launchMetadata = restoredSession.metadataExtensions.playLaunch;
+  if (
+    isRecord(launchMetadata) &&
+    (
+      (restoredSession.schemaVersion === PLAY_REHEARSAL_SESSION_SCHEMA_VERSION &&
+        launchMetadata.purpose !== 'sceneRehearsal') ||
+      (restoredSession.schemaVersion === PLAY_SESSION_SCHEMA_VERSION &&
+        launchMetadata.purpose !== 'immersiveJourney')
+    )
+  ) {
+    throw new Error(
+      'Play launch session metadata purpose does not match the parent session schema.',
+    );
+  }
+  if (isRecord(launchMetadata)) {
+    const sourceIds = restoredSession.activatedSources.map((source) => source.sourceId);
+    if (
+      sourceIds.length === 0 ||
+      new Set(sourceIds).size !== sourceIds.length ||
+      restoredSession.activatedSources.some((source) =>
+        !source.contentHash || !source.role)
+    ) {
+      throw new Error(
+        'Guided Play sessions require unique activated source hash and role evidence.',
+      );
+    }
+  }
   normalizePlaySessionRehearsalState(restoredSession);
   return restoredSession;
 };
@@ -1723,9 +1771,47 @@ const PLAY_SESSION_METADATA_KEYS = new Set([
 function readPlaySessionMetadataExtensions(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
-  return Object.fromEntries(
+  const extensions = Object.fromEntries(
     Object.entries(metadata).filter(([key]) => !PLAY_SESSION_METADATA_KEYS.has(key)),
   );
+  if (extensions.playLaunch !== undefined) {
+    assertStoredPlayLaunchMetadata(extensions.playLaunch);
+  }
+  return extensions;
+}
+
+function assertStoredPlayLaunchMetadata(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new Error('Play launch session metadata must be an object.');
+  }
+  const knownFields = new Set([
+    'setupId',
+    'setupSchemaVersion',
+    'purpose',
+    'startMode',
+  ]);
+  const unknownField = Object.keys(value).find((field) => !knownFields.has(field));
+  if (unknownField) {
+    throw new Error(
+      `Play launch session metadata contains unknown field: ${unknownField}.`,
+    );
+  }
+  if (
+    typeof value.setupId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value.setupId) ||
+    value.setupId.includes('..')
+  ) {
+    throw new Error('Play launch session metadata setupId is invalid.');
+  }
+  if (value.setupSchemaVersion !== 1) {
+    throw new Error('Unsupported Play launch session metadata version.');
+  }
+  if (value.purpose !== 'immersiveJourney' && value.purpose !== 'sceneRehearsal') {
+    throw new Error('Play launch session metadata purpose is invalid.');
+  }
+  if (value.startMode !== 'guided') {
+    throw new Error('Play launch session metadata startMode must be guided.');
+  }
 }
 
 function normalizeStoredPlaySessionSchemaVersion(
@@ -2784,12 +2870,33 @@ function formatPromptJson(value: unknown): string {
 }
 
 function assertActivatedSource(source: PlayActivatedSource): PlayActivatedSource {
+  if (!source.sourceId.trim()) {
+    throw new Error('Play activated source requires a sourceId.');
+  }
   if (!source.reason.trim()) {
     throw new Error(`Play activated source ${source.sourceId} requires a reason.`);
+  }
+  if (
+    source.contentHash !== undefined &&
+    !/^[a-f0-9]{64}$/u.test(source.contentHash)
+  ) {
+    throw new Error(
+      `Play activated source ${source.sourceId} contentHash must be a SHA-256 hex digest.`,
+    );
+  }
+  if (
+    source.role !== undefined &&
+    !['chapter', 'character', 'world', 'timeline', 'state', 'other']
+      .includes(source.role)
+  ) {
+    throw new Error(`Play activated source ${source.sourceId} has an invalid role.`);
   }
 
   return {
     ...source,
+    sourceId: source.sourceId.trim(),
+    ...(source.path === undefined ? {} : { path: source.path.trim() }),
+    ...(source.objectId === undefined ? {} : { objectId: source.objectId.trim() }),
     reason: source.reason.trim(),
   };
 }

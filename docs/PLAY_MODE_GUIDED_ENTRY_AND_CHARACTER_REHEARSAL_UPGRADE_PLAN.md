@@ -1,6 +1,6 @@
 # Play Mode 引导入场与角色推演升级计划
 
-> 状态：F1 Completed / F2 Next
+> 状态：F1 / F2 Completed / F3 Next
 >
 > 文档目标：在现有顶级 Play 工作区与世界事件底座上，补齐“从小说素材进入可玩场景、按角色知识与行为依据进行推演、由作者逐步导演、结束后形成可追溯写作参考”的产品闭环。
 >
@@ -14,7 +14,7 @@
 >
 > 执行顺序调整：2026-07-15。
 >
-> 当前执行原则：基础设施已经足够。世界事件 M1 与本计划 F1 已于 2026-07-15 完成；下一功能主线是 F2 Source-backed Guided Start，之后再推进 F3 Outcome / Writing Handoff 与 F4 advanced Director controls。耐久性、规模化和通用 transport 加固继续并行，只有被具体切片直接触及时才成为局部门槛。
+> 当前执行原则：基础设施已经足够。世界事件 M1 与本计划 F1 已于 2026-07-15 完成，世界事件 M2 与本计划 F2 Source-backed Guided Start 已于 2026-07-16 完成；下一功能主线是 F3 Outcome / Writing Handoff，之后再推进 F4 advanced Director controls。耐久性、规模化和通用 transport 加固继续并行，只有被具体切片直接触及时才成为局部门槛。
 
 ## 1. 结论摘要
 
@@ -1086,7 +1086,7 @@ Done Criteria：
 
 ### F2：Source-backed Guided Start
 
-状态：**Next**。
+状态：**Completed（2026-07-16）**。实现与验收记录见 `docs/tasks/1140.md` 和 `docs/superpowers/plans/2026-07-16-source-backed-guided-start-f2.md`。
 
 范围：
 
@@ -1101,6 +1101,8 @@ Done Criteria：
 - 最终确认前不创建 session truth，也不修改 canonical 文件。
 - source 缺失或 stale 时首版可阻止启动并要求重新确认，不等待完整 rebase / fork UI。
 - 所有未转换且没有 rehearsal sidecar 的既有 v1–v4 session 继续解释为 `immersiveJourney + quick`；旧 parent + orphan sidecar、新 parent 缺 sidecar，或配对版本不一致均 fail closed。
+
+实现记录：schema v1 Launch Package、raw-byte SHA-256 source evidence、zero-write preview、server-authoritative confirm、immutable `.workspace/play-setups`、全来源 drift revalidation、v4 / v5 bridge 与五步 Desktop Guided Start 已落地。session 继续以 `activated-sources.yaml` 为唯一 source hash truth；metadata 只保留 setup provenance。Quick Start、既有 v1–v4 与 F1 rehearsal 均通过回归。
 
 ### F3：Outcome And Explicit Writing Handoff
 
