@@ -4,6 +4,9 @@ import type {
   PlayEventTrigger,
   PlayEventVisibility,
   PlayKnowledgeChange,
+  PlayKnowledgeState,
+  PlayOutcomeItem,
+  PlayOutcomeProjection,
   PlayPressureStatus,
   PlayScheduledEventTemplate,
   PlaySessionV4,
@@ -44,7 +47,7 @@ export interface PlaySceneContract {
   objective?: PlaySceneValue;
   risk?: PlaySceneValue;
   participantRefs: string[];
-  orderStrategy: 'directorFixed';
+  orderStrategy: 'directorFixed' | 'refereeDynamic' | 'hybrid';
 }
 
 export interface PlayRehearsalParticipant {
@@ -246,10 +249,73 @@ export interface CharacterStepDraft {
   intentSummary: string;
   narrativeBlocks: NarrativeBlock[];
   settlementContribution: PlayWorldRefereeSettlement;
+  effectFingerprint: string;
   decisionBasisRefs: string[];
   variantOf?: string;
+  materialEffect: PlayStepMaterialEffect;
   status: CharacterStepDraftStatus;
   createdAt: string;
+}
+
+export type PlayStepMaterialEffect =
+  | { kind: 'materialEffect' }
+  | { kind: 'noMaterialEffect'; reason: string };
+
+export type PlayDirectorKnowledgeGrant =
+  | { kind: 'existingFact'; factRefs: string[] }
+  | {
+      kind: 'authorProvidedPlayFact';
+      summary: string;
+      visibility: PlayEventVisibility;
+      providedAt: string;
+    };
+
+export interface PlayDirectorInterventionBase {
+  schemaVersion: 1;
+  id: string;
+  attemptId: string;
+  attemptRevision: number;
+  createdAt: string;
+  provenance: { actor: 'user'; source: 'directorControl' };
+  supersededStepRefs: string[];
+}
+
+export type PlayDirectorIntervention = PlayDirectorInterventionBase & (
+  | {
+      kind: 'reviseProjection';
+      stepRef: string;
+      replacementStepRef: string;
+      replacementBlocks: NarrativeBlock[];
+      expectedEffectFingerprint: string;
+    }
+  | {
+      kind: 'redirectStep';
+      stepRef: string;
+      replacementStepRef: string;
+      directorIntent: string;
+      authorConstraintRefs: string[];
+    }
+  | {
+      kind: 'insertActor';
+      participantRef: string;
+      insertionIndex: number;
+      beforeStepRef?: string;
+      afterStepRef?: string;
+    }
+  | {
+      kind: 'grantKnowledge';
+      participantRef: string;
+      effectiveFromStepRef: string;
+      effectiveFromQueueIndex: number;
+      selectedPrefixRefs: string[];
+      grant: PlayDirectorKnowledgeGrant;
+    }
+);
+
+export interface PlayAttemptStagnation {
+  consecutiveNoMaterialSteps: number;
+  threshold: number;
+  warning: boolean;
 }
 
 export interface PlayAttemptMutationReceipt {
@@ -269,16 +335,65 @@ export interface PlayTurnAttempt {
   sceneBeforeRef: string;
   status: PlayTurnAttemptStatus;
   actorOrder: string[];
+  participantRefs: string[];
+  orderStrategy: 'directorFixed' | 'refereeDynamic' | 'hybrid';
   selectedStepRefs: string[];
   selectedHeadRef?: string;
   currentStepRef?: string;
   dueScheduledEventIds: string[];
   steps: CharacterStepDraft[];
+  interventions: PlayDirectorIntervention[];
+  stagnation: PlayAttemptStagnation;
   mutationReceipts: PlayAttemptMutationReceipt[];
   committedArtifactRef?: string;
   committedEvidenceRef?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type PlayDirectorInterventionInput = PlayAttemptMutationInput & (
+  | { kind: 'accept'; stepRef: string }
+  | {
+      kind: 'reviseProjection';
+      stepRef: string;
+      replacementBlocks: NarrativeBlock[];
+      expectedEffectFingerprint: string;
+    }
+  | {
+      kind: 'redirectStep';
+      stepRef: string;
+      directorIntent: string;
+      authorConstraintRefs: string[];
+    }
+  | {
+      kind: 'insertActor';
+      participantRef: string;
+      beforeStepRef?: string;
+      afterStepRef?: string;
+    }
+  | {
+      kind: 'grantKnowledge';
+      participantRef: string;
+      effectiveFromStepRef: string;
+      grant: PlayDirectorKnowledgeGrant;
+    }
+);
+
+export interface PlaySceneMemoryArtifact {
+  schemaVersion: 1;
+  id: string;
+  sessionId: string;
+  sceneId?: string;
+  lens: PlayOutcomeProjection;
+  throughRevision: number;
+  selectedTurnRefs: string[];
+  sourceHashes: Record<string, string>;
+  items: PlayOutcomeItem[];
+  status: 'current' | 'stale' | 'superseded';
+  builtAt: string;
+  staleReasons?: Array<
+    'sessionRevisionChanged' | 'selectedBranchChanged' | 'sourceHashesChanged'
+  >;
 }
 
 export type PlayRehearsalAttempt = PlayTurnAttempt;
@@ -409,7 +524,7 @@ export interface PlayRehearsalClientMethods {
   intervenePlayTurnAttempt(
     sessionId: string,
     attemptId: string,
-    input: PlayAttemptMutationInput & { kind: 'accept'; stepRef: string },
+    input: PlayDirectorInterventionInput,
   ): Promise<PlayAttemptMutationResult>;
   finalizePlayTurnAttempt(
     sessionId: string,
@@ -424,6 +539,14 @@ export interface PlayRehearsalClientMethods {
     attemptId: string,
     input: PlayAttemptMutationInput,
   ): Promise<PlayAttemptMutationResult>;
+  getPlaySceneMemory(
+    sessionId: string,
+    lens: PlayOutcomeProjection,
+  ): Promise<{ memory: PlaySceneMemoryArtifact | null }>;
+  rebuildPlaySceneMemory(
+    sessionId: string,
+    lens: PlayOutcomeProjection,
+  ): Promise<{ memory: PlaySceneMemoryArtifact }>;
   getActivePlayRehearsalAttempt(
     sessionId: string,
   ): Promise<{ attempt: PlayTurnAttempt | null }>;
@@ -449,7 +572,7 @@ export interface PlayRehearsalClientMethods {
   acceptPlayRehearsalStep(
     sessionId: string,
     attemptId: string,
-    input: PlayAttemptMutationInput & { kind: 'accept'; stepRef: string },
+    input: PlayDirectorInterventionInput,
   ): Promise<PlayAttemptMutationResult>;
   finishPlayRehearsalAttempt(
     sessionId: string,
@@ -552,6 +675,8 @@ type PlayRehearsalCanonicalClientMethods = Pick<
   | 'intervenePlayTurnAttempt'
   | 'finalizePlayTurnAttempt'
   | 'cancelPlayTurnAttempt'
+  | 'getPlaySceneMemory'
+  | 'rebuildPlaySceneMemory'
 >;
 
 export function createPlayRehearsalClientMethods(
@@ -592,6 +717,17 @@ export function createPlayRehearsalClientMethods(
           attemptId,
           input,
         )),
+    getPlaySceneMemory: (sessionId, lens) =>
+      options.requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(assertSafeId(sessionId))}` +
+        `/memories/${encodeURIComponent(assertMemoryLens(lens))}`,
+      ).then((value) => parseSceneMemoryEnvelope(value, sessionId, lens, true)),
+    rebuildPlaySceneMemory: (sessionId, lens) =>
+      options.requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(assertSafeId(sessionId))}` +
+        '/memories/rebuild',
+        { method: 'POST', body: { lens: assertMemoryLens(lens) } },
+      ).then((value) => parseSceneMemoryEnvelope(value, sessionId, lens, false)),
     finalizePlayTurnAttempt: (sessionId, attemptId, input) =>
       options.requestJson<unknown>(attemptPath(
         sessionId,
@@ -959,16 +1095,27 @@ export function isPlayRehearsalSessionEnvelope(
   const referencedEvidence = new Set<string>();
   const artifactsById = new Map(session.turnArtifacts.map((artifact) => [artifact.id, artifact]));
   const eventsById = new Map(session.events.map((event) => [event.id, event]));
+  const knowledgeState = Object.hasOwn(session.playLocalState, 'playKnowledge')
+    ? session.playLocalState.playKnowledge as PlayKnowledgeState
+    : { schemaVersion: 1 as const, records: [] };
+  if (knowledgeState.records.some((record) =>
+    record.kind === 'participantGrant' &&
+    !sidecar.participants.some((participant) =>
+      participant.participantRef === record.participantRef))) return false;
   for (const artifact of session.turnArtifacts) {
     if (!isRehearsalArtifactV3(artifact)) return false;
     const owningEventRefs = new Set(artifact.eventIds);
     const allowedEventRefs = new Set<string>();
+    const allowedTurnRefs = new Set<string>();
     const visitedAncestors = new Set<string>();
     let ancestor: PlayTurnArtifact | undefined = artifact;
     while (ancestor) {
       if (visitedAncestors.has(ancestor.id)) return false;
       visitedAncestors.add(ancestor.id);
       for (const eventRef of ancestor.eventIds) allowedEventRefs.add(eventRef);
+      for (const message of ancestor.messages) {
+        if (message.id) allowedTurnRefs.add(message.id);
+      }
       ancestor = ancestor.parentTurnId
         ? artifactsById.get(ancestor.parentTurnId)
         : undefined;
@@ -981,11 +1128,33 @@ export function isPlayRehearsalSessionEnvelope(
         referencedEvidence.has(evidenceRef) ||
         evidence.steps.length !== sidecar.participants.length
       ) return false;
+      const evidenceParticipantRefs = evidence.steps.map((step) => step.participantRef);
+      if (
+        new Set(evidenceParticipantRefs).size !== evidenceParticipantRefs.length ||
+        sidecar.participants.some((participant) =>
+          !evidenceParticipantRefs.includes(participant.participantRef))
+      ) return false;
       const stepSettlementEventRefs: string[] = [];
-      for (const [index, step] of evidence.steps.entries()) {
-        const participant = sidecar.participants[index];
-        if (!participant || step.participantRef !== participant.participantRef) return false;
+      for (const step of evidence.steps) {
+        const participant = sidecar.participants.find((candidate) =>
+          candidate.participantRef === step.participantRef);
+        if (!participant) return false;
         const allowedKnowledgeRefs = new Set(participant.initialKnowledgeEvidenceRefs);
+        for (const record of knowledgeState.records) {
+          if (
+            record.kind !== 'participantGrant' ||
+            record.participantRef !== participant.participantRef ||
+            !allowedTurnRefs.has(record.grantedAtTurnId)
+          ) continue;
+          allowedKnowledgeRefs.add(deriveParticipantKnowledgeEvidenceId(
+            record.interventionRef,
+          ));
+          if (record.grant.kind === 'existingFact') {
+            for (const factRef of record.grant.factRefs) {
+              allowedKnowledgeRefs.add(factRef);
+            }
+          }
+        }
         if (step.decisionBasisRefs.some((ref) => !allowedKnowledgeRefs.has(ref))) return false;
         if (step.settlementEventRefs.some((ref) => {
           const event = eventsById.get(ref);
@@ -1158,7 +1327,11 @@ function isSceneContract(value: unknown): value is PlaySceneContract {
     !isUniqueSafeIdArray(value.participantRefs) ||
     value.participantRefs.length === 0 ||
     value.participantRefs.length > 24 ||
-    value.orderStrategy !== 'directorFixed'
+    (
+      value.orderStrategy !== 'directorFixed' &&
+      value.orderStrategy !== 'refereeDynamic' &&
+      value.orderStrategy !== 'hybrid'
+    )
   ) return false;
   return ['location', 'atmosphere', 'trigger', 'objective', 'risk'].every((field) =>
     value[field] === undefined || isSceneValue(value[field]));
@@ -1368,11 +1541,15 @@ export function isPlayTurnAttempt(value: unknown): value is PlayTurnAttempt {
       'sceneBeforeRef',
       'status',
       'actorOrder',
+      'participantRefs',
+      'orderStrategy',
       'selectedStepRefs',
       'selectedHeadRef',
       'currentStepRef',
       'dueScheduledEventIds',
       'steps',
+      'interventions',
+      'stagnation',
       'mutationReceipts',
       'committedArtifactRef',
       'committedEvidenceRef',
@@ -1389,6 +1566,16 @@ export function isPlayTurnAttempt(value: unknown): value is PlayTurnAttempt {
     !isUniqueSafeIdArray(value.actorOrder) ||
     value.actorOrder.length === 0 ||
     value.actorOrder.length > 24 ||
+    !isUniqueSafeIdArray(value.participantRefs) ||
+    value.participantRefs.length === 0 ||
+    value.participantRefs.length > 24 ||
+    value.actorOrder.some((participantRef) =>
+      !(value.participantRefs as string[]).includes(participantRef)) ||
+    (
+      value.orderStrategy !== 'directorFixed' &&
+      value.orderStrategy !== 'refereeDynamic' &&
+      value.orderStrategy !== 'hybrid'
+    ) ||
     !isUniqueSafeIdArray(value.selectedStepRefs) ||
     value.selectedStepRefs.length > value.actorOrder.length ||
     (value.selectedHeadRef === undefined
@@ -1400,46 +1587,103 @@ export function isPlayTurnAttempt(value: unknown): value is PlayTurnAttempt {
     value.steps.length > 96 ||
     !value.steps.every((step) => isCharacterStepDraft(step, value.id as string)) ||
     !hasUniqueIds(value.steps, 'id') ||
+    !Array.isArray(value.interventions) ||
+    value.interventions.length > 256 ||
+    !value.interventions.every((intervention) =>
+      isPlayDirectorIntervention(intervention, value.id as string)) ||
+    !hasUniqueIds(value.interventions, 'id') ||
+    !isPlayAttemptStagnation(value.stagnation) ||
     !Array.isArray(value.mutationReceipts) ||
     value.mutationReceipts.length > 256 ||
     !value.mutationReceipts.every(isAttemptReceipt) ||
     !hasUniqueIds(value.mutationReceipts, 'idempotencyKey') ||
-    value.mutationReceipts.some((receipt) =>
-      receipt.resultingAttemptRevision > (value.attemptRevision as number)) ||
+    value.mutationReceipts.length !== value.attemptRevision ||
+    value.mutationReceipts.some((receipt, index) =>
+      receipt.resultingAttemptRevision !== index + 1) ||
     (value.committedArtifactRef !== undefined && !isSafeId(value.committedArtifactRef)) ||
     (value.committedEvidenceRef !== undefined && !isSafeId(value.committedEvidenceRef)) ||
     !isNonEmptyString(value.createdAt) ||
     !isNonEmptyString(value.updatedAt)
   ) return false;
 
+  const attempt = value as unknown as PlayTurnAttempt;
   if (value.status === 'committed') {
     if (!value.committedArtifactRef || !value.committedEvidenceRef) return false;
   } else if (value.committedArtifactRef || value.committedEvidenceRef) {
     return false;
   }
 
-  const stepsById = new Map(value.steps.map((step) => [step.id, step]));
-  for (const [index, stepRef] of value.selectedStepRefs.entries()) {
+  const stepsById = new Map(attempt.steps.map((step) => [step.id, step]));
+  const selectedStepSet = new Set(attempt.selectedStepRefs);
+  for (const [index, stepRef] of attempt.selectedStepRefs.entries()) {
     const step = stepsById.get(stepRef);
     if (
       !step ||
       step.status !== 'selected' ||
       step.queueIndex !== index ||
-      step.participantRef !== value.actorOrder[index] ||
-      step.beforeStepRef !== (index === 0 ? undefined : value.selectedStepRefs[index - 1])
+      step.participantRef !== attempt.actorOrder[index] ||
+      step.beforeStepRef !== (index === 0 ? undefined : attempt.selectedStepRefs[index - 1])
     ) return false;
   }
-  const current = value.currentStepRef ? stepsById.get(value.currentStepRef) : undefined;
-  if (value.currentStepRef && (
+  const current = attempt.currentStepRef ? stepsById.get(attempt.currentStepRef) : undefined;
+  if (attempt.currentStepRef && (
     !current ||
     current.status !== 'draft' ||
-    current.queueIndex !== value.selectedStepRefs.length ||
-    current.participantRef !== value.actorOrder[value.selectedStepRefs.length]
+    current.queueIndex !== attempt.selectedStepRefs.length ||
+    current.participantRef !== attempt.actorOrder[attempt.selectedStepRefs.length]
   )) return false;
+  for (const step of attempt.steps) {
+    const live = step.status === 'selected' || step.status === 'draft';
+    const expectedBeforeRef = step.queueIndex === 0
+      ? undefined
+      : attempt.selectedStepRefs[step.queueIndex - 1];
+    if (
+      step.queueIndex >= attempt.participantRefs.length ||
+      !attempt.participantRefs.includes(step.participantRef) ||
+      (live && step.beforeStepRef !== expectedBeforeRef) ||
+      ((step.status === 'selected') !== selectedStepSet.has(step.id)) ||
+      ((step.status === 'draft') !== (step.id === attempt.currentStepRef)) ||
+      !hasCompatibleStepVariant(step, stepsById)
+    ) return false;
+  }
+
+  let previousInterventionRevision = 0;
+  for (const intervention of attempt.interventions) {
+    if (
+      intervention.attemptRevision <= previousInterventionRevision ||
+      intervention.attemptRevision > attempt.attemptRevision ||
+      intervention.supersededStepRefs.some((stepRef) => {
+        const step = stepsById.get(stepRef);
+        return !step || (step.status !== 'superseded' && step.status !== 'discarded');
+      }) ||
+      !hasConsistentInterventionSteps(intervention, stepsById)
+    ) return false;
+    previousInterventionRevision = intervention.attemptRevision;
+  }
+
+  let consecutiveNoMaterialSteps = 0;
+  for (const stepRef of [...attempt.selectedStepRefs].reverse()) {
+    if (stepsById.get(stepRef)?.materialEffect.kind !== 'noMaterialEffect') break;
+    consecutiveNoMaterialSteps += 1;
+  }
+  if (
+    attempt.stagnation.consecutiveNoMaterialSteps !== consecutiveNoMaterialSteps ||
+    attempt.stagnation.warning !==
+      (consecutiveNoMaterialSteps >= attempt.stagnation.threshold)
+  ) return false;
+
   return !(
-    (value.status === 'prepared' && value.selectedStepRefs.length !== value.actorOrder.length) ||
-    (value.status === 'running' && value.selectedStepRefs.length >= value.actorOrder.length) ||
-    (value.status === 'prepared' && value.currentStepRef !== undefined)
+    (attempt.status === 'prepared' &&
+      attempt.selectedStepRefs.length !== attempt.actorOrder.length) ||
+    (attempt.status === 'running' &&
+      attempt.selectedStepRefs.length >= attempt.actorOrder.length) ||
+    ((attempt.status === 'prepared' || attempt.status === 'committed') &&
+      (
+        attempt.selectedStepRefs.length !== attempt.actorOrder.length ||
+        attempt.currentStepRef !== undefined
+      )) ||
+    (attempt.status !== 'running' && attempt.status !== 'prepared' &&
+      attempt.currentStepRef !== undefined)
   );
 }
 
@@ -1458,8 +1702,10 @@ function isCharacterStepDraft(
       'intentSummary',
       'narrativeBlocks',
       'settlementContribution',
+      'effectFingerprint',
       'decisionBasisRefs',
       'variantOf',
+      'materialEffect',
       'status',
       'createdAt',
     ])
@@ -1476,11 +1722,196 @@ function isCharacterStepDraft(
     && value.narrativeBlocks.every(isNarrativeBlock)
     && hasUniqueIds(value.narrativeBlocks, 'id')
     && isSettlement(value.settlementContribution)
+    && isSha256Hex(value.effectFingerprint)
     && isUniqueSafeIdArray(value.decisionBasisRefs)
     && (value.variantOf === undefined || isSafeId(value.variantOf))
+    && isPlayStepMaterialEffect(value.materialEffect)
     && isStepStatus(value.status)
     && isNonEmptyString(value.createdAt)
     && hasValidProvisionalWorldNoticeEvidence(value);
+}
+
+function hasCompatibleStepVariant(
+  step: CharacterStepDraft,
+  stepsById: Map<string, CharacterStepDraft>,
+): boolean {
+  const visited = new Set([step.id]);
+  let current = step;
+  while (current.variantOf) {
+    if (visited.has(current.variantOf)) return false;
+    visited.add(current.variantOf);
+    const source = stepsById.get(current.variantOf);
+    if (
+      !source ||
+      source.queueIndex !== step.queueIndex ||
+      source.participantRef !== step.participantRef ||
+      source.beforeStepRef !== step.beforeStepRef
+    ) return false;
+    current = source;
+  }
+  return true;
+}
+
+function isPlayStepMaterialEffect(value: unknown): value is PlayStepMaterialEffect {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'materialEffect') {
+    return hasOnlyKnownFields(value, ['kind']);
+  }
+  return value.kind === 'noMaterialEffect'
+    && hasOnlyKnownFields(value, ['kind', 'reason'])
+    && isNonEmptyString(value.reason);
+}
+
+function isPlayAttemptStagnation(value: unknown): value is PlayAttemptStagnation {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'consecutiveNoMaterialSteps',
+      'threshold',
+      'warning',
+    ])
+    && isNonNegativeInteger(value.consecutiveNoMaterialSteps)
+    && isPositiveInteger(value.threshold)
+    && value.warning ===
+      (value.consecutiveNoMaterialSteps >= value.threshold);
+}
+
+function isPlayDirectorIntervention(
+  value: unknown,
+  expectedAttemptId: string,
+): value is PlayDirectorIntervention {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isSafeId(value.id) ||
+    value.attemptId !== expectedAttemptId ||
+    !isPositiveInteger(value.attemptRevision) ||
+    !isNonEmptyString(value.createdAt) ||
+    !isRecord(value.provenance) ||
+    !hasOnlyKnownFields(value.provenance, ['actor', 'source']) ||
+    value.provenance.actor !== 'user' ||
+    value.provenance.source !== 'directorControl' ||
+    !isUniqueSafeIdArray(value.supersededStepRefs)
+  ) return false;
+  const baseFields = [
+    'schemaVersion',
+    'id',
+    'attemptId',
+    'attemptRevision',
+    'createdAt',
+    'provenance',
+    'supersededStepRefs',
+    'kind',
+  ];
+  if (value.kind === 'reviseProjection') {
+    return hasOnlyKnownFields(value, [
+      ...baseFields,
+      'stepRef',
+      'replacementStepRef',
+      'replacementBlocks',
+      'expectedEffectFingerprint',
+    ])
+      && isSafeId(value.stepRef)
+      && isSafeId(value.replacementStepRef)
+      && Array.isArray(value.replacementBlocks)
+      && value.replacementBlocks.length <= 96
+      && value.replacementBlocks.every(isNarrativeBlock)
+      && hasUniqueIds(value.replacementBlocks, 'id')
+      && isSha256Hex(value.expectedEffectFingerprint);
+  }
+  if (value.kind === 'redirectStep') {
+    return hasOnlyKnownFields(value, [
+      ...baseFields,
+      'stepRef',
+      'replacementStepRef',
+      'directorIntent',
+      'authorConstraintRefs',
+    ])
+      && isSafeId(value.stepRef)
+      && isSafeId(value.replacementStepRef)
+      && isNonEmptyString(value.directorIntent)
+      && Array.isArray(value.authorConstraintRefs)
+      && value.authorConstraintRefs.length <= 64
+      && isUniqueSafeIdArray(value.authorConstraintRefs);
+  }
+  if (value.kind === 'insertActor') {
+    return hasOnlyKnownFields(value, [
+      ...baseFields,
+      'participantRef',
+      'insertionIndex',
+      'beforeStepRef',
+      'afterStepRef',
+    ])
+      && isSafeId(value.participantRef)
+      && isNonNegativeInteger(value.insertionIndex)
+      && (value.beforeStepRef === undefined || isSafeId(value.beforeStepRef))
+      && (value.afterStepRef === undefined || isSafeId(value.afterStepRef))
+      && !(value.beforeStepRef !== undefined && value.afterStepRef !== undefined);
+  }
+  return value.kind === 'grantKnowledge'
+    && hasOnlyKnownFields(value, [
+      ...baseFields,
+      'participantRef',
+      'effectiveFromStepRef',
+      'effectiveFromQueueIndex',
+      'selectedPrefixRefs',
+      'grant',
+    ])
+    && isSafeId(value.participantRef)
+    && isSafeId(value.effectiveFromStepRef)
+    && isNonNegativeInteger(value.effectiveFromQueueIndex)
+    && isUniqueSafeIdArray(value.selectedPrefixRefs)
+    && isPlayDirectorKnowledgeGrant(value.grant);
+}
+
+function isPlayDirectorKnowledgeGrant(
+  value: unknown,
+): value is PlayDirectorKnowledgeGrant {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'existingFact') {
+    return hasOnlyKnownFields(value, ['kind', 'factRefs'])
+      && isUniqueSafeIdArray(value.factRefs)
+      && value.factRefs.length > 0
+      && value.factRefs.length <= 64;
+  }
+  return value.kind === 'authorProvidedPlayFact'
+    && hasOnlyKnownFields(value, ['kind', 'summary', 'visibility', 'providedAt'])
+    && isNonEmptyString(value.summary)
+    && isVisibility(value.visibility)
+    && isNonEmptyString(value.providedAt);
+}
+
+function hasConsistentInterventionSteps(
+  intervention: PlayDirectorIntervention,
+  stepsById: Map<string, CharacterStepDraft>,
+): boolean {
+  if (intervention.kind === 'reviseProjection' || intervention.kind === 'redirectStep') {
+    const source = stepsById.get(intervention.stepRef);
+    const replacement = stepsById.get(intervention.replacementStepRef);
+    if (
+      !source ||
+      !replacement ||
+      replacement.variantOf !== source.id ||
+      replacement.queueIndex !== source.queueIndex ||
+      replacement.participantRef !== source.participantRef ||
+      replacement.beforeStepRef !== source.beforeStepRef
+    ) return false;
+    return intervention.kind !== 'reviseProjection' || (
+      source.effectFingerprint === intervention.expectedEffectFingerprint &&
+      replacement.effectFingerprint === source.effectFingerprint &&
+      isDeepEqualJson(replacement.narrativeBlocks, intervention.replacementBlocks)
+    );
+  }
+  if (intervention.kind === 'insertActor') {
+    return (intervention.beforeStepRef === undefined ||
+      stepsById.has(intervention.beforeStepRef)) &&
+      (intervention.afterStepRef === undefined || stepsById.has(intervention.afterStepRef));
+  }
+  const target = stepsById.get(intervention.effectiveFromStepRef);
+  return Boolean(target) &&
+    target!.queueIndex === intervention.effectiveFromQueueIndex &&
+    intervention.selectedPrefixRefs.length === intervention.effectiveFromQueueIndex &&
+    intervention.selectedPrefixRefs.every((stepRef, index) =>
+      stepsById.get(stepRef)?.queueIndex === index);
 }
 
 function hasValidProvisionalWorldNoticeEvidence(
@@ -1555,7 +1986,8 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
     && Array.isArray(value.knowledgeChanges)
     && value.knowledgeChanges.length <= 8
     && value.knowledgeChanges.every(isKnowledgeChange)
-    && hasUniqueIds(value.knowledgeChanges, 'subjectEventId')
+    && value.knowledgeChanges.every((change) => change.type === 'revealEvent')
+    && hasUniqueKnowledgeChanges(value.knowledgeChanges)
     && Array.isArray(value.pressureChanges)
     && value.pressureChanges.every(isPressureChange)
     && Array.isArray(value.agendaChanges)
@@ -1577,16 +2009,46 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
 }
 
 function isKnowledgeChange(value: unknown): value is PlayKnowledgeChange {
-  return isRecord(value)
-    && hasOnlyKnownFields(value, [
+  if (!isRecord(value)) return false;
+  if (value.type === 'grantParticipantKnowledge') {
+    return hasOnlyKnownFields(value, [
       'type',
-      'subjectEventId',
-      'playerProjection',
+      'participantRef',
+      'effectiveFromStepRef',
+      'interventionRef',
+      'grant',
     ])
+      && isSafeId(value.participantRef)
+      && isSafeId(value.effectiveFromStepRef)
+      && isSafeId(value.interventionRef)
+      && isPlayDirectorKnowledgeGrant(value.grant);
+  }
+  return hasOnlyKnownFields(value, [
+    'type',
+    'subjectEventId',
+    'playerProjection',
+  ])
     && value.type === 'revealEvent'
     && isSafeId(value.subjectEventId)
     && (value.playerProjection === 'rumor'
       || value.playerProjection === 'playerVisible');
+}
+
+function hasUniqueKnowledgeChanges(
+  changes: readonly PlayKnowledgeChange[],
+): boolean {
+  const subjectEventIds = new Set<string>();
+  const interventionRefs = new Set<string>();
+  for (const change of changes) {
+    if (change.type === 'grantParticipantKnowledge') {
+      if (interventionRefs.has(change.interventionRef)) return false;
+      interventionRefs.add(change.interventionRef);
+    } else {
+      if (subjectEventIds.has(change.subjectEventId)) return false;
+      subjectEventIds.add(change.subjectEventId);
+    }
+  }
+  return true;
 }
 
 function isSettlementEvent(value: unknown): boolean {
@@ -1703,6 +2165,179 @@ function isAttemptReceipt(value: unknown): value is PlayAttemptMutationReceipt {
     && isNonNegativeInteger(value.resultingAttemptRevision)
     && isSafeId(value.resultRef)
     && isNonEmptyString(value.responseDigest);
+}
+
+function assertMemoryLens(value: unknown): PlayOutcomeProjection {
+  if (value !== 'player' && value !== 'director') {
+    throw new Error('Invalid Play Scene Memory lens.');
+  }
+  return value;
+}
+
+function parseSceneMemoryEnvelope(
+  value: unknown,
+  sessionId: string,
+  lens: PlayOutcomeProjection,
+  allowNull: true,
+): { memory: PlaySceneMemoryArtifact | null };
+function parseSceneMemoryEnvelope(
+  value: unknown,
+  sessionId: string,
+  lens: PlayOutcomeProjection,
+  allowNull: false,
+): { memory: PlaySceneMemoryArtifact };
+function parseSceneMemoryEnvelope(
+  value: unknown,
+  sessionId: string,
+  lens: PlayOutcomeProjection,
+  allowNull: boolean,
+): { memory: PlaySceneMemoryArtifact | null } {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, ['memory'])) {
+    throw new Error('Play Scene Memory request returned an invalid payload.');
+  }
+  if (allowNull && value.memory === null) return { memory: null };
+  if (
+    !isPlaySceneMemoryArtifact(value.memory, lens) ||
+    value.memory.sessionId !== sessionId
+  ) {
+    throw new Error('Play Scene Memory request returned an invalid payload.');
+  }
+  return { memory: value.memory };
+}
+
+function isPlaySceneMemoryArtifact(
+  value: unknown,
+  expectedLens?: PlayOutcomeProjection,
+): value is PlaySceneMemoryArtifact {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'schemaVersion',
+      'id',
+      'sessionId',
+      'sceneId',
+      'lens',
+      'throughRevision',
+      'selectedTurnRefs',
+      'sourceHashes',
+      'items',
+      'status',
+      'builtAt',
+      'staleReasons',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    !isSafeId(value.id) ||
+    !isSafeId(value.sessionId) ||
+    (value.sceneId !== undefined && !isSafeId(value.sceneId)) ||
+    (value.lens !== 'player' && value.lens !== 'director') ||
+    (expectedLens !== undefined && value.lens !== expectedLens) ||
+    !isNonNegativeInteger(value.throughRevision) ||
+    !isUniqueSafeIdArray(value.selectedTurnRefs) ||
+    !isMemorySourceHashes(value.sourceHashes) ||
+    !Array.isArray(value.items) ||
+    value.items.length > 4096 ||
+    !value.items.every((item) => isMemoryOutcomeItem(item, value.lens as PlayOutcomeProjection)) ||
+    !hasUniqueIds(value.items, 'id') ||
+    (
+      value.status !== 'current' &&
+      value.status !== 'stale' &&
+      value.status !== 'superseded'
+    ) ||
+    !isNonEmptyString(value.builtAt) ||
+    !Number.isFinite(Date.parse(value.builtAt)) ||
+    (
+      value.staleReasons !== undefined &&
+      !isMemoryStaleReasons(value.staleReasons)
+    ) ||
+    ((value.status === 'stale') !==
+      (Array.isArray(value.staleReasons) && value.staleReasons.length > 0))
+  ) return false;
+  if (value.id !== `scene-memory-${value.lens}-${value.throughRevision}`) return false;
+  if (value.lens === 'player') {
+    return value.selectedTurnRefs.length === 0 &&
+      Object.keys(value.sourceHashes).length === 0;
+  }
+  return true;
+}
+
+function isMemorySourceHashes(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.entries(value).every(([sourceId, hash]) =>
+    isSafeId(sourceId) && isSha256Hex(hash));
+}
+
+function isMemoryStaleReasons(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0 && value.every((reason) =>
+    reason === 'sessionRevisionChanged' ||
+    reason === 'selectedBranchChanged' ||
+    reason === 'sourceHashesChanged') && new Set(value).size === value.length;
+}
+
+function isMemoryOutcomeItem(
+  value: unknown,
+  lens: PlayOutcomeProjection,
+): value is PlayOutcomeItem {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'kind',
+      'summary',
+      'visibility',
+      'confidence',
+      'goalStatus',
+      'tags',
+      'artifactTurnRefs',
+      'messageRefs',
+      'eventRefs',
+      'observationRefs',
+      'evidenceRefs',
+      'sourceRefs',
+      'participantRefs',
+    ]) ||
+    !isSafeId(value.id) ||
+    ![
+      'sceneSummary',
+      'goalAssessment',
+      'participantFootprint',
+      'worldChange',
+      'writingMaterial',
+    ].includes(String(value.kind)) ||
+    !isNonEmptyString(value.summary) ||
+    !isVisibility(value.visibility) ||
+    !['confirmed', 'inferred', 'authorProvided'].includes(String(value.confidence)) ||
+    !Array.isArray(value.tags) ||
+    value.tags.length === 0 ||
+    !value.tags.every((tag) => [
+      'goal',
+      'divergence',
+      'consistency',
+      'worldChange',
+      'participantFootprint',
+      'writingMaterial',
+    ].includes(String(tag))) ||
+    new Set(value.tags).size !== value.tags.length
+  ) return false;
+  const refFields = [
+    'artifactTurnRefs',
+    'messageRefs',
+    'eventRefs',
+    'observationRefs',
+    'evidenceRefs',
+    'sourceRefs',
+    'participantRefs',
+  ] as const;
+  if (refFields.some((field) => !isUniqueSafeIdArray(value[field]))) return false;
+  if (value.kind === 'goalAssessment') {
+    if (!['reached', 'partial', 'missed', 'changed'].includes(String(value.goalStatus))) {
+      return false;
+    }
+  } else if (value.goalStatus !== undefined) {
+    return false;
+  }
+  return lens === 'director'
+    ? (value.artifactTurnRefs as string[]).length > 0
+    : value.visibility !== 'playerUnknown' &&
+      refFields.every((field) => (value[field] as string[]).length === 0);
 }
 
 function parseAttemptEnvelope(
@@ -1983,6 +2618,10 @@ function isSafeId(value: unknown): value is string {
     && !value.includes('\\');
 }
 
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
 function assertSafeId(value: unknown): string {
   if (!isSafeId(value)) throw new Error('Invalid Play rehearsal identifier.');
   return value;
@@ -2011,6 +2650,13 @@ function hasUniqueIds(
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function deriveParticipantKnowledgeEvidenceId(interventionRef: string): string {
+  const candidate = `participant-knowledge-${interventionRef}`;
+  return candidate.length <= 180
+    ? candidate
+    : `participant-knowledge-${interventionRef.slice(-150)}`;
 }
 
 function doesPlayVisibilityCover(

@@ -61,6 +61,141 @@ describe('Play rehearsal client contract', () => {
       .rejects.toThrow(/invalid payload/iu);
   });
 
+  it('sends typed Director interventions and validates append-only replacement truth', async () => {
+    const attempt = createRevisedAttempt();
+    const receipt = attempt.mutationReceipts.at(-1)!;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ url: String(input), init });
+        return jsonResponse({ attempt, receipt, replayed: false });
+      }) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    const replacementBlocks = attempt.steps.at(-1)!.narrativeBlocks;
+
+    await expect(client.acceptPlayRehearsalStep(
+      'play-1',
+      'attempt-1',
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: 'revise-key',
+        kind: 'reviseProjection',
+        stepRef: 'step-1',
+        replacementBlocks,
+        expectedEffectFingerprint: '0'.repeat(64),
+      },
+    )).resolves.toEqual({ attempt, receipt, replayed: false });
+    expect(calls[0]?.url).toBe(
+      'http://backend.test/api/workspace/play-sessions/play-1/attempts/attempt-1/interventions',
+    );
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      expectedAttemptRevision: 1,
+      idempotencyKey: 'revise-key',
+      kind: 'reviseProjection',
+      stepRef: 'step-1',
+      replacementBlocks,
+      expectedEffectFingerprint: '0'.repeat(64),
+    });
+
+    const forged = structuredClone(attempt) as unknown as Record<string, unknown>;
+    const interventions = forged.interventions as Array<Record<string, unknown>>;
+    interventions[0]!.forged = true;
+    const invalid = createOanClient({
+      fetch: (async () => jsonResponse({
+        attempt: forged,
+        receipt,
+        replayed: false,
+      })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(invalid.acceptPlayRehearsalStep(
+      'play-1',
+      'attempt-1',
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: 'revise-key',
+        kind: 'reviseProjection',
+        stepRef: 'step-1',
+        replacementBlocks,
+        expectedEffectFingerprint: '0'.repeat(64),
+      },
+    )).rejects.toThrow(/invalid payload/iu);
+
+    const oversized = structuredClone(attempt) as unknown as Record<string, unknown>;
+    const oversizedIntervention = (oversized.interventions as Array<Record<string, unknown>>)[0]!;
+    delete oversizedIntervention.replacementBlocks;
+    delete oversizedIntervention.expectedEffectFingerprint;
+    oversizedIntervention.kind = 'redirectStep';
+    oversizedIntervention.directorIntent = 'Keep the response grounded in visible evidence.';
+    oversizedIntervention.authorConstraintRefs = Array.from(
+      { length: 65 },
+      (_, index) => `constraint-${index}`,
+    );
+    const oversizedClient = createOanClient({
+      fetch: (async () => jsonResponse({
+        attempt: oversized,
+        receipt,
+        replayed: false,
+      })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(oversizedClient.acceptPlayRehearsalStep(
+      'play-1',
+      'attempt-1',
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: 'revise-key',
+        kind: 'reviseProjection',
+        stepRef: 'step-1',
+        replacementBlocks,
+        expectedEffectFingerprint: '0'.repeat(64),
+      },
+    )).rejects.toThrow(/invalid payload/iu);
+  });
+
+  it('reads and rebuilds strict lens-safe Scene Memory envelopes', async () => {
+    const memory = createPlayerSceneMemory();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ url: String(input), init });
+        return jsonResponse({ memory });
+      }) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+
+    await expect(client.getPlaySceneMemory('play-1', 'player'))
+      .resolves.toEqual({ memory });
+    await expect(client.rebuildPlaySceneMemory('play-1', 'player'))
+      .resolves.toEqual({ memory });
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://backend.test/api/workspace/play-sessions/play-1/memories/player',
+      'http://backend.test/api/workspace/play-sessions/play-1/memories/rebuild',
+    ]);
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ lens: 'player' });
+
+    const leaked = structuredClone(memory);
+    leaked.selectedTurnRefs = ['turn-artifact-hidden'];
+    const invalid = createOanClient({
+      fetch: (async () => jsonResponse({ memory: leaked })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(invalid.getPlaySceneMemory('play-1', 'player'))
+      .rejects.toThrow(/invalid payload/iu);
+
+    const missing = createOanClient({
+      fetch: (async () => jsonResponse({ memory: null })) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(missing.getPlaySceneMemory('play-1', 'player'))
+      .resolves.toEqual({ memory: null });
+    await expect(missing.rebuildPlaySceneMemory('play-1', 'player'))
+      .rejects.toThrow(/invalid payload/iu);
+  });
+
   it('reports the actor-step commit barrier as too late to stop and fails closed on weaker truth', async () => {
     const committing = createOanClient({
       fetch: (async () => jsonResponse({
@@ -459,6 +594,7 @@ describe('Play rehearsal client contract', () => {
       ...createRunningAttempt(),
       attemptRevision: 3,
       actorOrder: ['participant-lin', 'participant-mei'],
+      participantRefs: ['participant-lin', 'participant-mei'],
       selectedStepRefs: [firstStep.id],
       selectedHeadRef: firstStep.id,
       currentStepRef: secondStep.id,
@@ -886,6 +1022,77 @@ describe('Play rehearsal client contract', () => {
       },
     )).resolves.toEqual(response);
   });
+
+  it('accepts committed participant grants only for scene participants and scoped evidence', async () => {
+    const { session, artifact, evidence, receipt } = createCommittedRehearsalFixture();
+    const grantEvidenceRef = 'participant-knowledge-intervention-grant-lin';
+    const knowledgeState = {
+      schemaVersion: 1 as const,
+      records: [{
+        id: 'knowledge-1-1',
+        kind: 'participantGrant' as const,
+        participantRef: 'participant-lin',
+        effectiveFromStepRef: 'step-1',
+        interventionRef: 'intervention-grant-lin',
+        grant: {
+          kind: 'authorProvidedPlayFact' as const,
+          summary: '林知道门外来客持有旧宅的备用钥匙。',
+          visibility: 'playerUnknown' as const,
+          providedAt: '2026-07-15T00:01:30.000Z',
+        },
+        grantedAtTurnId: 'turn-1-referee',
+        canonical: false as const,
+      }],
+    };
+    session.playLocalState = { playKnowledge: structuredClone(knowledgeState) };
+    session.playLocalStateVisibility = { playKnowledge: 'playerUnknown' };
+    artifact.playLocalStateSnapshot = {
+      playKnowledge: structuredClone(knowledgeState),
+    };
+    artifact.playLocalStateVisibilitySnapshot = { playKnowledge: 'playerUnknown' };
+    artifact.stateDelta = { playKnowledge: structuredClone(knowledgeState) };
+    evidence.steps[0]!.decisionBasisRefs = [grantEvidenceRef];
+    const response = { session, artifact, evidence, receipt, replayed: true };
+    const client = createOanClient({
+      fetch: (async () => jsonResponse(response)) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(client.finishPlayRehearsalAttempt(
+      'play-1',
+      'attempt-1',
+      {
+        baseRevision: 0,
+        expectedAttemptRevision: 2,
+        selectedHeadRef: 'step-1',
+        idempotencyKey: 'finalize-key',
+      },
+    )).resolves.toEqual(response);
+
+    const tampered = structuredClone(response);
+    const state = tampered.session.playLocalState.playKnowledge as typeof knowledgeState;
+    state.records[0]!.participantRef = 'participant-outsider';
+    const snapshot = tampered.session.turnArtifacts[0]!
+      .playLocalStateSnapshot!.playKnowledge as typeof knowledgeState;
+    snapshot.records[0]!.participantRef = 'participant-outsider';
+    const delta = tampered.session.turnArtifacts[0]!
+      .stateDelta.playKnowledge as typeof knowledgeState;
+    delta.records[0]!.participantRef = 'participant-outsider';
+    tampered.artifact = tampered.session.turnArtifacts[0]!;
+    const invalid = createOanClient({
+      fetch: (async () => jsonResponse(tampered)) as typeof fetch,
+      systemTheme: () => 'dark',
+    });
+    await expect(invalid.finishPlayRehearsalAttempt(
+      'play-1',
+      'attempt-1',
+      {
+        baseRevision: 0,
+        expectedAttemptRevision: 2,
+        selectedHeadRef: 'step-1',
+        idempotencyKey: 'finalize-key',
+      },
+    )).rejects.toThrow(/payload/iu);
+  });
 });
 
 function createRunningAttempt(): PlayTurnAttempt {
@@ -898,9 +1105,17 @@ function createRunningAttempt(): PlayTurnAttempt {
     sceneBeforeRef: 'scene-1',
     status: 'running',
     actorOrder: ['participant-lin'],
+    participantRefs: ['participant-lin'],
+    orderStrategy: 'directorFixed',
     selectedStepRefs: [],
     dueScheduledEventIds: [],
     steps: [],
+    interventions: [],
+    stagnation: {
+      consecutiveNoMaterialSteps: 0,
+      threshold: 3,
+      warning: false,
+    },
     mutationReceipts: [],
     createdAt: '2026-07-15T00:00:00.000Z',
     updatedAt: '2026-07-15T00:00:00.000Z',
@@ -948,7 +1163,9 @@ function createStep(status: CharacterStepDraft['status']): CharacterStepDraft {
       observations: [],
       suggestedActions: [],
     },
+    effectFingerprint: '0'.repeat(64),
     decisionBasisRefs: ['knowledge-1'],
+    materialEffect: { kind: 'materialEffect' },
     status,
     createdAt: '2026-07-15T00:01:00.000Z',
   };
@@ -965,6 +1182,76 @@ function createReceipt(
     resultingAttemptRevision,
     resultRef,
     responseDigest: `${idempotencyKey}-digest`,
+  };
+}
+
+function createRevisedAttempt(): PlayTurnAttempt {
+  const draft = createDraftAttempt();
+  const source = { ...draft.steps[0]!, status: 'superseded' as const };
+  const replacementBlocks = [{
+    ...structuredClone(source.narrativeBlocks[0]!),
+    id: 'block-revised',
+    content: '林压低声音，仍然侧耳听着门外。',
+  }];
+  const replacement: CharacterStepDraft = {
+    ...structuredClone(source),
+    id: 'intervention-revise-step',
+    narrativeBlocks: replacementBlocks,
+    variantOf: source.id,
+    status: 'draft',
+  };
+  const receipt = createReceipt('revise-key', 2, 'intervention-revise');
+  return {
+    ...draft,
+    attemptRevision: 2,
+    currentStepRef: replacement.id,
+    steps: [source, replacement],
+    interventions: [{
+      schemaVersion: 1,
+      id: 'intervention-revise',
+      attemptId: draft.id,
+      attemptRevision: 2,
+      createdAt: '2026-07-15T00:01:30.000Z',
+      provenance: { actor: 'user', source: 'directorControl' },
+      supersededStepRefs: [source.id],
+      kind: 'reviseProjection',
+      stepRef: source.id,
+      replacementStepRef: replacement.id,
+      replacementBlocks,
+      expectedEffectFingerprint: source.effectFingerprint,
+    }],
+    mutationReceipts: [...draft.mutationReceipts, receipt],
+    updatedAt: '2026-07-15T00:01:30.000Z',
+  };
+}
+
+function createPlayerSceneMemory() {
+  return {
+    schemaVersion: 1 as const,
+    id: 'scene-memory-player-1',
+    sessionId: 'play-1',
+    sceneId: 'scene-1',
+    lens: 'player' as const,
+    throughRevision: 1,
+    selectedTurnRefs: [],
+    sourceHashes: {},
+    items: [{
+      id: 'outcome-0001',
+      kind: 'sceneSummary' as const,
+      summary: '林听见门外传来三下敲门声。',
+      visibility: 'playerVisible' as const,
+      confidence: 'confirmed' as const,
+      tags: ['writingMaterial' as const],
+      artifactTurnRefs: [],
+      messageRefs: [],
+      eventRefs: [],
+      observationRefs: [],
+      evidenceRefs: [],
+      sourceRefs: [],
+      participantRefs: [],
+    }],
+    status: 'current' as const,
+    builtAt: '2026-07-20T00:00:00.000Z',
   };
 }
 

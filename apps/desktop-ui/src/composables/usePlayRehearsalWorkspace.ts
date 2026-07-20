@@ -18,11 +18,13 @@ import {
   projectPlayRehearsalSteps,
   projectPlayRehearsalVisibleEvents,
 } from './playRehearsalPresentation';
+import { usePlayDirectorInterventions } from './usePlayDirectorInterventions';
 import { usePlayRehearsalAttempt } from './usePlayRehearsalAttempt';
 import type { PlayRehearsalAttemptClient } from './usePlayRehearsalAttempt';
 import type {
   PlayRehearsalSessionV5,
   PlayRehearsalTurnEvidence,
+  PlaySelectedArtifactPresentation,
   PlaySession,
   PlayTurnArtifact,
 } from './useWorkspaceApi';
@@ -34,6 +36,9 @@ export interface UsePlayRehearsalWorkspaceOptions {
     PlayRehearsalTurnEvidence
   >;
   selectedSession: Readonly<Ref<PlaySession | undefined>>;
+  selectedArtifactPresentation?: Readonly<
+    Ref<PlaySelectedArtifactPresentation | undefined>
+  >;
   providerConfigured: Readonly<Ref<boolean>>;
   onCommitted(session: PlayRehearsalSessionV5): void;
 }
@@ -61,6 +66,24 @@ export function usePlayRehearsalWorkspace(
       options.onCommitted(result.session);
     },
   });
+  const director = usePlayDirectorInterventions({
+    client: {
+      getPlaySceneMemory(sessionId, lens) {
+        return options.client.getPlaySceneMemory?.(sessionId, lens) ??
+          Promise.resolve({ memory: null });
+      },
+      rebuildPlaySceneMemory(sessionId, lens) {
+        const rebuild = options.client.rebuildPlaySceneMemory;
+        return rebuild
+          ? rebuild(sessionId, lens)
+          : Promise.reject(new Error('Scene Memory is unavailable.'));
+      },
+    },
+    sessionId,
+    sessionRevision: baseRevision,
+    attempt: rehearsal.attempt,
+    apply: rehearsal.intervene,
+  });
 
   watch(
     sessionId,
@@ -84,7 +107,10 @@ export function usePlayRehearsalWorkspace(
     if (activeAttempt.value) return undefined;
     const session = selectedSession.value;
     if (!session) return undefined;
-    const persisted = findPersistedPlayRehearsalResult(session);
+    const persisted = findPersistedPlayRehearsalResult(
+      session,
+      options.selectedArtifactPresentation?.value,
+    );
     if (persisted) return persisted;
 
     // The Finish response may render one tick before the parent replaces its
@@ -154,6 +180,7 @@ export function usePlayRehearsalWorkspace(
     recoveryRequired.value && !reconciling.value);
   const busy = computed(() =>
     rehearsal.busy.value || recoveryRequired.value || reconciling.value);
+  const error = computed(() => rehearsal.error.value || director.error.value);
   const interactionBlocked = computed(() =>
     busy.value || Boolean(activeAttempt.value));
   const capabilities = computed<PlayRehearsalControlCapabilities>(() => ({
@@ -163,8 +190,20 @@ export function usePlayRehearsalWorkspace(
       options.providerConfigured.value && rehearsal.canGenerateStep.value,
     canStopStep: rehearsal.canStopStep.value,
     canAccept: rehearsal.canAcceptStep.value,
+    canModify: rehearsal.canIntervene.value && Boolean(
+      rehearsal.attempt.value?.steps.some((step) =>
+        (step.status === 'draft' || step.status === 'selected') &&
+        Boolean(step.effectFingerprint),
+      ),
+    ),
     canRetry:
       options.providerConfigured.value && rehearsal.canRetryStep.value,
+    canInsertActor: rehearsal.canIntervene.value,
+    canGrantKnowledge: rehearsal.canIntervene.value && Boolean(
+      rehearsal.attempt.value?.steps.some((step) =>
+        step.status === 'draft' || step.status === 'selected',
+      ),
+    ),
     canFinish: rehearsal.canFinishAttempt.value,
     canCancel: rehearsal.canCancelAttempt.value,
     disabledReasons: {
@@ -191,6 +230,13 @@ export function usePlayRehearsalWorkspace(
             startAttempt: 'Recover mutation truth before starting another rehearsal.',
             generateStep: 'Recover mutation truth before generating another actor step.',
             retry: 'Recover mutation truth before generating another Retry variant.',
+          }
+        : {}),
+      ...(!rehearsal.canIntervene.value
+        ? {
+            modify: 'Director interventions require a stable active attempt.',
+            insertActor: 'Director interventions require a stable active attempt.',
+            grantKnowledge: 'Director interventions require a stable active attempt.',
           }
         : {}),
     },
@@ -227,6 +273,12 @@ export function usePlayRehearsalWorkspace(
     await rehearsal.cancelAttempt();
   }
 
+  async function intervene(
+    draft: Parameters<typeof director.intervene>[0],
+  ): Promise<boolean> {
+    return director.intervene(draft);
+  }
+
   async function reconcileStep(): Promise<void> {
     if (!canReconcile.value) return;
     reconciling.value = true;
@@ -254,6 +306,11 @@ export function usePlayRehearsalWorkspace(
     perception,
     visibleEvents,
     result,
+    lens: director.lens,
+    memory: director.memory,
+    memoryLoading: director.loadingMemory,
+    memoryRebuilding: director.rebuildingMemory,
+    memoryError: director.error,
     capabilities,
     busy,
     interactionBlocked,
@@ -262,14 +319,18 @@ export function usePlayRehearsalWorkspace(
     recovering: readonly(reconciling),
     canReconcile,
     announcement: rehearsal.announcement,
-    error: rehearsal.error,
+    error,
     startAttempt,
     generateStep,
     stopStep,
     acceptStep,
     retryStep,
+    intervene,
     finishAttempt,
     cancelAttempt,
+    setLens: director.setLens,
+    refreshMemory: director.refreshMemory,
+    rebuildMemory: director.rebuildMemory,
     reconcileStep,
   };
 }

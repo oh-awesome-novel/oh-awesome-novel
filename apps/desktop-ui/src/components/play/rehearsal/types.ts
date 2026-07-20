@@ -87,6 +87,13 @@ export interface PlayRehearsalAttemptView {
   currentParticipantRef?: string;
   selectedStepRefs: string[];
   selectedHeadRef?: string;
+  supersededStepRefs?: string[];
+  orderStrategy?: 'directorFixed' | 'refereeDynamic' | 'hybrid';
+  stagnation?: {
+    consecutiveNoMaterialSteps: number;
+    threshold: number;
+    warning: boolean;
+  };
 }
 
 export type PlayRehearsalActorStatus =
@@ -132,6 +139,10 @@ export interface PlayRehearsalStepView {
   status: PlayRehearsalStepStatus;
   blocks: PlayRehearsalNarrativeBlockView[];
   variantOf?: string;
+  effectFingerprint?: string;
+  materialEffect?:
+    | { kind: 'materialEffect' }
+    | { kind: 'noMaterialEffect'; reason: string };
 }
 
 export type PlayRehearsalStepRunPhase =
@@ -152,8 +163,18 @@ export interface PlayRehearsalStepRunView {
 export interface PlayRehearsalPerceptionView {
   participantRef: string;
   visibleFacts: string[];
+  /** Parallel visibility metadata used by the Player/Director projection. */
+  visibleFactVisibilities?: Array<
+    'playerVisible' | 'rumor' | 'playerUnknown'
+  >;
   behaviorAnchors: string[];
   observedBlockLabels: string[];
+  grantedKnowledge?: Array<{
+    id: string;
+    summary: string;
+    provenanceLabel: string;
+    visibility: 'playerVisible' | 'rumor' | 'playerUnknown';
+  }>;
   omissionNotice?: string;
 }
 
@@ -183,7 +204,10 @@ export type PlayRehearsalControl =
   | 'generateStep'
   | 'stopStep'
   | 'accept'
+  | 'modify'
   | 'retry'
+  | 'insertActor'
+  | 'grantKnowledge'
   | 'finish'
   | 'cancel';
 
@@ -192,8 +216,64 @@ export interface PlayRehearsalControlCapabilities {
   canGenerateStep: boolean;
   canStopStep: boolean;
   canAccept: boolean;
+  canModify?: boolean;
   canRetry: boolean;
+  canInsertActor?: boolean;
+  canGrantKnowledge?: boolean;
   canFinish: boolean;
   canCancel: boolean;
   disabledReasons?: Partial<Record<PlayRehearsalControl, string>>;
+}
+
+export type PlayDirectorPanelMode =
+  | 'modify'
+  | 'insertActor'
+  | 'grantKnowledge';
+
+export type PlayDirectorInterventionDraft =
+  | {
+      kind: 'reviseProjection';
+      stepRef: string;
+      replacementProjection: Array<{ blockId: string; content: string }>;
+    }
+  | {
+      kind: 'redirectStep';
+      stepRef: string;
+      directorIntent: string;
+      authorConstraintRefs: string[];
+    }
+  | {
+      kind: 'insertActor';
+      participantRef: string;
+      anchor: 'before' | 'after' | 'next';
+      anchorStepRef?: string;
+    }
+  | {
+      kind: 'grantKnowledge';
+      participantRef: string;
+      effectiveFromStepRef: string;
+      grant:
+        | { kind: 'existingFact'; factRefs: string[] }
+        | {
+            kind: 'authorProvidedPlayFact';
+            summary: string;
+            visibility: 'playerVisible' | 'rumor' | 'playerUnknown';
+          };
+    };
+
+export interface PlaySceneMemoryItemView {
+  id: string;
+  kind: string;
+  summary: string;
+  provenanceLabel?: string;
+}
+
+export interface PlaySceneMemoryView {
+  id: string;
+  lens: 'player' | 'director';
+  status: 'current' | 'stale';
+  revision: number;
+  builtAt: string;
+  staleReasons: string[];
+  items: PlaySceneMemoryItemView[];
 }

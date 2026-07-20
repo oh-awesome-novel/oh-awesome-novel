@@ -54,18 +54,20 @@
 - [1060 Play Mode And Tavern Character Import](1060.md)
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
+- [1090 Play Mode UI And Adoption Workflow](1090.md)
 - [1100 Project Health Guardrails And Projection Refresh](1100.md)
 - [1130 First Playable Scene Rehearsal](1130.md)
 - [1140 Source-backed Guided Start](1140.md)
 - [1150 Play Outcome And Explicit Writing Handoff](1150.md)
 - [1160 Branch-local Knowledge And Causal Reveal](1160.md)
 - [1170 Evidence-backed Play Adoption Path](1170.md)
+- [1180 Play Long-session Context And Experience Closure](1180.md)
+- [1190 Advanced Director Controls And Long-session Rehearsal](1190.md)
 
 ## Needs Review Tasks
 
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [0900 Project References](0900.md)
-- [1090 Play Mode UI And Adoption Workflow](1090.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 
 ## Planned Tasks

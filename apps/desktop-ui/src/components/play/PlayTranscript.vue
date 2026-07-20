@@ -1,14 +1,30 @@
 <script setup lang="ts">
+import { computed, useId } from 'vue';
+
 import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import type { PlayProvisionalTurn } from '../../composables/usePlayTurnStream';
 
-defineProps<{
+const props = withDefaults(defineProps<{
   title: string;
   sceneStart: string;
   turns: PlayTranscriptTurn[];
   provisional?: PlayProvisionalTurn;
   announcement: string;
+  totalCount?: number;
+  hasMoreBefore?: boolean;
+  loadingEarlier?: boolean;
+}>(), {
+  totalCount: undefined,
+  hasMoreBefore: false,
+  loadingEarlier: false,
+});
+
+const emit = defineEmits<{
+  loadEarlier: [];
 }>();
+
+const scrollId = `${useId()}-play-transcript-scroll`;
+const messageCount = computed(() => props.totalCount ?? props.turns.length);
 
 function turnClass(speaker: string): string {
   const normalized = speaker.toLowerCase();
@@ -36,14 +52,27 @@ function formatTime(value: string): string {
         <span class="play-transcript-kicker">Now playing</span>
         <h1>{{ title }}</h1>
       </div>
-      <span class="play-transcript-count">{{ turns.length }} messages</span>
+      <span class="play-transcript-count">
+        {{ messageCount }} messages<span v-if="turns.length < messageCount"> · showing {{ turns.length }}</span>
+      </span>
     </header>
 
-    <div class="play-transcript-scroll">
+    <div :id="scrollId" class="play-transcript-scroll">
       <article class="play-scene-opening">
         <span>Opening scene</span>
         <p>{{ sceneStart }}</p>
       </article>
+
+      <button
+        v-if="hasMoreBefore"
+        class="play-transcript-load-earlier"
+        type="button"
+        :disabled="loadingEarlier"
+        :aria-controls="scrollId"
+        @click="emit('loadEarlier')"
+      >
+        {{ loadingEarlier ? 'Loading earlier messages…' : 'Load earlier transcript' }}
+      </button>
 
       <article
         v-for="turn in turns"
@@ -92,3 +121,12 @@ function formatTime(value: string): string {
     </p>
   </section>
 </template>
+
+<style scoped>
+.play-transcript-load-earlier {
+  min-height: 32px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  background: var(--play-surface, var(--editor-surface));
+  color: var(--play-ink, var(--editor-ink));
+}
+</style>

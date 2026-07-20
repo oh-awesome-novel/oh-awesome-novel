@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@oh-awesome-novel/backend": "^0.0.1",
+    "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/runtime": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1"
   },

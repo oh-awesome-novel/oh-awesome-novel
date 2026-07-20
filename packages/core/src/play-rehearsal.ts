@@ -51,8 +51,13 @@ export interface PlaySceneContract {
   objective?: PlaySceneValue;
   risk?: PlaySceneValue;
   participantRefs: string[];
-  orderStrategy: 'directorFixed';
+  orderStrategy: PlayRehearsalOrderStrategy;
 }
+
+export type PlayRehearsalOrderStrategy =
+  | 'directorFixed'
+  | 'refereeDynamic'
+  | 'hybrid';
 
 export interface PlayRehearsalParticipant {
   participantRef: string;
@@ -107,6 +112,7 @@ export interface CharacterPerceptionPackage {
     trigger?: PlaySceneValue;
   };
   initialKnowledgeEvidence: PlaySceneKnowledgeEvidence[];
+  grantedKnowledgeEvidence: PlayParticipantKnowledgeEvidence[];
   visibleEventRefs: string[];
   observedNarrativeBlockRefs: string[];
   omissionMetadata: Array<{
@@ -114,6 +120,19 @@ export interface CharacterPerceptionPackage {
     omittedCount?: number;
     opaqueTraceRef?: string;
   }>;
+}
+
+export interface PlayParticipantKnowledgeEvidence {
+  id: string;
+  participantRef: string;
+  interventionRef: string;
+  effectiveFromStepRef: string;
+  factRefs: string[];
+  fact: string;
+  visibility: PlayEventVisibility;
+  provenance:
+    | { kind: 'existingFact' }
+    | { kind: 'authorProvidedPlayFact'; providedAt: string };
 }
 
 export type NarrativeBlockKind =
@@ -298,8 +317,13 @@ export function normalizePlaySceneContract(value: unknown): PlaySceneContract {
     'participantRefs',
     'orderStrategy',
   ], 'Play Scene Contract');
-  if (record.orderStrategy !== 'directorFixed') {
-    throw new Error('F1 Play Scene Contract requires directorFixed actor order.');
+  const orderStrategies: readonly PlayRehearsalOrderStrategy[] = [
+    'directorFixed',
+    'refereeDynamic',
+    'hybrid',
+  ];
+  if (!orderStrategies.includes(record.orderStrategy as PlayRehearsalOrderStrategy)) {
+    throw new Error('Play Scene Contract has an invalid actor order strategy.');
   }
   const participantRefs = normalizeSafeIdList(
     record.participantRefs,
@@ -334,7 +358,7 @@ export function normalizePlaySceneContract(value: unknown): PlaySceneContract {
     ...(objective ? { objective } : {}),
     ...(risk ? { risk } : {}),
     participantRefs,
-    orderStrategy: 'directorFixed',
+    orderStrategy: record.orderStrategy as PlayRehearsalOrderStrategy,
   };
 }
 
@@ -426,6 +450,7 @@ export function createCharacterPerceptionPackage(
     worldClock?: PlayWorldClock;
     visibleEventRefs?: string[];
     observedNarrativeBlockRefs?: string[];
+    grantedKnowledgeEvidence?: PlayParticipantKnowledgeEvidence[];
   } = {},
 ): CharacterPerceptionPackage {
   const sidecar = normalizePlaySceneRehearsalSidecar(sidecarValue);
@@ -472,6 +497,7 @@ export function createCharacterPerceptionPackage(
       ...(trigger ? { trigger } : {}),
     },
     initialKnowledgeEvidence,
+    grantedKnowledgeEvidence: options.grantedKnowledgeEvidence ?? [],
     visibleEventRefs: normalizeSafeIdList(
       options.visibleEventRefs ?? [],
       'perception visibleEventRefs',
@@ -498,6 +524,7 @@ export function normalizeCharacterPerceptionPackage(
     'participant',
     'scene',
     'initialKnowledgeEvidence',
+    'grantedKnowledgeEvidence',
     'visibleEventRefs',
     'observedNarrativeBlockRefs',
     'omissionMetadata',
@@ -594,6 +621,10 @@ export function normalizeCharacterPerceptionPackage(
       ...(trigger ? { trigger } : {}),
     },
     initialKnowledgeEvidence,
+    grantedKnowledgeEvidence: normalizeParticipantKnowledgeEvidenceList(
+      record.grantedKnowledgeEvidence,
+      participantRef,
+    ),
     visibleEventRefs: normalizeSafeIdList(
       record.visibleEventRefs,
       'perception visibleEventRefs',
@@ -628,12 +659,39 @@ export function listForbiddenPlayKnowledgeEvidenceRefs(
     .filter((evidenceRef) => !allowed.has(evidenceRef));
 }
 
+/**
+ * Lists the stable references a Director redirect may cite for one actor.
+ *
+ * Redirect constraints are deliberately bounded by the same participant
+ * perception that is sent to the actor. This prevents an opaque, syntactically
+ * valid id from being treated as evidence and keeps private knowledge owned by
+ * another participant outside the redirect intervention and its constraint
+ * records. The referee still receives its separately filtered private context.
+ */
+export function listPlayRedirectConstraintRefs(
+  perceptionValue: CharacterPerceptionPackage,
+): string[] {
+  const perception = normalizeCharacterPerceptionPackage(perceptionValue);
+  const refs = [
+    ...perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+    ...perception.grantedKnowledgeEvidence.map((evidence) => evidence.id),
+    ...perception.grantedKnowledgeEvidence.flatMap((evidence) => evidence.factRefs),
+    ...perception.visibleEventRefs,
+    ...perception.observedNarrativeBlockRefs,
+  ];
+  return [...new Set(refs)];
+}
+
 export function assertNarrativeBlocksWithinPerception(
   blocksValue: readonly NarrativeBlock[],
   perception: CharacterPerceptionPackage,
 ): NarrativeBlock[] {
   const allowedEvidenceRefs = new Set(
-    perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+    [
+      ...perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+      ...perception.grantedKnowledgeEvidence.map((evidence) => evidence.id),
+      ...perception.grantedKnowledgeEvidence.flatMap((evidence) => evidence.factRefs),
+    ],
   );
   const allowedEventRefs = new Set(perception.visibleEventRefs);
   const blocks = blocksValue.map(normalizeNarrativeBlock);
@@ -787,6 +845,83 @@ function normalizePlaySceneKnowledgeEvidence(value: unknown): PlaySceneKnowledge
     fact: normalizeText(record.fact, 'knowledge fact', MAX_NARRATIVE_TEXT),
     provenance: normalizedProvenance,
   };
+}
+
+function normalizeParticipantKnowledgeEvidenceList(
+  value: unknown,
+  expectedParticipantRef: string,
+): PlayParticipantKnowledgeEvidence[] {
+  const evidence = normalizeBoundedArray(
+    value ?? [],
+    MAX_REHEARSAL_KNOWLEDGE_ITEMS,
+    'Play perception granted knowledge evidence',
+  ).map((item): PlayParticipantKnowledgeEvidence => {
+    const record = requireRecord(item, 'Play participant knowledge evidence');
+    assertOnlyKnownFields(record, [
+      'id',
+      'participantRef',
+      'interventionRef',
+      'effectiveFromStepRef',
+      'factRefs',
+      'fact',
+      'visibility',
+      'provenance',
+    ], 'Play participant knowledge evidence');
+    const participantRef = assertSafePlayRehearsalId(
+      record.participantRef,
+      'participant knowledge participantRef',
+    );
+    if (participantRef !== expectedParticipantRef) {
+      throw new Error('Play participant knowledge evidence belongs to another participant.');
+    }
+    const provenance = requireRecord(
+      record.provenance,
+      'Play participant knowledge provenance',
+    );
+    let normalizedProvenance: PlayParticipantKnowledgeEvidence['provenance'];
+    if (provenance.kind === 'existingFact') {
+      assertOnlyKnownFields(
+        provenance,
+        ['kind'],
+        'Play existing-fact knowledge provenance',
+      );
+      normalizedProvenance = { kind: 'existingFact' };
+    } else if (provenance.kind === 'authorProvidedPlayFact') {
+      assertOnlyKnownFields(
+        provenance,
+        ['kind', 'providedAt'],
+        'Play author-provided participant knowledge provenance',
+      );
+      normalizedProvenance = {
+        kind: 'authorProvidedPlayFact',
+        providedAt: normalizeText(provenance.providedAt, 'providedAt', 128),
+      };
+    } else {
+      throw new Error('Play participant knowledge evidence has invalid provenance.');
+    }
+    return {
+      id: assertSafePlayRehearsalId(record.id, 'participant knowledge evidence id'),
+      participantRef,
+      interventionRef: assertSafePlayRehearsalId(
+        record.interventionRef,
+        'participant knowledge interventionRef',
+      ),
+      effectiveFromStepRef: assertSafePlayRehearsalId(
+        record.effectiveFromStepRef,
+        'participant knowledge effectiveFromStepRef',
+      ),
+      factRefs: normalizeSafeIdList(
+        record.factRefs,
+        'participant knowledge factRefs',
+        64,
+      ),
+      fact: normalizeText(record.fact, 'participant knowledge fact', MAX_NARRATIVE_TEXT),
+      visibility: normalizeVisibility(record.visibility),
+      provenance: normalizedProvenance,
+    };
+  });
+  assertUnique(evidence.map((item) => item.id), 'participant knowledge evidence id');
+  return evidence;
 }
 
 function normalizePlayRehearsalTurnEvidence(value: unknown): PlayRehearsalTurnEvidence {

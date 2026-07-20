@@ -16,8 +16,11 @@ import type {
 import type {
   CreatePlaySceneRehearsalSessionInput,
   NarrativeBlock,
+  PlayEventVisibility,
+  PlayParticipantKnowledgeGrantRecord,
   PlayRehearsalSessionV5,
   PlayRehearsalTurnEvidence,
+  PlaySelectedArtifactPresentation,
   PlaySession,
   PlayTurnArtifact,
 } from './useWorkspaceApi';
@@ -36,9 +39,13 @@ export type PlayRehearsalCommittedResult = PlayRehearsalFinishResult<
   PlayTurnArtifact,
   PlayRehearsalTurnEvidence
 >;
+export type PlayRehearsalResultArtifact = Pick<
+  PlayTurnArtifact,
+  'id' | 'revision' | 'eventIds' | 'stateDelta' | 'rehearsalEvidenceRefs'
+> & Partial<Pick<PlayTurnArtifact, 'playLocalStateVisibilitySnapshot'>>;
 export interface PlayRehearsalCommittedProjection {
   session: PlayRehearsalSessionV5;
-  artifact: PlayTurnArtifact;
+  artifact: PlayRehearsalResultArtifact;
   evidence: PlayRehearsalTurnEvidence;
 }
 type ReadonlyPlayRehearsalAttempt = DeepReadonly<PlayRehearsalAttemptRecord>;
@@ -163,6 +170,7 @@ export function isPlayRehearsalSession(
 
 export function findPersistedPlayRehearsalResult(
   session: PlayRehearsalSessionV5,
+  selectedArtifactPresentation?: Readonly<PlaySelectedArtifactPresentation>,
 ): PlayRehearsalCommittedProjection | undefined {
   const activeScene = session.rehearsalScenes.find((scene) =>
     scene.sceneId === session.sceneRehearsal.activeSceneRef);
@@ -176,7 +184,11 @@ export function findPersistedPlayRehearsalResult(
   );
 
   for (const artifactId of [...session.selectedTurnIds].reverse()) {
-    const artifact = artifacts.get(artifactId);
+    const artifact = artifacts.get(artifactId) ?? (
+      selectedArtifactPresentation?.id === artifactId
+        ? selectedArtifactPresentation
+        : undefined
+    );
     const evidence = evidenceByArtifactId.get(artifactId);
     if (
       !artifact ||
@@ -228,6 +240,14 @@ export function projectPlayRehearsalAttempt(
     currentParticipantRef: currentParticipantRef(session, attempt),
     selectedStepRefs: [...attempt.selectedStepRefs],
     ...(attempt.selectedHeadRef ? { selectedHeadRef: attempt.selectedHeadRef } : {}),
+    supersededStepRefs: [...new Set(
+      (attempt.interventions ?? []).flatMap((intervention) =>
+        intervention.supersededStepRefs),
+    )],
+    ...(attempt.orderStrategy ? { orderStrategy: attempt.orderStrategy } : {}),
+    ...(attempt.stagnation
+      ? { stagnation: { ...attempt.stagnation } }
+      : {}),
   };
 }
 
@@ -254,7 +274,9 @@ export function projectPlayRehearsalQueue(
     ]),
   );
 
-  return session.sceneRehearsal.sceneContract.participantRefs.map((participantRef) => {
+  const actorOrder = attempt?.actorOrder ??
+    session.sceneRehearsal.sceneContract.participantRefs;
+  return actorOrder.map((participantRef) => {
     const participant = participants.get(participantRef);
     const committedStepRef = committedByParticipant.get(participantRef);
     const selectedStepRef = selectedByParticipant.get(participantRef);
@@ -359,37 +381,164 @@ export function projectPlayRehearsalPerception(
   const participant = session.sceneRehearsal.participants.find((candidate) =>
     candidate.participantRef === participantRef);
   const evidenceRefs = new Set(participant?.initialKnowledgeEvidenceRefs ?? []);
+  const initialKnowledge = session.sceneRehearsal.initialKnowledgeEvidence
+    .filter((evidence) =>
+      evidence.participantRef === participantRef && evidenceRefs.has(evidence.id));
   const observedBlockLabels = selectedVisiblePerceptionBlocks(session, attempt)
     .map((block) => block.content);
+  const committedGrantRecords = readCommittedParticipantKnowledgeGrants(
+    session.playLocalState.playKnowledge,
+    participantRef,
+  );
+  const committedGrants = committedGrantRecords.map((record) => projectGrantedKnowledge(
+    session,
+    record.id,
+    record.grant,
+    `Committed at ${record.grantedAtTurnId}`,
+  ));
+  const committedInterventionRefs = new Set(
+    committedGrantRecords.map((record) => record.interventionRef),
+  );
+  const provisionalGrants = (attempt?.interventions ?? []).flatMap((intervention) => {
+    if (
+      intervention.kind !== 'grantKnowledge' ||
+      intervention.participantRef !== participantRef ||
+      !intervention.grant ||
+      committedInterventionRefs.has(intervention.id)
+    ) return [];
+    return [projectGrantedKnowledge(
+      session,
+      intervention.id,
+      intervention.grant,
+      intervention.grant.kind === 'existingFact'
+        ? 'Existing selected-branch evidence'
+        : `Author-provided at ${intervention.grant.providedAt}`,
+    )];
+  });
+  const grantedKnowledge = [...committedGrants, ...provisionalGrants];
   return {
     participantRef,
-    visibleFacts: session.sceneRehearsal.initialKnowledgeEvidence
-      .filter((evidence) =>
-        evidence.participantRef === participantRef && evidenceRefs.has(evidence.id))
-      .map((evidence) => evidence.fact),
+    visibleFacts: initialKnowledge.map((evidence) => evidence.fact),
+    visibleFactVisibilities: initialKnowledge.map((evidence) => evidence.visibility),
     behaviorAnchors: [participant?.currentGoal]
       .filter((value): value is string => Boolean(value)),
     observedBlockLabels,
+    ...(grantedKnowledge.length ? { grantedKnowledge } : {}),
   };
+}
+
+function readCommittedParticipantKnowledgeGrants(
+  value: unknown,
+  participantRef: string,
+): PlayParticipantKnowledgeGrantRecord[] {
+  if (
+    !isStateRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.records)
+  ) return [];
+  return value.records.flatMap((record) => {
+    if (
+      !isStateRecord(record) ||
+      record.kind !== 'participantGrant' ||
+      record.participantRef !== participantRef ||
+      typeof record.id !== 'string' ||
+      typeof record.interventionRef !== 'string' ||
+      typeof record.effectiveFromStepRef !== 'string' ||
+      typeof record.grantedAtTurnId !== 'string' ||
+      record.canonical !== false ||
+      !isDirectorKnowledgeGrant(record.grant)
+    ) return [];
+    return [record as unknown as PlayParticipantKnowledgeGrantRecord];
+  });
+}
+
+function projectGrantedKnowledge(
+  session: PlayRehearsalSessionV5,
+  id: string,
+  grant:
+    | { readonly kind: 'existingFact'; readonly factRefs: readonly string[] }
+    | {
+        readonly kind: 'authorProvidedPlayFact';
+        readonly summary: string;
+        readonly visibility: PlayEventVisibility;
+        readonly providedAt: string;
+      },
+  provenanceLabel: string,
+): NonNullable<PlayRehearsalPerceptionView['grantedKnowledge']>[number] {
+  if (grant.kind === 'authorProvidedPlayFact') {
+    return {
+      id,
+      summary: grant.summary,
+      provenanceLabel,
+      visibility: grant.visibility,
+    };
+  }
+  const resolved = grant.factRefs.map((factRef) => {
+    const evidence = session.sceneRehearsal.initialKnowledgeEvidence.find((item) =>
+      item.id === factRef);
+    if (evidence) return { summary: evidence.fact, visibility: evidence.visibility };
+    const event = session.events.find((item) => item.id === factRef);
+    if (event) {
+      return {
+        summary: `${event.title}: ${event.summary}`,
+        visibility: event.visibility,
+      };
+    }
+    // A bounded event window may not include an older stable fact. Keep its
+    // identity Director-only instead of guessing that it is player-visible.
+    return {
+      summary: `Stable fact ${factRef}`,
+      visibility: 'playerUnknown' as const,
+    };
+  });
+  return {
+    id,
+    summary: resolved.map((item) => item.summary).join('\n'),
+    provenanceLabel,
+    visibility: strictestPlayVisibility(resolved.map((item) => item.visibility)),
+  };
+}
+
+function isDirectorKnowledgeGrant(
+  value: unknown,
+): value is PlayParticipantKnowledgeGrantRecord['grant'] {
+  if (!isStateRecord(value) || typeof value.kind !== 'string') return false;
+  if (value.kind === 'existingFact') {
+    return Array.isArray(value.factRefs) &&
+      value.factRefs.length > 0 &&
+      value.factRefs.every((item) => typeof item === 'string' && Boolean(item));
+  }
+  return value.kind === 'authorProvidedPlayFact' &&
+    typeof value.summary === 'string' &&
+    Boolean(value.summary) &&
+    isPlayVisibility(value.visibility) &&
+    typeof value.providedAt === 'string';
+}
+
+function strictestPlayVisibility(
+  values: readonly PlayEventVisibility[],
+): PlayEventVisibility {
+  return values.includes('playerUnknown')
+    ? 'playerUnknown'
+    : values.includes('rumor')
+      ? 'rumor'
+      : 'playerVisible';
+}
+
+function isPlayVisibility(value: unknown): value is PlayEventVisibility {
+  return value === 'playerVisible' || value === 'rumor' || value === 'playerUnknown';
 }
 
 export function projectPlayRehearsalVisibleEvents(
   session: PlayRehearsalSessionV5,
   attempt?: ReadonlyPlayRehearsalAttempt,
 ): PlayRehearsalVisibleEventView[] {
-  const selectedArtifactIds = new Set(session.selectedTurnIds);
-  const selectedEventIds = new Set(
-    session.turnArtifacts
-      .filter((artifact) => selectedArtifactIds.has(artifact.id))
-      .flatMap((artifact) => artifact.eventIds),
-  );
   const observedEventIds = new Set(
     selectedVisiblePerceptionBlocks(session, attempt)
       .flatMap((block) => block.eventRefs ?? []),
   );
   return session.events
     .filter((event) =>
-      selectedEventIds.has(event.id) &&
       observedEventIds.has(event.id) &&
       event.visibility !== 'playerUnknown')
     .map((event) => ({
@@ -474,6 +623,19 @@ function projectAttemptStep(
       .filter(isPlayerSafeNarrativeBlock)
       .map((block) => projectNarrativeBlock(block, participantNames)),
     ...(step.variantOf ? { variantOf: step.variantOf } : {}),
+    ...(step.effectFingerprint
+      ? { effectFingerprint: step.effectFingerprint }
+      : {}),
+    ...(step.materialEffect
+      ? {
+          materialEffect: step.materialEffect.kind === 'materialEffect'
+            ? { kind: 'materialEffect' as const }
+            : {
+                kind: 'noMaterialEffect' as const,
+                reason: step.materialEffect.reason,
+              },
+        }
+      : {}),
   };
 }
 
@@ -552,7 +714,7 @@ function isReservedStatePath(path: string): boolean {
 }
 
 function currentParticipantRef(
-  session: PlayRehearsalSessionV5,
+  _session: PlayRehearsalSessionV5,
   attempt: ReadonlyPlayRehearsalAttempt | undefined,
 ): string | undefined {
   if (!attempt || attempt.status !== 'running') return undefined;
@@ -560,7 +722,7 @@ function currentParticipantRef(
     ? attempt.steps.find((step) => step.id === attempt.currentStepRef)
     : undefined;
   return currentStep?.participantRef ??
-    session.sceneRehearsal.sceneContract.participantRefs[
+    attempt.actorOrder[
       attempt.selectedStepRefs.length
     ];
 }

@@ -10,8 +10,11 @@ import {
   aggregatePlayTurnAttemptSettlement,
   cancelPlayTurnAttempt,
   createCharacterPerceptionPackage,
+  createPlayParticipantKnowledgeEvidence,
   createPlaySceneRehearsalSessionDraft,
   finalizePlaySceneRehearsalAttempt,
+  fingerprintPlayStepEffects,
+  grantPlayTurnAttemptKnowledge,
   listPlaySessionCheckpoints,
   listPlayTurnAttemptRecoveries,
   preparePlayWorldSettlementRetry,
@@ -493,6 +496,10 @@ describe('Play rehearsal recovery and atomic Finish', () => {
           triggerId: 'scheduled-gate-close',
         },
       });
+      actorTriesToSettleDue.steps[0]!.effectFingerprint =
+        fingerprintPlayStepEffects(
+          actorTriesToSettleDue.steps[0]!.settlementContribution,
+        );
       expect(() => aggregatePlayTurnAttemptSettlement(
         draft,
         actorTriesToSettleDue,
@@ -504,6 +511,9 @@ describe('Play rehearsal recovery and atomic Finish', () => {
           subjectEventId: 'hidden-shared-subject',
           playerProjection: 'rumor',
         });
+        step.effectFingerprint = fingerprintPlayStepEffects(
+          step.settlementContribution,
+        );
       }
       expect(() => aggregatePlayTurnAttemptSettlement(
         draft,
@@ -858,6 +868,137 @@ describe('Play rehearsal recovery and atomic Finish', () => {
         hidden.id,
         prepared.id,
       )).resolves.toMatchObject({ status: 'prepared', attemptRevision: 4 });
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('commits a Director knowledge grant into branch-local M3 state and later perception', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-play-finish-participant-grant-'));
+    try {
+      const draft = createPlaySceneRehearsalSessionDraft({
+        ...createInput(),
+        scheduledEvents: [],
+      });
+      await writePlaySessionFiles(workspaceRoot, draft);
+      const attempt = await startPlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: draft.id,
+        attemptId: 'attempt-participant-grant',
+        baseRevision: 0,
+      });
+      const alice = createCharacterPerceptionPackage(
+        draft.sceneRehearsal!,
+        'participant-alice',
+      );
+      const bob = createCharacterPerceptionPackage(
+        draft.sceneRehearsal!,
+        'participant-bob',
+      );
+      const prepared = await prepareAttempt(
+        workspaceRoot,
+        attempt,
+        alice,
+        bob,
+      );
+      const granted = grantPlayTurnAttemptKnowledge(prepared, {
+        expectedAttemptRevision: 4,
+        idempotencyKey: 'grant-alice-ticket-to-bob',
+        interventionId: 'intervention-grant-alice-ticket-to-bob',
+        participantRef: 'participant-bob',
+        effectiveFromStepRef: 'step-bob',
+        availableFactRefs: ['knowledge-alice-ticket'],
+        grant: {
+          kind: 'existingFact',
+          factRefs: ['knowledge-alice-ticket'],
+        },
+      }).attempt;
+      await writePlayTurnAttemptRecovery(workspaceRoot, granted, {
+        expectedAttemptRevision: 4,
+      });
+      const grantedEvidence = createPlayParticipantKnowledgeEvidence({
+        session: draft,
+        sidecar: draft.sceneRehearsal!,
+        participantRef: 'participant-bob',
+        attempt: granted,
+        throughQueueIndex: 1,
+      });
+      expect(grantedEvidence).toEqual([expect.objectContaining({
+        id: 'participant-knowledge-intervention-grant-alice-ticket-to-bob',
+        participantRef: 'participant-bob',
+        factRefs: ['knowledge-alice-ticket'],
+        provenance: { kind: 'existingFact' },
+      })]);
+      expect(createPlayParticipantKnowledgeEvidence({
+        session: draft,
+        sidecar: draft.sceneRehearsal!,
+        participantRef: 'participant-alice',
+        attempt: granted,
+        throughQueueIndex: 1,
+      })).toEqual([]);
+      const grantedPerception = createCharacterPerceptionPackage(
+        draft.sceneRehearsal!,
+        'participant-bob',
+        { grantedKnowledgeEvidence: grantedEvidence },
+      );
+      let current = addPlayTurnAttemptStep(granted, {
+        expectedAttemptRevision: 5,
+        idempotencyKey: 'prepare-bob-with-grant',
+        operation: { mode: 'next' },
+        perception: grantedPerception,
+        step: createStep({
+          id: 'step-bob-with-grant',
+          participantRef: 'participant-bob',
+          queueIndex: 1,
+          beforeStepRef: 'step-alice',
+          perception: grantedPerception,
+          knowledgeRef: grantedEvidence[0]!.id,
+          contribution: emptySettlement({ bobUsedGrantedFact: true }),
+        }),
+      }).attempt;
+      await writePlayTurnAttemptRecovery(workspaceRoot, current, {
+        expectedAttemptRevision: 5,
+      });
+      current = acceptPlayTurnAttemptStep(current, {
+        expectedAttemptRevision: 6,
+        idempotencyKey: 'accept-bob-with-grant',
+        stepRef: 'step-bob-with-grant',
+      }).attempt;
+      await writePlayTurnAttemptRecovery(workspaceRoot, current, {
+        expectedAttemptRevision: 6,
+      });
+
+      const finalized = await finalizePlaySceneRehearsalAttempt(workspaceRoot, {
+        sessionId: draft.id,
+        attemptId: current.id,
+        baseRevision: 0,
+        expectedAttemptRevision: 7,
+        selectedHeadRef: 'step-bob-with-grant',
+        idempotencyKey: 'finish-participant-grant',
+        userText: 'Let Bob act on the granted fact.',
+        createdAt: '2026-07-15T00:01:00.000Z',
+      });
+      expect(readPlayKnowledgeState(finalized.session.playLocalState).records)
+        .toEqual([expect.objectContaining({
+          id: 'knowledge-1-1',
+          kind: 'participantGrant',
+          participantRef: 'participant-bob',
+          effectiveFromStepRef: 'step-bob',
+          interventionRef: 'intervention-grant-alice-ticket-to-bob',
+          grantedAtTurnId: 'turn-1-referee',
+          canonical: false,
+        })]);
+      expect(finalized.evidence.steps[1]?.decisionBasisRefs)
+        .toEqual([grantedEvidence[0]!.id]);
+      expect(createPlayParticipantKnowledgeEvidence({
+        session: finalized.session,
+        sidecar: finalized.session.sceneRehearsal!,
+        participantRef: 'participant-bob',
+      })).toEqual(grantedEvidence);
+      expect(createPlayParticipantKnowledgeEvidence({
+        session: finalized.session,
+        sidecar: finalized.session.sceneRehearsal!,
+        participantRef: 'participant-alice',
+      })).toEqual([]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

@@ -15,15 +15,22 @@ const props = withDefaults(defineProps<{
   causeLabelsByEventId?: Readonly<Record<string, readonly string[]>>;
   hasHiddenPlayContent: boolean;
   adoptionDisabled?: boolean;
+  totalCount?: number;
+  hasMoreBefore?: boolean;
+  loadingEarlier?: boolean;
 }>(), {
   cards: undefined,
   events: undefined,
   causeLabelsByEventId: undefined,
   adoptionDisabled: false,
+  totalCount: undefined,
+  hasMoreBefore: false,
+  loadingEarlier: false,
 });
 
 const emit = defineEmits<{
   prepareAdoption: [seed: PlayAdoptionSeed];
+  loadEarlier: [];
 }>();
 
 const showSpoilers = defineModel<boolean>('showSpoilers', { required: true });
@@ -113,6 +120,9 @@ function mergeLegacyCauseLabels(
       <div>
         <span>World motion</span>
         <h2>Recent events</h2>
+        <small v-if="totalCount !== undefined && totalCount > displayCards.length">
+          Showing {{ displayCards.length }} of {{ totalCount }}
+        </small>
       </div>
       <button
         v-if="hasHiddenPlayContent"
@@ -127,6 +137,16 @@ function mergeLegacyCauseLabels(
         Author view
       </button>
     </header>
+
+    <button
+      v-if="hasMoreBefore"
+      class="play-event-load-earlier"
+      type="button"
+      :disabled="loadingEarlier"
+      @click="emit('loadEarlier')"
+    >
+      {{ loadingEarlier ? 'Loading earlier events…' : 'Load earlier events' }}
+    </button>
 
     <div v-if="displayCards.length" class="play-event-list">
       <PlayWorldEventCard
@@ -145,3 +165,13 @@ function mergeLegacyCauseLabels(
     </div>
   </section>
 </template>
+
+<style scoped>
+.play-event-load-earlier {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  background: var(--play-canvas, var(--editor-canvas));
+  color: var(--play-ink, var(--editor-ink));
+}
+</style>

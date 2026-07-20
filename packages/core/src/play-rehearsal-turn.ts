@@ -42,12 +42,16 @@ import {
   createPlayTurnAttempt,
   fingerprintPlayAttemptRequest,
   markPlayTurnAttemptCommitted,
+  listActivePlayParticipantKnowledgeGrants,
   normalizePlayTurnAttempt,
 } from './play-turn-attempt.js';
+import { evaluatePlayRehearsalProvisionalOverlay } from './play-rehearsal-overlay.js';
 import type {
   CharacterStepDraft,
   PlayTurnAttempt,
 } from './play-turn-attempt.js';
+import { createPlayTurnContextTrace } from './play-context-trace.js';
+import type { PlayContextSourceTrace } from './play-context-trace.js';
 
 export interface StartPlaySceneRehearsalAttemptInput {
   sessionId: string;
@@ -65,6 +69,8 @@ export interface FinalizePlaySceneRehearsalAttemptInput {
   idempotencyKey: string;
   userText: string;
   createdAt?: string;
+  /** Host-owned source selection evidence; private model reasoning is forbidden. */
+  contextTraceSources?: PlayContextSourceTrace[];
 }
 
 export interface FinalizedPlaySceneRehearsalAttempt {
@@ -105,6 +111,8 @@ export async function startPlaySceneRehearsalAttempt(
     baseRevision: currentRevision,
     sceneBeforeRef: sidecar.activeSceneRef,
     actorOrder: [...sidecar.sceneContract.participantRefs],
+    participantRefs: [...sidecar.sceneContract.participantRefs],
+    orderStrategy: sidecar.sceneContract.orderStrategy,
     dueScheduledEventIds,
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
   });
@@ -124,8 +132,8 @@ export function aggregatePlayTurnAttemptSettlement(
     );
   }
   const selectedSteps = resolveSelectedSteps(attempt);
-  const dueEvents = evaluatePlaySessionDueEvents(session).dueEvents;
-  const dueIds = dueEvents.map((event) => event.id);
+  const dueOverlay = evaluatePlayRehearsalProvisionalOverlay(session, attempt);
+  const dueIds = dueOverlay.base.dueEvents.map((event) => event.id);
   if (
     dueIds.length !== attempt.dueScheduledEventIds.length ||
     dueIds.some((dueId, index) => dueId !== attempt.dueScheduledEventIds[index])
@@ -135,6 +143,7 @@ export function aggregatePlayTurnAttemptSettlement(
       'Play rehearsal hard-due skeleton changed after the attempt started.',
     );
   }
+  const dueEvents = dueOverlay.overlay.dueEvents;
 
   const elapsedValues = new Set<string>();
   const anchorValues = new Set<string>();
@@ -166,6 +175,12 @@ export function aggregatePlayTurnAttemptSettlement(
     agendaChanges.push(...structuredClone(contribution.agendaChanges));
     scheduledEventChanges.push(...structuredClone(contribution.scheduledEventChanges));
     for (const change of contribution.knowledgeChanges) {
+      if (change.type === 'grantParticipantKnowledge') {
+        throw new PlayTurnAttemptError(
+          'invalidTransition',
+          `Actor step ${step.id} cannot forge a Director participant knowledge grant.`,
+        );
+      }
       if (changedKnowledgeSubjectIds.has(change.subjectEventId)) {
         throw new PlayTurnAttemptError(
           'invalidTransition',
@@ -188,6 +203,21 @@ export function aggregatePlayTurnAttemptSettlement(
     observations.push(...structuredClone(contribution.observations));
     if (contribution.suggestedActions.length) {
       suggestedActions = [...contribution.suggestedActions];
+    }
+  }
+  for (const participantRef of attempt.participantRefs) {
+    for (const intervention of listActivePlayParticipantKnowledgeGrants(
+      attempt,
+      participantRef,
+      attempt.selectedStepRefs.length - 1,
+    )) {
+      knowledgeChanges.push({
+        type: 'grantParticipantKnowledge',
+        participantRef,
+        effectiveFromStepRef: intervention.effectiveFromStepRef,
+        interventionRef: intervention.id,
+        grant: structuredClone(intervention.grant),
+      });
     }
   }
   if (elapsedValues.size > 1 || anchorValues.size > 1) {
@@ -368,6 +398,7 @@ async function finalizePlaySceneRehearsalAttemptWithTransactions(context: {
   });
   const selectedSteps = resolveSelectedSteps(finalizable);
   const settlement = aggregatePlayTurnAttemptSettlement(session, finalizable);
+  const dueOverlay = evaluatePlayRehearsalProvisionalOverlay(session, finalizable);
   const provisionalNarrativeBlocks = selectedSteps.flatMap((step) =>
     step.narrativeBlocks.map((block) => structuredClone(block)));
   const provisionalHostNarrativeBlocks = createProvisionalHostNarrativeBlocks(
@@ -384,6 +415,7 @@ async function finalizePlaySceneRehearsalAttemptWithTransactions(context: {
     actionKind: 'do',
     narrative,
     settlement,
+    dueScheduledEvents: dueOverlay.overlay.dueEvents,
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
   });
   const artifactId = settled.selectedTurnIds.at(-1);
@@ -447,9 +479,21 @@ async function finalizePlaySceneRehearsalAttemptWithTransactions(context: {
       artifact.id === rehearsalArtifact.id ? rehearsalArtifact : artifact),
   };
   materializePlayTurnFacts(finalizedSession);
+  const contextTrace = input.contextTraceSources === undefined
+    ? undefined
+    : createPlayTurnContextTrace({
+        session: commitBaseSession,
+        artifactId: rehearsalArtifact.id,
+        sessionRevision: finalizedSession.revision,
+        createdAt: committedAt,
+        transcriptLimit: 20,
+        eventLimit: 12,
+        sources: input.contextTraceSources,
+      });
   try {
     await sessionFiles.write(finalizedSession, {
       expectedCurrentSession: commitBaseSession,
+      ...(contextTrace ? { contextTrace } : {}),
     });
   } catch (error) {
     if (error instanceof PlaySessionWriteConflictError) {

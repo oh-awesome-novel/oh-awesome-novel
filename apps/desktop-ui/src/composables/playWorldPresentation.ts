@@ -1,5 +1,6 @@
 import type {
   PlayAgenda,
+  PlayEventPresentationEvidence,
   PlayEventVisibility,
   PlayPressure,
   PlayScheduledEvent,
@@ -75,6 +76,8 @@ export interface PlayEventCardView {
 export interface BuildPlayEventCardViewsInput {
   events: readonly PlayWorldEvent[];
   artifacts: readonly PlayTurnArtifact[];
+  /** Bounded M5 evidence paired with the current event window. */
+  eventPresentation?: readonly PlayEventPresentationEvidence[];
   showSpoilers: boolean;
   /** @deprecated Historical cards deliberately ignore current-head schedules. */
   scheduledEvents?: readonly PlayScheduledEvent[];
@@ -101,10 +104,17 @@ export function buildPlayEventCardViews(
   );
   const artifactsByEventId = indexArtifactsByEventId(input.artifacts);
   const messagesById = indexMessages(input.artifacts);
+  const presentationByEventId = new Map(
+    (input.eventPresentation ?? []).map((evidence) => [evidence.eventId, evidence]),
+  );
 
   return input.events
     .filter((event) => input.showSpoilers || event.visibility !== 'playerUnknown')
     .map((event) => {
+      const presentation = presentationByEventId.get(event.id);
+      if (presentation) {
+        return buildBoundedEventCard(event, presentation, input.showSpoilers);
+      }
       const artifact = artifactsByEventId.get(event.id);
       const scheduledEvent = resolveScheduledEventEvidence(event, artifact);
       const momentum = readArtifactMomentumEvidence(artifact);
@@ -156,6 +166,157 @@ export function buildPlayEventCardViews(
           : {}),
       };
     });
+}
+
+function buildBoundedEventCard(
+  event: Readonly<PlayWorldEvent>,
+  evidence: Readonly<PlayEventPresentationEvidence>,
+  showSpoilers: boolean,
+): PlayEventCardView {
+  const causes = showSpoilers
+    ? mergePresentationCauses(evidence.causes, evidence.author.hiddenCauses)
+    : evidence.causes;
+  const causeLabels = buildPresentationCauseLabels(event.id, causes);
+  const impacts = showSpoilers ? evidence.author.stateImpacts : evidence.stateImpacts;
+  const omittedCount = showSpoilers
+    ? evidence.author.stateImpactOmittedCount
+    : evidence.stateImpactOmittedCount;
+  const reveal = evidence.reveal
+    ? {
+        statusLabel: evidence.reveal.status === 'rumorSurfaced'
+          ? 'Rumor surfaced'
+          : 'Information confirmed',
+        explanation: evidence.reveal.status === 'rumorSurfaced'
+          ? 'This event carries a rumor about an earlier unseen development.'
+          : 'This event confirms information about an earlier unseen development.',
+        ...(showSpoilers && evidence.author.reveal
+          ? {
+              author: {
+                recordId: evidence.author.reveal.recordId,
+                subjectEventId: evidence.author.reveal.subjectEventId,
+                subjectTitle: evidence.author.reveal.subjectTitle,
+                subjectSummary: evidence.author.reveal.subjectSummary,
+                subjectWorldTimeLabel: formatClock(evidence.author.reveal.subjectWorldClock),
+                ...(evidence.author.reveal.subjectReason
+                  ? { subjectReason: evidence.author.reveal.subjectReason }
+                  : {}),
+                revealedByEventId: evidence.author.reveal.revealedByEventId,
+                revealedByTitle: event.title,
+                previousPlayerProjection:
+                  evidence.author.reveal.previousPlayerProjection,
+                playerProjection: evidence.author.reveal.playerProjection,
+                knownByParticipantRefs: [
+                  ...evidence.author.reveal.knownByParticipantRefs,
+                ],
+              },
+            }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    id: event.id,
+    title: event.title,
+    impact: event.summary,
+    kindLabel: humanizeIdentifier(event.kind),
+    originLabel: `Origin · ${humanizeIdentifier(event.origin)}`,
+    visibility: event.visibility,
+    worldTimeLabel: formatWorldTime(event),
+    causeLabels,
+    stateImpacts: [
+      ...impacts.map((impact) => ({ ...impact })),
+      ...(omittedCount > 0
+        ? [{ path: 'Additional changes', value: `${omittedCount} omitted` }]
+        : []),
+    ],
+    technicalRefs: showSpoilers
+      ? buildPresentationTechnicalRefs(event.id, evidence.author.technicalRefs)
+      : [],
+    projection: showSpoilers ? 'author' : 'player',
+    ...(reveal ? { revealChain: reveal } : {}),
+    ...(showSpoilers && evidence.author.reason.trim()
+      ? { authorReason: evidence.author.reason.trim() }
+      : {}),
+  };
+}
+
+function mergePresentationCauses(
+  visible: Readonly<PlayEventPresentationEvidence['causes']>,
+  hidden: Readonly<PlayEventPresentationEvidence['causes']>,
+): PlayEventPresentationEvidence['causes'] {
+  return {
+    actions: [...visible.actions, ...hidden.actions],
+    sourceEvents: [...visible.sourceEvents, ...hidden.sourceEvents],
+    ...(visible.scheduled ?? hidden.scheduled
+      ? { scheduled: structuredClone(visible.scheduled ?? hidden.scheduled!) }
+      : {}),
+    ...(visible.pressure ?? hidden.pressure
+      ? { pressure: { ...(visible.pressure ?? hidden.pressure!) } }
+      : {}),
+    ...(visible.agenda ?? hidden.agenda
+      ? { agenda: { ...(visible.agenda ?? hidden.agenda!) } }
+      : {}),
+  };
+}
+
+function buildPresentationCauseLabels(
+  eventId: string,
+  causes: Readonly<PlayEventPresentationEvidence['causes']>,
+): PlayEventCauseLabelView[] {
+  const labels: PlayEventCauseLabelView[] = [];
+  causes.actions.forEach((action, index) => {
+    labels.push({
+      kind: 'action',
+      label: `${action.actionKind ? humanizeIdentifier(action.actionKind) : 'Action'} · ${action.contentExcerpt}`,
+      ref: `${eventId}:action:${index}`,
+    });
+  });
+  if (causes.scheduled) {
+    labels.push({
+      kind: 'trigger',
+      label: `Scheduled · ${causes.scheduled.label} (${formatPresentationTrigger(causes.scheduled.trigger)})`,
+      ref: `${eventId}:scheduled`,
+    });
+  }
+  causes.sourceEvents.forEach((sourceEvent, index) => {
+    labels.push({
+      kind: 'sourceEvent',
+      label: `Earlier event · ${sourceEvent.title}`,
+      ref: `${eventId}:source-event:${index}`,
+    });
+  });
+  if (causes.pressure) {
+    labels.push({
+      kind: 'pressure',
+      label: `Pressure · ${causes.pressure.label}`,
+      ref: `${eventId}:pressure`,
+    });
+  }
+  if (causes.agenda) {
+    labels.push({
+      kind: 'agenda',
+      label: `Agenda · ${causes.agenda.ownerEntityId}: ${causes.agenda.summary}`,
+      ref: `${eventId}:agenda`,
+    });
+  }
+  return dedupeCauseLabels(labels);
+}
+
+function buildPresentationTechnicalRefs(
+  eventId: string,
+  refs: Readonly<PlayEventPresentationEvidence['author']['technicalRefs']>,
+): PlayEventTechnicalRefView[] {
+  return dedupeTechnicalRefs([
+    { label: 'Event', value: eventId },
+    { label: 'Turn message', value: refs.turnId },
+    { label: 'Artifact', value: refs.artifactId },
+    { label: 'Artifact revision', value: String(refs.artifactRevision) },
+    ...refs.sourceTurnIds.map((value) => ({ label: 'Source turn ref', value })),
+    ...refs.sourceEventIds.map((value) => ({ label: 'Source event ref', value })),
+    ...(refs.triggerId ? [{ label: 'Trigger ref', value: refs.triggerId }] : []),
+    ...(refs.pressureId ? [{ label: 'Pressure ref', value: refs.pressureId }] : []),
+    ...(refs.agendaId ? [{ label: 'Agenda ref', value: refs.agendaId }] : []),
+  ]);
 }
 
 interface BuildRevealChainInput {
@@ -634,12 +795,29 @@ function flattenStateValue(
 }
 
 function formatWorldTime(event: PlayWorldEvent): string {
+  return formatClock(event.worldClock);
+}
+
+function formatClock(clock: Readonly<PlayWorldEvent['worldClock']>): string {
   const parts = [
-    event.worldClock.anchor?.trim(),
-    `Turn ${event.worldClock.turn}`,
-    event.worldClock.elapsed ? `+ ${event.worldClock.elapsed}` : undefined,
+    clock.anchor?.trim(),
+    `Turn ${clock.turn}`,
+    clock.elapsed ? `+ ${clock.elapsed}` : undefined,
   ].filter((value): value is string => Boolean(value));
   return parts.join(' · ');
+}
+
+function formatPresentationTrigger(
+  trigger: NonNullable<PlayEventPresentationEvidence['causes']['scheduled']>['trigger'],
+): string {
+  switch (trigger.type) {
+    case 'nextTurn': return 'next turn';
+    case 'afterTurns':
+      return `after ${trigger.turns} turn${trigger.turns === 1 ? '' : 's'}`;
+    case 'flagEquals': return 'tracked world condition matched';
+    case 'atWorldTime': return `at ${trigger.value}`;
+    case 'manual': return 'manual';
+  }
 }
 
 function formatTrigger(event: PlayScheduledEvent): string {

@@ -2,22 +2,32 @@ import { randomUUID } from 'node:crypto';
 
 import {
   acceptPlayTurnAttemptStep,
+  applyPlayTurnAttemptRedirect,
+  createPlayParticipantKnowledgeEvidence,
   addPlayTurnAttemptStep,
   cancelPlayTurnAttempt,
   createCharacterPerceptionPackage,
   evaluatePlaySessionEligibleEvents,
   finalizePlaySceneRehearsalAttempt,
   findPlayAttemptMutationReceipt,
+  fingerprintPlayAttemptRequest,
   fingerprintPlayTurnAttemptStepOperation,
   listPlayKnowledgeRevealCandidates,
+  grantPlayTurnAttemptKnowledge,
+  insertPlayTurnAttemptActor,
   listPlayTurnAttemptRecoveries,
+  listPlayRedirectConstraintRefs,
   parsePlayWorldRefereeResponse,
   preparePlayTurnAttemptRetry,
+  projectPlaySceneMemory,
   projectSelectedPlayRehearsalEvidence,
   readPlaySessionFiles,
+  readPlaySceneMemory,
   readPlayTurnAttemptRecovery,
   startPlaySceneRehearsalAttempt,
+  revisePlayTurnAttemptProjection,
   withPlayTurnAttemptRecoveryTransaction,
+  writePlaySceneMemory,
 } from '@oh-awesome-novel/core';
 import type {
   CharacterPerceptionPackage,
@@ -25,8 +35,11 @@ import type {
   LlmProviderConfig,
   NarrativeBlock,
   PlayAttemptMutationReceipt,
+  PlayDirectorKnowledgeGrant,
   PlaySession,
+  PlayContextSourceTrace,
   PlayTurnAttempt,
+  PlaySceneMemoryArtifact,
   PlayWorldRefereeSettlement,
 } from '@oh-awesome-novel/core';
 import {
@@ -144,6 +157,14 @@ export interface PlayRehearsalBackendController {
     attemptId: string,
     body: unknown,
   ): Promise<Record<string, unknown>>;
+  getSceneMemory(
+    sessionId: string,
+    lens: unknown,
+  ): Promise<{ memory: PlaySceneMemoryArtifact | null }>;
+  rebuildSceneMemory(
+    sessionId: string,
+    body: unknown,
+  ): Promise<{ memory: PlaySceneMemoryArtifact }>;
 }
 
 export function createPlayRehearsalBackendController(
@@ -335,25 +356,102 @@ export function createPlayRehearsalBackendController(
       const workspaceRoot = options.getWorkspaceRoot();
       const sessionId = requireSafeWireId(sessionIdValue, 'sessionId');
       const attemptId = requireSafeWireId(attemptIdValue, 'attemptId');
-      const body = requireBody(
-        bodyValue,
-        ['expectedAttemptRevision', 'idempotencyKey', 'kind', 'stepRef'],
-        'Play rehearsal intervention request',
-      );
-      if (body.kind !== 'accept') {
+      if (!isRecord(bodyValue) || typeof bodyValue.kind !== 'string') {
         throw new PlayRehearsalRequestError(
           400,
           'invalid_request',
-          'F1 Play rehearsal supports only the accept intervention.',
+          'Play rehearsal intervention request requires a typed kind.',
         );
       }
-      const input = {
+      if (bodyValue.kind === 'redirectStep') {
+        const body = requireBody(
+          bodyValue,
+          [
+            'expectedAttemptRevision',
+            'idempotencyKey',
+            'kind',
+            'stepRef',
+            'directorIntent',
+            'authorConstraintRefs',
+          ],
+          'Play redirectStep intervention request',
+        );
+        return withAttemptMutation(
+          stepRuns,
+          workspaceRoot,
+          sessionId,
+          attemptId,
+          () => performPlayRedirectIntervention({
+            options,
+            workspaceRoot,
+            sessionId,
+            attemptId,
+            expectedAttemptRevision: requireNonNegativeInteger(
+              body.expectedAttemptRevision,
+              'expectedAttemptRevision',
+            ),
+            idempotencyKey: requireSafeWireId(body.idempotencyKey, 'idempotencyKey'),
+            stepRef: requireSafeWireId(body.stepRef, 'stepRef'),
+            directorIntent: requireWireText(body.directorIntent, 'directorIntent', 12_000),
+            authorConstraintRefs: requireWireIdList(
+              body.authorConstraintRefs,
+              'authorConstraintRefs',
+            ),
+          }),
+        );
+      }
+      const allowedFields = bodyValue.kind === 'accept'
+        ? ['expectedAttemptRevision', 'idempotencyKey', 'kind', 'stepRef']
+        : bodyValue.kind === 'reviseProjection'
+          ? [
+              'expectedAttemptRevision',
+              'idempotencyKey',
+              'kind',
+              'stepRef',
+              'replacementBlocks',
+              'expectedEffectFingerprint',
+            ]
+          : bodyValue.kind === 'insertActor'
+            ? [
+                'expectedAttemptRevision',
+                'idempotencyKey',
+                'kind',
+                'participantRef',
+                'beforeStepRef',
+                'afterStepRef',
+              ]
+            : bodyValue.kind === 'grantKnowledge'
+              ? [
+                  'expectedAttemptRevision',
+                  'idempotencyKey',
+                  'kind',
+                  'participantRef',
+                  'effectiveFromStepRef',
+                  'grant',
+                ]
+              : undefined;
+      if (!allowedFields) {
+        throw new PlayRehearsalRequestError(
+          400,
+          'invalid_request',
+          `Unsupported Play Director intervention: ${bodyValue.kind}.`,
+        );
+      }
+      const body = requireBody(
+        bodyValue,
+        allowedFields,
+        'Play rehearsal intervention request',
+      );
+      const common = {
         expectedAttemptRevision: requireNonNegativeInteger(
           body.expectedAttemptRevision,
           'expectedAttemptRevision',
         ),
         idempotencyKey: requireSafeWireId(body.idempotencyKey, 'idempotencyKey'),
-        stepRef: requireSafeWireId(body.stepRef, 'stepRef'),
+        interventionId: `intervention-${requireSafeWireId(
+          body.idempotencyKey,
+          'idempotencyKey',
+        )}`,
       };
       return withAttemptMutation(
         stepRuns,
@@ -372,10 +470,60 @@ export function createPlayRehearsalBackendController(
               () => recovery.remove(attemptId),
             );
             const attempt = await recovery.read(attemptId);
-            const result = acceptPlayTurnAttemptStep(attempt, input);
+            const session = body.kind === 'grantKnowledge'
+              ? await readPlaySessionFiles(workspaceRoot, sessionId)
+              : undefined;
+            const result = body.kind === 'accept'
+              ? acceptPlayTurnAttemptStep(attempt, {
+                  expectedAttemptRevision: common.expectedAttemptRevision,
+                  idempotencyKey: common.idempotencyKey,
+                  stepRef: requireSafeWireId(body.stepRef, 'stepRef'),
+                })
+              : body.kind === 'reviseProjection'
+                ? revisePlayTurnAttemptProjection(attempt, {
+                    ...common,
+                    stepRef: requireSafeWireId(body.stepRef, 'stepRef'),
+                    replacementBlocks: body.replacementBlocks as NarrativeBlock[],
+                    expectedEffectFingerprint: requireSha256WireValue(
+                      body.expectedEffectFingerprint,
+                      'expectedEffectFingerprint',
+                    ),
+                  })
+                : body.kind === 'insertActor'
+                  ? insertPlayTurnAttemptActor(attempt, {
+                      ...common,
+                      participantRef: requireSafeWireId(
+                        body.participantRef,
+                        'participantRef',
+                      ),
+                      ...(body.beforeStepRef === undefined
+                        ? {}
+                        : { beforeStepRef: requireSafeWireId(body.beforeStepRef, 'beforeStepRef') }),
+                      ...(body.afterStepRef === undefined
+                        ? {}
+                        : { afterStepRef: requireSafeWireId(body.afterStepRef, 'afterStepRef') }),
+                    })
+                  : grantPlayTurnAttemptKnowledge(attempt, {
+                      ...common,
+                      participantRef: requireSafeWireId(
+                        body.participantRef,
+                        'participantRef',
+                      ),
+                      effectiveFromStepRef: requireSafeWireId(
+                        body.effectiveFromStepRef,
+                        'effectiveFromStepRef',
+                      ),
+                      grant: requireDirectorKnowledgeGrant(body.grant),
+                      availableFactRefs: [
+                        ...(session?.sceneRehearsal?.initialKnowledgeEvidence.map(
+                          (evidence) => evidence.id,
+                        ) ?? []),
+                        ...(session ? selectPlaySessionEvents(session).map((event) => event.id) : []),
+                      ],
+                    });
             if (!result.replayed) {
               await recovery.write(result.attempt, {
-                expectedAttemptRevision: input.expectedAttemptRevision,
+                expectedAttemptRevision: common.expectedAttemptRevision,
               });
             }
             return result;
@@ -416,6 +564,7 @@ export function createPlayRehearsalBackendController(
               selectedHeadRef,
               idempotencyKey,
               userText: formatRehearsalActionText(session),
+              contextTraceSources: createRehearsalContextSourceTraces(session),
             });
             return {
               session: result.session,
@@ -474,7 +623,277 @@ export function createPlayRehearsalBackendController(
         ),
       );
     },
+
+    async getSceneMemory(sessionIdValue, lensValue) {
+      const workspaceRoot = options.getWorkspaceRoot();
+      const sessionId = requireSafeWireId(sessionIdValue, 'sessionId');
+      const lens = requireMemoryLens(lensValue);
+      const memory = await readPlaySceneMemory(workspaceRoot, sessionId, lens);
+      return { memory: memory ? projectPlaySceneMemory(memory, lens) : null };
+    },
+
+    async rebuildSceneMemory(sessionIdValue, bodyValue) {
+      const workspaceRoot = options.getWorkspaceRoot();
+      const sessionId = requireSafeWireId(sessionIdValue, 'sessionId');
+      const body = requireBody(bodyValue, ['lens'], 'Play Scene Memory rebuild request');
+      const lens = requireMemoryLens(body.lens);
+      const memory = await writePlaySceneMemory(workspaceRoot, sessionId, lens);
+      return {
+        memory: projectPlaySceneMemory(memory, lens),
+      };
+    },
   };
+}
+
+async function performPlayRedirectIntervention(input: {
+  options: PlayRehearsalBackendControllerOptions;
+  workspaceRoot: string;
+  sessionId: string;
+  attemptId: string;
+  expectedAttemptRevision: number;
+  idempotencyKey: string;
+  stepRef: string;
+  directorIntent: string;
+  authorConstraintRefs: string[];
+}): Promise<Record<string, unknown>> {
+  const requestFingerprint = fingerprintPlayAttemptRequest({
+    kind: 'redirectStep',
+    stepRef: input.stepRef,
+    directorIntent: input.directorIntent,
+    authorConstraintRefs: input.authorConstraintRefs,
+  });
+  const session = await readPlaySessionFiles(input.workspaceRoot, input.sessionId);
+  const attempt = await readPlayTurnAttemptRecovery(
+    input.workspaceRoot,
+    input.sessionId,
+    input.attemptId,
+  );
+  const existingReceipt = findPlayAttemptMutationReceipt(
+    attempt,
+    input.idempotencyKey,
+    requestFingerprint,
+  );
+  if (existingReceipt) {
+    return { attempt, receipt: existingReceipt, replayed: true };
+  }
+  assertAttemptRevision(attempt, input.expectedAttemptRevision);
+  const target = attempt.steps.find((step) =>
+    step.id === input.stepRef && (step.status === 'selected' || step.status === 'draft'));
+  if (!target) {
+    throw new PlayRehearsalRequestError(
+      404,
+      'step_not_found',
+      `Play redirectStep target is not on the live branch: ${input.stepRef}.`,
+    );
+  }
+  const sidecar = session.sceneRehearsal;
+  if (!sidecar || session.schemaVersion !== 5) {
+    throw new PlayRehearsalRequestError(
+      422,
+      'invalid_rehearsal_effect',
+      'Play redirectStep requires a v5 Scene Rehearsal session.',
+    );
+  }
+  const selectedPrefixRefs = attempt.selectedStepRefs.slice(0, target.queueIndex);
+  const prefixSet = new Set(selectedPrefixRefs);
+  const selectedPrefixSteps = attempt.steps.filter((step) => prefixSet.has(step.id));
+  const contextAttempt: PlayTurnAttempt = {
+    ...attempt,
+    status: 'running',
+    selectedStepRefs: selectedPrefixRefs,
+    selectedHeadRef: selectedPrefixRefs.at(-1),
+    currentStepRef: undefined,
+  };
+  const committedBlocks = projectSelectedPlayRehearsalEvidence(
+    session.turnArtifacts,
+    session.selectedTurnIds,
+    session.rehearsalScenes ?? [],
+  ).flatMap((evidence) => evidence.narrativeBlocks);
+  const selectedVisibleBlocks = [
+    ...committedBlocks,
+    ...selectedPrefixSteps.flatMap((step) => step.narrativeBlocks),
+  ].filter(isParticipantVisibleBlock).filter((block, index, blocks) =>
+    blocks.findIndex((candidate) => candidate.id === block.id) === index);
+  const selectedEvents = selectPlaySessionEvents(session);
+  const observedEventRefs = new Set(selectedVisibleBlocks.flatMap((block) => block.eventRefs));
+  const visibleEvents = selectedEvents.filter((event) =>
+    observedEventRefs.has(event.id) && event.visibility !== 'playerUnknown');
+  const perception = createCharacterPerceptionPackage(
+    sidecar,
+    target.participantRef,
+    {
+      sceneRevision: session.revision,
+      worldClock: session.worldClock,
+      visibleEventRefs: visibleEvents.map((event) => event.id),
+      observedNarrativeBlockRefs: selectedVisibleBlocks.map((block) => block.id),
+      grantedKnowledgeEvidence: createPlayParticipantKnowledgeEvidence({
+        session,
+        sidecar,
+        participantRef: target.participantRef,
+        attempt,
+        throughQueueIndex: target.queueIndex,
+      }),
+    },
+  );
+  const allowedConstraintRefs = new Set(listPlayRedirectConstraintRefs(perception));
+  const forbiddenConstraintRef = input.authorConstraintRefs.find((constraintRef) =>
+    !allowedConstraintRefs.has(constraintRef));
+  if (forbiddenConstraintRef) {
+    throw new PlayRehearsalRequestError(
+      422,
+      'invalid_rehearsal_effect',
+      `Play redirect constraint is outside the target participant perception: ${forbiddenConstraintRef}.`,
+    );
+  }
+  const resolvedAuthorConstraints = resolvePlayRedirectConstraintRecords(
+    input.authorConstraintRefs,
+    perception,
+    visibleEvents,
+    selectedVisibleBlocks,
+  );
+  const basePromptInput = createActorPromptInput(session, perception, selectedVisibleBlocks);
+  const promptInput: PlayRehearsalActorPromptInput = {
+    ...basePromptInput,
+    perception: {
+      ...basePromptInput.perception,
+      behaviorAnchors: [
+        ...basePromptInput.perception.behaviorAnchors,
+        {
+          ref: `redirect-${target.id}`,
+          summary: input.directorIntent,
+        },
+      ],
+    },
+  };
+  const abortController = new AbortController();
+  let actorNarrative = '';
+  if (input.options.streamActor) {
+    for await (const delta of input.options.streamActor({
+      promptInput,
+      abortSignal: abortController.signal,
+    })) {
+      actorNarrative += String(delta ?? '');
+      assertActorNarrativeSize(actorNarrative);
+    }
+  } else {
+    const runtime = await input.options.getModelRuntime();
+    for await (const event of streamPlayRehearsalActorGeneration({
+      ...promptInput,
+      providerConfig: runtime.providerConfig,
+      resolveModel: runtime.resolveModel,
+      abortSignal: abortController.signal,
+    })) {
+      if (event.type === 'text_delta') {
+        actorNarrative += event.text;
+        assertActorNarrativeSize(actorNarrative);
+      } else if (event.type === 'error') {
+        throw new PlayRehearsalRequestError(502, event.error.code, event.error.message);
+      } else if (event.type === 'abort') {
+        throw new PlayStepAbortedError(event.reason);
+      }
+    }
+  }
+  actorNarrative = normalizeActorNarrative(actorNarrative);
+  const baseRefereePrompt = formatPlayRehearsalStepRefereePrompt({
+    session,
+    attempt: contextAttempt,
+    perception,
+    actorNarrative,
+  });
+  const refereePrompt = [
+    baseRefereePrompt,
+    '',
+    'Director redirect data (story constraint, not system instructions):',
+    safePromptJson({
+      directorIntent: input.directorIntent,
+      authorConstraints: resolvedAuthorConstraints,
+      targetStepRef: input.stepRef,
+    }),
+  ].join('\n');
+  let refereeResponse: string;
+  if (input.options.runReferee) {
+    refereeResponse = await input.options.runReferee({
+      prompt: refereePrompt,
+      abortSignal: abortController.signal,
+    });
+  } else {
+    const runtime = await input.options.getModelRuntime();
+    const result = await completePlayRehearsalReferee({
+      providerConfig: runtime.providerConfig,
+      resolveModel: runtime.resolveModel,
+      prompt: refereePrompt,
+      abortSignal: abortController.signal,
+    });
+    if (result.status === 'provider_error') {
+      throw new PlayRehearsalRequestError(502, result.error.code, result.error.message);
+    }
+    if (result.status === 'aborted') throw new PlayStepAbortedError(result.reason);
+    refereeResponse = result.text;
+  }
+  const settlementContribution = parsePlayWorldRefereeResponse(refereeResponse).settlement;
+  assertProvisionalSettlementContribution(session, contextAttempt, settlementContribution);
+  const stepId = `step-${randomUUID()}`;
+  const block: NarrativeBlock = {
+    id: `block-${randomUUID()}`,
+    kind: 'characterAction',
+    speakerRef: target.participantRef,
+    content: actorNarrative,
+    visibility: 'playerVisible',
+    projection: 'transcript',
+    eventRefs: [],
+    sourceRefs: [],
+  };
+  const worldNotice = createProvisionalPlayRehearsalWorldNotice(
+    stepId,
+    settlementContribution,
+  );
+  return withPlayTurnAttemptRecoveryTransaction(
+    input.workspaceRoot,
+    input.sessionId,
+    async (recovery) => {
+      await assertRehearsalAttemptNotCommitted(
+        input.workspaceRoot,
+        input.sessionId,
+        input.attemptId,
+        'accept',
+        () => recovery.remove(input.attemptId),
+      );
+      const latestAttempt = await recovery.read(input.attemptId);
+      const result = applyPlayTurnAttemptRedirect(latestAttempt, {
+        expectedAttemptRevision: input.expectedAttemptRevision,
+        idempotencyKey: input.idempotencyKey,
+        interventionId: `intervention-${input.idempotencyKey}`,
+        stepRef: input.stepRef,
+        directorIntent: input.directorIntent,
+        authorConstraintRefs: input.authorConstraintRefs,
+        perception,
+        replacementStep: {
+          id: stepId,
+          participantRef: target.participantRef,
+          queueIndex: target.queueIndex,
+          ...(selectedPrefixRefs.at(-1)
+            ? { beforeStepRef: selectedPrefixRefs.at(-1) }
+            : {}),
+          perceptionRef: perception.id,
+          intentSummary: input.directorIntent.slice(0, 800),
+          narrativeBlocks: worldNotice ? [block, worldNotice] : [block],
+          settlementContribution,
+          decisionBasisRefs: [
+            ...perception.initialKnowledgeEvidence.map((item) => item.id),
+            ...perception.grantedKnowledgeEvidence.map((item) => item.id),
+          ],
+          variantOf: target.id,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (!result.replayed) {
+        await recovery.write(result.attempt, {
+          expectedAttemptRevision: input.expectedAttemptRevision,
+        });
+      }
+      return result;
+    },
+  );
 }
 
 function createStepStreamResponse(input: {
@@ -586,6 +1005,13 @@ function createStepStreamResponse(input: {
             worldClock: session.worldClock,
             visibleEventRefs: visibleEvents.map((event) => event.id),
             observedNarrativeBlockRefs: selectedVisibleBlocks.map((block) => block.id),
+            grantedKnowledgeEvidence: createPlayParticipantKnowledgeEvidence({
+              session,
+              sidecar,
+              participantRef: input.participantRef,
+              attempt,
+              throughQueueIndex: attempt.selectedStepRefs.length,
+            }),
           },
         );
         const actorPromptInput = createActorPromptInput(
@@ -738,7 +1164,8 @@ function createStepStreamResponse(input: {
                 narrativeBlocks: worldNotice ? [block, worldNotice] : [block],
                 settlementContribution,
                 decisionBasisRefs: perception.initialKnowledgeEvidence
-                  .map((item) => item.id),
+                  .map((item) => item.id)
+                  .concat(perception.grantedKnowledgeEvidence.map((item) => item.id)),
                 ...(retryPreparation
                   ? { variantOf: retryPreparation.variantOf }
                   : {}),
@@ -831,8 +1258,8 @@ export function formatPlayRehearsalStepRefereePrompt(input: {
     0,
   );
   const usedKnowledgeSubjectIds = new Set(selectedSteps.flatMap((step) =>
-    step.settlementContribution.knowledgeChanges.map((change) =>
-      change.subjectEventId),
+    step.settlementContribution.knowledgeChanges.flatMap((change) =>
+      change.type === 'revealEvent' ? [change.subjectEventId] : []),
   ));
   const revealCandidates = listPlayKnowledgeRevealCandidates({
     playLocalState: input.session.playLocalState,
@@ -897,6 +1324,64 @@ export function formatPlayRehearsalStepRefereePrompt(input: {
   ].join('\n');
 }
 
+function createRehearsalContextSourceTraces(
+  session: PlaySession,
+): PlayContextSourceTrace[] {
+  const sidecar = session.sceneRehearsal;
+  if (!sidecar) return [];
+  const selectedSourceIds = new Set<string>();
+  const selectedCharacters = new Map<string, number>();
+  const addSelected = (sourceId: string, characters: number): void => {
+    selectedSourceIds.add(sourceId);
+    selectedCharacters.set(
+      sourceId,
+      (selectedCharacters.get(sourceId) ?? 0) + characters,
+    );
+  };
+  for (const evidence of sidecar.initialKnowledgeEvidence) {
+    if (evidence.provenance.kind === 'sourceBacked') {
+      addSelected(evidence.provenance.sourceId, evidence.fact.length);
+    }
+  }
+  if (sidecar.sceneContract.clockProvenance.kind === 'newSessionInitial') {
+    for (const sourceId of sidecar.sceneContract.clockProvenance.sourceRefs) {
+      addSelected(sourceId, 0);
+    }
+  }
+  for (const field of [
+    sidecar.sceneContract.location,
+    sidecar.sceneContract.atmosphere,
+    sidecar.sceneContract.trigger,
+    sidecar.sceneContract.objective,
+    sidecar.sceneContract.risk,
+  ]) {
+    if (field?.provenance.kind !== 'sourceBacked') continue;
+    for (const sourceId of field.provenance.sourceRefs) {
+      addSelected(sourceId, field.value.length);
+    }
+  }
+  return session.activatedSources.map((source): PlayContextSourceTrace => ({
+    sourceId: source.sourceId,
+    ...(source.path ? { path: source.path } : {}),
+    ...(source.role ? { role: source.role } : {}),
+    trust: source.trust,
+    budgetLayer: source.budgetLayer,
+    semanticBoundary: source.semanticBoundary,
+    ...(source.contentHash
+      ? { expectedContentHash: source.contentHash }
+      : {}),
+    ...(selectedSourceIds.has(source.sourceId)
+      ? {
+          outcome: 'selected',
+          selectedCharacterCount: selectedCharacters.get(source.sourceId) ?? 0,
+        }
+      : {
+          outcome: 'omitted',
+          omissionReason: 'notSelected',
+        }),
+  }));
+}
+
 function createActorPromptInput(
   session: PlaySession,
   perception: CharacterPerceptionPackage,
@@ -958,10 +1443,16 @@ function createActorPromptInput(
       ...(perception.participant.currentGoal
         ? { currentGoal: perception.participant.currentGoal }
         : {}),
-      visibleFacts: perception.initialKnowledgeEvidence.map((evidence) => ({
-        ref: evidence.id,
-        fact: evidence.fact,
-      })),
+      visibleFacts: [
+        ...perception.initialKnowledgeEvidence.map((evidence) => ({
+          ref: evidence.id,
+          fact: evidence.fact,
+        })),
+        ...perception.grantedKnowledgeEvidence.map((evidence) => ({
+          ref: evidence.id,
+          fact: evidence.fact,
+        })),
+      ],
       visibleEvents,
       behaviorAnchors: perception.participant.currentGoal
         ? [{ ref: `goal-${perception.participant.participantRef}`, summary: perception.participant.currentGoal }]
@@ -1046,8 +1537,8 @@ function assertProvisionalSettlementContribution(
     );
   }
   const usedKnowledgeSubjectIds = new Set(previousContributions.flatMap(
-    (settlement) => settlement.knowledgeChanges.map((change) =>
-      change.subjectEventId),
+    (settlement) => settlement.knowledgeChanges.flatMap((change) =>
+      change.type === 'revealEvent' ? [change.subjectEventId] : []),
   ));
   const revealCandidateIds = new Set(listPlayKnowledgeRevealCandidates({
     playLocalState: session.playLocalState,
@@ -1055,6 +1546,13 @@ function assertProvisionalSettlementContribution(
   }).map((candidate) => candidate.subjectEventId));
   const matchedRevealEventIndexes = new Set<number>();
   for (const change of contribution.knowledgeChanges) {
+    if (change.type === 'grantParticipantKnowledge') {
+      throw new PlayRehearsalRequestError(
+        422,
+        'invalid_rehearsal_effect',
+        'Actor/referee output cannot forge a Director participant knowledge grant.',
+      );
+    }
     if (
       usedKnowledgeSubjectIds.has(change.subjectEventId) ||
       !revealCandidateIds.has(change.subjectEventId)
@@ -1342,6 +1840,119 @@ function requireNonNegativeInteger(value: unknown, label: string): number {
   return value as number;
 }
 
+function requireWireText(value: unknown, label: string, maximum: number): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maximum) {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      `${label} must be non-empty text up to ${maximum} characters.`,
+    );
+  }
+  return value.trim();
+}
+
+function requireWireIdList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.length > 64) {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      `${label} must be an array of at most 64 ids.`,
+    );
+  }
+  const ids = value.map((item) => requireSafeWireId(item, label));
+  if (new Set(ids).size !== ids.length) {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      `${label} must not contain duplicates.`,
+    );
+  }
+  return ids;
+}
+
+function requireMemoryLens(value: unknown): 'player' | 'director' {
+  if (value !== 'player' && value !== 'director') {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      'Play Scene Memory lens must be player or director.',
+    );
+  }
+  return value;
+}
+
+function requireSha256WireValue(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      `${label} must be a SHA-256 hex digest.`,
+    );
+  }
+  return value;
+}
+
+function requireDirectorKnowledgeGrant(value: unknown): PlayDirectorKnowledgeGrant {
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    throw new PlayRehearsalRequestError(
+      400,
+      'invalid_request',
+      'Play grantKnowledge requires a typed grant.',
+    );
+  }
+  if (value.kind === 'existingFact') {
+    const body = requireBody(value, ['kind', 'factRefs'], 'Play existing-fact grant');
+    if (!Array.isArray(body.factRefs) || !body.factRefs.length) {
+      throw new PlayRehearsalRequestError(
+        400,
+        'invalid_request',
+        'Play existing-fact grant requires factRefs.',
+      );
+    }
+    return {
+      kind: 'existingFact',
+      factRefs: body.factRefs.map((factRef) =>
+        requireSafeWireId(factRef, 'factRef')),
+    };
+  }
+  if (value.kind === 'authorProvidedPlayFact') {
+    const body = requireBody(
+      value,
+      ['kind', 'summary', 'visibility', 'providedAt'],
+      'Play author-provided knowledge grant',
+    );
+    if (
+      typeof body.summary !== 'string' ||
+      !body.summary.trim() ||
+      body.summary.length > 12_000 ||
+      typeof body.providedAt !== 'string' ||
+      !body.providedAt.trim() ||
+      (
+        body.visibility !== 'playerVisible' &&
+        body.visibility !== 'rumor' &&
+        body.visibility !== 'playerUnknown'
+      )
+    ) {
+      throw new PlayRehearsalRequestError(
+        400,
+        'invalid_request',
+        'Play author-provided knowledge grant has invalid typed fields.',
+      );
+    }
+    return {
+      kind: 'authorProvidedPlayFact',
+      summary: body.summary.trim(),
+      visibility: body.visibility,
+      providedAt: body.providedAt.trim(),
+    };
+  }
+  throw new PlayRehearsalRequestError(
+    400,
+    'invalid_request',
+    `Unsupported Play knowledge grant: ${value.kind}.`,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1477,6 +2088,79 @@ function assertActorNarrativeSize(value: string): void {
 
 function isParticipantVisibleBlock(block: NarrativeBlock): boolean {
   return block.projection === 'transcript' && block.visibility !== 'playerUnknown';
+}
+
+function resolvePlayRedirectConstraintRecords(
+  refs: readonly string[],
+  perception: CharacterPerceptionPackage,
+  visibleEvents: ReturnType<typeof selectPlaySessionEvents>,
+  observedBlocks: readonly NarrativeBlock[],
+): Array<Record<string, unknown>> {
+  return refs.map((ref) => {
+    const initialEvidence = perception.initialKnowledgeEvidence.find((evidence) =>
+      evidence.id === ref);
+    if (initialEvidence) {
+      return {
+        kind: 'initialKnowledgeEvidence',
+        ref,
+        fact: initialEvidence.fact,
+        visibility: initialEvidence.visibility,
+        provenance: initialEvidence.provenance,
+      };
+    }
+    const grantedEvidence = perception.grantedKnowledgeEvidence.find((evidence) =>
+      evidence.id === ref);
+    if (grantedEvidence) {
+      return {
+        kind: 'grantedKnowledgeEvidence',
+        ref,
+        fact: grantedEvidence.fact,
+        visibility: grantedEvidence.visibility,
+        provenance: grantedEvidence.provenance,
+      };
+    }
+    const visibleEvent = visibleEvents.find((event) => event.id === ref);
+    if (visibleEvent) {
+      return {
+        kind: 'visibleEvent',
+        ref,
+        title: visibleEvent.title,
+        summary: visibleEvent.summary,
+        visibility: visibleEvent.visibility,
+      };
+    }
+    const observedBlock = observedBlocks.find((block) => block.id === ref);
+    if (observedBlock) {
+      return {
+        kind: 'observedNarrativeBlock',
+        ref,
+        content: observedBlock.content,
+        visibility: observedBlock.visibility,
+        eventRefs: observedBlock.eventRefs,
+        sourceRefs: observedBlock.sourceRefs,
+      };
+    }
+    const grantsByFactRef = perception.grantedKnowledgeEvidence.filter((evidence) =>
+      evidence.factRefs.includes(ref));
+    if (grantsByFactRef.length === 1) {
+      const evidence = grantsByFactRef[0]!;
+      return {
+        kind: 'grantedKnowledgeFact',
+        ref,
+        evidenceRef: evidence.id,
+        fact: evidence.fact,
+        visibility: evidence.visibility,
+        provenance: evidence.provenance,
+      };
+    }
+    throw new PlayRehearsalRequestError(
+      422,
+      'invalid_rehearsal_effect',
+      grantsByFactRef.length > 1
+        ? `Play redirect constraint is ambiguous in the target participant perception: ${ref}.`
+        : `Play redirect constraint is outside the target participant perception: ${ref}.`,
+    );
+  });
 }
 
 function createProvisionalPlayRehearsalWorldNotice(

@@ -13,6 +13,11 @@ import type {
 
 const api = vi.hoisted(() => ({
   listPlaySessions: vi.fn(),
+  listPlaySessionSummaries: vi.fn(),
+  getPlaySession: vi.fn(),
+  getPlaySessionDetail: vi.fn(),
+  listPlayContextTraces: vi.fn(),
+  getPlaySourceDrift: vi.fn(),
   createPlaySession: vi.fn(),
   listPlayCheckpoints: vi.fn(),
   getActivePlayRehearsalAttempt: vi.fn(),
@@ -31,6 +36,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
+import { installLegacyPlayReadModelMocks } from './support/playReadModelMock';
 
 const files: FileTreeNode[] = [{
   name: 'chapters',
@@ -47,6 +53,7 @@ describe('PlayWorkspace Guided Start wiring', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.resetAllMocks();
+    installLegacyPlayReadModelMocks(api);
     api.listPlayCheckpoints.mockResolvedValue({ checkpoints: [] });
     api.getActivePlayRehearsalAttempt.mockResolvedValue({ attempt: null });
   });

@@ -9,6 +9,7 @@ import {
 } from 'vue';
 
 import type {
+  PlayDirectorPanelMode,
   PlayRehearsalAttemptStatus,
   PlayRehearsalControl,
   PlayRehearsalControlCapabilities,
@@ -19,11 +20,13 @@ const props = defineProps<{
   attemptStatus: PlayRehearsalAttemptStatus;
   busy: boolean;
   capabilities: Readonly<PlayRehearsalControlCapabilities>;
+  activePanel?: PlayDirectorPanelMode;
   announcement?: string;
 }>();
 
 const emit = defineEmits<{
   accept: [stepRef: string];
+  openIntervention: [mode: PlayDirectorPanelMode];
   retry: [stepRef: string];
   finish: [];
   cancel: [];
@@ -33,6 +36,10 @@ type ConfirmationAction = 'finish' | 'cancel';
 
 const pendingAction = shallowRef<ConfirmationAction>();
 const returnFocusAction = shallowRef<ConfirmationAction>();
+const returnFocusPanel = shallowRef<PlayDirectorPanelMode>();
+const modifyButton = useTemplateRef<HTMLButtonElement>('modifyButton');
+const insertActorButton = useTemplateRef<HTMLButtonElement>('insertActorButton');
+const grantKnowledgeButton = useTemplateRef<HTMLButtonElement>('grantKnowledgeButton');
 const finishButton = useTemplateRef<HTMLButtonElement>('finishButton');
 const cancelButton = useTemplateRef<HTMLButtonElement>('cancelButton');
 const confirmButton = useTemplateRef<HTMLButtonElement>('confirmButton');
@@ -48,6 +55,17 @@ watch(
   () => props.attemptStatus,
   () => {
     pendingAction.value = undefined;
+  },
+);
+
+watch(
+  [() => props.activePanel, () => props.busy],
+  async ([panel, busy]) => {
+    if (panel || busy || !returnFocusPanel.value) return;
+    const target = returnFocusPanel.value;
+    returnFocusPanel.value = undefined;
+    await nextTick();
+    focusPanelAction(target);
   },
 );
 
@@ -80,6 +98,17 @@ function emitStepAction(action: 'accept' | 'retry'): void {
   } else {
     emit('retry', props.activeStepRef);
   }
+}
+
+function requestPanel(mode: PlayDirectorPanelMode): void {
+  const enabled = mode === 'modify'
+    ? props.capabilities.canModify
+    : mode === 'insertActor'
+      ? props.capabilities.canInsertActor
+      : props.capabilities.canGrantKnowledge;
+  if (props.busy || !enabled) return;
+  returnFocusPanel.value = mode;
+  emit('openIntervention', mode);
 }
 
 async function requestConfirmation(action: ConfirmationAction): Promise<void> {
@@ -126,6 +155,14 @@ async function confirmPendingAction(): Promise<void> {
 function focusAction(action: ConfirmationAction): void {
   (action === 'finish' ? finishButton.value : cancelButton.value)?.focus();
 }
+
+function focusPanelAction(action: PlayDirectorPanelMode): void {
+  (action === 'modify'
+    ? modifyButton.value
+    : action === 'insertActor'
+      ? insertActorButton.value
+      : grantKnowledgeButton.value)?.focus();
+}
 </script>
 
 <template>
@@ -139,12 +176,36 @@ function focusAction(action: ConfirmationAction): void {
         @click="emitStepAction('accept')"
       >Accept</button>
       <button
+        ref="modifyButton"
+        type="button"
+        :disabled="busy || !capabilities.canModify"
+        :title="reasonFor('modify')"
+        :aria-describedby="helpId"
+        @click="requestPanel('modify')"
+      >Modify</button>
+      <button
         type="button"
         :disabled="busy || !capabilities.canRetry || !activeStepRef"
         :title="reasonFor('retry')"
         :aria-describedby="helpId"
         @click="emitStepAction('retry')"
       >Retry</button>
+      <button
+        ref="insertActorButton"
+        type="button"
+        :disabled="busy || !capabilities.canInsertActor"
+        :title="reasonFor('insertActor')"
+        :aria-describedby="helpId"
+        @click="requestPanel('insertActor')"
+      >Insert actor</button>
+      <button
+        ref="grantKnowledgeButton"
+        type="button"
+        :disabled="busy || !capabilities.canGrantKnowledge"
+        :title="reasonFor('grantKnowledge')"
+        :aria-describedby="helpId"
+        @click="requestPanel('grantKnowledge')"
+      >Grant knowledge</button>
       <span class="play-director-control-separator" aria-hidden="true"></span>
       <button
         ref="finishButton"
@@ -161,7 +222,7 @@ function focusAction(action: ConfirmationAction): void {
         :title="reasonFor('cancel')"
         :aria-describedby="helpId"
         @click="requestConfirmation('cancel')"
-      >Cancel attempt</button>
+      >Cancel</button>
     </div>
 
     <div

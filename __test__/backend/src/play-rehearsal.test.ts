@@ -221,6 +221,304 @@ describe("Play scene-rehearsal HTTP controller", () => {
     ]);
   });
 
+  it("persists typed revise/grant controls and returns lens-safe rebuildable Scene Memory", async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const actor = vi.fn(defaultActor);
+    const referee = vi.fn(defaultReferee);
+    const baseUrl = await startBackend(workspaceRoot, {
+      streamPlayRehearsalActor: actor,
+      runPlayRehearsalReferee: referee,
+    });
+    const session = await createSession(baseUrl, "rehearsal-f4-controls");
+    const attempt = await createAttempt(baseUrl, session.id, 0);
+    const streamed = await streamStep(baseUrl, session.id, attempt.id, {
+      expectedAttemptRevision: 0,
+      idempotencyKey: "f4-first-step",
+      mode: "next",
+    });
+    const draft = findEvent(streamed.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+
+    const revised = await postJson<{ attempt: PlayTurnAttempt }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: "f4-revise-step",
+        kind: "reviseProjection",
+        stepRef: draft.id,
+        expectedEffectFingerprint: draft.effectFingerprint,
+        replacementBlocks: [{
+          id: "block-f4-revised",
+          kind: "characterAction",
+          speakerRef: "participant-alice",
+          content: "Alice deliberately keeps the valid ticket visible.",
+          visibility: "playerVisible",
+          projection: "transcript",
+          eventRefs: [],
+          sourceRefs: [...draft.narrativeBlocks[0]!.sourceRefs],
+        }],
+      },
+    );
+    expect(revised.response.status, JSON.stringify(revised.body)).toBe(200);
+    const revisedStep = revised.body.attempt.steps.find((step) =>
+      step.id === revised.body.attempt.currentStepRef)!;
+    expect(revisedStep).toMatchObject({
+      variantOf: draft.id,
+      effectFingerprint: draft.effectFingerprint,
+      status: "draft",
+    });
+    expect(revised.body.attempt.interventions).toEqual([
+      expect.objectContaining({
+        kind: "reviseProjection",
+        stepRef: draft.id,
+        replacementStepRef: revisedStep.id,
+        supersededStepRefs: [draft.id],
+      }),
+    ]);
+
+    const rejectedGrant = await postJson<{ code: string }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 2,
+        idempotencyKey: "f4-grant-forged",
+        kind: "grantKnowledge",
+        participantRef: "participant-alice",
+        effectiveFromStepRef: revisedStep.id,
+        grant: {
+          kind: "authorProvidedPlayFact",
+          summary: "The Director tells Alice that the last train is a decoy.",
+          visibility: "playerUnknown",
+          providedAt: "2026-07-20T02:00:00.000Z",
+          forged: true,
+        },
+      },
+    );
+    expect(rejectedGrant.response.status).toBe(400);
+
+    const granted = await postJson<{ attempt: PlayTurnAttempt }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 2,
+        idempotencyKey: "f4-grant-secret",
+        kind: "grantKnowledge",
+        participantRef: "participant-alice",
+        effectiveFromStepRef: revisedStep.id,
+        grant: {
+          kind: "authorProvidedPlayFact",
+          summary: "The Director tells Alice that the last train is a decoy.",
+          visibility: "playerUnknown",
+          providedAt: "2026-07-20T02:00:00.000Z",
+        },
+      },
+    );
+    expect(granted.response.status).toBe(200);
+    expect(granted.body.attempt).toMatchObject({
+      attemptRevision: 3,
+      selectedStepRefs: [],
+    });
+    expect(granted.body.attempt).not.toHaveProperty("currentStepRef");
+    expect(granted.body.attempt.interventions.at(-1)).toMatchObject({
+      kind: "grantKnowledge",
+      participantRef: "participant-alice",
+      supersededStepRefs: [revisedStep.id],
+    });
+
+    const regenerated = await streamStep(baseUrl, session.id, attempt.id, {
+      expectedAttemptRevision: 3,
+      idempotencyKey: "f4-regenerate-with-grant",
+      mode: "next",
+    });
+    const grantedDraft = findEvent(regenerated.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+    expect(actor.mock.calls.at(-1)![0].promptInput.perception.visibleFacts)
+      .toContainEqual(expect.objectContaining({
+        ref: "participant-knowledge-intervention-f4-grant-secret",
+        fact: "The Director tells Alice that the last train is a decoy.",
+      }));
+    const accepted = await postJson<{ attempt: PlayTurnAttempt }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 4,
+        idempotencyKey: "f4-accept-granted-step",
+        kind: "accept",
+        stepRef: grantedDraft.id,
+      },
+    );
+    expect(accepted.body.attempt.status).toBe("prepared");
+
+    const finished = await postJson<{
+      session: PlaySession;
+      attempt: PlayTurnAttempt;
+    }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/finalize`,
+      {
+        baseRevision: 0,
+        expectedAttemptRevision: 5,
+        idempotencyKey: "f4-finish-granted-step",
+        selectedHeadRef: grantedDraft.id,
+      },
+    );
+    expect(finished.response.status).toBe(200);
+    expect(finished.body.session.playLocalState.playKnowledge).toMatchObject({
+      schemaVersion: 1,
+      records: [expect.objectContaining({
+        kind: "participantGrant",
+        participantRef: "participant-alice",
+        interventionRef: "intervention-f4-grant-secret",
+        grantedAtTurnId: "turn-1-referee",
+      })],
+    });
+
+    const malformedMemory = await postJson<{ code: string }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/memories/rebuild`,
+      { lens: "player", forged: true },
+    );
+    expect(malformedMemory.response.status).toBe(400);
+    const rebuiltPlayer = await postJson<{ memory: {
+      lens: string;
+      selectedTurnRefs: string[];
+      sourceHashes: Record<string, string>;
+      items: Array<Record<string, unknown>>;
+      status: string;
+    } }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/memories/rebuild`,
+      { lens: "player" },
+    );
+    expect(rebuiltPlayer.response.status).toBe(200);
+    expect(rebuiltPlayer.body.memory).toMatchObject({
+      lens: "player",
+      selectedTurnRefs: [],
+      sourceHashes: {},
+      status: "current",
+    });
+    expect(JSON.stringify(rebuiltPlayer.body.memory)).not.toContain(
+      "participant-knowledge-intervention-f4-grant-secret",
+    );
+    expect(rebuiltPlayer.body.memory.items.every((item) => [
+      "artifactTurnRefs",
+      "messageRefs",
+      "eventRefs",
+      "observationRefs",
+      "evidenceRefs",
+      "sourceRefs",
+      "participantRefs",
+    ].every((field) => Array.isArray(item[field]) && item[field].length === 0)))
+      .toBe(true);
+    const reopenedPlayer = await getJson<typeof rebuiltPlayer.body>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/memories/player`,
+    );
+    expect(reopenedPlayer.body).toEqual(rebuiltPlayer.body);
+  });
+
+  it("adjudicates redirect server-side and rejects renderer-supplied replacement truth", async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const actor = vi.fn(defaultActor);
+    const referee = vi.fn(defaultReferee);
+    const baseUrl = await startBackend(workspaceRoot, {
+      streamPlayRehearsalActor: actor,
+      runPlayRehearsalReferee: referee,
+    });
+    const session = await createSession(baseUrl, "rehearsal-f4-redirect");
+    const attempt = await createAttempt(baseUrl, session.id, 0);
+    const streamed = await streamStep(baseUrl, session.id, attempt.id, {
+      expectedAttemptRevision: 0,
+      idempotencyKey: "redirect-first-step",
+      mode: "next",
+    });
+    const draft = findEvent(streamed.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+
+    const forged = await postJson<{ code: string }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: "redirect-forged",
+        kind: "redirectStep",
+        stepRef: draft.id,
+        directorIntent: "Alice lowers the ticket.",
+        authorConstraintRefs: ["knowledge-ticket"],
+        replacementStep: draft,
+      },
+    );
+    expect(forged.response.status).toBe(400);
+    expect(actor).toHaveBeenCalledTimes(1);
+    expect(referee).toHaveBeenCalledTimes(1);
+
+    const opaqueConstraint = await postJson<{ code: string }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      {
+        expectedAttemptRevision: 1,
+        idempotencyKey: "redirect-opaque-constraint",
+        kind: "redirectStep",
+        stepRef: draft.id,
+        directorIntent: "Alice lowers the ticket.",
+        authorConstraintRefs: ["unresolved-opaque-constraint"],
+      },
+    );
+    expect(opaqueConstraint.response.status).toBe(422);
+    expect(opaqueConstraint.body.code).toBe("invalid_rehearsal_effect");
+    expect(actor).toHaveBeenCalledTimes(1);
+    expect(referee).toHaveBeenCalledTimes(1);
+
+    const redirectBody = {
+      expectedAttemptRevision: 1,
+      idempotencyKey: "redirect-host-adjudicated",
+      kind: "redirectStep",
+      stepRef: draft.id,
+      directorIntent: "Alice lowers the ticket without revealing why.",
+      authorConstraintRefs: ["knowledge-ticket"],
+    };
+    const redirected = await postJson<{
+      attempt: PlayTurnAttempt;
+      replayed: boolean;
+    }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      redirectBody,
+    );
+    expect(redirected.response.status).toBe(200);
+    expect(redirected.body.replayed).toBe(false);
+    expect(actor).toHaveBeenCalledTimes(2);
+    expect(referee).toHaveBeenCalledTimes(2);
+    const replacement = redirected.body.attempt.steps.find((step) =>
+      step.id === redirected.body.attempt.currentStepRef)!;
+    expect(replacement).toMatchObject({
+      variantOf: draft.id,
+      status: "draft",
+      intentSummary: redirectBody.directorIntent,
+    });
+    expect(redirected.body.attempt.interventions).toEqual([
+      expect.objectContaining({
+        kind: "redirectStep",
+        stepRef: draft.id,
+        replacementStepRef: replacement.id,
+        directorIntent: redirectBody.directorIntent,
+      }),
+    ]);
+    expect(actor.mock.calls.at(-1)![0].promptInput.perception.behaviorAnchors)
+      .toContainEqual(expect.objectContaining({
+        ref: `redirect-${draft.id}`,
+        summary: redirectBody.directorIntent,
+      }));
+    expect(referee.mock.calls.at(-1)![0].prompt).toContain(
+      '"kind": "initialKnowledgeEvidence"',
+    );
+    expect(referee.mock.calls.at(-1)![0].prompt).toContain(
+      '"ref": "knowledge-ticket"',
+    );
+    expect(referee.mock.calls.at(-1)![0].prompt).not.toContain(
+      '"authorConstraintRefs"',
+    );
+
+    const replay = await postJson<typeof redirected.body>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`,
+      redirectBody,
+    );
+    expect(replay.body.replayed).toBe(true);
+    expect(replay.body.attempt).toEqual(redirected.body.attempt);
+    expect(actor).toHaveBeenCalledTimes(2);
+    expect(referee).toHaveBeenCalledTimes(2);
+  });
+
   it("shows a provisional player-visible world notice to the next actor without inventing event ids or leaking hidden effects", async () => {
     const workspaceRoot = await createOanWorkspace();
     const baseInput = createSessionInput("rehearsal-provisional-world-notice");
@@ -930,6 +1228,56 @@ describe("Play scene-rehearsal HTTP controller", () => {
     expect(actor).toHaveBeenCalledTimes(providerCountsBeforeFinish.actor);
     expect(referee).toHaveBeenCalledTimes(providerCountsBeforeFinish.referee);
     expect(JSON.stringify(finished.body)).not.toContain("play.turn.");
+
+    const contextTraces = await getJson<{
+      traces: Array<{
+        artifactId: string;
+        sessionRevision: number;
+        transcriptWindow: { kind: string };
+        eventWindow: { kind: string };
+      }>;
+    }>(`${baseUrl}/api/workspace/play-sessions/${input.id}/context-traces`);
+    expect(contextTraces.response.status).toBe(200);
+    expect(contextTraces.body.traces).toEqual([
+      expect.objectContaining({
+        artifactId: finished.body.artifact.id,
+        sessionRevision: 1,
+        transcriptWindow: expect.objectContaining({ kind: "transcript" }),
+        eventWindow: expect.objectContaining({ kind: "event" }),
+      }),
+    ]);
+
+    const boundedReopen = await getJson<{
+      detail: {
+        snapshot: {
+          schemaVersion: number;
+          rehearsalScenes: Array<{
+            turns: Array<{ id: string; owningTurnArtifactId: string }>;
+          }>;
+        };
+        events: { items: Array<{ id: string }> };
+        eventPresentation: Array<{ eventId: string }>;
+        selectedArtifactPresentation: {
+          id: string;
+          revision: number;
+          rehearsalEvidenceRefs: string[];
+        };
+      };
+    }>(`${baseUrl}/api/workspace/play-sessions/${input.id}/detail?limit=20`);
+    expect(boundedReopen.response.status).toBe(200);
+    expect(boundedReopen.body.detail.snapshot.schemaVersion).toBe(5);
+    expect(boundedReopen.body.detail.selectedArtifactPresentation).toMatchObject({
+      id: finished.body.artifact.id,
+      revision: 1,
+      rehearsalEvidenceRefs: [finished.body.evidence.id],
+    });
+    expect(boundedReopen.body.detail.snapshot.rehearsalScenes[0]?.turns)
+      .toEqual([expect.objectContaining({
+        id: finished.body.evidence.id,
+        owningTurnArtifactId: finished.body.artifact.id,
+      })]);
+    expect(boundedReopen.body.detail.eventPresentation.map((item) => item.eventId))
+      .toEqual(boundedReopen.body.detail.events.items.map((event) => event.id));
 
     const dueOccurrences = finished.body.session.events.filter(
       (event) => event.cause.triggerId === dueEventId,

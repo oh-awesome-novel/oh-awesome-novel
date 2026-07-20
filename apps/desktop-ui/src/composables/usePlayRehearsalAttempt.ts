@@ -7,6 +7,11 @@ import {
 } from 'vue';
 import type { Ref } from 'vue';
 
+import type {
+  PlayDirectorInterventionInput,
+  PlaySceneMemoryArtifact,
+} from './useWorkspaceApi';
+
 import {
   assertPlayRehearsalAttemptSnapshot,
   clonePlayRehearsalAttemptSnapshot,
@@ -66,6 +71,11 @@ export interface PlayRehearsalAttemptClient<
       stepRef: string;
     },
   ): Promise<PlayRehearsalAttemptMutationResult>;
+  intervenePlayTurnAttempt(
+    sessionId: string,
+    attemptId: string,
+    input: PlayDirectorInterventionInput,
+  ): Promise<PlayRehearsalAttemptMutationResult>;
   finishPlayRehearsalAttempt(
     sessionId: string,
     attemptId: string,
@@ -84,6 +94,14 @@ export interface PlayRehearsalAttemptClient<
       idempotencyKey: string;
     },
   ): Promise<PlayRehearsalAttemptMutationResult>;
+  getPlaySceneMemory?(
+    sessionId: string,
+    lens: 'player' | 'director',
+  ): Promise<{ memory: PlaySceneMemoryArtifact | null }>;
+  rebuildPlaySceneMemory?(
+    sessionId: string,
+    lens: 'player' | 'director',
+  ): Promise<{ memory: PlaySceneMemoryArtifact }>;
 }
 
 export interface UsePlayRehearsalAttemptOptions<
@@ -108,9 +126,17 @@ interface PendingMutationRecovery {
 
 interface SnapshotMutationRecoverySpec {
   expectedAttemptRevision: number;
-  expectedResultRef: string;
+  expectedResultRef?: string;
   validate(attempt: PlayRehearsalAttemptRecord): boolean;
 }
+
+type WithoutAttemptMutationFields<T> = T extends unknown
+  ? Omit<T, 'expectedAttemptRevision' | 'idempotencyKey'>
+  : never;
+
+export type PlayDirectorInterventionAction = WithoutAttemptMutationFields<
+  Exclude<PlayDirectorInterventionInput, { kind: 'accept' }>
+>;
 
 export function usePlayRehearsalAttempt<
   TSession,
@@ -192,6 +218,10 @@ export function usePlayRehearsalAttempt<
     Boolean(attempt.value.selectedHeadRef) &&
     !busy.value);
   const canCancelAttempt = computed(() =>
+    !mutationIndeterminate.value &&
+    (attempt.value?.status === 'running' || attempt.value?.status === 'prepared') &&
+    !busy.value);
+  const canIntervene = computed(() =>
     !mutationIndeterminate.value &&
     (attempt.value?.status === 'running' || attempt.value?.status === 'prepared') &&
     !busy.value);
@@ -388,6 +418,45 @@ export function usePlayRehearsalAttempt<
         expectedResultRef: stepRef,
         validate(candidate) {
           return candidate.selectedStepRefs.includes(stepRef);
+        },
+      },
+    );
+  }
+
+  async function intervene(
+    action: PlayDirectorInterventionAction,
+  ): Promise<PlayRehearsalMutationOutcome> {
+    const current = activeAttemptForMutation();
+    if (!current) return 'ignored';
+    const previousInterventionCount = current.attempt.interventions?.length ?? 0;
+    const fingerprint = [
+      'intervention',
+      current.attempt.id,
+      current.attempt.attemptRevision,
+      stableJson(action),
+    ].join(':');
+    const mutationKey = idempotencyKey(fingerprint);
+    return runSnapshotMutation(
+      fingerprint,
+      mutationKey,
+      () => options.client.intervenePlayTurnAttempt(
+        current.attempt.sessionId,
+        current.attempt.id,
+        {
+          ...action,
+          expectedAttemptRevision: current.attempt.attemptRevision,
+          idempotencyKey: mutationKey,
+        },
+      ).then((result) => snapshotFromMutation(result, mutationKey)),
+      current.attempt.sessionId,
+      current.attempt.id,
+      `${formatInterventionKind(action.kind)} applied · attempt-local, still not committed`,
+      {
+        expectedAttemptRevision: current.attempt.attemptRevision,
+        validate(candidate) {
+          const interventions = candidate.interventions ?? [];
+          return interventions.length > previousInterventionCount &&
+            interventions.some((item) => item.kind === action.kind);
         },
       },
     );
@@ -636,12 +705,14 @@ export function usePlayRehearsalAttempt<
     canRetryStep,
     canFinishAttempt,
     canCancelAttempt,
+    canIntervene,
     loadActive,
     loadAttempt,
     startAttempt,
     generateNextStep,
     stopStep,
     acceptStep,
+    intervene,
     retryStep,
     reconcileStep,
     recoverMutation,
@@ -900,7 +971,8 @@ function assertRecoveredSnapshotMutation(
     !receipt ||
     receipt.resultingAttemptRevision !== recovery.expectedAttemptRevision + 1 ||
     snapshot.attempt.attemptRevision < receipt.resultingAttemptRevision ||
-    receipt.resultRef !== recovery.expectedResultRef ||
+    (recovery.expectedResultRef !== undefined &&
+      receipt.resultRef !== recovery.expectedResultRef) ||
     !recovery.validate(snapshot.attempt)
   ) {
     throw new Error('Attempt truth does not contain the expected mutation receipt.');
@@ -985,6 +1057,26 @@ function cloneFinishResult<TSession, TArtifact, TEvidence>(
       : {}),
     receipt: { ...result.receipt },
   };
+}
+
+function formatInterventionKind(
+  kind: PlayDirectorInterventionAction['kind'],
+): string {
+  if (kind === 'reviseProjection') return 'Projection revision';
+  if (kind === 'redirectStep') return 'Step redirect';
+  if (kind === 'insertActor') return 'Actor insertion';
+  return 'Participant knowledge grant';
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 function createMutationId(): string {

@@ -11,6 +11,11 @@ import type {
 
 const api = vi.hoisted(() => ({
   listPlaySessions: vi.fn(),
+  listPlaySessionSummaries: vi.fn(),
+  getPlaySession: vi.fn(),
+  getPlaySessionDetail: vi.fn(),
+  listPlayContextTraces: vi.fn(),
+  getPlaySourceDrift: vi.fn(),
   listPlayCheckpoints: vi.fn(),
   streamPlayWorldRefereeTurn: vi.fn(),
   cancelPlayWorldRefereeTurn: vi.fn(),
@@ -19,11 +24,13 @@ const api = vi.hoisted(() => ({
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
+import { installLegacyPlayReadModelMocks } from './support/playReadModelMock';
 
 describe('PlayWorkspace world momentum', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.resetAllMocks();
+    installLegacyPlayReadModelMocks(api);
     api.listPlayCheckpoints.mockResolvedValue({ checkpoints: [] });
     api.cancelPlayWorldRefereeTurn.mockResolvedValue({
       status: 'cancelled',

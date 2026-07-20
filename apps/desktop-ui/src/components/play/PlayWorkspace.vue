@@ -9,6 +9,7 @@ import PlayHistoryControls from './PlayHistoryControls.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
+import PlayContextInspector from './context/PlayContextInspector.vue';
 import PlayOutcomePanel from './outcome/PlayOutcomePanel.vue';
 import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
 import PlayRehearsalWorkspace from './rehearsal/PlayRehearsalWorkspace.vue';
@@ -65,6 +66,7 @@ const {
   historyRetryingArtifactId,
   historyLoading,
   historyNotice,
+  historyWindow,
   canStop,
   provisionalTurn,
   turnAnnouncement,
@@ -94,6 +96,23 @@ const {
 } = usePlayWorkspace(props.workspace.path, providerConfigured);
 
 const {
+  transcript: transcriptWindow,
+  events: eventWindow,
+  traces: contextTraces,
+  drift: sourceDrift,
+  loadingEarlierTranscript,
+  loadingEarlierEvents,
+  contextLoading,
+  decisionBusy: sourceDecisionBusy,
+  contextError,
+  announcement: historyWindowAnnouncement,
+  loadEarlierTranscript,
+  loadEarlierEvents,
+  refreshContext,
+  decideSourceDrift,
+} = historyWindow;
+
+const {
   scene: rehearsalScene,
   clock: rehearsalClock,
   attempt: rehearsalAttempt,
@@ -103,6 +122,11 @@ const {
   perception: rehearsalPerception,
   visibleEvents: rehearsalVisibleEvents,
   result: rehearsalResult,
+  lens: rehearsalLens,
+  memory: rehearsalMemory,
+  memoryLoading: rehearsalMemoryLoading,
+  memoryRebuilding: rehearsalMemoryRebuilding,
+  memoryError: rehearsalMemoryError,
   capabilities: rehearsalCapabilities,
   busy: rehearsalBusy,
   recoveryRequired: rehearsalRecoveryRequired,
@@ -115,8 +139,12 @@ const {
   stopStep: stopRehearsalStep,
   acceptStep: acceptRehearsalStep,
   retryStep: retryRehearsalStep,
+  intervene: interveneRehearsal,
   finishAttempt: finishRehearsalAttempt,
   cancelAttempt: cancelRehearsalAttempt,
+  setLens: setRehearsalLens,
+  refreshMemory: refreshRehearsalMemory,
+  rebuildMemory: rebuildRehearsalMemory,
   reconcileStep: reconcileRehearsalStep,
 } = rehearsalWorkspace;
 
@@ -256,6 +284,11 @@ function acceptGuidedSession(session: PlaySession): void {
           :perception="rehearsalPerception"
           :visible-events="rehearsalVisibleEvents"
           :result="rehearsalResult"
+          :lens="rehearsalLens"
+          :memory="rehearsalMemory"
+          :memory-loading="rehearsalMemoryLoading"
+          :memory-rebuilding="rehearsalMemoryRebuilding"
+          :memory-error="rehearsalMemoryError"
           :capabilities="rehearsalCapabilities"
           :provider-configured="providerConfigured"
           :busy="rehearsalBusy"
@@ -269,10 +302,23 @@ function acceptGuidedSession(session: PlaySession): void {
           @stop-step="stopRehearsalStep"
           @accept="acceptRehearsalStep"
           @retry="retryRehearsalStep"
+          @intervene="interveneRehearsal"
           @finish="finishRehearsalAttempt"
           @cancel="cancelRehearsalAttempt"
+          @update-lens="setRehearsalLens"
+          @refresh-memory="refreshRehearsalMemory"
+          @rebuild-memory="rebuildRehearsalMemory"
           @reconcile-step="reconcileRehearsalStep"
           @configure-provider="emit('configureProvider')"
+        />
+        <PlayContextInspector
+          :traces="contextTraces"
+          :drift="sourceDrift"
+          :loading="contextLoading"
+          :busy="sourceDecisionBusy"
+          :error="contextError"
+          @refresh="refreshContext"
+          @decide="decideSourceDrift"
         />
         <PlayOutcomePanel
           :session="selectedSession"
@@ -304,8 +350,12 @@ function acceptGuidedSession(session: PlaySession): void {
           :title="selectedSession.title"
           :scene-start="selectedSession.sceneStart"
           :turns="displaySession?.transcript ?? selectedSession.transcript"
+          :total-count="transcriptWindow?.totalCount"
+          :has-more-before="transcriptWindow?.hasMoreBefore"
+          :loading-earlier="loadingEarlierTranscript"
           :provisional="provisionalTurn"
-          :announcement="turnAnnouncement"
+          :announcement="turnAnnouncement || historyWindowAnnouncement"
+          @load-earlier="loadEarlierTranscript"
         />
 
         <div v-if="!providerConfigured" class="play-provider-gate">
@@ -343,6 +393,15 @@ function acceptGuidedSession(session: PlaySession): void {
         class="play-world-inspector"
         aria-label="Play world inspector"
       >
+        <PlayContextInspector
+          :traces="contextTraces"
+          :drift="sourceDrift"
+          :loading="contextLoading"
+          :busy="sourceDecisionBusy"
+          :error="contextError"
+          @refresh="refreshContext"
+          @decide="decideSourceDrift"
+        />
         <PlayHistoryControls
           :checkpoints="historyCheckpoints"
           :session-revision="selectedSession.revision"
@@ -372,8 +431,12 @@ function acceptGuidedSession(session: PlaySession): void {
         <PlayEventFeed
           v-model:show-spoilers="showSpoilers"
           :cards="eventCards"
+          :total-count="eventWindow?.totalCount"
+          :has-more-before="eventWindow?.hasMoreBefore"
+          :loading-earlier="loadingEarlierEvents"
           :has-hidden-play-content="hasHiddenPlayContent"
           :adoption-disabled="interactionBlocked"
+          @load-earlier="loadEarlierEvents"
           @prepare-adoption="prepareAdoption"
         />
         <PlayAdoptionPanel

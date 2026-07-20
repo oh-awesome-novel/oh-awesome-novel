@@ -109,6 +109,14 @@ import {
   normalizePlayCommittedSceneEvidence,
   normalizePlaySceneRehearsalSidecar,
 } from './play-rehearsal.js';
+import {
+  PLAY_CONTEXT_TRACES_DIRECTORY,
+  normalizePlayTurnContextTrace,
+  writePlayContextTraceToStage,
+} from './play-context-trace.js';
+import type { PlayTurnContextTrace } from './play-context-trace.js';
+import { summarizePlaySession } from './play-session-read-model.js';
+import type { PlaySessionSummary } from './play-session-read-model.js';
 import type {
   PlayCommittedSceneEvidence,
   PlayRehearsalParticipant,
@@ -230,6 +238,8 @@ export interface SettlePlayWorldRefereeSettlementInput {
   timeAdvance?: PlayRelativeTimeAdvance;
   narrative: string;
   settlement: PlayWorldRefereeSettlement;
+  /** Host-evaluated provisional rehearsal due set; renderer input must never set this. */
+  dueScheduledEvents?: PlayScheduledEvent[];
   createdAt?: string;
 }
 
@@ -300,6 +310,12 @@ export interface WritePlaySessionFilesOptions {
    * completed, the write fails if an authoritative session already exists.
    */
   expectedAbsent?: boolean;
+  /**
+   * Optional host-owned context evidence committed inside the same sibling
+   * stage as its successful turn artifact. A failed/cancelled turn must never
+   * call the writer with this option.
+   */
+  contextTrace?: PlayTurnContextTrace;
 }
 
 export interface PlaySessionFileTransaction {
@@ -535,7 +551,11 @@ export const withPlaySessionFileTransaction = async <T>(
             );
           }
         }
-        return writePlaySessionFilesWithLock(workspaceRoot, session);
+        return writePlaySessionFilesWithLock(
+          workspaceRoot,
+          session,
+          options.contextTrace,
+        );
       },
     });
   } finally {
@@ -546,6 +566,7 @@ export const withPlaySessionFileTransaction = async <T>(
 const writePlaySessionFilesWithLock = async (
   workspaceRoot: string,
   session: PlaySession,
+  contextTrace?: PlayTurnContextTrace,
 ): Promise<string[]> => {
   const rehearsalState = normalizePlaySessionRehearsalState(session);
 
@@ -585,6 +606,23 @@ const writePlaySessionFilesWithLock = async (
       revision,
     },
   };
+  const normalizedContextTrace = contextTrace === undefined
+    ? undefined
+    : normalizePlayTurnContextTrace(contextTrace);
+  if (normalizedContextTrace) {
+    const selectedArtifactId = sessionForWrite.selectedTurnIds.at(-1);
+    if (
+      normalizedContextTrace.sessionId !== sessionForWrite.id ||
+      normalizedContextTrace.sessionRevision !== sessionForWrite.revision ||
+      normalizedContextTrace.artifactId !== selectedArtifactId ||
+      !sessionForWrite.turnArtifacts.some((artifact) =>
+        artifact.id === normalizedContextTrace.artifactId)
+    ) {
+      throw new Error(
+        'Play context trace must match the committed selected turn artifact.',
+      );
+    }
+  }
   const files: Array<[string, string]> = [
     ['session.yaml', stringify(formatSessionMetadata(sessionForWrite))],
     ['transcript.md', formatTranscript(sessionForWrite)],
@@ -635,6 +673,8 @@ const writePlaySessionFilesWithLock = async (
     await copyPlaySessionMigrationHistory(sessionRoot, stageRoot);
     await copyPlaySessionRecoveryState(sessionRoot, stageRoot);
     await copyPlaySessionReports(sessionRoot, stageRoot);
+    await copyPlaySessionMemories(sessionRoot, stageRoot);
+    await copyPlaySessionContextTraces(sessionRoot, stageRoot);
     if (migrationPreview) {
       await writePlaySessionMigrationBackup({
         sessionRoot,
@@ -650,6 +690,26 @@ const writePlaySessionFilesWithLock = async (
         'utf-8',
       );
     }));
+    if (normalizedContextTrace) {
+      const existingTracePath = join(
+        stageRoot,
+        PLAY_CONTEXT_TRACES_DIRECTORY,
+        `${normalizedContextTrace.artifactId}.context.yaml`,
+      );
+      try {
+        const existingTrace = normalizePlayTurnContextTrace(
+          parse(await readFile(existingTracePath, 'utf-8')),
+        );
+        if (!isDeepStrictEqual(existingTrace, normalizedContextTrace)) {
+          throw new Error(
+            `Play context trace is immutable: ${normalizedContextTrace.artifactId}.`,
+          );
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      await writePlayContextTraceToStage(stageRoot, normalizedContextTrace);
+    }
     await writeFile(join(stageRoot, '.ready'), `${sessionForWrite.revision}\n`, 'utf-8');
   } catch (error) {
     await rm(stageRoot, { recursive: true, force: true });
@@ -992,6 +1052,16 @@ export const listPlaySessions = async (
   }
 };
 
+export const listPlaySessionSummaries = async (
+  workspaceRoot: string,
+): Promise<PlaySessionSummary[]> => {
+  const summaries = (await listPlaySessions(workspaceRoot))
+    .map(summarizePlaySession);
+
+  return summaries.sort((left, right) =>
+    right.latestActivityAt.localeCompare(left.latestActivityAt));
+};
+
 export const evaluatePlaySessionDueEvents = (
   session: PlaySession,
 ) => {
@@ -1241,7 +1311,12 @@ export const settlePlayWorldRefereeSettlement = (
   const turnId = `turn-${revision}`;
   const userTurnId = `${turnId}-user`;
   const refereeTurnId = `${turnId}-referee`;
-  const scheduleEvaluation = evaluatePlaySessionDueEvents(input.session);
+  const scheduleEvaluation = input.dueScheduledEvents
+    ? {
+        ...evaluatePlaySessionDueEvents(input.session),
+        dueEvents: normalizePlayScheduledEvents(input.dueScheduledEvents),
+      }
+    : evaluatePlaySessionDueEvents(input.session);
   const eligibleEvaluation = evaluatePlaySessionEligibleEvents(input.session, {
     actionKind: input.actionKind,
     userText,
@@ -2075,6 +2150,101 @@ async function copyPlaySessionReports(
   }
 }
 
+async function copyPlaySessionMemories(
+  sessionRoot: string,
+  stageRoot: string,
+): Promise<void> {
+  const memoriesRoot = join(sessionRoot, 'memories');
+  const allowedFiles = new Set(['player.yaml', 'director.yaml']);
+  let rootStats: Stats;
+  try {
+    rootStats = await lstat(memoriesRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error('Play Scene Memory root must be a real directory.');
+  }
+  const entries = await readdir(memoriesRoot, { withFileTypes: true });
+  const unsupported = entries.find((entry) => !allowedFiles.has(entry.name));
+  if (unsupported) {
+    throw new Error(
+      `Play Scene Memory directory contains an unsupported entry: ${unsupported.name}.`,
+    );
+  }
+  if (!entries.length) return;
+  const targetRoot = join(stageRoot, 'memories');
+  await mkdir(targetRoot, { recursive: true });
+  for (const entry of entries) {
+    const sourcePath = join(memoriesRoot, entry.name);
+    const fileStats = await lstat(sourcePath);
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      !fileStats.isFile() ||
+      fileStats.isSymbolicLink()
+    ) {
+      throw new Error(`Play Scene Memory must be a regular file: ${entry.name}.`);
+    }
+    if (fileStats.size > 32 * 1024 * 1024) {
+      throw new Error(`Play Scene Memory exceeds the size limit: ${entry.name}.`);
+    }
+    await copyFile(sourcePath, join(targetRoot, entry.name));
+  }
+}
+
+async function copyPlaySessionContextTraces(
+  sessionRoot: string,
+  stageRoot: string,
+): Promise<void> {
+  const tracesRoot = join(sessionRoot, PLAY_CONTEXT_TRACES_DIRECTORY);
+  let rootStats: Stats;
+  try {
+    rootStats = await lstat(tracesRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    throw new Error('Play context traces root must be a real directory.');
+  }
+  const entries = await readdir(tracesRoot, { withFileTypes: true });
+  const targetRoot = join(stageRoot, PLAY_CONTEXT_TRACES_DIRECTORY);
+  await mkdir(targetRoot, { recursive: true });
+  for (const entry of entries) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.context\.yaml$/u.test(entry.name)) {
+      throw new Error(
+        `Play context traces directory contains an unsupported entry: ${entry.name}.`,
+      );
+    }
+    const sourcePath = join(tracesRoot, entry.name);
+    const fileStats = await lstat(sourcePath);
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      !fileStats.isFile() ||
+      fileStats.isSymbolicLink()
+    ) {
+      throw new Error(`Play context trace must be a regular file: ${entry.name}.`);
+    }
+    if (fileStats.size > 4 * 1024 * 1024) {
+      throw new Error(`Play context trace exceeds the size limit: ${entry.name}.`);
+    }
+    const trace = normalizePlayTurnContextTrace(
+      parse(await readFile(sourcePath, 'utf-8')),
+    );
+    const artifactId = entry.name.slice(0, -'.context.yaml'.length);
+    if (
+      trace.sessionId !== basename(sessionRoot) ||
+      trace.artifactId !== artifactId
+    ) {
+      throw new Error(`Play context trace identity does not match: ${entry.name}.`);
+    }
+    await copyFile(sourcePath, join(targetRoot, entry.name));
+  }
+}
+
 function isDurablePlaySessionRecoveryPath(
   recoveryRoot: string,
   source: string,
@@ -2775,7 +2945,7 @@ function assertPlayTimeAdvanceMatchesAction(
   }
 }
 
-function materializePlayScheduledEvents(input: {
+export function materializePlayScheduledEvents(input: {
   session: PlaySession;
   settlement: PlayWorldRefereeSettlement;
   events: PlayWorldEvent[];

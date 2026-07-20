@@ -18,6 +18,11 @@ import type {
 
 const api = vi.hoisted(() => ({
   listPlaySessions: vi.fn(),
+  listPlaySessionSummaries: vi.fn(),
+  getPlaySession: vi.fn(),
+  getPlaySessionDetail: vi.fn(),
+  listPlayContextTraces: vi.fn(),
+  getPlaySourceDrift: vi.fn(),
   createPlaySession: vi.fn(),
   listPlayCheckpoints: vi.fn(),
   getActivePlayRehearsalAttempt: vi.fn(),
@@ -35,11 +40,13 @@ const api = vi.hoisted(() => ({
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
+import { installLegacyPlayReadModelMocks } from './support/playReadModelMock';
 
 describe('PlayWorkspace scene rehearsal integration', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.resetAllMocks();
+    installLegacyPlayReadModelMocks(api);
     api.listPlayCheckpoints.mockResolvedValue({ checkpoints: [] });
     api.getActivePlayRehearsalAttempt.mockResolvedValue({ attempt: null });
     api.getPlayOutcomeReport.mockRejectedValue(Object.assign(new Error('missing'), {
@@ -438,9 +445,9 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     const wrapper = mountWorkspace();
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Cancel attempt').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, 'Cancel').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Cancel attempt').trigger('click');
+    await button(wrapper, 'Cancel').trigger('click');
     await flushPromises();
     await button(wrapper, 'Confirm Cancel attempt').trigger('click');
     await vi.waitFor(() => expect(api.cancelPlayRehearsalAttempt).toHaveBeenCalledOnce());

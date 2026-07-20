@@ -44,9 +44,9 @@ describe('PlayDirectorControls', () => {
     wrapper.unmount();
   });
 
-  it('requires a separate zero-commit confirmation for Cancel attempt', async () => {
+  it('requires a separate zero-commit confirmation for Cancel', async () => {
     const wrapper = mountControls();
-    await button(wrapper, 'Cancel attempt').trigger('click');
+    await button(wrapper, 'Cancel').trigger('click');
     await flushPromises();
 
     expect(wrapper.emitted('cancel')).toBeUndefined();
@@ -57,13 +57,13 @@ describe('PlayDirectorControls', () => {
     await flushPromises();
 
     expect(wrapper.emitted('cancel')).toHaveLength(1);
-    expect(document.activeElement).toBe(button(wrapper, 'Cancel attempt').element);
+    expect(document.activeElement).toBe(button(wrapper, 'Cancel').element);
     wrapper.unmount();
   });
 
   it.each([
     ['Finish', 'Confirm Finish'],
-    ['Cancel attempt', 'Confirm Cancel attempt'],
+    ['Cancel', 'Confirm Cancel attempt'],
   ] as const)('returns focus to %s after an async mutation failure', async (action, confirmation) => {
     const wrapper = mountControls();
     await button(wrapper, action).trigger('click');

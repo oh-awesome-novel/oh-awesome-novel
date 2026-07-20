@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { PlaySession } from '../../composables/useWorkspaceApi';
+import type { PlaySessionSummary } from '../../composables/useWorkspaceApi';
 
 defineProps<{
-  sessions: PlaySession[];
+  sessions: readonly Readonly<PlaySessionSummary>[];
   selectedSessionId: string;
   loading: boolean;
   creating: boolean;
@@ -57,9 +57,13 @@ const emit = defineEmits<{
         @click="emit('selectSession', session.id)"
       >
         <span class="play-session-title">{{ session.title }}</span>
-        <span class="play-session-scene">{{ session.sceneStart }}</span>
+        <span class="play-session-scene">
+          {{ session.purpose === 'sceneRehearsal' ? 'Scene rehearsal' : 'Immersive journey' }}
+          · {{ session.startMode }}
+        </span>
         <span class="play-session-meta">
-          Turn {{ session.worldClock.turn }} · {{ session.transcript.length }} messages
+          Turn {{ session.worldClock.turn }} · {{ session.transcriptCount }} messages
+          · {{ session.eventCount }} events
         </span>
       </button>
       <p v-if="!loading && sessions.length === 0" class="play-empty-copy">

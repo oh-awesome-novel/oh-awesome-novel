@@ -8,6 +8,7 @@ import type {
   PlayRehearsalActorQueueItem,
   PlayRehearsalControlCapabilities,
   PlayRehearsalResultView,
+  PlaySceneMemoryView,
   PlayRehearsalStepView,
 } from '../../../apps/desktop-ui/src/components/play/rehearsal/types';
 
@@ -26,7 +27,9 @@ describe('PlayRehearsalWorkspace', () => {
     expect(wrapper.get('.play-rehearsal-step[data-status="committed"]').text()).toContain('committed');
     expect(wrapper.get('.play-rehearsal-inspector').text()).toContain('The train leaves at midnight.');
     expect(wrapper.text()).not.toContain('Hidden command from the mayor');
-    expect(wrapper.get('[role="status"]').text()).toBe('Draft prepared for Ivo.');
+    expect(wrapper.get('.play-rehearsal-workspace-announcement').text()).toBe(
+      'Draft prepared for Ivo.',
+    );
 
     await button(wrapper, 'Stop step').trigger('click');
     await button(wrapper, 'Accept').trigger('click');
@@ -88,6 +91,133 @@ describe('PlayRehearsalWorkspace', () => {
     expect(wrapper.text()).toContain('Revision 4 · turn-rehearsal-1');
     expect(wrapper.text()).toContain('Mara keeps the letter hidden.');
     expect(wrapper.find('.play-director-controls').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('opens each typed intervention panel from the seven Director controls', async () => {
+    const wrapper = mountWorkspace();
+    const controls = wrapper.get('.play-director-control-row');
+
+    expect(controls.findAll('button').map((control) => control.text())).toEqual([
+      'Accept',
+      'Modify',
+      'Retry',
+      'Insert actor',
+      'Grant knowledge',
+      'Finish',
+      'Cancel',
+    ]);
+
+    await button(wrapper, 'Modify').trigger('click');
+    expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
+      'Modify actor step',
+    );
+    await button(wrapper, 'Back').trigger('click');
+
+    await button(wrapper, 'Insert actor').trigger('click');
+    expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
+      'Insert actor',
+    );
+    await button(wrapper, 'Back').trigger('click');
+
+    await button(wrapper, 'Grant knowledge').trigger('click');
+    expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
+      'Grant participant knowledge',
+    );
+    wrapper.unmount();
+  });
+
+  it('shows superseded suffix and stagnation without changing the selected prefix', () => {
+    const wrapper = mountWorkspace({
+      attempt: {
+        id: 'attempt-1',
+        revision: 7,
+        status: 'prepared',
+        currentParticipantRef: 'ivo',
+        selectedStepRefs: ['step-mara-selected'],
+        selectedHeadRef: 'step-mara-selected',
+        supersededStepRefs: ['step-old-ivo', 'step-old-guard'],
+        stagnation: {
+          consecutiveNoMaterialSteps: 3,
+          threshold: 3,
+          warning: true,
+        },
+      },
+    });
+    const notices = wrapper.findAll('.play-rehearsal-workspace-notice');
+
+    expect(notices).toHaveLength(2);
+    expect(notices[0]!.text()).toContain('2 earlier step variant(s) are superseded');
+    expect(notices[0]!.text()).toContain('current selected prefix');
+    expect(notices[1]!.text()).toContain('3 consecutive steps had no material effect');
+    expect(notices[1]!.text()).toContain('without manufacturing conflict');
+    expect(wrapper.get('.play-rehearsal-step[data-status="selected"]').text()).toContain(
+      'Mara hides the letter.',
+    );
+    wrapper.unmount();
+  });
+
+  it('renders current and stale Scene Memory and forwards lens, refresh and rebuild', async () => {
+    const wrapper = mountWorkspace({ memory: currentMemory() });
+    const memory = wrapper.get('.play-scene-memory-panel');
+
+    expect(memory.text()).toContain('current clue retained for rehearsal');
+    expect(memory.text()).toContain('2 turn refs · 1 event refs');
+    expect(memory.find('.play-scene-memory-stale').exists()).toBe(false);
+
+    await memory.findAll('button').find((control) => control.text() === 'Player')!.trigger('click');
+    await memory.findAll('button').find((control) => control.text() === 'Refresh')!.trigger('click');
+    await memory.findAll('button').find((control) => control.text() === 'Rebuild')!.trigger('click');
+
+    expect(wrapper.emitted('updateLens')).toEqual([['player']]);
+    expect(wrapper.emitted('refreshMemory')).toHaveLength(1);
+    expect(wrapper.emitted('rebuildMemory')).toHaveLength(1);
+
+    await wrapper.setProps({
+      memory: {
+        ...currentMemory(),
+        status: 'stale',
+        staleReasons: ['selected path changed', 'source hash changed'],
+      },
+    });
+    expect(wrapper.get('.play-scene-memory-stale').text()).toContain(
+      'selected path changed, source hash changed',
+    );
+    wrapper.unmount();
+  });
+
+  it('scrubs player-unknown facts and grants from the Player inspector lens', async () => {
+    const wrapper = mountWorkspace({
+      lens: 'director',
+      perception: {
+        participantRef: 'ivo',
+        visibleFacts: ['The train leaves at midnight.', 'The mayor ordered the signal changed.'],
+        visibleFactVisibilities: ['playerVisible', 'playerUnknown'],
+        behaviorAnchors: ['Ivo never abandons an unfinished promise.'],
+        observedBlockLabels: [],
+        grantedKnowledge: [{
+          id: 'grant-visible',
+          summary: 'Mara carries the public timetable.',
+          provenanceLabel: 'Existing selected-branch evidence',
+          visibility: 'playerVisible',
+        }, {
+          id: 'grant-hidden',
+          summary: 'The stationmaster is working for the mayor.',
+          provenanceLabel: 'Author-provided Play fact',
+          visibility: 'playerUnknown',
+        }],
+      },
+    });
+
+    expect(wrapper.text()).toContain('The mayor ordered the signal changed.');
+    expect(wrapper.text()).toContain('The stationmaster is working for the mayor.');
+
+    await wrapper.setProps({ lens: 'player' });
+
+    expect(wrapper.text()).toContain('The train leaves at midnight.');
+    expect(wrapper.text()).toContain('Mara carries the public timetable.');
+    expect(wrapper.text()).not.toContain('The mayor ordered the signal changed.');
+    expect(wrapper.text()).not.toContain('The stationmaster is working for the mayor.');
     wrapper.unmount();
   });
 });
@@ -189,9 +319,29 @@ function fullCapabilities(): PlayRehearsalControlCapabilities {
     canGenerateStep: false,
     canStopStep: true,
     canAccept: true,
+    canModify: true,
     canRetry: true,
+    canInsertActor: true,
+    canGrantKnowledge: true,
     canFinish: true,
     canCancel: true,
+  };
+}
+
+function currentMemory(): PlaySceneMemoryView {
+  return {
+    id: 'memory-director-3',
+    lens: 'director',
+    status: 'current',
+    revision: 3,
+    builtAt: '2026-07-20T12:00:00.000Z',
+    staleReasons: [],
+    items: [{
+      id: 'memory-item-clue',
+      kind: 'knowledge',
+      summary: 'current clue retained for rehearsal',
+      provenanceLabel: '2 turn refs · 1 event refs · 1 evidence refs · 1 source refs',
+    }],
   };
 }
 

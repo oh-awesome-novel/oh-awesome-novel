@@ -261,9 +261,11 @@ export {
   createEmptyPlayKnowledgeState,
   isPlayKnowledgeStateVisibility,
   listPlayKnowledgeRevealCandidates,
+  listPlayParticipantKnowledgeGrants,
   normalizePlayKnowledgeChanges,
   normalizePlayKnowledgeState,
   projectPlayEventRevealRecord,
+  projectPlayKnowledgeRecord,
   readPlayKnowledgeState,
   resolvePlayKnowledgeEventProjection,
 } from './play-knowledge.js';
@@ -272,12 +274,15 @@ export type {
   AssertPlayKnowledgeHistoryInput,
   AssertPlayKnowledgeTransitionInput,
   PlayEventRevealRecord,
+  PlayGrantParticipantKnowledgeChange,
   PlayKnowledgeChange,
   PlayKnowledgePlayerProjection,
+  PlayKnowledgeRecord,
   PlayKnowledgeProjection,
   PlayKnowledgeRevealCandidate,
   PlayKnowledgeState,
   PlayRevealEventKnowledgeChange,
+  PlayParticipantKnowledgeGrantRecord,
 } from './play-knowledge.js';
 
 // Play Mode And Tavern-Compatible Import
@@ -298,6 +303,7 @@ export {
   evaluatePlaySessionDueEvents,
   formatPlayWorldRefereePrompt,
   listPlaySessionCheckpoints,
+  listPlaySessionSummaries,
   listPlaySessions,
   previewPlaySessionMigration,
   readPlaySessionFiles,
@@ -407,6 +413,71 @@ export type {
   PlaySessionMigrationPreview,
   WritePlaySessionFilesOptions,
 } from './play-session.js';
+export {
+  DEFAULT_PLAY_DETAIL_WINDOW_LIMIT,
+  MAX_PLAY_EVENT_PRESENTATION_STATE_IMPACTS,
+  MAX_PLAY_EVENT_PRESENTATION_TEXT_LENGTH,
+  MAX_PLAY_DETAIL_WINDOW_LIMIT,
+  projectPlaySessionSelectedDetail,
+  summarizePlaySession,
+} from './play-session-read-model.js';
+export type {
+  PlayCursorWindow,
+  PlayEventPresentationActionCause,
+  PlayEventPresentationAgendaCause,
+  PlayEventPresentationAuthorEvidence,
+  PlayEventPresentationAuthorReveal,
+  PlayEventPresentationCauses,
+  PlayEventPresentationEvidence,
+  PlayEventPresentationPressureCause,
+  PlayEventPresentationReveal,
+  PlayEventPresentationScheduledCause,
+  PlayEventPresentationSourceEventCause,
+  PlayEventPresentationStateImpact,
+  PlayEventPresentationTechnicalRefs,
+  PlaySelectedArtifactPresentation,
+  PlaySessionSelectedDetail,
+  PlaySessionSelectedSnapshot,
+  PlaySessionSummary,
+  ProjectPlaySessionSelectedDetailOptions,
+} from './play-session-read-model.js';
+export {
+  PLAY_CONTEXT_TRACE_SCHEMA_VERSION,
+  PLAY_CONTEXT_TRACE_SUFFIX,
+  PLAY_CONTEXT_TRACES_DIRECTORY,
+  createPlayTurnContextTrace,
+  listPlayContextTraces,
+  normalizePlayTurnContextTrace,
+  resolvePlayContextTracePath,
+} from './play-context-trace.js';
+export type {
+  CreatePlayTurnContextTraceInput,
+  PlayContextSourceOmissionReason,
+  PlayContextSourceOutcome,
+  PlayContextSourceTrace,
+  PlayContextWindowKind,
+  PlayContextWindowOmissionReason,
+  PlayContextWindowTrace,
+  PlayTurnContextTrace,
+} from './play-context-trace.js';
+export {
+  PLAY_SOURCE_DRIFT_RESOLUTION_METADATA_KEY,
+  PLAY_SOURCE_DRIFT_RESOLUTION_SCHEMA_VERSION,
+  createPlaySourceDriftStatus,
+  readPlaySourceDriftResolution,
+  resolvePlaySourceDriftDecision,
+} from './play-source-drift.js';
+export type {
+  PlaySourceDriftDecision,
+  PlaySourceDriftDecisionKind,
+  PlaySourceDriftOverall,
+  PlaySourceDriftResolution,
+  PlaySourceDriftSourceStatus,
+  PlaySourceDriftState,
+  PlaySourceDriftStatus,
+  ResolvePlaySourceDriftDecisionInput,
+  ResolvePlaySourceDriftDecisionResult,
+} from './play-source-drift.js';
 export {
   PLAY_OUTCOME_REPORT_MARKDOWN_FILE,
   PLAY_OUTCOME_REPORT_SCHEMA_VERSION,
@@ -528,6 +599,7 @@ export {
   createCharacterPerceptionPackage,
   createPlayParticipantRef,
   listForbiddenPlayKnowledgeEvidenceRefs,
+  listPlayRedirectConstraintRefs,
   normalizeCharacterPerceptionPackage,
   normalizeNarrativeBlock,
   normalizePlayCommittedSceneEvidence,
@@ -544,6 +616,8 @@ export type {
   PlayRehearsalParticipant,
   PlayRehearsalTurnEvidence,
   PlaySceneContract,
+  PlayParticipantKnowledgeEvidence,
+  PlayRehearsalOrderStrategy,
   PlaySceneKnowledgeEvidence,
   PlaySceneRehearsalSidecar,
   PlaySceneValue,
@@ -554,15 +628,23 @@ export {
   PlayTurnAttemptError,
   acceptPlayTurnAttemptStep,
   addPlayTurnAttemptStep,
+  applyPlayTurnAttemptRedirect,
   assertPlayTurnAttemptFinalizable,
   cancelPlayTurnAttempt,
   createPlayTurnAttempt,
+  classifyPlayStepMaterialEffect,
   findPlayAttemptMutationReceipt,
   fingerprintPlayAttemptRequest,
+  fingerprintPlayStepEffects,
   fingerprintPlayTurnAttemptStepOperation,
   markPlayTurnAttemptCommitted,
+  grantPlayTurnAttemptKnowledge,
+  insertPlayTurnAttemptActor,
+  listActivePlayParticipantKnowledgeGrants,
   normalizePlayTurnAttempt,
   preparePlayTurnAttemptRetry,
+  revisePlayTurnAttemptProjection,
+  schedulePlayRehearsalActorOrder,
 } from './play-turn-attempt.js';
 export type {
   CharacterStepDraft,
@@ -570,10 +652,42 @@ export type {
   PlayAttemptMutationInput,
   PlayAttemptMutationReceipt,
   PlayAttemptMutationResult,
+  PlayAttemptStagnation,
+  PlayDirectorIntervention,
+  PlayDirectorInterventionBase,
+  PlayDirectorInterventionMutationInput,
+  PlayDirectorKnowledgeGrant,
+  PlayRehearsalOrderStrategy as PlayTurnAttemptOrderStrategy,
+  PlayStepMaterialEffect,
   PlayTurnAttempt,
   PlayTurnAttemptErrorCode,
   PlayTurnAttemptStatus,
 } from './play-turn-attempt.js';
+export {
+  evaluatePlayRehearsalProvisionalOverlay,
+} from './play-rehearsal-overlay.js';
+export type {
+  PlayRehearsalOverlayEvaluation,
+} from './play-rehearsal-overlay.js';
+export {
+  createPlayParticipantKnowledgeEvidence,
+} from './play-rehearsal-knowledge.js';
+export {
+  PLAY_SCENE_MEMORIES_DIRECTORY,
+  PLAY_SCENE_MEMORY_SCHEMA_VERSION,
+  evaluatePlaySceneMemoryStatus,
+  normalizePlaySceneMemoryArtifact,
+  projectPlaySceneMemory,
+  readPlaySceneMemory,
+  rebuildPlaySceneMemory,
+  resolvePlaySceneMemoryPath,
+  writePlaySceneMemory,
+} from './play-scene-memory.js';
+export type {
+  PlaySceneMemoryArtifact,
+  PlaySceneMemoryStaleReason,
+  PlaySceneMemoryStatus,
+} from './play-scene-memory.js';
 export {
   PLAY_ATTEMPT_RECOVERY_DIRECTORY,
   PLAY_ATTEMPT_RECOVERY_FILE,

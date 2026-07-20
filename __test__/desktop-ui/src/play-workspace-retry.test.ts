@@ -14,6 +14,11 @@ import type {
 
 const api = vi.hoisted(() => ({
   listPlaySessions: vi.fn(),
+  listPlaySessionSummaries: vi.fn(),
+  getPlaySession: vi.fn(),
+  getPlaySessionDetail: vi.fn(),
+  listPlayContextTraces: vi.fn(),
+  getPlaySourceDrift: vi.fn(),
   listPlayCheckpoints: vi.fn(),
   retryPlayWorldRefereeTurn: vi.fn(),
   cancelPlayWorldRefereeTurn: vi.fn(),
@@ -23,11 +28,13 @@ const api = vi.hoisted(() => ({
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
+import { installLegacyPlayReadModelMocks } from './support/playReadModelMock';
 
 describe('PlayWorkspace Retry', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.resetAllMocks();
+    installLegacyPlayReadModelMocks(api);
     api.cancelPlayWorldRefereeTurn.mockResolvedValue({
       status: 'cancelled',
       committed: false,
@@ -130,6 +137,7 @@ describe('PlayWorkspace Retry', () => {
 
     await startRetry(wrapper);
     await streamStarted.promise;
+    api.listPlaySessions.mockResolvedValue({ sessions: [committedSession] });
     gate.resolve();
     await flushPromises();
     await flushPromises();
@@ -187,12 +195,14 @@ describe('PlayWorkspace Retry', () => {
       expect(refresh.element.disabled).toBe(false);
 
       statusAvailable = true;
-      const listCallsBeforeRefresh = api.listPlaySessions.mock.calls.length;
+      const listCallsBeforeRefresh = api.listPlaySessionSummaries.mock.calls.length;
       await refresh.trigger('click');
       await vi.runAllTimersAsync();
       await flushPromises();
 
-      expect(api.listPlaySessions).toHaveBeenCalledTimes(listCallsBeforeRefresh + 1);
+      expect(api.listPlaySessionSummaries).toHaveBeenCalledTimes(
+        listCallsBeforeRefresh + 1,
+      );
       expect(wrapper.find('.play-turn-indeterminate').exists()).toBe(false);
       expect(wrapper.get('.play-composer textarea').attributes('disabled')).toBeUndefined();
       wrapper.unmount();

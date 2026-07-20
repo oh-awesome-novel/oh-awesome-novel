@@ -16,6 +16,7 @@ export interface PlayActorNarrativeBlockRecord {
   visibility?: 'playerVisible' | 'rumor' | 'playerUnknown';
   projection: 'transcript' | 'directorOnly';
   eventRefs?: string[];
+  sourceRefs?: string[];
 }
 
 export interface PlayActorStepRecord {
@@ -25,6 +26,11 @@ export interface PlayActorStepRecord {
   intentSummary?: string;
   perceptionRef?: string;
   narrativeBlocks?: PlayActorNarrativeBlockRecord[];
+  queueIndex?: number;
+  effectFingerprint?: string;
+  materialEffect?:
+    | { kind: 'materialEffect' }
+    | { kind: 'noMaterialEffect'; reason: string };
   status: PlayActorStepStatus;
   variantOf?: string;
 }
@@ -43,10 +49,34 @@ export interface PlayRehearsalAttemptRecord {
   attemptRevision: number;
   status: PlayRehearsalAttemptRuntimeStatus;
   actorOrder: string[];
+  participantRefs?: string[];
+  orderStrategy?: 'directorFixed' | 'refereeDynamic' | 'hybrid';
   selectedStepRefs: string[];
   selectedHeadRef?: string;
   currentStepRef?: string;
   steps: PlayActorStepRecord[];
+  interventions?: Array<{
+    id: string;
+    kind: 'reviseProjection' | 'redirectStep' | 'insertActor' | 'grantKnowledge';
+    supersededStepRefs: string[];
+    participantRef?: string;
+    effectiveFromStepRef?: string;
+    effectiveFromQueueIndex?: number;
+    selectedPrefixRefs?: string[];
+    grant?:
+      | { kind: 'existingFact'; factRefs: string[] }
+      | {
+          kind: 'authorProvidedPlayFact';
+          summary: string;
+          visibility: 'playerVisible' | 'rumor' | 'playerUnknown';
+          providedAt: string;
+        };
+  }>;
+  stagnation?: {
+    consecutiveNoMaterialSteps: number;
+    threshold: number;
+    warning: boolean;
+  };
   mutationReceipts?: PlayRehearsalAttemptMutationReceipt[];
 }
 

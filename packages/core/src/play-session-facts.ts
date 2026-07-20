@@ -633,20 +633,54 @@ function validatePlayRehearsalEvidence(input: {
       }
       if (turnEvidence.steps.length !== sidecar.participants.length) {
         throw new Error(
-          `Play rehearsal evidence ${evidenceRef} does not cover the fixed actor queue.`,
+          `Play rehearsal evidence ${evidenceRef} does not cover the scene participants.`,
+        );
+      }
+      const evidenceParticipantRefs = turnEvidence.steps.map((step) =>
+        step.participantRef);
+      if (
+        new Set(evidenceParticipantRefs).size !== evidenceParticipantRefs.length ||
+        sidecar.participants.some((participant) =>
+          !evidenceParticipantRefs.includes(participant.participantRef))
+      ) {
+        throw new Error(
+          `Play rehearsal evidence ${evidenceRef} does not contain one step per participant.`,
+        );
+      }
+      const committedKnowledge = readPlayKnowledgeState(
+        artifact.playLocalStateSnapshot ?? {},
+      );
+      const unknownGrantParticipant = committedKnowledge.records.find((record) =>
+        record.kind === 'participantGrant' &&
+        !sidecar.participants.some((participant) =>
+          participant.participantRef === record.participantRef));
+      if (unknownGrantParticipant?.kind === 'participantGrant') {
+        throw new Error(
+          `Play participant knowledge grant ${unknownGrantParticipant.id} ` +
+          `references an unknown scene participant: ${unknownGrantParticipant.participantRef}.`,
         );
       }
       const stepSettlementEventRefs: string[] = [];
-      for (const [index, step] of turnEvidence.steps.entries()) {
-        const participant = sidecar.participants[index];
-        if (step.participantRef !== participant?.participantRef) {
-          throw new Error(
-            `Play rehearsal evidence ${evidenceRef} breaks fixed actor order.`,
-          );
-        }
+      for (const step of turnEvidence.steps) {
+        const participant = sidecar.participants.find((candidate) =>
+          candidate.participantRef === step.participantRef)!;
         const allowedEvidenceRefs = new Set(
           participant.initialKnowledgeEvidenceRefs,
         );
+        for (const record of committedKnowledge.records) {
+          if (
+            record.kind !== 'participantGrant' ||
+            record.participantRef !== participant.participantRef
+          ) continue;
+          allowedEvidenceRefs.add(derivePlayParticipantKnowledgeEvidenceId(
+            record.interventionRef,
+          ));
+          if (record.grant.kind === 'existingFact') {
+            for (const factRef of record.grant.factRefs) {
+              allowedEvidenceRefs.add(factRef);
+            }
+          }
+        }
         const forbiddenDecisionRef = step.decisionBasisRefs.find((ref) =>
           !allowedEvidenceRefs.has(ref));
         if (forbiddenDecisionRef) {
@@ -1997,6 +2031,13 @@ export function clonePlayLocalState(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
   return structuredClone(value);
+}
+
+function derivePlayParticipantKnowledgeEvidenceId(interventionRef: string): string {
+  const candidate = `participant-knowledge-${interventionRef}`;
+  return candidate.length <= 180
+    ? candidate
+    : `participant-knowledge-${interventionRef.slice(-150)}`;
 }
 
 export function mergePlayLocalState(

@@ -31,6 +31,8 @@ import {
   createPlayAdoptionSourceBase,
   createPlayWritingReferenceAttachment,
   createPlayNarrativeStreamFilter,
+  createPlaySourceDriftStatus,
+  createPlayTurnContextTrace,
   createPlaySceneRehearsalSessionDraft,
   createPlaySessionFromLaunchPackage,
   createPlaySessionDraft,
@@ -46,6 +48,8 @@ import {
   loadNovelCopilotSkill,
   loadWorkspaceList,
   listPlaySessions,
+  listPlaySessionSummaries,
+  listPlayContextTraces,
   listPlaySessionCheckpoints,
   listPlayWritingReferenceAttachments,
   listReferenceWorks,
@@ -55,6 +59,7 @@ import {
   normalizePlayWorldMomentum,
   preparePlayWorldSettlementRetry,
   projectPlayOutcomeReport,
+  projectPlaySessionSelectedDetail,
   projectPlayAdoptionCandidate,
   projectPlayAdoptionDraft,
   readProjectHealth,
@@ -75,6 +80,7 @@ import {
   selectReferenceContext,
   settlePlayWorldRefereeResponse,
   settlePlayWorldSettlementRetry,
+  resolvePlaySourceDriftDecision,
   setDefaultLlmProviderConfig,
   setReferenceEnabled,
   upsertLlmProviderConfig,
@@ -111,6 +117,7 @@ import type {
   PlayObservation,
   PlayRelativeTimeAdvance,
   PlaySession,
+  PlaySessionFileTransaction,
   PlaySimulationMode,
   PlayTranscriptTurn,
   PlayWorldMomentum,
@@ -118,6 +125,10 @@ import type {
   PlayOutcomeItem,
   PlayOutcomeReport,
   PlayWritingReferenceAttachment,
+  PlayContextSourceTrace,
+  PlaySourceDriftDecision,
+  PlaySourceDriftSourceStatus,
+  PlaySourceDriftStatus,
   ProjectHealth,
   ReferenceAllowedUsage,
   ReferenceRights,
@@ -181,6 +192,8 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
+const PLAY_CONTEXT_TRANSCRIPT_LIMIT = 20;
+const PLAY_CONTEXT_EVENT_LIMIT = 12;
 
 class InvalidJsonBodyError extends Error {}
 
@@ -408,6 +421,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.get('/api/workspace/play-sessions', (context) =>
     handleListPlaySessions(options, state, context));
+  app.get('/api/workspace/play-session-summaries', (context) =>
+    handleListPlaySessionSummaries(options, state, context));
   app.post('/api/workspace/play-sessions', (context) =>
     handleCreatePlaySession(options, state, context));
   app.post('/api/workspace/play-sessions/:id/attempts', (context) =>
@@ -419,6 +434,18 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/play-sessions/:id/attempts/active', (context) =>
     handlePlayRehearsalJsonRequest(context, () =>
       playRehearsal.getActiveAttempt(context.req.param('id') ?? '')));
+  app.post('/api/workspace/play-sessions/:id/memories/rebuild', (context) =>
+    handlePlayRehearsalJsonRequest(context, async () =>
+      playRehearsal.rebuildSceneMemory(
+        context.req.param('id') ?? '',
+        await readJsonBody(context),
+      )));
+  app.get('/api/workspace/play-sessions/:id/memories/:lens', (context) =>
+    handlePlayRehearsalJsonRequest(context, () =>
+      playRehearsal.getSceneMemory(
+        context.req.param('id') ?? '',
+        context.req.param('lens') ?? '',
+      )));
   app.get('/api/workspace/play-sessions/:id/attempts/:attemptId', (context) =>
     handlePlayRehearsalJsonRequest(context, () =>
       playRehearsal.getAttempt(
@@ -497,6 +524,34 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   );
   app.get('/api/workspace/play-sessions/:id', (context) =>
     handleReadPlaySession(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace/play-sessions/:id/detail', (context) =>
+    handleReadPlaySessionDetail(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/play-sessions/:id/context-traces', (context) =>
+    handleListPlayContextTraces(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/play-sessions/:id/source-drift', (context) =>
+    handleGetPlaySourceDrift(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/play-sessions/:id/source-drift/decisions', (context) =>
+    handleDecidePlaySourceDrift(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
   app.get('/api/workspace/play-sessions/:id/checkpoints', (context) =>
     handleListPlaySessionCheckpoints(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/checkpoints/:checkpointId/restore', (context) =>
@@ -1503,6 +1558,20 @@ async function handleListPlaySessions(
   return jsonResponse(context, 200, { sessions: await listPlaySessions(workspaceRoot) });
 }
 
+async function handleListPlaySessionSummaries(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (hasActivePlayMutation(state, workspaceRoot)) {
+    return jsonResponse(context, 409, { error: 'A Play session is being modified.' });
+  }
+  return jsonResponse(context, 200, {
+    summaries: await listPlaySessionSummaries(workspaceRoot),
+  });
+}
+
 async function handlePreviewPlayLaunchPackage(
   options: NovelBackendOptions,
   state: BackendState,
@@ -1798,6 +1867,234 @@ async function handleReadPlaySession(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function handleReadPlaySessionDetail(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  const query = readPlaySessionDetailQuery(context.req.url);
+  if ('error' in query) {
+    return jsonResponse(context, 400, { error: query.error });
+  }
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    return jsonResponse(context, 200, {
+      detail: projectPlaySessionSelectedDetail(session, query.value),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? 404
+      : message.includes('cursor') || message.includes('window limit')
+        ? 400
+        : 422;
+    return jsonResponse(context, status, { error: message });
+  }
+}
+
+async function handleListPlayContextTraces(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  const query = readSingleIntegerQuery(context.req.url, 'limit', 1, 100, 20);
+  if ('error' in query) return jsonResponse(context, 400, { error: query.error });
+  try {
+    await readPlaySessionFiles(workspaceRoot, id);
+    return jsonResponse(context, 200, {
+      traces: await listPlayContextTraces(workspaceRoot, id, {
+        limit: query.value,
+      }),
+    });
+  } catch (error) {
+    return jsonResponse(
+      context,
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422,
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+  }
+}
+
+async function handleGetPlaySourceDrift(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    return jsonResponse(context, 200, {
+      status: await inspectPlaySourceDriftStatus(workspaceRoot, session),
+    });
+  } catch (error) {
+    return jsonResponse(
+      context,
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422,
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+  }
+}
+
+async function handleDecidePlaySourceDrift(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const decision = readPlaySourceDriftDecision(body);
+  if ('error' in decision) {
+    return jsonResponse(context, 400, { error: decision.error });
+  }
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(
+    state,
+    workspaceRoot,
+    id,
+    context,
+  );
+  if (rehearsalConflict) return rehearsalConflict;
+  const sourceLockKey = createPlayTurnLockKey(workspaceRoot, id);
+  const forkLockKey = decision.value.kind === 'fork'
+    ? createPlayTurnLockKey(workspaceRoot, decision.value.newSessionId)
+    : undefined;
+  if (
+    state.activePlayTurns.has(sourceLockKey) ||
+    (forkLockKey && state.activePlayTurns.has(forkLockKey))
+  ) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(sourceLockKey);
+  if (forkLockKey) state.activePlayTurns.add(forkLockKey);
+  try {
+    const resolveAndCommit = async (
+      session: PlaySession,
+      write: (next: PlaySession) => Promise<unknown>,
+    ) => {
+      const status = await inspectPlaySourceDriftStatus(workspaceRoot, session);
+      const result = resolvePlaySourceDriftDecision({
+        session,
+        status,
+        decision: decision.value,
+      });
+      const revalidatedStatus = await inspectPlaySourceDriftStatus(
+        workspaceRoot,
+        session,
+      );
+      if (!isDeepStrictEqual(revalidatedStatus.sources, status.sources)) {
+        throw new PlaySessionWriteConflictError(
+          'Play canonical sources changed during the drift decision.',
+        );
+      }
+      await write(result.session);
+      return {
+        result,
+        nextStatus: await inspectPlaySourceDriftStatus(
+          workspaceRoot,
+          result.session,
+        ),
+      };
+    };
+    const committed = decision.value.kind === 'fork'
+      ? await withOrderedPlaySessionFileTransactions(
+          workspaceRoot,
+          id,
+          decision.value.newSessionId,
+          async (sourceTransaction, targetTransaction) => {
+            const session = await sourceTransaction.read();
+            return resolveAndCommit(
+              session,
+              (next) => targetTransaction.write(next, { expectedAbsent: true }),
+            );
+          },
+        )
+      : await withPlaySessionFileTransaction(
+          workspaceRoot,
+          id,
+          async (transaction) => {
+            const session = await transaction.read();
+            return resolveAndCommit(
+              session,
+              (next) => transaction.write(next, {
+                expectedCurrentSession: session,
+              }),
+            );
+          },
+        );
+    const { result, nextStatus } = committed;
+    return jsonResponse(context, result.createdSessionId ? 201 : 200, {
+      session: result.session,
+      resolution: result.resolution,
+      status: nextStatus,
+      sourceSessionId: result.sourceSessionId,
+      ...(result.createdSessionId
+        ? { createdSessionId: result.createdSessionId }
+        : {}),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof PlaySessionWriteConflictError ||
+        message.includes('revision conflict') ||
+        message.includes('already exists')
+      ? 409
+      : (error as NodeJS.ErrnoException).code === 'ENOENT'
+        ? 404
+        : 422;
+    return jsonResponse(context, status, { error: message });
+  } finally {
+    state.activePlayTurns.delete(sourceLockKey);
+    if (forkLockKey) state.activePlayTurns.delete(forkLockKey);
+  }
+}
+
+async function withOrderedPlaySessionFileTransactions<T>(
+  workspaceRoot: string,
+  sourceSessionId: string,
+  targetSessionId: string,
+  operation: (
+    sourceTransaction: PlaySessionFileTransaction,
+    targetTransaction: PlaySessionFileTransaction,
+  ) => Promise<T>,
+): Promise<T> {
+  if (sourceSessionId === targetSessionId) {
+    return withPlaySessionFileTransaction(
+      workspaceRoot,
+      sourceSessionId,
+      (transaction) => operation(transaction, transaction),
+    );
+  }
+
+  const sourceFirst = sourceSessionId < targetSessionId;
+  const firstSessionId = sourceFirst ? sourceSessionId : targetSessionId;
+  const secondSessionId = sourceFirst ? targetSessionId : sourceSessionId;
+  return withPlaySessionFileTransaction(
+    workspaceRoot,
+    firstSessionId,
+    (firstTransaction) => withPlaySessionFileTransaction(
+      workspaceRoot,
+      secondSessionId,
+      (secondTransaction) => operation(
+        sourceFirst ? firstTransaction : secondTransaction,
+        sourceFirst ? secondTransaction : firstTransaction,
+      ),
+    ),
+  );
 }
 
 async function handleListPlaySessionCheckpoints(
@@ -2859,6 +3156,13 @@ function createPlayWorldRefereeTurnStreamResponse(
           );
           emit('play.context.ready', {
             activatedSourceCount: turnSession.activatedSources.length,
+            selectedSourceCount: activatedSourceContext.sources.filter(
+              (source) => source.outcome === 'selected',
+            ).length,
+            omittedSourceCount: activatedSourceContext.sources.filter(
+              (source) => source.outcome === 'omitted',
+            ).length,
+            sourceDrift: activatedSourceContext.driftStatus.overall,
           });
 
           const request = [
@@ -2867,7 +3171,9 @@ function createPlayWorldRefereeTurnStreamResponse(
               userText,
               ...(timeAdvance ? { timeAdvance } : {}),
             }),
-            ...(activatedSourceContext ? ['', activatedSourceContext] : []),
+            ...(activatedSourceContext.content
+              ? ['', activatedSourceContext.content]
+              : []),
             '',
             `Action kind: ${actionKind}`,
             `User turn: ${userText}`,
@@ -2904,6 +3210,25 @@ function createPlayWorldRefereeTurnStreamResponse(
 
           run.status = 'validating';
           const next = execution.settle(refereeText);
+          const committedArtifactId = next.selectedTurnIds.at(-1);
+          if (committedArtifactId !== execution.expectedArtifactId) {
+            throw new Error(
+              `Play turn produced unexpected artifact: ${String(committedArtifactId)}.`,
+            );
+          }
+          const committedArtifact = next.turnArtifacts.find((artifact) =>
+            artifact.id === committedArtifactId);
+          const contextTrace = createPlayTurnContextTrace({
+            session: turnSession,
+            artifactId: execution.expectedArtifactId,
+            sessionRevision: next.revision,
+            ...(committedArtifact?.committedAt
+              ? { createdAt: committedArtifact.committedAt }
+              : {}),
+            transcriptLimit: PLAY_CONTEXT_TRANSCRIPT_LIMIT,
+            eventLimit: PLAY_CONTEXT_EVENT_LIMIT,
+            sources: activatedSourceContext.sources,
+          });
 
           assertPlayTurnNotCancelled(run);
           run.status = 'prepared';
@@ -2923,7 +3248,10 @@ function createPlayWorldRefereeTurnStreamResponse(
           }
           assertPlayTurnNotCancelled(run);
           run.status = 'committing';
-          await writePlaySessionFiles(workspaceRoot, next);
+          await writePlaySessionFiles(workspaceRoot, next, {
+            expectedCurrentSession: authoritativeSession,
+            contextTrace,
+          });
 
           run.status = 'committed';
           run.committedSession = next;
@@ -3304,7 +3632,7 @@ async function handlePlayWorldRefereeTurn(
         userText,
         ...(timeAdvance ? { timeAdvance } : {}),
       }),
-      ...(activatedSourceContext ? ['', activatedSourceContext] : []),
+      ...(activatedSourceContext.content ? ['', activatedSourceContext.content] : []),
       '',
       `Action kind: ${actionKind}`,
       `User turn: ${userText}`,
@@ -3362,7 +3690,25 @@ async function handlePlayWorldRefereeTurn(
       });
     }
 
-    await writePlaySessionFiles(workspaceRoot, next);
+    const artifactId = next.selectedTurnIds.at(-1);
+    if (!artifactId) {
+      throw new Error('Play turn did not produce a selected artifact.');
+    }
+    const artifact = next.turnArtifacts.find((candidate) =>
+      candidate.id === artifactId);
+    const contextTrace = createPlayTurnContextTrace({
+      session,
+      artifactId,
+      sessionRevision: next.revision,
+      ...(artifact?.committedAt ? { createdAt: artifact.committedAt } : {}),
+      transcriptLimit: PLAY_CONTEXT_TRANSCRIPT_LIMIT,
+      eventLimit: PLAY_CONTEXT_EVENT_LIMIT,
+      sources: activatedSourceContext.sources,
+    });
+    await writePlaySessionFiles(workspaceRoot, next, {
+      expectedCurrentSession: session,
+      contextTrace,
+    });
     const assistantContent = next.transcript.at(-1)?.content ?? '';
 
     return jsonResponse(context, 200, {
@@ -3383,19 +3729,98 @@ async function handlePlayWorldRefereeTurn(
   }
 }
 
+async function inspectPlaySourceDriftStatus(
+  workspaceRoot: string,
+  session: PlaySession,
+): Promise<PlaySourceDriftStatus> {
+  const sources = await Promise.all(session.activatedSources.map(async (
+    source,
+  ): Promise<PlaySourceDriftSourceStatus> => {
+    const base = {
+      sourceId: source.sourceId,
+      ...(source.path ? { path: source.path } : {}),
+      ...(source.contentHash
+        ? { expectedContentHash: source.contentHash }
+        : {}),
+    };
+    // Legacy best-effort activated sources have no frozen hash evidence. They
+    // remain usable, but cannot claim canonical drift detection.
+    if (!source.contentHash) {
+      return { ...base, state: 'current' };
+    }
+    if (!source.path) {
+      return { ...base, state: 'invalid' };
+    }
+    try {
+      const filePath = await resolveWorkspaceRealFile(workspaceRoot, source.path);
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile() || fileStat.size > MAX_PLAY_LAUNCH_SOURCE_BYTES) {
+        return { ...base, state: 'invalid' };
+      }
+      const bytes = await readFile(filePath);
+      if (bytes.byteLength > MAX_PLAY_LAUNCH_SOURCE_BYTES) {
+        return { ...base, state: 'invalid' };
+      }
+      const actualContentHash = createHash('sha256').update(bytes).digest('hex');
+      return {
+        ...base,
+        actualContentHash,
+        state: actualContentHash === source.contentHash ? 'current' : 'changed',
+      };
+    } catch (error) {
+      return {
+        ...base,
+        state: (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? 'missing'
+          : 'invalid',
+      };
+    }
+  }));
+  return createPlaySourceDriftStatus(session, sources);
+}
+
 async function loadPlayActivatedSourceContext(
   workspaceRoot: string,
   session: PlaySession,
-): Promise<string> {
+): Promise<{
+  content: string;
+  sources: PlayContextSourceTrace[];
+  driftStatus: PlaySourceDriftStatus;
+}> {
   const blocks: string[] = [];
+  const sourceTraces: PlayContextSourceTrace[] = [];
   const diagnostics: PlayLaunchDiagnostic[] = [];
   const guided = getPlaySessionStartMode(session) === 'guided';
   let omittedValidatedSourceCount = 0;
+  const driftStatus = await inspectPlaySourceDriftStatus(workspaceRoot, session);
+  const driftById = new Map(driftStatus.sources.map((source) => [
+    source.sourceId,
+    source,
+  ]));
+  const explicitlyExcluded = driftStatus.activeResolution?.kind ===
+      'continueFrozen'
+    ? new Set(driftStatus.activeResolution.excludedSourceIds)
+    : new Set<string>();
 
-  const selectedSources = session.activatedSources
-    .filter((item) => item.path || item.contentHash);
+  const selectedSources = session.activatedSources;
   for (const [index, source] of selectedSources.entries()) {
     const sourceBacked = guided || source.contentHash !== undefined;
+    const drift = driftById.get(source.sourceId)!;
+    const traceBase = {
+      sourceId: source.sourceId,
+      ...(source.path ? { path: source.path } : {}),
+      ...(source.role ? { role: source.role } : {}),
+      trust: source.trust,
+      budgetLayer: source.budgetLayer,
+      semanticBoundary: source.semanticBoundary,
+      ...(source.contentHash
+        ? { expectedContentHash: source.contentHash }
+        : {}),
+      ...(drift.actualContentHash
+        ? { actualContentHash: drift.actualContentHash }
+        : {}),
+      driftState: drift.state,
+    } satisfies Omit<PlayContextSourceTrace, 'outcome'>;
     const diagnostic = (
       code: PlayLaunchDiagnostic['code'],
       message: string,
@@ -3414,6 +3839,41 @@ async function loadPlayActivatedSourceContext(
         ...hashes,
       });
     };
+    if (drift.state !== 'current' && explicitlyExcluded.has(source.sourceId)) {
+      sourceTraces.push({
+        ...traceBase,
+        outcome: 'omitted',
+        omissionReason: drift.state === 'changed'
+          ? 'canonicalDrift'
+          : drift.state,
+      });
+      continue;
+    }
+    // An inspector-level `invalid` is deliberately coarse: it can represent
+    // a directory, an unsafe path, unreadable bytes, or a size violation. Let
+    // the detailed source loader preserve the existing typed launch
+    // diagnostic (for example sourceTooLarge or binarySource). Changed and
+    // missing sources have already been classified precisely and must not be
+    // read into context.
+    if (drift.state === 'changed' || drift.state === 'missing') {
+      diagnostic(
+        drift.state === 'changed'
+          ? 'staleSource'
+          : 'missingSource',
+        drift.state === 'changed'
+          ? `Play source changed after its session snapshot: ${source.path ?? source.sourceId}`
+          : `Play source is missing: ${source.path ?? source.sourceId}`,
+        {
+          ...(source.contentHash
+            ? { expectedContentHash: source.contentHash }
+            : {}),
+          ...(drift.actualContentHash
+            ? { actualContentHash: drift.actualContentHash }
+            : {}),
+        },
+      );
+      continue;
+    }
     try {
       const path = source.path?.trim();
       if (!path) {
@@ -3422,6 +3882,13 @@ async function loadPlayActivatedSourceContext(
             'invalidSource',
             `Guided Play source ${source.sourceId} no longer has a readable path.`,
           );
+        }
+        if (!sourceBacked) {
+          sourceTraces.push({
+            ...traceBase,
+            outcome: 'omitted',
+            omissionReason: 'invalid',
+          });
         }
         continue;
       }
@@ -3438,6 +3905,12 @@ async function loadPlayActivatedSourceContext(
       if (!fileStat.isFile()) {
         if (sourceBacked) {
           diagnostic('invalidSource', `Guided Play source is no longer a file: ${path}`);
+        } else {
+          sourceTraces.push({
+            ...traceBase,
+            outcome: 'omitted',
+            omissionReason: 'invalid',
+          });
         }
         continue;
       }
@@ -3485,20 +3958,37 @@ async function loadPlayActivatedSourceContext(
       if (!content) {
         if (sourceBacked) {
           diagnostic('invalidSource', `Guided Play source is no longer readable text: ${path}`);
+        } else {
+          sourceTraces.push({
+            ...traceBase,
+            outcome: 'omitted',
+            omissionReason: 'empty',
+          });
         }
         continue;
       }
 
       if (blocks.length < 8) {
+        const excerpt = content.slice(0, 8_000);
         blocks.push([
           `## ${source.sourceId}`,
           `Path: ${path}`,
           `Trust: ${source.trust}`,
           '',
-          content.slice(0, 8_000),
+          excerpt,
         ].join('\n'));
+        sourceTraces.push({
+          ...traceBase,
+          outcome: 'selected',
+          selectedCharacterCount: excerpt.length,
+        });
       } else {
         omittedValidatedSourceCount += 1;
+        sourceTraces.push({
+          ...traceBase,
+          outcome: 'omitted',
+          omissionReason: 'sourceCountLimit',
+        });
       }
     } catch (error) {
       if (sourceBacked) {
@@ -3511,6 +4001,15 @@ async function loadPlayActivatedSourceContext(
             : `Guided Play source is unavailable or unsafe: ${source.path ?? source.sourceId}`,
         );
       }
+      if (!sourceBacked) {
+        sourceTraces.push({
+          ...traceBase,
+          outcome: 'omitted',
+          omissionReason: (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? 'missing'
+            : 'unsafe',
+        });
+      }
       // A legacy unavailable or unsafe activated source remains best-effort.
     }
   }
@@ -3522,7 +4021,7 @@ async function loadPlayActivatedSourceContext(
     );
   }
 
-  return blocks.length
+  const content = blocks.length
     ? [
         '# Activated Source Contents',
         '',
@@ -3534,6 +4033,7 @@ async function loadPlayActivatedSourceContext(
         ...blocks,
       ].join('\n\n')
     : '';
+  return { content, sources: sourceTraces, driftStatus };
 }
 
 async function handleCreatePlayAdoptionPreview(
@@ -5324,6 +5824,117 @@ function readPlayBaseRevision(value: Record<string, unknown>): {
     return { error: 'baseRevision must be a non-negative integer.' };
   }
   return { value: baseRevision };
+}
+
+function readPlaySessionDetailQuery(url: string): {
+  value: {
+    limit?: number;
+    transcriptCursor?: string;
+    eventCursor?: string;
+  };
+} | { error: string } {
+  const params = new URL(url).searchParams;
+  const allowed = new Set(['limit', 'transcriptCursor', 'eventCursor']);
+  for (const key of params.keys()) {
+    if (!allowed.has(key)) {
+      return { error: `Unknown Play detail query parameter: ${key}.` };
+    }
+    if (params.getAll(key).length !== 1) {
+      return { error: `Play detail query parameter must not repeat: ${key}.` };
+    }
+  }
+  const rawLimit = params.get('limit');
+  const limit = rawLimit === null ? undefined : Number(rawLimit);
+  if (
+    limit !== undefined &&
+    (!/^\d+$/u.test(rawLimit ?? '') || !Number.isSafeInteger(limit) || limit < 1 || limit > 200)
+  ) {
+    return { error: 'Play detail limit must be an integer between 1 and 200.' };
+  }
+  const transcriptCursor = params.get('transcriptCursor') ?? undefined;
+  const eventCursor = params.get('eventCursor') ?? undefined;
+  if (transcriptCursor === '' || eventCursor === '') {
+    return { error: 'Play detail cursors must not be empty.' };
+  }
+  return {
+    value: {
+      ...(limit === undefined ? {} : { limit }),
+      ...(transcriptCursor ? { transcriptCursor } : {}),
+      ...(eventCursor ? { eventCursor } : {}),
+    },
+  };
+}
+
+function readSingleIntegerQuery(
+  url: string,
+  key: string,
+  minimum: number,
+  maximum: number,
+  defaultValue: number,
+): { value: number } | { error: string } {
+  const params = new URL(url).searchParams;
+  if ([...params.keys()].some((candidate) => candidate !== key)) {
+    return { error: `Only the ${key} query parameter is supported.` };
+  }
+  if (params.getAll(key).length > 1) {
+    return { error: `${key} query parameter must not repeat.` };
+  }
+  const raw = params.get(key);
+  if (raw === null) return { value: defaultValue };
+  const value = Number(raw);
+  if (
+    !/^\d+$/u.test(raw) ||
+    !Number.isSafeInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    return { error: `${key} must be an integer between ${minimum} and ${maximum}.` };
+  }
+  return { value };
+}
+
+function readPlaySourceDriftDecision(value: Record<string, unknown>): {
+  value: PlaySourceDriftDecision;
+} | { error: string } {
+  const kind = value.kind;
+  if (kind !== 'continueFrozen' && kind !== 'reassemble' && kind !== 'fork') {
+    return { error: 'Play source drift decision kind is invalid.' };
+  }
+  const allowed = kind === 'fork'
+    ? ['kind', 'baseRevision', 'newSessionId', 'title']
+    : ['kind', 'baseRevision'];
+  if (!hasOnlyJsonFields(value, allowed)) {
+    return { error: 'Play source drift decision contains unknown fields.' };
+  }
+  const revision = readPlayBaseRevision(value);
+  if (revision.error || revision.value === undefined) {
+    return { error: revision.error ?? 'baseRevision is required.' };
+  }
+  if (kind !== 'fork') {
+    return { value: { kind, baseRevision: revision.value } };
+  }
+  if (!isSafePlayFactId(value.newSessionId)) {
+    return { error: 'Play source drift fork requires a safe newSessionId.' };
+  }
+  if (
+    value.title !== undefined &&
+    (
+      typeof value.title !== 'string' ||
+      value.title !== value.title.trim() ||
+      value.title.length < 1 ||
+      value.title.length > 160
+    )
+  ) {
+    return { error: 'Play source drift fork title is invalid.' };
+  }
+  return {
+    value: {
+      kind: 'fork',
+      baseRevision: revision.value,
+      newSessionId: value.newSessionId,
+      ...(typeof value.title === 'string' ? { title: value.title } : {}),
+    },
+  };
 }
 
 function readPlayOutcomeRequest(value: Record<string, unknown>): {

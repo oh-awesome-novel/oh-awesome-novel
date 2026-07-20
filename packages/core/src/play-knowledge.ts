@@ -32,9 +32,31 @@ export interface PlayEventRevealRecord {
   canonical: false;
 }
 
+export interface PlayParticipantKnowledgeGrantRecord {
+  id: string;
+  kind: 'participantGrant';
+  participantRef: string;
+  effectiveFromStepRef: string;
+  interventionRef: string;
+  grant:
+    | { kind: 'existingFact'; factRefs: string[] }
+    | {
+        kind: 'authorProvidedPlayFact';
+        summary: string;
+        visibility: PlayEventVisibility;
+        providedAt: string;
+      };
+  grantedAtTurnId: string;
+  canonical: false;
+}
+
+export type PlayKnowledgeRecord =
+  | PlayEventRevealRecord
+  | PlayParticipantKnowledgeGrantRecord;
+
 export interface PlayKnowledgeState {
   schemaVersion: typeof PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION;
-  records: PlayEventRevealRecord[];
+  records: PlayKnowledgeRecord[];
 }
 
 export interface PlayRevealEventKnowledgeChange {
@@ -43,7 +65,17 @@ export interface PlayRevealEventKnowledgeChange {
   playerProjection: 'rumor' | 'playerVisible';
 }
 
-export type PlayKnowledgeChange = PlayRevealEventKnowledgeChange;
+export interface PlayGrantParticipantKnowledgeChange {
+  type: 'grantParticipantKnowledge';
+  participantRef: string;
+  effectiveFromStepRef: string;
+  interventionRef: string;
+  grant: PlayParticipantKnowledgeGrantRecord['grant'];
+}
+
+export type PlayKnowledgeChange =
+  | PlayRevealEventKnowledgeChange
+  | PlayGrantParticipantKnowledgeChange;
 
 export interface PlayKnowledgeRevealCandidate {
   subjectEventId: string;
@@ -67,7 +99,12 @@ export type PlayKnowledgeProjection =
     }
   | {
       lens: 'author';
-      record: PlayEventRevealRecord;
+      record: PlayKnowledgeRecord;
+    }
+  | {
+      lens: 'player';
+      kind: 'participantGrant';
+      visible: false;
     };
 
 export interface ApplyPlayKnowledgeChangesInput {
@@ -121,7 +158,7 @@ export function normalizePlayKnowledgeState(value: unknown): PlayKnowledgeState 
     );
   }
 
-  const records = value.records.map(normalizePlayEventRevealRecord);
+  const records = value.records.map(normalizePlayKnowledgeRecord);
   const recordIds = new Set<string>();
   const revealingEventIds = new Set<string>();
   const projections = new Map<string, PlayKnowledgePlayerProjection>();
@@ -130,6 +167,9 @@ export function normalizePlayKnowledgeState(value: unknown): PlayKnowledgeState 
       throw new Error(`Play knowledge state contains duplicate record id: ${record.id}.`);
     }
     recordIds.add(record.id);
+    if (record.kind === 'participantGrant') {
+      continue;
+    }
     if (revealingEventIds.has(record.revealedByEventId)) {
       throw new Error(
         `Play knowledge state reuses revealing event: ${record.revealedByEventId}.`,
@@ -183,7 +223,17 @@ export function normalizePlayKnowledgeChanges(
 
   const changes = value.map(normalizePlayKnowledgeChange);
   const changedSubjectIds = new Set<string>();
+  const interventionRefs = new Set<string>();
   for (const change of changes) {
+    if (change.type === 'grantParticipantKnowledge') {
+      if (interventionRefs.has(change.interventionRef)) {
+        throw new Error(
+          `Play settlement repeats participant knowledge intervention: ${change.interventionRef}.`,
+        );
+      }
+      interventionRefs.add(change.interventionRef);
+      continue;
+    }
     if (changedSubjectIds.has(change.subjectEventId)) {
       throw new Error(
         `Play settlement changes knowledge for the same event more than once: ` +
@@ -205,7 +255,8 @@ export function resolvePlayKnowledgeEventProjection(
   );
   const state = normalizePlayKnowledgeState(stateValue);
   return state.records.reduce<PlayKnowledgePlayerProjection>(
-    (projection, record) => record.subjectEventId === safeSubjectEventId
+    (projection, record) => record.kind === 'eventReveal' &&
+      record.subjectEventId === safeSubjectEventId
       ? record.playerProjection
       : projection,
     'playerUnknown',
@@ -289,9 +340,22 @@ export function applyPlayKnowledgeChanges(
     }
   }
 
-  const records = previous.records.map(clonePlayEventRevealRecord);
+  const records = previous.records.map(clonePlayKnowledgeRecord);
   const usedRevealingEventIds = new Set<string>();
   for (const [changeIndex, change] of changes.entries()) {
+    if (change.type === 'grantParticipantKnowledge') {
+      records.push({
+        id: createPlayKnowledgeRecordId(input.revision, changeIndex + 1),
+        kind: 'participantGrant',
+        participantRef: change.participantRef,
+        effectiveFromStepRef: change.effectiveFromStepRef,
+        interventionRef: change.interventionRef,
+        grant: structuredClone(change.grant),
+        grantedAtTurnId: refereeTurnId,
+        canonical: false,
+      });
+      continue;
+    }
     const subject = ancestorEventsById.get(change.subjectEventId);
     if (!subject) {
       throw new Error(
@@ -409,7 +473,7 @@ export function assertPlayKnowledgeTransition(
   }
   const usedSubjectIds = new Set<string>();
   const usedRevealingEventIds = new Set<string>();
-  const replayRecords = previous.records.map(clonePlayEventRevealRecord);
+  const replayRecords = previous.records.map(clonePlayKnowledgeRecord);
 
   for (const [index, record] of appended.entries()) {
     const expectedRecordId = createPlayKnowledgeRecordId(input.revision, index + 1);
@@ -418,6 +482,15 @@ export function assertPlayKnowledgeTransition(
         `Play knowledge record ${record.id} is not host-assigned for revision ` +
         `${input.revision}.`,
       );
+    }
+    if (record.kind === 'participantGrant') {
+      if (record.grantedAtTurnId !== refereeTurnId) {
+        throw new Error(
+          `Play participant knowledge record ${record.id} does not belong to its referee turn.`,
+        );
+      }
+      replayRecords.push(record);
+      continue;
     }
     if (record.revealedAtTurnId !== refereeTurnId) {
       throw new Error(
@@ -495,6 +568,27 @@ export function assertPlayKnowledgeHistory(
   let previousRevealRevision = -1;
 
   for (const record of state.records) {
+    if (record.kind === 'participantGrant') {
+      const revisionMatch = /^turn-(\d+)-referee$/u.exec(record.grantedAtTurnId);
+      const grantRevision = revisionMatch ? Number(revisionMatch[1]) : Number.NaN;
+      if (!Number.isSafeInteger(grantRevision) || grantRevision < 1) {
+        throw new Error(
+          `Play participant knowledge record ${record.id} has invalid turn evidence.`,
+        );
+      }
+      if (grantRevision < previousRevealRevision) {
+        throw new Error('Play knowledge records are not in chronology order.');
+      }
+      previousRevealRevision = grantRevision;
+      const localIndex = (localRecordCounts.get(grantRevision) ?? 0) + 1;
+      localRecordCounts.set(grantRevision, localIndex);
+      if (record.id !== createPlayKnowledgeRecordId(grantRevision, localIndex)) {
+        throw new Error(
+          `Play participant knowledge record ${record.id} is not host-assigned.`,
+        );
+      }
+      continue;
+    }
     const subject = selectedEventsById.get(record.subjectEventId);
     const revealingEvent = selectedEventsById.get(record.revealedByEventId);
     if (!subject || !revealingEvent) {
@@ -563,6 +657,44 @@ export function projectPlayEventRevealRecord(
   };
 }
 
+export function projectPlayKnowledgeRecord(
+  value: unknown,
+  lens: 'player' | 'author',
+): PlayKnowledgeProjection {
+  const record = normalizePlayKnowledgeRecord(value);
+  if (lens === 'author') return { lens, record };
+  if (record.kind === 'participantGrant') {
+    return { lens, kind: 'participantGrant', visible: false };
+  }
+  return projectPlayEventRevealRecord(record, lens);
+}
+
+export function listPlayParticipantKnowledgeGrants(
+  stateValue: unknown,
+  participantRefValue: string,
+): PlayParticipantKnowledgeGrantRecord[] {
+  const state = normalizePlayKnowledgeState(stateValue);
+  const participantRef = assertSafePlayKnowledgeId(
+    participantRefValue,
+    'Play participant knowledge participantRef',
+  );
+  return state.records
+    .filter(
+      (record): record is PlayParticipantKnowledgeGrantRecord =>
+        record.kind === 'participantGrant' && record.participantRef === participantRef,
+    )
+    .map((record) => structuredClone(record));
+}
+
+function normalizePlayKnowledgeRecord(value: unknown): PlayKnowledgeRecord {
+  if (!isRecord(value)) {
+    throw new Error('Every Play knowledge record must be an object.');
+  }
+  return value.kind === 'participantGrant'
+    ? normalizePlayParticipantKnowledgeGrantRecord(value)
+    : normalizePlayEventRevealRecord(value);
+}
+
 function normalizePlayEventRevealRecord(value: unknown): PlayEventRevealRecord {
   if (!isRecord(value)) {
     throw new Error('Every Play knowledge record must be an object.');
@@ -619,9 +751,77 @@ function normalizePlayEventRevealRecord(value: unknown): PlayEventRevealRecord {
   };
 }
 
+function normalizePlayParticipantKnowledgeGrantRecord(
+  value: unknown,
+): PlayParticipantKnowledgeGrantRecord {
+  if (!isRecord(value)) {
+    throw new Error('Every Play participant knowledge record must be an object.');
+  }
+  assertOnlyKnownFields(value, [
+    'id',
+    'kind',
+    'participantRef',
+    'effectiveFromStepRef',
+    'interventionRef',
+    'grant',
+    'grantedAtTurnId',
+    'canonical',
+  ], 'Play participant knowledge record');
+  if (value.kind !== 'participantGrant' || value.canonical !== false) {
+    throw new Error('Play participant knowledge record has invalid identity or canonical status.');
+  }
+  return {
+    id: assertSafePlayKnowledgeId(value.id, 'Play knowledge record id'),
+    kind: 'participantGrant',
+    participantRef: assertSafePlayKnowledgeId(
+      value.participantRef,
+      'Play knowledge participantRef',
+    ),
+    effectiveFromStepRef: assertSafePlayKnowledgeId(
+      value.effectiveFromStepRef,
+      'Play knowledge effectiveFromStepRef',
+    ),
+    interventionRef: assertSafePlayKnowledgeId(
+      value.interventionRef,
+      'Play knowledge interventionRef',
+    ),
+    grant: normalizeParticipantGrant(value.grant),
+    grantedAtTurnId: assertSafePlayKnowledgeId(
+      value.grantedAtTurnId,
+      'Play knowledge grantedAtTurnId',
+    ),
+    canonical: false,
+  };
+}
+
 function normalizePlayKnowledgeChange(value: unknown): PlayKnowledgeChange {
   if (!isRecord(value)) {
     throw new Error('Every Play knowledge change must be an object.');
+  }
+  if (value.type === 'grantParticipantKnowledge') {
+    assertOnlyKnownFields(value, [
+      'type',
+      'participantRef',
+      'effectiveFromStepRef',
+      'interventionRef',
+      'grant',
+    ], 'Play participant knowledge change');
+    return {
+      type: 'grantParticipantKnowledge',
+      participantRef: assertSafePlayKnowledgeId(
+        value.participantRef,
+        'Play knowledge participantRef',
+      ),
+      effectiveFromStepRef: assertSafePlayKnowledgeId(
+        value.effectiveFromStepRef,
+        'Play knowledge effectiveFromStepRef',
+      ),
+      interventionRef: assertSafePlayKnowledgeId(
+        value.interventionRef,
+        'Play knowledge interventionRef',
+      ),
+      grant: normalizeParticipantGrant(value.grant),
+    };
   }
   assertOnlyKnownFields(
     value,
@@ -649,11 +849,53 @@ function resolveProjectionFromNormalizedState(
   subjectEventId: string,
 ): PlayKnowledgePlayerProjection {
   return state.records.reduce<PlayKnowledgePlayerProjection>(
-    (projection, record) => record.subjectEventId === subjectEventId
+    (projection, record) => record.kind === 'eventReveal' &&
+      record.subjectEventId === subjectEventId
       ? record.playerProjection
       : projection,
     'playerUnknown',
   );
+}
+
+function normalizeParticipantGrant(
+  value: unknown,
+): PlayParticipantKnowledgeGrantRecord['grant'] {
+  if (!isRecord(value)) {
+    throw new Error('Play participant knowledge grant must be an object.');
+  }
+  if (value.kind === 'existingFact') {
+    assertOnlyKnownFields(value, ['kind', 'factRefs'], 'Play existing-fact grant');
+    if (!Array.isArray(value.factRefs) || !value.factRefs.length) {
+      throw new Error('Play existing-fact grant requires stable fact refs.');
+    }
+    const factRefs = value.factRefs.map((ref) =>
+      assertSafePlayKnowledgeId(ref, 'Play knowledge fact ref'));
+    if (new Set(factRefs).size !== factRefs.length) {
+      throw new Error('Play participant knowledge fact refs must be unique.');
+    }
+    return { kind: 'existingFact', factRefs };
+  }
+  if (value.kind === 'authorProvidedPlayFact') {
+    assertOnlyKnownFields(
+      value,
+      ['kind', 'summary', 'visibility', 'providedAt'],
+      'Play author-provided participant grant',
+    );
+    if (
+      value.visibility !== 'playerVisible' &&
+      value.visibility !== 'rumor' &&
+      value.visibility !== 'playerUnknown'
+    ) {
+      throw new Error('Play participant knowledge grant has invalid visibility.');
+    }
+    return {
+      kind: 'authorProvidedPlayFact',
+      summary: normalizeGrantText(value.summary, 'summary', 12_000),
+      visibility: value.visibility,
+      providedAt: normalizeGrantText(value.providedAt, 'providedAt', 128),
+    };
+  }
+  throw new Error(`Unsupported Play participant knowledge grant: ${String(value.kind)}.`);
 }
 
 function assertAllowedProjectionTransition(
@@ -694,11 +936,10 @@ function createPlayKnowledgeRecordId(revision: number, localIndex: number): stri
   return `knowledge-${revision}-${localIndex}`;
 }
 
-function clonePlayEventRevealRecord(record: PlayEventRevealRecord): PlayEventRevealRecord {
-  return {
-    ...record,
-    knownByParticipantRefs: [],
-  };
+function clonePlayKnowledgeRecord(record: PlayKnowledgeRecord): PlayKnowledgeRecord {
+  return record.kind === 'eventReveal'
+    ? { ...record, knownByParticipantRefs: [] }
+    : structuredClone(record);
 }
 
 function indexUniqueEvents(
@@ -743,6 +984,17 @@ function assertSafePlayKnowledgeId(value: unknown, label: string): string {
     throw new Error(`${label} must be a safe id.`);
   }
   return value;
+}
+
+function normalizeGrantText(
+  value: unknown,
+  label: string,
+  maximum: number,
+): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maximum) {
+    throw new Error(`Play participant knowledge ${label} must be non-empty text.`);
+  }
+  return value.trim();
 }
 
 function assertOnlyKnownFields(

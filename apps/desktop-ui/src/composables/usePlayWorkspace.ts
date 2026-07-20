@@ -1,4 +1,4 @@
-import { computed, onMounted, readonly, shallowRef } from 'vue';
+import { computed, onMounted, readonly, shallowRef, toRaw } from 'vue';
 import type { Ref } from 'vue';
 
 import { useWorkspaceApi } from './useWorkspaceApi';
@@ -7,6 +7,7 @@ import {
   type PlayRetryBeforeTurnProjection,
 } from './usePlayRetryProjection';
 import { usePlaySessionHistory } from './usePlaySessionHistory';
+import { usePlaySessionHistoryWindow } from './usePlaySessionHistoryWindow';
 import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
 import { usePlayTurnStream } from './usePlayTurnStream';
 import {
@@ -25,6 +26,8 @@ import type {
   PlayRelativeTimeAdvance,
   PlayScheduledEvent,
   PlaySession,
+  PlaySessionSelectedDetail,
+  PlaySessionSummary,
 } from './useWorkspaceApi';
 
 const PLAY_WORLD_MOMENTUM_STATE_KEY = 'worldMomentum';
@@ -64,7 +67,7 @@ export function usePlayWorkspace(
   providerConfigured: Readonly<Ref<boolean>>,
 ) {
   const api = useWorkspaceApi();
-  const sessions = shallowRef<PlaySession[]>([]);
+  const sessions = shallowRef<PlaySessionSummary[]>([]);
   const selectedSessionId = shallowRef(readSelectedSession(workspacePath));
   const loading = shallowRef(false);
   const creating = shallowRef(false);
@@ -81,6 +84,20 @@ export function usePlayWorkspace(
     sessionId: string;
     projection: PlayRetryBeforeTurnProjection;
   }>();
+  const historyWindow = usePlaySessionHistoryWindow({
+    client: api,
+    selectedSessionId,
+    directorLens: showSpoilers,
+    onDecision(result) {
+      if (result.createdSessionId) rememberSelectedSession(result.createdSessionId);
+      void refreshSessionSummaries().catch((caught) => {
+        error.value = toErrorMessage(caught);
+      });
+    },
+    onError(caught) {
+      error.value = toErrorMessage(caught);
+    },
+  });
   const {
     run: provisionalTurn,
     announcement: turnAnnouncement,
@@ -102,15 +119,17 @@ export function usePlayWorkspace(
     },
   });
 
-  const selectedSession = computed(() =>
-    sessions.value.find((session) => session.id === selectedSessionId.value),
-  );
+  const selectedSession = computed(() => historyWindow.detail.value
+    ? materializeBoundedPlaySession(historyWindow.detail.value)
+    : undefined);
   const selectedJourneySession = computed(() =>
     selectedSession.value?.schemaVersion === 4 ? selectedSession.value : undefined,
   );
   const rehearsalWorkspace = usePlayRehearsalWorkspace({
     client: api,
     selectedSession,
+    selectedArtifactPresentation: computed(() =>
+      historyWindow.detail.value?.selectedArtifactPresentation),
     providerConfigured,
     onCommitted(session) {
       replaceSession(session);
@@ -177,6 +196,10 @@ export function usePlayWorkspace(
   const interactionBlocked = computed(() =>
     loading.value ||
     creating.value ||
+    historyWindow.loading.value ||
+    historyWindow.loadingEarlierTranscript.value ||
+    historyWindow.loadingEarlierEvents.value ||
+    historyWindow.decisionBusy.value ||
     turnInteractionBlocked.value ||
     rehearsalWorkspace.interactionBlocked.value ||
     Boolean(historyBusyArtifactId.value) ||
@@ -185,6 +208,8 @@ export function usePlayWorkspace(
   const refreshBlocked = computed(() =>
     loading.value ||
     creating.value ||
+    historyWindow.loading.value ||
+    historyWindow.decisionBusy.value ||
     sending.value ||
     rehearsalWorkspace.interactionBlocked.value ||
     Boolean(historyBusyArtifactId.value) ||
@@ -226,58 +251,19 @@ export function usePlayWorkspace(
       showSpoilers.value,
     ),
   );
-  const selectedArtifactIds = computed(() =>
-    new Set(displaySession.value?.selectedTurnIds ?? []),
-  );
-  const selectedEventIds = computed(() => new Set(
-    (displaySession.value?.turnArtifacts ?? [])
-      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
-      .flatMap((artifact) => artifact.eventIds),
-  ));
-  const selectedMessageIds = computed(() => new Set(
-    (displaySession.value?.turnArtifacts ?? [])
-      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
-      .flatMap((artifact) => artifact.messages.map((message) => message.id))
-      .filter((id): id is string => Boolean(id)),
-  ));
-  const selectedObservationIds = computed(() => new Set(
-    (displaySession.value?.turnArtifacts ?? [])
-      .filter((artifact) => selectedArtifactIds.value.has(artifact.id))
-      .flatMap((artifact) => artifact.observationIds),
-  ));
-  const artifactOwnedObservationIds = computed(() => new Set(
-    (displaySession.value?.turnArtifacts ?? [])
-      .flatMap((artifact) => artifact.observationIds),
-  ));
-  const projectedEvents = computed(() =>
-    (displaySession.value?.events ?? []).filter((event) =>
-      selectedEventIds.value.has(event.id),
-    ),
-  );
+  // M5 detail windows are already selected-branch projections. The renderer
+  // must not reconstruct ownership from the intentionally omitted artifact
+  // ledger or fall back to the legacy full-session list.
+  const projectedEvents = computed(() => displaySession.value?.events ?? []);
   const projectedObservations = computed(() =>
-    (displaySession.value?.observations ?? []).filter((observation) =>
-      (
-        !artifactOwnedObservationIds.value.has(observation.id) ||
-        selectedObservationIds.value.has(observation.id)
-      ) && isPlayProvenanceInSelectedBranch(
-        observation,
-        selectedMessageIds.value,
-        selectedEventIds.value,
-      ),
-    ),
+    displaySession.value?.observations ?? [],
   );
   const projectedObservationIds = computed(() => new Set(
     projectedObservations.value.map((observation) => observation.id),
   ));
   const projectedCandidates = computed(() =>
     (displaySession.value?.adoptionCandidates ?? []).filter((candidate) =>
-      candidate.sourceObservationIds.every((id) =>
-        projectedObservationIds.value.has(id)) &&
-      isPlayProvenanceInSelectedBranch(
-        candidate,
-        selectedMessageIds.value,
-        selectedEventIds.value,
-      ),
+      candidate.sourceObservationIds.every((id) => projectedObservationIds.value.has(id)),
     ),
   );
   const sortedEvents = computed(() =>
@@ -287,8 +273,8 @@ export function usePlayWorkspace(
   );
   const eventCards = computed(() => buildPlayEventCardViews({
     events: sortedEvents.value,
-    artifacts: (displaySession.value?.turnArtifacts ?? []).filter((artifact) =>
-      selectedArtifactIds.value.has(artifact.id)),
+    artifacts: [],
+    eventPresentation: historyWindow.detail.value?.eventPresentation ?? [],
     showSpoilers: showSpoilers.value,
   }));
   const causeLabelsByEventId = computed<Record<string, string[]>>(() =>
@@ -361,12 +347,7 @@ export function usePlayWorkspace(
       if (turnTruthIndeterminate.value) {
         await reconcileStreamTurn();
       }
-      const result = await api.listPlaySessions();
-      sessions.value = result.sessions;
-
-      if (!sessions.value.some((session) => session.id === selectedSessionId.value)) {
-        rememberSelectedSession(sessions.value[0]?.id ?? '');
-      }
+      await refreshSessionIndexAndDetail();
       clearRetryProjection();
       clearTerminalRun();
     } catch (caught) {
@@ -380,6 +361,7 @@ export function usePlayWorkspace(
     if (!interactionBlocked.value && sessions.value.some((session) => session.id === id)) {
       rememberSelectedSession(id);
       error.value = '';
+      void historyWindow.refreshSelected();
     }
   }
 
@@ -393,7 +375,8 @@ export function usePlayWorkspace(
 
     try {
       const result = await api.createPlaySession(input);
-      registerCreatedSession(result.session);
+      rememberSelectedSession(result.session.id);
+      await refreshSessionIndexAndDetail(result.session.id);
       return result.session;
     } catch (caught) {
       error.value = toErrorMessage(caught);
@@ -404,12 +387,9 @@ export function usePlayWorkspace(
   }
 
   function registerCreatedSession(session: PlaySession): void {
-    sessions.value = [
-      session,
-      ...sessions.value.filter((candidate) => candidate.id !== session.id),
-    ];
     rememberSelectedSession(session.id);
     error.value = '';
+    void refreshSessionIndexAndDetail(session.id);
   }
 
   async function submitTurn() {
@@ -464,22 +444,30 @@ export function usePlayWorkspace(
       return;
     }
 
-    const artifact = session.turnArtifacts.find((candidate) => candidate.id === artifactId);
-    const projection = projectPlaySessionBeforeArtifact(session, artifactId);
-    if (!artifact?.input || !projection) {
-      error.value = 'The state before this turn cannot be reconstructed safely, so Retry was not started.';
-      return;
-    }
-
     error.value = '';
     historyRetryingArtifactId.value = artifactId;
-    retryProjection.value = { sessionId: session.id, projection };
 
     try {
+      // Retry is an explicit graph operation, so it lazily requests the legacy
+      // full artifact graph instead of putting that graph back on the main
+      // Play workspace read path.
+      const loaded = await api.getPlaySession(session.id);
+      if (loaded.session.schemaVersion !== 4 || loaded.session.revision !== session.revision) {
+        throw new Error('Play session changed before Retry could reconstruct its checkpoint.');
+      }
+      const artifact = loaded.session.turnArtifacts.find((candidate) =>
+        candidate.id === artifactId);
+      const projection = projectPlaySessionBeforeArtifact(loaded.session, artifactId);
+      if (!artifact?.input || !projection) {
+        throw new Error(
+          'The state before this turn cannot be reconstructed safely, so Retry was not started.',
+        );
+      }
+      retryProjection.value = { sessionId: session.id, projection };
       const outcome = await retryStreamTurn({
         sessionId: session.id,
         artifactId,
-        baseRevision: session.revision,
+        baseRevision: loaded.session.revision,
         userText: artifact.input.raw,
         actionKind: artifact.input.kind,
       });
@@ -502,9 +490,31 @@ export function usePlayWorkspace(
   }
 
   function replaceSession(session: PlaySession) {
-    sessions.value = sessions.value.map((item) =>
-      item.id === session.id && session.revision >= item.revision ? session : item,
-    );
+    const currentRevision = historyWindow.detail.value?.snapshot.revision ?? -1;
+    if (session.id === selectedSessionId.value && session.revision >= currentRevision) {
+      void refreshSessionIndexAndDetail(session.id);
+    }
+  }
+
+  async function refreshSessionIndexAndDetail(preferredSessionId?: string): Promise<void> {
+    await refreshSessionSummaries();
+    const nextSessionId = preferredSessionId && sessions.value.some((summary) =>
+      summary.id === preferredSessionId)
+      ? preferredSessionId
+      : sessions.value.some((summary) => summary.id === selectedSessionId.value)
+        ? selectedSessionId.value
+        : sessions.value[0]?.id ?? '';
+    rememberSelectedSession(nextSessionId);
+    if (nextSessionId) {
+      await historyWindow.refreshSelected();
+    } else {
+      historyWindow.reset();
+    }
+  }
+
+  async function refreshSessionSummaries(): Promise<void> {
+    const result = await api.listPlaySessionSummaries();
+    sessions.value = result.summaries;
   }
 
   function clearRetryProjection() {
@@ -543,6 +553,7 @@ export function usePlayWorkspace(
     historyRetryingArtifactId: readonly(historyRetryingArtifactId),
     historyLoading,
     historyNotice,
+    historyWindow,
     canStop,
     provisionalTurn,
     turnAnnouncement,
@@ -581,6 +592,43 @@ export function isPlayProvenanceInSelectedBranch(
 ): boolean {
   return fact.sourceTurnIds.every((id) => selectedMessageIds.has(id)) &&
     fact.sourceEventIds.every((id) => selectedEventIds.has(id));
+}
+
+/**
+ * Adapts the bounded M5 read model to the pre-M5 presentational component
+ * shape. Historical ledgers stay empty by design; mutation code must use the
+ * session id/revision or explicitly fetch the full graph (Retry does so).
+ */
+export function materializeBoundedPlaySession(
+  detail: Readonly<PlaySessionSelectedDetail>,
+): PlaySession {
+  const mutableDetail = structuredClone(toRaw(detail)) as PlaySessionSelectedDetail;
+  const snapshot = mutableDetail.snapshot;
+  const common = {
+    ...snapshot,
+    transcript: mutableDetail.transcript.items,
+    turnArtifacts: [],
+    branchBaseSnapshot: {
+      worldClock: { ...snapshot.worldClock },
+      playLocalState: structuredClone(snapshot.playLocalState),
+      playLocalStateVisibility: { ...snapshot.playLocalStateVisibility },
+      scheduledEvents: structuredClone(snapshot.scheduledEvents),
+      suggestedActions: [...snapshot.suggestedActions],
+    },
+    events: mutableDetail.events.items,
+  };
+  if (snapshot.schemaVersion === 5) {
+    if (!snapshot.sceneRehearsal || !snapshot.rehearsalScenes) {
+      throw new Error('Bounded rehearsal detail is missing its Scene Rehearsal sidecars.');
+    }
+    return {
+      ...common,
+      schemaVersion: 5,
+      sceneRehearsal: snapshot.sceneRehearsal,
+      rehearsalScenes: snapshot.rehearsalScenes,
+    };
+  }
+  return { ...common, schemaVersion: 4 };
 }
 
 export function readPlayWorldMomentum(

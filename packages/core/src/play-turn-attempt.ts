@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   normalizePlayWorldRefereeSettlement,
@@ -7,6 +8,7 @@ import type { PlayWorldRefereeSettlement } from './play-session.js';
 import {
   assertSafePlayRehearsalId,
   assertNarrativeBlocksWithinPerception,
+  listPlayRedirectConstraintRefs,
   normalizeCharacterPerceptionPackage,
   normalizeNarrativeBlock,
 } from './play-rehearsal.js';
@@ -18,6 +20,75 @@ import type {
 const MAX_ATTEMPT_STEPS = 96;
 const MAX_ATTEMPT_RECEIPTS = 256;
 const MAX_ATTEMPT_TEXT = 12_000;
+
+export type PlayRehearsalOrderStrategy =
+  | 'directorFixed'
+  | 'refereeDynamic'
+  | 'hybrid';
+
+export type PlayStepMaterialEffect =
+  | { kind: 'materialEffect' }
+  | { kind: 'noMaterialEffect'; reason: string };
+
+export type PlayDirectorKnowledgeGrant =
+  | { kind: 'existingFact'; factRefs: string[] }
+  | {
+      kind: 'authorProvidedPlayFact';
+      summary: string;
+      visibility: 'playerVisible' | 'rumor' | 'playerUnknown';
+      providedAt: string;
+    };
+
+export interface PlayDirectorInterventionBase {
+  schemaVersion: 1;
+  id: string;
+  attemptId: string;
+  attemptRevision: number;
+  createdAt: string;
+  provenance: {
+    actor: 'user';
+    source: 'directorControl';
+  };
+  supersededStepRefs: string[];
+}
+
+export type PlayDirectorIntervention = PlayDirectorInterventionBase & (
+  | {
+      kind: 'reviseProjection';
+      stepRef: string;
+      replacementStepRef: string;
+      replacementBlocks: NarrativeBlock[];
+      expectedEffectFingerprint: string;
+    }
+  | {
+      kind: 'redirectStep';
+      stepRef: string;
+      replacementStepRef: string;
+      directorIntent: string;
+      authorConstraintRefs: string[];
+    }
+  | {
+      kind: 'insertActor';
+      participantRef: string;
+      insertionIndex: number;
+      beforeStepRef?: string;
+      afterStepRef?: string;
+    }
+  | {
+      kind: 'grantKnowledge';
+      participantRef: string;
+      effectiveFromStepRef: string;
+      effectiveFromQueueIndex: number;
+      selectedPrefixRefs: string[];
+      grant: PlayDirectorKnowledgeGrant;
+    }
+);
+
+export interface PlayAttemptStagnation {
+  consecutiveNoMaterialSteps: number;
+  threshold: number;
+  warning: boolean;
+}
 
 export type PlayTurnAttemptStatus =
   | 'running'
@@ -42,8 +113,10 @@ export interface CharacterStepDraft {
   intentSummary: string;
   narrativeBlocks: NarrativeBlock[];
   settlementContribution: PlayWorldRefereeSettlement;
+  effectFingerprint?: string;
   decisionBasisRefs: string[];
   variantOf?: string;
+  materialEffect?: PlayStepMaterialEffect;
   status: CharacterStepDraftStatus;
   createdAt: string;
 }
@@ -65,11 +138,15 @@ export interface PlayTurnAttempt {
   sceneBeforeRef: string;
   status: PlayTurnAttemptStatus;
   actorOrder: string[];
+  participantRefs: string[];
+  orderStrategy: PlayRehearsalOrderStrategy;
   selectedStepRefs: string[];
   selectedHeadRef?: string;
   currentStepRef?: string;
   dueScheduledEventIds: string[];
   steps: CharacterStepDraft[];
+  interventions: PlayDirectorIntervention[];
+  stagnation: PlayAttemptStagnation;
   mutationReceipts: PlayAttemptMutationReceipt[];
   committedArtifactRef?: string;
   committedEvidenceRef?: string;
@@ -87,6 +164,12 @@ export interface PlayAttemptMutationResult {
   receipt: PlayAttemptMutationReceipt;
   replayed: boolean;
 }
+
+export type PlayDirectorInterventionMutationInput = PlayAttemptMutationInput & {
+  interventionId: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 export type PlayTurnAttemptErrorCode =
   | 'invalidAttempt'
@@ -115,6 +198,8 @@ export function createPlayTurnAttempt(input: {
   baseRevision: number;
   sceneBeforeRef: string;
   actorOrder: string[];
+  participantRefs?: string[];
+  orderStrategy?: PlayRehearsalOrderStrategy;
   dueScheduledEventIds?: string[];
   createdAt?: string;
 }): PlayTurnAttempt {
@@ -129,6 +214,20 @@ export function createPlayTurnAttempt(input: {
       'Play turn attempt requires a fixed actor order.',
     );
   }
+  const participantRefs = normalizeSafeIdList(
+    input.participantRefs ?? actorOrder,
+    'participantRefs',
+    24,
+  );
+  if (actorOrder.some((participantRef) => !participantRefs.includes(participantRef))) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Play turn attempt actor order must stay within its scene participants.',
+    );
+  }
+  const orderStrategy = normalizeOrderStrategy(
+    input.orderStrategy ?? 'directorFixed',
+  );
   const createdAt = normalizeText(
     input.createdAt ?? new Date().toISOString(),
     'createdAt',
@@ -146,6 +245,8 @@ export function createPlayTurnAttempt(input: {
     ),
     status: 'running',
     actorOrder,
+    participantRefs,
+    orderStrategy,
     selectedStepRefs: [],
     dueScheduledEventIds: normalizeSafeIdList(
       input.dueScheduledEventIds ?? [],
@@ -153,6 +254,8 @@ export function createPlayTurnAttempt(input: {
       128,
     ),
     steps: [],
+    interventions: [],
+    stagnation: createPlayAttemptStagnation(),
     mutationReceipts: [],
     createdAt,
     updatedAt: createdAt,
@@ -170,11 +273,15 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
     'sceneBeforeRef',
     'status',
     'actorOrder',
+    'participantRefs',
+    'orderStrategy',
     'selectedStepRefs',
     'selectedHeadRef',
     'currentStepRef',
     'dueScheduledEventIds',
     'steps',
+    'interventions',
+    'stagnation',
     'mutationReceipts',
     'committedArtifactRef',
     'committedEvidenceRef',
@@ -202,6 +309,20 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
   if (!actorOrder.length) {
     throw new PlayTurnAttemptError('invalidAttempt', 'Stored Play attempt requires actorOrder.');
   }
+  const participantRefs = normalizeSafeIdList(
+    record.participantRefs ?? actorOrder,
+    'participantRefs',
+    24,
+  );
+  if (actorOrder.some((participantRef) => !participantRefs.includes(participantRef))) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Stored Play actor order contains a non-scene participant.',
+    );
+  }
+  const orderStrategy = normalizeOrderStrategy(
+    record.orderStrategy ?? 'directorFixed',
+  );
   const steps = normalizeBoundedArray(
     record.steps,
     MAX_ATTEMPT_STEPS,
@@ -268,19 +389,19 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
   const selectedStepSet = new Set(selectedStepRefs);
   for (const step of steps) {
     if (
-      step.queueIndex >= actorOrder.length ||
-      step.queueIndex > selectedStepRefs.length ||
-      step.participantRef !== actorOrder[step.queueIndex]
+      step.queueIndex >= participantRefs.length ||
+      !participantRefs.includes(step.participantRef)
     ) {
       throw new PlayTurnAttemptError(
         'invalidAttempt',
-        `Stored Play step ${step.id} is outside the fixed actor queue.`,
+        `Stored Play step ${step.id} is outside the scene participants.`,
       );
     }
+    const isLiveStep = step.status === 'selected' || step.status === 'draft';
     const expectedBeforeRef = step.queueIndex === 0
       ? undefined
       : selectedStepRefs[step.queueIndex - 1];
-    if (step.beforeStepRef !== expectedBeforeRef) {
+    if (isLiveStep && step.beforeStepRef !== expectedBeforeRef) {
       throw new PlayTurnAttemptError(
         'invalidAttempt',
         `Stored Play step ${step.id} breaks the selected step chain.`,
@@ -344,6 +465,47 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
       'Stored Play attempt receipts must exactly account for attemptRevision.',
     );
   }
+  const interventions = normalizeBoundedArray(
+    record.interventions ?? [],
+    MAX_ATTEMPT_RECEIPTS,
+    'Stored Play attempt interventions',
+  ).map((intervention) => normalizePlayDirectorIntervention(intervention, id));
+  assertUnique(interventions.map((intervention) => intervention.id), 'intervention id');
+  let previousInterventionRevision = 0;
+  for (const intervention of interventions) {
+    if (
+      intervention.attemptRevision <= previousInterventionRevision ||
+      intervention.attemptRevision > attemptRevision
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidAttempt',
+        'Stored Play interventions must be append-only in attempt revision order.',
+      );
+    }
+    previousInterventionRevision = intervention.attemptRevision;
+    for (const stepRef of intervention.supersededStepRefs) {
+      const step = stepsById.get(stepRef);
+      if (!step || (step.status !== 'superseded' && step.status !== 'discarded')) {
+        throw new PlayTurnAttemptError(
+          'invalidAttempt',
+          `Stored Play intervention references a live superseded step: ${stepRef}.`,
+        );
+      }
+    }
+  }
+  const stagnation = normalizePlayAttemptStagnation(
+    record.stagnation ?? derivePlayAttemptStagnation(selectedStepRefs, stepsById),
+  );
+  const expectedStagnation = derivePlayAttemptStagnation(selectedStepRefs, stepsById, stagnation.threshold);
+  if (
+    stagnation.consecutiveNoMaterialSteps !== expectedStagnation.consecutiveNoMaterialSteps ||
+    stagnation.warning !== expectedStagnation.warning
+  ) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Stored Play attempt stagnation does not match its selected branch.',
+    );
+  }
   const committedArtifactRef = record.committedArtifactRef === undefined
     ? undefined
     : assertSafePlayRehearsalId(record.committedArtifactRef, 'committedArtifactRef');
@@ -375,6 +537,8 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
     sceneBeforeRef: assertSafePlayRehearsalId(record.sceneBeforeRef, 'sceneBeforeRef'),
     status,
     actorOrder,
+    participantRefs,
+    orderStrategy,
     selectedStepRefs,
     ...(selectedHeadRef ? { selectedHeadRef } : {}),
     ...(currentStepRef ? { currentStepRef } : {}),
@@ -384,6 +548,8 @@ export function normalizePlayTurnAttempt(value: unknown): PlayTurnAttempt {
       128,
     ),
     steps,
+    interventions,
+    stagnation,
     mutationReceipts,
     ...(committedArtifactRef ? { committedArtifactRef } : {}),
     ...(committedEvidenceRef ? { committedEvidenceRef } : {}),
@@ -454,6 +620,15 @@ export function addPlayTurnAttemptStep(
       `Actor step ${step.id} cannot settle hard-due event ${attemptedHardDue.cause.triggerId}.`,
     );
   }
+  const attemptedParticipantGrant = step.settlementContribution.knowledgeChanges.find(
+    (change) => change.type === 'grantParticipantKnowledge',
+  );
+  if (attemptedParticipantGrant) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      'Actor/referee output cannot forge a Director participant knowledge grant.',
+    );
+  }
   const changedHardDue = step.settlementContribution.scheduledEventChanges.find(
     (change) =>
       change.type !== 'schedule' &&
@@ -486,7 +661,11 @@ export function addPlayTurnAttemptStep(
     perception,
   );
   const allowedDecisionRefs = new Set(
-    perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+    [
+      ...perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+      ...perception.grantedKnowledgeEvidence.map((evidence) => evidence.id),
+      ...perception.grantedKnowledgeEvidence.flatMap((evidence) => evidence.factRefs),
+    ],
   );
   const forbiddenDecisionRef = step.decisionBasisRefs.find((decisionRef) =>
     !allowedDecisionRefs.has(decisionRef));
@@ -612,6 +791,511 @@ export function acceptPlayTurnAttemptStep(
       };
     },
   );
+}
+
+export function revisePlayTurnAttemptProjection(
+  attemptValue: PlayTurnAttempt,
+  input: PlayDirectorInterventionMutationInput & {
+    stepRef: string;
+    replacementBlocks: NarrativeBlock[];
+    expectedEffectFingerprint: string;
+  },
+): PlayAttemptMutationResult {
+  const attempt = normalizePlayTurnAttempt(attemptValue);
+  assertAttemptActive(attempt);
+  const stepRef = assertSafePlayRehearsalId(input.stepRef, 'revised stepRef');
+  const interventionId = assertSafePlayRehearsalId(
+    input.interventionId,
+    'revise interventionId',
+  );
+  const expectedEffectFingerprint = normalizeSha256(
+    input.expectedEffectFingerprint,
+    'expectedEffectFingerprint',
+  );
+  const replacementBlocks = normalizeBoundedArray(
+    input.replacementBlocks,
+    96,
+    'Play reviseProjection replacementBlocks',
+  ).map(normalizeNarrativeBlock);
+  assertUnique(replacementBlocks.map((block) => block.id), 'replacement NarrativeBlock id');
+  if (replacementBlocks.some((block) => block.kind === 'worldNotice')) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      'Play reviseProjection cannot rewrite host-derived world notices.',
+    );
+  }
+  const fingerprint = fingerprintPlayAttemptRequest({
+    kind: 'reviseProjection',
+    stepRef,
+    replacementBlocks,
+    expectedEffectFingerprint,
+  });
+  const replay = replayAttemptMutation(attempt, input.idempotencyKey, fingerprint);
+  if (replay) return replay;
+  const target = requireLiveAttemptStep(attempt, stepRef);
+  if (target.effectFingerprint !== expectedEffectFingerprint) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      'Play reviseProjection effect fingerprint no longer matches its target step.',
+    );
+  }
+  assertProjectionReplacementSafe(target, replacementBlocks);
+  const targetIndex = target.queueIndex;
+  const selectedTarget = target.status === 'selected';
+  const selectedSuffixRefs = selectedTarget
+    ? attempt.selectedStepRefs.slice(targetIndex)
+    : [];
+  const supersededStepRefs = [
+    ...selectedSuffixRefs,
+    ...(attempt.currentStepRef && !selectedSuffixRefs.includes(attempt.currentStepRef)
+      ? [attempt.currentStepRef]
+      : []),
+  ];
+  const nextRevision = attempt.attemptRevision + 1;
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const replacementStepRef = deriveInterventionStepId(interventionId, 'step');
+  const replacementStep: CharacterStepDraft = normalizeCharacterStepDraft({
+    ...target,
+    id: replacementStepRef,
+    beforeStepRef: target.beforeStepRef,
+    narrativeBlocks: [
+      ...replacementBlocks,
+      ...cloneWorldNoticesForStep(target, replacementStepRef),
+    ],
+    variantOf: target.id,
+    status: selectedTarget ? 'selected' : 'draft',
+    createdAt,
+  }, attempt.id);
+  const carrySteps: CharacterStepDraft[] = [];
+  const nextSelectedRefs = selectedTarget
+    ? [...attempt.selectedStepRefs.slice(0, targetIndex), replacementStepRef]
+    : [...attempt.selectedStepRefs];
+  if (selectedTarget) {
+    let beforeStepRef = replacementStepRef;
+    for (const [offset, oldRef] of selectedSuffixRefs.slice(1).entries()) {
+      const source = attempt.steps.find((step) => step.id === oldRef)!;
+      const carryRef = deriveInterventionStepId(interventionId, `carry-${offset + 1}`);
+      const carry = normalizeCharacterStepDraft({
+        ...source,
+        id: carryRef,
+        beforeStepRef,
+        narrativeBlocks: cloneBlocksForStep(source, carryRef),
+        variantOf: source.id,
+        status: 'selected',
+        createdAt,
+      }, attempt.id);
+      carrySteps.push(carry);
+      nextSelectedRefs.push(carry.id);
+      beforeStepRef = carry.id;
+    }
+  }
+  const intervention: PlayDirectorIntervention = {
+    schemaVersion: 1,
+    id: interventionId,
+    attemptId: attempt.id,
+    attemptRevision: nextRevision,
+    createdAt,
+    provenance: { actor: 'user', source: 'directorControl' },
+    supersededStepRefs,
+    kind: 'reviseProjection',
+    stepRef,
+    replacementStepRef,
+    replacementBlocks,
+    expectedEffectFingerprint,
+  };
+  return mutateAttempt(
+    attempt,
+    input,
+    fingerprint,
+    intervention.id,
+    intervention,
+    (draft) => {
+      const superseded = new Set(supersededStepRefs);
+      const steps = draft.steps.map((step) => superseded.has(step.id)
+        ? { ...step, status: 'superseded' as const }
+        : step);
+      steps.push(replacementStep, ...carrySteps);
+      return {
+        ...draft,
+        status: selectedTarget && nextSelectedRefs.length === draft.actorOrder.length
+          ? 'prepared'
+          : 'running',
+        steps,
+        selectedStepRefs: nextSelectedRefs,
+        selectedHeadRef: nextSelectedRefs.at(-1),
+        currentStepRef: selectedTarget ? undefined : replacementStepRef,
+        interventions: [...draft.interventions, intervention],
+      };
+    },
+  );
+}
+
+/**
+ * Applies a host-adjudicated redirect. Public transports must never accept
+ * `replacementStep` or `perception` from the renderer; the Backend prepares
+ * both through the existing actor/referee pipeline before calling this seam.
+ */
+export function applyPlayTurnAttemptRedirect(
+  attemptValue: PlayTurnAttempt,
+  input: PlayDirectorInterventionMutationInput & {
+    stepRef: string;
+    directorIntent: string;
+    authorConstraintRefs: string[];
+    replacementStep: Omit<CharacterStepDraft, 'attemptId' | 'status'>;
+    perception: CharacterPerceptionPackage;
+  },
+): PlayAttemptMutationResult {
+  const attempt = normalizePlayTurnAttempt(attemptValue);
+  assertAttemptActive(attempt);
+  const stepRef = assertSafePlayRehearsalId(input.stepRef, 'redirected stepRef');
+  const interventionId = assertSafePlayRehearsalId(
+    input.interventionId,
+    'redirect interventionId',
+  );
+  const directorIntent = normalizeText(input.directorIntent, 'directorIntent', MAX_ATTEMPT_TEXT);
+  const authorConstraintRefs = normalizeSafeIdList(
+    input.authorConstraintRefs,
+    'authorConstraintRefs',
+    64,
+  );
+  const fingerprint = fingerprintPlayAttemptRequest({
+    kind: 'redirectStep',
+    stepRef,
+    directorIntent,
+    authorConstraintRefs,
+  });
+  const replay = replayAttemptMutation(attempt, input.idempotencyKey, fingerprint);
+  if (replay) return replay;
+  const target = requireLiveAttemptStep(attempt, stepRef);
+  const selectedTarget = target.status === 'selected';
+  const selectedPrefixRefs = attempt.selectedStepRefs.slice(0, target.queueIndex);
+  const expectedBeforeRef = selectedPrefixRefs.at(-1);
+  const perception = normalizeCharacterPerceptionPackage(input.perception);
+  const allowedConstraintRefs = new Set(listPlayRedirectConstraintRefs(perception));
+  const forbiddenConstraintRef = authorConstraintRefs.find((constraintRef) =>
+    !allowedConstraintRefs.has(constraintRef));
+  if (forbiddenConstraintRef) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      `Play redirect constraint is outside the target participant perception: ${forbiddenConstraintRef}.`,
+    );
+  }
+  const replacementStep = normalizeCharacterStepDraft({
+    ...input.replacementStep,
+    attemptId: attempt.id,
+    status: selectedTarget ? 'selected' : 'draft',
+  }, attempt.id);
+  if (
+    replacementStep.id === target.id ||
+    attempt.steps.some((step) => step.id === replacementStep.id) ||
+    replacementStep.variantOf !== target.id ||
+    replacementStep.queueIndex !== target.queueIndex ||
+    replacementStep.participantRef !== target.participantRef ||
+    replacementStep.beforeStepRef !== expectedBeforeRef ||
+    perception.id !== replacementStep.perceptionRef ||
+    perception.participantRef !== replacementStep.participantRef
+  ) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      'Host-adjudicated Play redirect does not fork from the target before-step snapshot.',
+    );
+  }
+  assertStepWithinPerception(replacementStep, perception);
+  const selectedSuffixRefs = selectedTarget
+    ? attempt.selectedStepRefs.slice(target.queueIndex)
+    : [];
+  const supersededStepRefs = [
+    ...selectedSuffixRefs,
+    ...(attempt.currentStepRef && !selectedSuffixRefs.includes(attempt.currentStepRef)
+      ? [attempt.currentStepRef]
+      : []),
+  ];
+  const nextSelectedRefs = selectedTarget
+    ? [...selectedPrefixRefs, replacementStep.id]
+    : [...selectedPrefixRefs];
+  const nextRevision = attempt.attemptRevision + 1;
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const intervention: PlayDirectorIntervention = {
+    schemaVersion: 1,
+    id: interventionId,
+    attemptId: attempt.id,
+    attemptRevision: nextRevision,
+    createdAt,
+    provenance: { actor: 'user', source: 'directorControl' },
+    supersededStepRefs,
+    kind: 'redirectStep',
+    stepRef,
+    replacementStepRef: replacementStep.id,
+    directorIntent,
+    authorConstraintRefs,
+  };
+  return mutateAttempt(
+    attempt,
+    input,
+    fingerprint,
+    intervention.id,
+    intervention,
+    (draft) => {
+      const superseded = new Set(supersededStepRefs);
+      return {
+        ...draft,
+        status: selectedTarget && nextSelectedRefs.length === draft.actorOrder.length
+          ? 'prepared'
+          : 'running',
+        steps: [
+          ...draft.steps.map((step) => superseded.has(step.id)
+            ? { ...step, status: 'superseded' as const }
+            : step),
+          replacementStep,
+        ],
+        selectedStepRefs: nextSelectedRefs,
+        selectedHeadRef: nextSelectedRefs.at(-1),
+        currentStepRef: selectedTarget ? undefined : replacementStep.id,
+        interventions: [...draft.interventions, intervention],
+      };
+    },
+  );
+}
+
+export function insertPlayTurnAttemptActor(
+  attemptValue: PlayTurnAttempt,
+  input: PlayDirectorInterventionMutationInput & {
+    participantRef: string;
+    beforeStepRef?: string;
+    afterStepRef?: string;
+  },
+): PlayAttemptMutationResult {
+  const attempt = normalizePlayTurnAttempt(attemptValue);
+  assertAttemptActive(attempt);
+  const interventionId = assertSafePlayRehearsalId(
+    input.interventionId,
+    'insert interventionId',
+  );
+  const participantRef = assertSafePlayRehearsalId(
+    input.participantRef,
+    'insert participantRef',
+  );
+  if (!attempt.participantRefs.includes(participantRef)) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      `Play insertActor references a participant outside the Scene Contract: ${participantRef}.`,
+    );
+  }
+  const beforeStepRef = input.beforeStepRef === undefined
+    ? undefined
+    : assertSafePlayRehearsalId(input.beforeStepRef, 'insert beforeStepRef');
+  const afterStepRef = input.afterStepRef === undefined
+    ? undefined
+    : assertSafePlayRehearsalId(input.afterStepRef, 'insert afterStepRef');
+  if (beforeStepRef && afterStepRef) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Play insertActor accepts either beforeStepRef or afterStepRef, not both.',
+    );
+  }
+  const anchorRef = beforeStepRef ?? afterStepRef;
+  const anchor = anchorRef
+    ? attempt.steps.find((step) =>
+        step.id === anchorRef && (step.status === 'selected' || step.status === 'draft'))
+    : undefined;
+  if (anchorRef && !anchor) {
+    throw new PlayTurnAttemptError(
+      'stepNotFound',
+      `Play insertActor anchor is not on the live branch: ${anchorRef}.`,
+    );
+  }
+  const desiredIndex = anchor
+    ? anchor.queueIndex + (afterStepRef ? 1 : 0)
+    : attempt.selectedStepRefs.length;
+  const oldIndex = attempt.actorOrder.indexOf(participantRef);
+  const withoutParticipant = attempt.actorOrder.filter((ref) => ref !== participantRef);
+  const adjustedIndex = Math.max(
+    0,
+    Math.min(
+      withoutParticipant.length,
+      oldIndex >= 0 && oldIndex < desiredIndex ? desiredIndex - 1 : desiredIndex,
+    ),
+  );
+  const actorOrder = [...withoutParticipant];
+  actorOrder.splice(adjustedIndex, 0, participantRef);
+  const firstChangedIndex = actorOrder.findIndex((ref, index) =>
+    ref !== attempt.actorOrder[index]);
+  const invalidationIndex = firstChangedIndex < 0
+    ? attempt.selectedStepRefs.length
+    : firstChangedIndex;
+  const supersededStepRefs = [
+    ...attempt.selectedStepRefs.slice(invalidationIndex),
+    ...(attempt.currentStepRef ? [attempt.currentStepRef] : []),
+  ];
+  const selectedStepRefs = attempt.selectedStepRefs.slice(0, invalidationIndex);
+  const fingerprint = fingerprintPlayAttemptRequest({
+    kind: 'insertActor',
+    participantRef,
+    ...(beforeStepRef ? { beforeStepRef } : {}),
+    ...(afterStepRef ? { afterStepRef } : {}),
+  });
+  const replay = replayAttemptMutation(attempt, input.idempotencyKey, fingerprint);
+  if (replay) return replay;
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const intervention: PlayDirectorIntervention = {
+    schemaVersion: 1,
+    id: interventionId,
+    attemptId: attempt.id,
+    attemptRevision: attempt.attemptRevision + 1,
+    createdAt,
+    provenance: { actor: 'user', source: 'directorControl' },
+    supersededStepRefs,
+    kind: 'insertActor',
+    participantRef,
+    insertionIndex: adjustedIndex,
+    ...(beforeStepRef ? { beforeStepRef } : {}),
+    ...(afterStepRef ? { afterStepRef } : {}),
+  };
+  return mutateAttempt(
+    attempt,
+    input,
+    fingerprint,
+    intervention.id,
+    intervention,
+    (draft) => {
+      const superseded = new Set(supersededStepRefs);
+      return {
+        ...draft,
+        status: selectedStepRefs.length === actorOrder.length ? 'prepared' : 'running',
+        actorOrder,
+        steps: draft.steps.map((step) => superseded.has(step.id)
+          ? { ...step, status: 'superseded' as const }
+          : step),
+        selectedStepRefs,
+        selectedHeadRef: selectedStepRefs.at(-1),
+        currentStepRef: undefined,
+        interventions: [...draft.interventions, intervention],
+      };
+    },
+  );
+}
+
+export function grantPlayTurnAttemptKnowledge(
+  attemptValue: PlayTurnAttempt,
+  input: PlayDirectorInterventionMutationInput & {
+    participantRef: string;
+    effectiveFromStepRef: string;
+    grant: PlayDirectorKnowledgeGrant;
+    availableFactRefs?: string[];
+  },
+): PlayAttemptMutationResult {
+  const attempt = normalizePlayTurnAttempt(attemptValue);
+  assertAttemptActive(attempt);
+  const interventionId = assertSafePlayRehearsalId(
+    input.interventionId,
+    'grant interventionId',
+  );
+  const participantRef = assertSafePlayRehearsalId(
+    input.participantRef,
+    'grant participantRef',
+  );
+  if (!attempt.participantRefs.includes(participantRef)) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      `Play grantKnowledge references a participant outside the Scene Contract: ${participantRef}.`,
+    );
+  }
+  const effectiveFromStepRef = assertSafePlayRehearsalId(
+    input.effectiveFromStepRef,
+    'grant effectiveFromStepRef',
+  );
+  const target = requireLiveAttemptStep(attempt, effectiveFromStepRef);
+  const grant = normalizePlayDirectorKnowledgeGrant(input.grant);
+  if (grant.kind === 'existingFact') {
+    const available = new Set(normalizeSafeIdList(
+      input.availableFactRefs ?? [],
+      'availableFactRefs',
+      512,
+    ));
+    const unavailable = grant.factRefs.find((factRef) => !available.has(factRef));
+    if (unavailable) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        `Play grantKnowledge references an unavailable stable fact: ${unavailable}.`,
+      );
+    }
+  }
+  const fingerprint = fingerprintPlayAttemptRequest({
+    kind: 'grantKnowledge',
+    participantRef,
+    effectiveFromStepRef,
+    grant,
+  });
+  const replay = replayAttemptMutation(attempt, input.idempotencyKey, fingerprint);
+  if (replay) return replay;
+  const selectedPrefixRefs = attempt.selectedStepRefs.slice(0, target.queueIndex);
+  const supersededStepRefs = [
+    ...attempt.selectedStepRefs.slice(target.queueIndex),
+    ...(attempt.currentStepRef && !attempt.selectedStepRefs.includes(attempt.currentStepRef)
+      ? [attempt.currentStepRef]
+      : []),
+  ];
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const intervention: PlayDirectorIntervention = {
+    schemaVersion: 1,
+    id: interventionId,
+    attemptId: attempt.id,
+    attemptRevision: attempt.attemptRevision + 1,
+    createdAt,
+    provenance: { actor: 'user', source: 'directorControl' },
+    supersededStepRefs,
+    kind: 'grantKnowledge',
+    participantRef,
+    effectiveFromStepRef,
+    effectiveFromQueueIndex: target.queueIndex,
+    selectedPrefixRefs,
+    grant,
+  };
+  return mutateAttempt(
+    attempt,
+    input,
+    fingerprint,
+    intervention.id,
+    intervention,
+    (draft) => {
+      const superseded = new Set(supersededStepRefs);
+      return {
+        ...draft,
+        status: 'running',
+        steps: draft.steps.map((step) => superseded.has(step.id)
+          ? { ...step, status: 'superseded' as const }
+          : step),
+        selectedStepRefs: selectedPrefixRefs,
+        selectedHeadRef: selectedPrefixRefs.at(-1),
+        currentStepRef: undefined,
+        interventions: [...draft.interventions, intervention],
+      };
+    },
+  );
+}
+
+export function listActivePlayParticipantKnowledgeGrants(
+  attemptValue: PlayTurnAttempt,
+  participantRefValue: string,
+  throughQueueIndex = Number.MAX_SAFE_INTEGER,
+): Extract<PlayDirectorIntervention, { kind: 'grantKnowledge' }>[] {
+  const attempt = normalizePlayTurnAttempt(attemptValue);
+  const participantRef = assertSafePlayRehearsalId(
+    participantRefValue,
+    'participant knowledge participantRef',
+  );
+  const queueIndex = normalizeNonNegativeInteger(throughQueueIndex, 'throughQueueIndex');
+  return attempt.interventions.filter(
+    (intervention): intervention is Extract<PlayDirectorIntervention, { kind: 'grantKnowledge' }> => {
+      if (
+        intervention.kind !== 'grantKnowledge' ||
+        intervention.participantRef !== participantRef ||
+        intervention.effectiveFromQueueIndex > queueIndex
+      ) return false;
+      return intervention.selectedPrefixRefs.every((stepRef, index) =>
+        attempt.selectedStepRefs[index] === stepRef);
+    },
+  ).map((intervention) => structuredClone(intervention));
 }
 
 export function preparePlayTurnAttemptRetry(
@@ -764,6 +1448,90 @@ export function fingerprintPlayAttemptRequest(value: unknown): string {
     .digest('hex');
 }
 
+export function fingerprintPlayStepEffects(
+  settlementValue: PlayWorldRefereeSettlement,
+): string {
+  return fingerprintPlayAttemptRequest(
+    normalizePlayWorldRefereeSettlement(settlementValue),
+  );
+}
+
+export function classifyPlayStepMaterialEffect(
+  settlementValue: PlayWorldRefereeSettlement,
+): PlayStepMaterialEffect {
+  const settlement = normalizePlayWorldRefereeSettlement(settlementValue);
+  const material = Boolean(
+    settlement.elapsed ||
+    settlement.worldTimeAnchor ||
+    settlement.events.length ||
+    settlement.knowledgeChanges.length ||
+    settlement.pressureChanges.length ||
+    settlement.agendaChanges.length ||
+    settlement.scheduledEventChanges.length ||
+    Object.keys(settlement.stateDelta).length,
+  );
+  return material
+    ? { kind: 'materialEffect' }
+    : {
+        kind: 'noMaterialEffect',
+        reason: 'No typed event, state, schedule, knowledge, momentum, or time effect.',
+      };
+}
+
+export function schedulePlayRehearsalActorOrder(input: {
+  strategy: PlayRehearsalOrderStrategy;
+  participantRefs: string[];
+  directorOrder?: string[];
+  refereeOrder?: string[];
+}): string[] {
+  const strategy = normalizeOrderStrategy(input.strategy);
+  const participants = normalizeSafeIdList(
+    input.participantRefs,
+    'scheduler participantRefs',
+    24,
+  );
+  if (!participants.length) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Play rehearsal actor scheduler requires participants.',
+    );
+  }
+  const assertPermutation = (value: string[] | undefined, label: string): string[] => {
+    const order = normalizeSafeIdList(value ?? [], label, 24);
+    if (
+      order.length !== participants.length ||
+      participants.some((participantRef) => !order.includes(participantRef))
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidAttempt',
+        `${label} must be a permutation of scene participants.`,
+      );
+    }
+    return order;
+  };
+  if (strategy === 'directorFixed') {
+    return input.directorOrder
+      ? assertPermutation(input.directorOrder, 'directorOrder')
+      : [...participants];
+  }
+  if (strategy === 'refereeDynamic') {
+    return assertPermutation(input.refereeOrder, 'refereeOrder');
+  }
+  const pinned = normalizeSafeIdList(
+    input.directorOrder ?? [],
+    'directorOrder',
+    24,
+  );
+  if (pinned.some((participantRef) => !participants.includes(participantRef))) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Hybrid directorOrder contains a non-scene participant.',
+    );
+  }
+  const dynamic = assertPermutation(input.refereeOrder, 'refereeOrder');
+  return [...pinned, ...dynamic.filter((participantRef) => !pinned.includes(participantRef))];
+}
+
 export function fingerprintPlayTurnAttemptStepOperation(
   operationValue: { mode: 'next' } | { mode: 'retry'; sourceStepRef: string },
 ): string {
@@ -860,6 +1628,12 @@ function mutateAttempt(
   }
   const nextRevision = attempt.attemptRevision + 1;
   const mutated = mutate(structuredClone(attempt));
+  const mutatedStepsById = new Map(mutated.steps.map((step) => [step.id, step]));
+  mutated.stagnation = derivePlayAttemptStagnation(
+    mutated.selectedStepRefs,
+    mutatedStepsById,
+    mutated.stagnation.threshold,
+  );
   const receipt: PlayAttemptMutationReceipt = {
     idempotencyKey,
     requestFingerprint,
@@ -919,8 +1693,10 @@ function normalizeCharacterStepDraft(
     'intentSummary',
     'narrativeBlocks',
     'settlementContribution',
+    'effectFingerprint',
     'decisionBasisRefs',
     'variantOf',
+    'materialEffect',
     'status',
     'createdAt',
   ], 'Stored Play character step');
@@ -953,6 +1729,16 @@ function normalizeCharacterStepDraft(
   const settlementContribution = normalizePlayWorldRefereeSettlement(
     record.settlementContribution,
   );
+  const effectFingerprint = fingerprintPlayStepEffects(settlementContribution);
+  if (
+    record.effectFingerprint !== undefined &&
+    record.effectFingerprint !== effectFingerprint
+  ) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      `Stored Play step ${id} has a stale effect fingerprint.`,
+    );
+  }
   const worldNotices = narrativeBlocks.filter((block) =>
     block.kind === 'worldNotice');
   const visibleContributionEvents = settlementContribution.events.filter((event) =>
@@ -986,12 +1772,16 @@ function normalizeCharacterStepDraft(
     intentSummary: normalizeText(record.intentSummary, 'step intentSummary', 800),
     narrativeBlocks,
     settlementContribution,
+    effectFingerprint,
     decisionBasisRefs: normalizeSafeIdList(
       record.decisionBasisRefs,
       'step decisionBasisRefs',
       128,
     ),
     ...(variantOf ? { variantOf } : {}),
+    materialEffect: normalizePlayStepMaterialEffect(
+      record.materialEffect ?? classifyPlayStepMaterialEffect(settlementContribution),
+    ),
     status: record.status as CharacterStepDraftStatus,
     createdAt: normalizeText(record.createdAt, 'step createdAt', 128),
   };
@@ -1015,8 +1805,7 @@ function assertCompatibleStepVariant(
     if (
       !source ||
       source.queueIndex !== step.queueIndex ||
-      source.participantRef !== step.participantRef ||
-      source.beforeStepRef !== step.beforeStepRef
+      source.participantRef !== step.participantRef
     ) {
       throw new PlayTurnAttemptError(
         'invalidAttempt',
@@ -1025,6 +1814,141 @@ function assertCompatibleStepVariant(
     }
     current = source;
   }
+}
+
+function requireLiveAttemptStep(
+  attempt: PlayTurnAttempt,
+  stepRef: string,
+): CharacterStepDraft {
+  const step = attempt.steps.find((candidate) => candidate.id === stepRef);
+  if (!step || (step.status !== 'selected' && step.status !== 'draft')) {
+    throw new PlayTurnAttemptError(
+      'stepNotFound',
+      `Play Director intervention target is not on the live branch: ${stepRef}.`,
+    );
+  }
+  return step;
+}
+
+function assertProjectionReplacementSafe(
+  target: CharacterStepDraft,
+  replacementBlocks: NarrativeBlock[],
+): void {
+  const targetProjectionBlocks = target.narrativeBlocks.filter((block) =>
+    block.kind !== 'worldNotice');
+  if (replacementBlocks.length !== targetProjectionBlocks.length) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      'Play reviseProjection must preserve the narrative projection block cardinality.',
+    );
+  }
+  targetProjectionBlocks.forEach((targetBlock, index) => {
+    const replacement = replacementBlocks[index]!;
+    const targetIsPlayerEditable = targetBlock.projection === 'transcript' &&
+      targetBlock.visibility !== 'playerUnknown';
+    if (!targetIsPlayerEditable && !isDeepStrictEqual(targetBlock, replacement)) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        'Play reviseProjection cannot alter or reorder Director-only narrative blocks.',
+      );
+    }
+    if (
+      targetIsPlayerEditable &&
+      (replacement.projection !== 'transcript' || replacement.visibility === 'playerUnknown')
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        'Play reviseProjection cannot turn a player-visible block into hidden narration.',
+      );
+    }
+    if (
+      targetIsPlayerEditable &&
+      (
+        replacement.kind !== targetBlock.kind ||
+        replacement.speakerRef !== targetBlock.speakerRef ||
+        replacement.visibility !== targetBlock.visibility ||
+        replacement.projection !== targetBlock.projection ||
+        !isDeepStrictEqual(replacement.eventRefs, targetBlock.eventRefs) ||
+        !isDeepStrictEqual(replacement.sourceRefs, targetBlock.sourceRefs)
+      )
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        'Play reviseProjection may change block identity and text, but not its evidence metadata.',
+      );
+    }
+  });
+  const allowedSourceRefs = new Set(target.narrativeBlocks.flatMap((block) =>
+    block.sourceRefs));
+  const allowedEventRefs = new Set(target.narrativeBlocks.flatMap((block) =>
+    block.eventRefs));
+  for (const block of replacementBlocks) {
+    if (
+      (block.kind === 'characterSpeech' || block.kind === 'characterAction') &&
+      block.speakerRef !== target.participantRef
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        'Play reviseProjection cannot change the acting participant.',
+      );
+    }
+    const widenedSource = block.sourceRefs.find((ref) => !allowedSourceRefs.has(ref));
+    const widenedEvent = block.eventRefs.find((ref) => !allowedEventRefs.has(ref));
+    if (widenedSource || widenedEvent) {
+      throw new PlayTurnAttemptError(
+        'invalidTransition',
+        'Play reviseProjection cannot widen the target step evidence closure.',
+      );
+    }
+  }
+}
+
+function assertStepWithinPerception(
+  step: CharacterStepDraft,
+  perception: CharacterPerceptionPackage,
+): void {
+  assertNarrativeBlocksWithinPerception(step.narrativeBlocks, perception);
+  const allowedDecisionRefs = new Set([
+    ...perception.initialKnowledgeEvidence.map((evidence) => evidence.id),
+    ...perception.grantedKnowledgeEvidence.map((evidence) => evidence.id),
+    ...perception.grantedKnowledgeEvidence.flatMap((evidence) => evidence.factRefs),
+  ]);
+  const forbiddenDecisionRef = step.decisionBasisRefs.find((decisionRef) =>
+    !allowedDecisionRefs.has(decisionRef));
+  if (forbiddenDecisionRef) {
+    throw new PlayTurnAttemptError(
+      'invalidTransition',
+      `Play redirected step references forbidden knowledge: ${forbiddenDecisionRef}.`,
+    );
+  }
+}
+
+function cloneWorldNoticesForStep(
+  source: CharacterStepDraft,
+  nextStepRef: string,
+): NarrativeBlock[] {
+  return source.narrativeBlocks
+    .filter((block) => block.kind === 'worldNotice')
+    .map((block) => ({
+      ...structuredClone(block),
+      id: `world-notice-${nextStepRef}`,
+    }));
+}
+
+function cloneBlocksForStep(
+  source: CharacterStepDraft,
+  nextStepRef: string,
+): NarrativeBlock[] {
+  return source.narrativeBlocks.map((block) => block.kind === 'worldNotice'
+    ? { ...structuredClone(block), id: `world-notice-${nextStepRef}` }
+    : structuredClone(block));
+}
+
+function deriveInterventionStepId(interventionId: string, suffix: string): string {
+  const candidate = `${interventionId}-${suffix}`;
+  return candidate.length <= 180
+    ? assertSafePlayRehearsalId(candidate, 'intervention result step id')
+    : `step-${fingerprintPlayAttemptRequest({ interventionId, suffix }).slice(0, 32)}`;
 }
 
 function normalizeAttemptReceipt(value: unknown): PlayAttemptMutationReceipt {
@@ -1046,6 +1970,304 @@ function normalizeAttemptReceipt(value: unknown): PlayAttemptMutationReceipt {
     resultRef: assertSafePlayRehearsalId(record.resultRef, 'receipt resultRef'),
     responseDigest: normalizeText(record.responseDigest, 'responseDigest', 512),
   };
+}
+
+function normalizePlayDirectorIntervention(
+  value: unknown,
+  expectedAttemptId: string,
+): PlayDirectorIntervention {
+  const record = requireRecord(value, 'Stored Play Director intervention');
+  const baseFields = [
+    'schemaVersion',
+    'id',
+    'attemptId',
+    'attemptRevision',
+    'createdAt',
+    'provenance',
+    'supersededStepRefs',
+    'kind',
+  ] as const;
+  if (record.schemaVersion !== 1) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      `Unsupported Play Director intervention schemaVersion: ${String(record.schemaVersion)}.`,
+    );
+  }
+  const attemptId = assertSafePlayRehearsalId(
+    record.attemptId,
+    'intervention attemptId',
+  );
+  if (attemptId !== expectedAttemptId) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Stored Play Director intervention belongs to another attempt.',
+    );
+  }
+  const provenance = requireRecord(
+    record.provenance,
+    'Play Director intervention provenance',
+  );
+  assertOnlyKnownFields(
+    provenance,
+    ['actor', 'source'],
+    'Play Director intervention provenance',
+  );
+  if (provenance.actor !== 'user' || provenance.source !== 'directorControl') {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Play Director intervention requires user/directorControl provenance.',
+    );
+  }
+  const base: PlayDirectorInterventionBase = {
+    schemaVersion: 1,
+    id: assertSafePlayRehearsalId(record.id, 'intervention id'),
+    attemptId,
+    attemptRevision: normalizePositiveInteger(
+      record.attemptRevision,
+      'intervention attemptRevision',
+    ),
+    createdAt: normalizeText(record.createdAt, 'intervention createdAt', 128),
+    provenance: { actor: 'user', source: 'directorControl' },
+    supersededStepRefs: normalizeSafeIdList(
+      record.supersededStepRefs,
+      'intervention supersededStepRefs',
+      MAX_ATTEMPT_STEPS,
+    ),
+  };
+  if (record.kind === 'reviseProjection') {
+    assertOnlyKnownFields(record, [
+      ...baseFields,
+      'stepRef',
+      'replacementStepRef',
+      'replacementBlocks',
+      'expectedEffectFingerprint',
+    ], 'Play reviseProjection intervention');
+    const replacementBlocks = normalizeBoundedArray(
+      record.replacementBlocks,
+      96,
+      'Play reviseProjection replacementBlocks',
+    ).map(normalizeNarrativeBlock);
+    assertUnique(replacementBlocks.map((block) => block.id), 'replacement NarrativeBlock id');
+    return {
+      ...base,
+      kind: 'reviseProjection',
+      stepRef: assertSafePlayRehearsalId(record.stepRef, 'intervention stepRef'),
+      replacementStepRef: assertSafePlayRehearsalId(
+        record.replacementStepRef,
+        'intervention replacementStepRef',
+      ),
+      replacementBlocks,
+      expectedEffectFingerprint: normalizeSha256(
+        record.expectedEffectFingerprint,
+        'expectedEffectFingerprint',
+      ),
+    };
+  }
+  if (record.kind === 'redirectStep') {
+    assertOnlyKnownFields(record, [
+      ...baseFields,
+      'stepRef',
+      'replacementStepRef',
+      'directorIntent',
+      'authorConstraintRefs',
+    ], 'Play redirectStep intervention');
+    return {
+      ...base,
+      kind: 'redirectStep',
+      stepRef: assertSafePlayRehearsalId(record.stepRef, 'intervention stepRef'),
+      replacementStepRef: assertSafePlayRehearsalId(
+        record.replacementStepRef,
+        'intervention replacementStepRef',
+      ),
+      directorIntent: normalizeText(record.directorIntent, 'directorIntent', MAX_ATTEMPT_TEXT),
+      authorConstraintRefs: normalizeSafeIdList(
+        record.authorConstraintRefs,
+        'authorConstraintRefs',
+        64,
+      ),
+    };
+  }
+  if (record.kind === 'insertActor') {
+    assertOnlyKnownFields(record, [
+      ...baseFields,
+      'participantRef',
+      'insertionIndex',
+      'beforeStepRef',
+      'afterStepRef',
+    ], 'Play insertActor intervention');
+    const beforeStepRef = record.beforeStepRef === undefined
+      ? undefined
+      : assertSafePlayRehearsalId(record.beforeStepRef, 'insert beforeStepRef');
+    const afterStepRef = record.afterStepRef === undefined
+      ? undefined
+      : assertSafePlayRehearsalId(record.afterStepRef, 'insert afterStepRef');
+    if (beforeStepRef && afterStepRef) {
+      throw new PlayTurnAttemptError(
+        'invalidAttempt',
+        'Play insertActor accepts either beforeStepRef or afterStepRef, not both.',
+      );
+    }
+    return {
+      ...base,
+      kind: 'insertActor',
+      participantRef: assertSafePlayRehearsalId(
+        record.participantRef,
+        'insert participantRef',
+      ),
+      insertionIndex: normalizeNonNegativeInteger(record.insertionIndex, 'insertionIndex'),
+      ...(beforeStepRef ? { beforeStepRef } : {}),
+      ...(afterStepRef ? { afterStepRef } : {}),
+    };
+  }
+  if (record.kind === 'grantKnowledge') {
+    assertOnlyKnownFields(record, [
+      ...baseFields,
+      'participantRef',
+      'effectiveFromStepRef',
+      'effectiveFromQueueIndex',
+      'selectedPrefixRefs',
+      'grant',
+    ], 'Play grantKnowledge intervention');
+    return {
+      ...base,
+      kind: 'grantKnowledge',
+      participantRef: assertSafePlayRehearsalId(
+        record.participantRef,
+        'grant participantRef',
+      ),
+      effectiveFromStepRef: assertSafePlayRehearsalId(
+        record.effectiveFromStepRef,
+        'grant effectiveFromStepRef',
+      ),
+      effectiveFromQueueIndex: normalizeNonNegativeInteger(
+        record.effectiveFromQueueIndex,
+        'grant effectiveFromQueueIndex',
+      ),
+      selectedPrefixRefs: normalizeSafeIdList(
+        record.selectedPrefixRefs,
+        'grant selectedPrefixRefs',
+        MAX_ATTEMPT_STEPS,
+      ),
+      grant: normalizePlayDirectorKnowledgeGrant(record.grant),
+    };
+  }
+  throw new PlayTurnAttemptError(
+    'invalidAttempt',
+    `Unsupported Play Director intervention kind: ${String(record.kind)}.`,
+  );
+}
+
+function normalizePlayDirectorKnowledgeGrant(value: unknown): PlayDirectorKnowledgeGrant {
+  const record = requireRecord(value, 'Play Director knowledge grant');
+  if (record.kind === 'existingFact') {
+    assertOnlyKnownFields(record, ['kind', 'factRefs'], 'Play existing-fact grant');
+    const factRefs = normalizeSafeIdList(record.factRefs, 'grant factRefs', 64);
+    if (!factRefs.length) {
+      throw new PlayTurnAttemptError(
+        'invalidAttempt',
+        'Play existing-fact grant requires at least one stable fact ref.',
+      );
+    }
+    return { kind: 'existingFact', factRefs };
+  }
+  if (record.kind === 'authorProvidedPlayFact') {
+    assertOnlyKnownFields(
+      record,
+      ['kind', 'summary', 'visibility', 'providedAt'],
+      'Play author-provided knowledge grant',
+    );
+    if (
+      record.visibility !== 'playerVisible' &&
+      record.visibility !== 'rumor' &&
+      record.visibility !== 'playerUnknown'
+    ) {
+      throw new PlayTurnAttemptError(
+        'invalidAttempt',
+        'Play author-provided knowledge grant has invalid visibility.',
+      );
+    }
+    return {
+      kind: 'authorProvidedPlayFact',
+      summary: normalizeText(record.summary, 'grant summary', MAX_ATTEMPT_TEXT),
+      visibility: record.visibility,
+      providedAt: normalizeText(record.providedAt, 'grant providedAt', 128),
+    };
+  }
+  throw new PlayTurnAttemptError(
+    'invalidAttempt',
+    `Unsupported Play knowledge grant kind: ${String(record.kind)}.`,
+  );
+}
+
+function createPlayAttemptStagnation(threshold = 3): PlayAttemptStagnation {
+  return {
+    consecutiveNoMaterialSteps: 0,
+    threshold,
+    warning: false,
+  };
+}
+
+function derivePlayAttemptStagnation(
+  selectedStepRefs: readonly string[],
+  stepsById: Map<string, CharacterStepDraft>,
+  threshold = 3,
+): PlayAttemptStagnation {
+  const safeThreshold = normalizePositiveInteger(threshold, 'stagnation threshold');
+  let consecutiveNoMaterialSteps = 0;
+  for (const stepRef of [...selectedStepRefs].reverse()) {
+    const step = stepsById.get(stepRef);
+    if (!step || step.materialEffect?.kind !== 'noMaterialEffect') break;
+    consecutiveNoMaterialSteps += 1;
+  }
+  return {
+    consecutiveNoMaterialSteps,
+    threshold: safeThreshold,
+    warning: consecutiveNoMaterialSteps >= safeThreshold,
+  };
+}
+
+function normalizePlayAttemptStagnation(value: unknown): PlayAttemptStagnation {
+  const record = requireRecord(value, 'Play attempt stagnation');
+  assertOnlyKnownFields(
+    record,
+    ['consecutiveNoMaterialSteps', 'threshold', 'warning'],
+    'Play attempt stagnation',
+  );
+  const consecutiveNoMaterialSteps = normalizeNonNegativeInteger(
+    record.consecutiveNoMaterialSteps,
+    'stagnation consecutiveNoMaterialSteps',
+  );
+  const threshold = normalizePositiveInteger(record.threshold, 'stagnation threshold');
+  if (record.warning !== (consecutiveNoMaterialSteps >= threshold)) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      'Play attempt stagnation warning does not match its threshold.',
+    );
+  }
+  return {
+    consecutiveNoMaterialSteps,
+    threshold,
+    warning: record.warning,
+  };
+}
+
+function normalizePlayStepMaterialEffect(value: unknown): PlayStepMaterialEffect {
+  const record = requireRecord(value, 'Play step material effect');
+  if (record.kind === 'materialEffect') {
+    assertOnlyKnownFields(record, ['kind'], 'Play material effect');
+    return { kind: 'materialEffect' };
+  }
+  if (record.kind === 'noMaterialEffect') {
+    assertOnlyKnownFields(record, ['kind', 'reason'], 'Play noMaterialEffect');
+    return {
+      kind: 'noMaterialEffect',
+      reason: normalizeText(record.reason, 'noMaterialEffect reason', 800),
+    };
+  }
+  throw new PlayTurnAttemptError(
+    'invalidAttempt',
+    `Unsupported Play step material effect: ${String(record.kind)}.`,
+  );
 }
 
 function assertAttemptActive(attempt: PlayTurnAttempt): void {
@@ -1110,6 +2332,41 @@ function normalizeNonNegativeInteger(value: unknown, label: string): number {
     );
   }
   return value as number;
+}
+
+function normalizePositiveInteger(value: unknown, label: string): number {
+  const normalized = normalizeNonNegativeInteger(value, label);
+  if (normalized < 1) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      `Play attempt ${label} must be a positive safe integer.`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeOrderStrategy(value: unknown): PlayRehearsalOrderStrategy {
+  if (
+    value !== 'directorFixed' &&
+    value !== 'refereeDynamic' &&
+    value !== 'hybrid'
+  ) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      `Unsupported Play rehearsal order strategy: ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
+function normalizeSha256(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new PlayTurnAttemptError(
+      'invalidAttempt',
+      `Play attempt ${label} must be a SHA-256 hex digest.`,
+    );
+  }
+  return value;
 }
 
 function assertUnique(values: readonly string[], label: string): void {

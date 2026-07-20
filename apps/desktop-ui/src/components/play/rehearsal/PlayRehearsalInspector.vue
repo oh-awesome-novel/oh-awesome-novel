@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useId } from 'vue';
+import { computed, useId } from 'vue';
 
 import type {
   PlayRehearsalActorQueueItem,
@@ -8,11 +8,32 @@ import type {
   PlayRehearsalVisibleEventView,
 } from './types';
 
-const { scene, activeActor, perception, visibleEvents } = defineProps<{
+const props = defineProps<{
   scene: Readonly<PlayRehearsalSceneContractView>;
   activeActor?: Readonly<PlayRehearsalActorQueueItem>;
   perception?: Readonly<PlayRehearsalPerceptionView>;
   visibleEvents: readonly Readonly<PlayRehearsalVisibleEventView>[];
+  lens?: 'player' | 'director';
+}>();
+const scene = computed(() => props.scene);
+const activeActor = computed(() => props.activeActor);
+const perception = computed(() => props.perception);
+const visibleEvents = computed(() => props.visibleEvents);
+const lens = computed(() => props.lens ?? 'director');
+const projectedVisibleFacts = computed(() =>
+  (props.perception?.visibleFacts ?? []).filter((_, index) =>
+    lens.value === 'director' ||
+    props.perception?.visibleFactVisibilities?.[index] !== 'playerUnknown',
+  ),
+);
+const visibleGrantedKnowledge = computed(() =>
+  (props.perception?.grantedKnowledge ?? []).filter((grant) =>
+    lens.value === 'director' || grant.visibility !== 'playerUnknown',
+  ),
+);
+
+const emit = defineEmits<{
+  updateLens: [lens: 'player' | 'director'];
 }>();
 
 const headingId = `${useId()}-rehearsal-inspector-heading`;
@@ -21,16 +42,22 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
 <template>
   <aside class="play-rehearsal-inspector" :aria-labelledby="headingId">
     <header>
-      <span>Director view</span>
-      <h2 :id="headingId">Scene Inspector</h2>
+      <div>
+        <span>{{ lens === 'director' ? 'Director view' : 'Player-safe view' }}</span>
+        <h2 :id="headingId">Scene Inspector</h2>
+      </div>
+      <div class="play-rehearsal-inspector-lens" role="group" aria-label="Rehearsal inspector lens">
+        <button type="button" :aria-pressed="lens === 'player'" @click="emit('updateLens', 'player')">Player</button>
+        <button type="button" :aria-pressed="lens === 'director'" @click="emit('updateLens', 'director')">Director</button>
+      </div>
     </header>
 
     <section>
       <h3>Scene Contract</h3>
       <dl>
         <div><dt>Location</dt><dd>{{ scene.location || 'Unspecified' }}</dd></div>
-        <div><dt>Objective</dt><dd>{{ scene.objective || 'Unspecified' }}</dd></div>
-        <div><dt>Risk</dt><dd>{{ scene.risk || 'Unspecified' }}</dd></div>
+        <div v-if="lens === 'director'"><dt>Objective</dt><dd>{{ scene.objective || 'Unspecified' }}</dd></div>
+        <div v-if="lens === 'director'"><dt>Risk</dt><dd>{{ scene.risk || 'Unspecified' }}</dd></div>
         <div><dt>Atmosphere</dt><dd>{{ scene.atmosphere || 'Unspecified' }}</dd></div>
       </dl>
     </section>
@@ -52,16 +79,26 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
       </p>
       <template v-if="perception">
         <h4>Visible facts</h4>
-        <ul v-if="perception.visibleFacts.length">
-          <li v-for="(fact, index) in perception.visibleFacts" :key="`${index}:${fact}`">{{ fact }}</li>
+        <ul v-if="projectedVisibleFacts.length">
+          <li v-for="(fact, index) in projectedVisibleFacts" :key="`${index}:${fact}`">{{ fact }}</li>
         </ul>
         <p v-else class="play-rehearsal-inspector-empty">No visible facts supplied.</p>
 
-        <h4>Behavior anchors</h4>
-        <ul v-if="perception.behaviorAnchors.length">
+        <h4 v-if="lens === 'director'">Behavior anchors</h4>
+        <ul v-if="lens === 'director' && perception.behaviorAnchors.length">
           <li v-for="(anchor, index) in perception.behaviorAnchors" :key="`${index}:${anchor}`">{{ anchor }}</li>
         </ul>
-        <p v-else class="play-rehearsal-inspector-empty">No behavior anchors supplied.</p>
+        <p v-else-if="lens === 'director'" class="play-rehearsal-inspector-empty">No behavior anchors supplied.</p>
+
+        <template v-if="visibleGrantedKnowledge.length">
+          <h4>Granted knowledge</h4>
+          <ul>
+            <li v-for="grant in visibleGrantedKnowledge" :key="grant.id">
+              {{ grant.summary }}
+              <small v-if="lens === 'director'">{{ grant.provenanceLabel }}</small>
+            </li>
+          </ul>
+        </template>
 
         <h4>Observed blocks</h4>
         <ul v-if="perception.observedBlockLabels.length">
@@ -69,7 +106,7 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
         </ul>
         <p v-else class="play-rehearsal-inspector-empty">No earlier block observations.</p>
 
-        <p v-if="perception.omissionNotice" class="play-rehearsal-omission-notice">
+        <p v-if="lens === 'director' && perception.omissionNotice" class="play-rehearsal-omission-notice">
           {{ perception.omissionNotice }}
         </p>
       </template>
@@ -107,7 +144,15 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
 }
 
 .play-rehearsal-inspector > header {
-  gap: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.play-rehearsal-inspector-lens {
+  display: flex;
+  gap: 4px;
 }
 
 .play-rehearsal-inspector > header span,

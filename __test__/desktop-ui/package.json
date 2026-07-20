@@ -7,7 +7,10 @@
     "pretest": "npm run build --workspace @oh-awesome-novel/client",
     "test": "vitest",
     "pretest:run": "npm run build --workspace @oh-awesome-novel/client",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "pretest:renderer-smoke": "npm run typecheck:renderer-smoke",
+    "typecheck:renderer-smoke": "vue-tsc --noEmit -p ./renderer-smoke/tsconfig.json",
+    "test:renderer-smoke": "node ./renderer-smoke/run.cjs"
   },
   "dependencies": {
     "@oh-awesome-novel/client": "^0.0.1",
@@ -19,6 +22,8 @@
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.10.6",
     "typescript": "~6.0.2",
-    "vitest": "^4.1.8"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.8",
+    "vue-tsc": "^3.2.8"
   }
 }

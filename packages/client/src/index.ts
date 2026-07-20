@@ -10,6 +10,8 @@ import type {
   CreatePlaySceneRehearsalSessionInput,
   PlayRehearsalClientMethods,
   PlayRehearsalSessionV5,
+  PlayCommittedSceneEvidence,
+  PlaySceneRehearsalSidecar,
   PlaySessionPurpose,
 } from './play-rehearsal.js';
 
@@ -31,8 +33,13 @@ export type {
   PlayAttemptMutationInput,
   PlayAttemptMutationReceipt,
   PlayAttemptMutationResult,
+  PlayAttemptStagnation,
   PlayCommittedCharacterStepEvidence,
   PlayCommittedSceneEvidence,
+  PlayDirectorIntervention,
+  PlayDirectorInterventionBase,
+  PlayDirectorInterventionInput,
+  PlayDirectorKnowledgeGrant,
   PlayRehearsalClientMethods,
   PlayRehearsalFinalizeReceipt,
   PlayRehearsalFinalizeResult,
@@ -47,6 +54,7 @@ export type {
   PlayRehearsalTurnEvidence,
   PlayRehearsalTurnArtifactV3,
   PlaySceneContract,
+  PlaySceneMemoryArtifact,
   PlaySceneKnowledgeEvidence,
   PlaySceneRehearsalSidecar,
   PlaySceneValue,
@@ -54,6 +62,7 @@ export type {
   PlayStartMode,
   PlayTurnAttempt,
   PlayTurnAttemptStatus,
+  PlayStepMaterialEffect,
   PlayWorldRefereeScheduledEventChange,
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
@@ -416,16 +425,45 @@ export interface PlayEventRevealRecord {
   revealedByEventId: string;
   canonical: false;
 }
+export interface PlayParticipantKnowledgeGrantRecord {
+  id: string;
+  kind: 'participantGrant';
+  participantRef: string;
+  effectiveFromStepRef: string;
+  interventionRef: string;
+  grant:
+    | { kind: 'existingFact'; factRefs: string[] }
+    | {
+        kind: 'authorProvidedPlayFact';
+        summary: string;
+        visibility: PlayEventVisibility;
+        providedAt: string;
+      };
+  grantedAtTurnId: string;
+  canonical: false;
+}
+export type PlayKnowledgeRecord =
+  | PlayEventRevealRecord
+  | PlayParticipantKnowledgeGrantRecord;
 export interface PlayKnowledgeState {
   schemaVersion: 1;
-  records: PlayEventRevealRecord[];
+  records: PlayKnowledgeRecord[];
 }
 export interface PlayRevealEventKnowledgeChange {
   type: 'revealEvent';
   subjectEventId: string;
   playerProjection: 'rumor' | 'playerVisible';
 }
-export type PlayKnowledgeChange = PlayRevealEventKnowledgeChange;
+export interface PlayGrantParticipantKnowledgeChange {
+  type: 'grantParticipantKnowledge';
+  participantRef: string;
+  effectiveFromStepRef: string;
+  interventionRef: string;
+  grant: PlayParticipantKnowledgeGrantRecord['grant'];
+}
+export type PlayKnowledgeChange =
+  | PlayRevealEventKnowledgeChange
+  | PlayGrantParticipantKnowledgeChange;
 export interface PlayKnowledgeRevealCandidate {
   subjectEventId: string;
   currentPlayerProjection: 'playerUnknown' | 'rumor';
@@ -447,7 +485,12 @@ export type PlayKnowledgeProjection =
     }
   | {
       lens: 'author';
-      record: PlayEventRevealRecord;
+      record: PlayKnowledgeRecord;
+    }
+  | {
+      lens: 'player';
+      kind: 'participantGrant';
+      visible: false;
     };
 export type PlayTimeAdvanceUnit = 'minute' | 'hour' | 'day';
 export interface PlayRelativeTimeAdvance {
@@ -945,6 +988,257 @@ export interface PlaySessionV4 {
 
 export type PlaySession = PlaySessionV4 | PlayRehearsalSessionV5;
 
+export interface PlaySessionSummary {
+  schemaVersion: PlaySession['schemaVersion'];
+  id: string;
+  title: string;
+  createdAt: string;
+  latestActivityAt: string;
+  revision: number;
+  purpose: PlaySessionPurpose;
+  startMode: 'quick' | 'guided';
+  selectedArtifactId?: string;
+  selectedTurnCount: number;
+  transcriptCount: number;
+  eventCount: number;
+  worldClock: PlayWorldClock;
+  canonical: false;
+}
+
+export interface PlayCursorWindow<T> {
+  items: T[];
+  totalCount: number;
+  hasMoreBefore: boolean;
+  nextCursor?: string;
+}
+
+export interface PlaySessionSelectedSnapshot {
+  schemaVersion: PlaySession['schemaVersion'];
+  id: string;
+  title: string;
+  createdAt: string;
+  revision: number;
+  userPersona?: string;
+  sceneStart: string;
+  characters: string[];
+  selectedTurnIds: string[];
+  branchSnapshotRequiredFromRevision: number;
+  metadataExtensions: Record<string, unknown>;
+  playLocalState: Record<string, unknown>;
+  playLocalStateVisibility: Record<string, PlayEventVisibility>;
+  worldClock: PlayWorldClock;
+  eventPolicy: PlayEventPolicy;
+  scheduledEvents: PlayScheduledEvent[];
+  suggestedActions: string[];
+  activatedSources: PlayActivatedSource[];
+  observations: PlayObservation[];
+  adoptionCandidates: PlayAdoptionCandidate[];
+  sceneRehearsal?: PlaySceneRehearsalSidecar;
+  rehearsalScenes?: PlayCommittedSceneEvidence[];
+}
+
+export interface PlaySessionSelectedDetail {
+  summary: PlaySessionSummary;
+  snapshot: PlaySessionSelectedSnapshot;
+  transcript: PlayCursorWindow<PlayTranscriptTurn>;
+  events: PlayCursorWindow<PlayWorldEvent>;
+  eventPresentation: PlayEventPresentationEvidence[];
+  selectedArtifactPresentation?: PlaySelectedArtifactPresentation;
+}
+
+export interface PlayEventPresentationActionCause {
+  actionKind?: PlayActionKind;
+  contentExcerpt: string;
+}
+
+export interface PlayEventPresentationSourceEventCause {
+  title: string;
+}
+
+export interface PlayEventPresentationScheduledCause {
+  label: string;
+  trigger: PlayEventTrigger;
+}
+
+export interface PlayEventPresentationPressureCause {
+  label: string;
+}
+
+export interface PlayEventPresentationAgendaCause {
+  ownerEntityId: string;
+  summary: string;
+}
+
+export interface PlayEventPresentationCauses {
+  actions: PlayEventPresentationActionCause[];
+  sourceEvents: PlayEventPresentationSourceEventCause[];
+  scheduled?: PlayEventPresentationScheduledCause;
+  pressure?: PlayEventPresentationPressureCause;
+  agenda?: PlayEventPresentationAgendaCause;
+}
+
+export interface PlayEventPresentationStateImpact {
+  path: string;
+  value: string;
+}
+
+export interface PlayEventPresentationReveal {
+  status: 'rumorSurfaced' | 'informationConfirmed';
+}
+
+export interface PlayEventPresentationAuthorReveal {
+  recordId: string;
+  subjectEventId: string;
+  subjectTitle: string;
+  subjectSummary: string;
+  subjectWorldClock: PlayWorldClock;
+  subjectReason?: string;
+  revealedByEventId: string;
+  previousPlayerProjection: 'playerUnknown' | 'rumor';
+  playerProjection: 'rumor' | 'playerVisible';
+  knownByParticipantRefs: string[];
+}
+
+export interface PlayEventPresentationTechnicalRefs {
+  artifactId: string;
+  artifactRevision: number;
+  turnId: string;
+  sourceTurnIds: string[];
+  sourceEventIds: string[];
+  triggerId?: string;
+  pressureId?: string;
+  agendaId?: string;
+}
+
+export interface PlayEventPresentationAuthorEvidence {
+  reason: string;
+  technicalRefs: PlayEventPresentationTechnicalRefs;
+  hiddenCauses: PlayEventPresentationCauses;
+  stateImpacts: PlayEventPresentationStateImpact[];
+  stateImpactOmittedCount: number;
+  reveal?: PlayEventPresentationAuthorReveal;
+}
+
+export interface PlayEventPresentationEvidence {
+  eventId: string;
+  causes: PlayEventPresentationCauses;
+  stateImpacts: PlayEventPresentationStateImpact[];
+  stateImpactOmittedCount: number;
+  reveal?: PlayEventPresentationReveal;
+  author: PlayEventPresentationAuthorEvidence;
+}
+
+export interface PlaySelectedArtifactPresentation {
+  id: string;
+  revision: number;
+  eventIds: string[];
+  stateDelta: Record<string, unknown>;
+  playLocalStateVisibilitySnapshot: Record<string, PlayEventVisibility>;
+  rehearsalEvidenceRefs?: string[];
+  canonical: false;
+}
+
+export type PlayContextSourceOmissionReason =
+  | 'sourceCountLimit'
+  | 'excerptCharacterLimit'
+  | 'canonicalDrift'
+  | 'missing'
+  | 'invalid'
+  | 'empty'
+  | 'notSelected'
+  | 'unsafe';
+
+export interface PlayContextWindowTrace {
+  kind: 'transcript' | 'event';
+  availableCount: number;
+  selectedCount: number;
+  selectedIds: string[];
+  omittedCount: number;
+  limit: number;
+  omissionReason?: 'windowLimit';
+}
+
+export interface PlayContextSourceTrace {
+  sourceId: string;
+  path?: string;
+  role?: PlayLaunchSourceRole;
+  trust: PlaySourceTrust;
+  budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
+  semanticBoundary: 'protected' | 'compressible' | 'excluded';
+  expectedContentHash?: string;
+  actualContentHash?: string;
+  driftState?: PlaySourceDriftState;
+  outcome: 'selected' | 'omitted';
+  selectedCharacterCount?: number;
+  omissionReason?: PlayContextSourceOmissionReason;
+}
+
+export interface PlayTurnContextTrace {
+  schemaVersion: 1;
+  sessionId: string;
+  sessionRevision: number;
+  artifactId: string;
+  createdAt: string;
+  transcriptWindow: PlayContextWindowTrace;
+  eventWindow: PlayContextWindowTrace;
+  sources: PlayContextSourceTrace[];
+  canonical: false;
+}
+
+export type PlaySourceDriftState = 'current' | 'changed' | 'missing' | 'invalid';
+export type PlaySourceDriftOverall = 'current' | 'drifted' | 'unavailable';
+export type PlaySourceDriftDecisionKind =
+  | 'continueFrozen'
+  | 'reassemble'
+  | 'fork';
+
+export interface PlaySourceDriftSourceStatus {
+  sourceId: string;
+  path?: string;
+  expectedContentHash?: string;
+  actualContentHash?: string;
+  state: PlaySourceDriftState;
+}
+
+export interface PlaySourceDriftResolution {
+  schemaVersion: 1;
+  kind: PlaySourceDriftDecisionKind;
+  decidedAt: string;
+  sourceSessionId: string;
+  sourceRevision: number;
+  snapshots: PlaySourceDriftSourceStatus[];
+  excludedSourceIds: string[];
+  canonical: false;
+}
+
+export interface PlaySourceDriftStatus {
+  sessionId: string;
+  sessionRevision: number;
+  overall: PlaySourceDriftOverall;
+  sources: PlaySourceDriftSourceStatus[];
+  activeResolution?: PlaySourceDriftResolution;
+  availableDecisions: PlaySourceDriftDecisionKind[];
+  canonical: false;
+}
+
+export type PlaySourceDriftDecision =
+  | { kind: 'continueFrozen'; baseRevision: number }
+  | { kind: 'reassemble'; baseRevision: number }
+  | {
+      kind: 'fork';
+      baseRevision: number;
+      newSessionId: string;
+      title?: string;
+    };
+
+export interface PlaySourceDriftDecisionResult {
+  session: PlaySession;
+  resolution: PlaySourceDriftResolution;
+  status: PlaySourceDriftStatus;
+  sourceSessionId: string;
+  createdSessionId?: string;
+}
+
 export type PlayCheckpointStatus = 'current' | 'selectedAncestor' | 'variant';
 export type PlayCheckpointKind = 'initialWorld' | 'turn';
 
@@ -1304,6 +1598,7 @@ export interface OanClient extends PlayRehearsalClientMethods {
     input: StartPlaySessionFromLaunchPackageInput,
   ): Promise<{ session: PlaySession; files: string[] }>;
   listPlaySessions(): Promise<{ sessions: PlaySession[] }>;
+  listPlaySessionSummaries(): Promise<{ summaries: PlaySessionSummary[] }>;
   createPlaySession(input: {
     id?: string;
     title: string;
@@ -1318,6 +1613,19 @@ export interface OanClient extends PlayRehearsalClientMethods {
     files: string[];
   }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  getPlaySessionDetail(id: string, options?: {
+    limit?: number;
+    transcriptCursor?: string;
+    eventCursor?: string;
+  }): Promise<{ detail: PlaySessionSelectedDetail }>;
+  listPlayContextTraces(id: string, options?: {
+    limit?: number;
+  }): Promise<{ traces: PlayTurnContextTrace[] }>;
+  getPlaySourceDrift(id: string): Promise<{ status: PlaySourceDriftStatus }>;
+  decidePlaySourceDrift(
+    id: string,
+    decision: PlaySourceDriftDecision,
+  ): Promise<PlaySourceDriftDecisionResult>;
   generatePlayOutcomeReport(id: string, input: {
     baseRevision: number;
     projection?: PlayOutcomeProjection;
@@ -1661,6 +1969,9 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     listPlaySessions: () =>
       requestJson<unknown>('/api/workspace/play-sessions')
         .then(parsePlaySessionListResponse),
+    listPlaySessionSummaries: () =>
+      requestJson<unknown>('/api/workspace/play-session-summaries')
+        .then(parsePlaySessionSummaryListResponse),
     createPlaySession: (input) => {
       const normalized = normalizePlaySessionCreateRequest(input);
       return requestJson<unknown>('/api/workspace/play-sessions', {
@@ -1675,6 +1986,41 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
       ).then((value) => parsePlaySessionResponse(value, id)),
+    getPlaySessionDetail: (id, options = {}) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      const query = normalizePlaySessionDetailQuery(options);
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/detail${query}`,
+      ).then((value) => parsePlaySessionDetailResponse(value, sessionId));
+    },
+    listPlayContextTraces: (id, options = {}) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      const limit = options.limit ?? 20;
+      if (!isPositiveSafeInteger(limit) || limit > 100) {
+        throw new Error('Play context trace limit must be between 1 and 100.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/context-traces?limit=${limit}`,
+      ).then((value) => parsePlayContextTraceListResponse(value, sessionId));
+    },
+    getPlaySourceDrift: (id) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/source-drift`,
+      ).then((value) => parsePlaySourceDriftResponse(value, sessionId));
+    },
+    decidePlaySourceDrift: (id, decision) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      const body = normalizePlaySourceDriftDecision(decision, sessionId);
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/source-drift/decisions`,
+        { method: 'POST', body },
+      ).then((value) => parsePlaySourceDriftDecisionResponse(
+        value,
+        sessionId,
+        body,
+      ));
+    },
     generatePlayOutcomeReport: (id, input) => {
       const normalized = normalizePlayOutcomeRequest(id, input);
       return requestJson<unknown>(
@@ -2539,6 +2885,22 @@ function parsePlaySessionListResponse(
   return value as unknown as { sessions: PlaySession[] };
 }
 
+function parsePlaySessionSummaryListResponse(
+  value: unknown,
+): { summaries: PlaySessionSummary[] } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['summaries']) ||
+    !Array.isArray(value.summaries) ||
+    !value.summaries.every(isPlaySessionSummary) ||
+    new Set(value.summaries.map((summary) => summary.id)).size !==
+      value.summaries.length
+  ) {
+    throw new Error('Play session summary list returned an invalid payload.');
+  }
+  return value as unknown as { summaries: PlaySessionSummary[] };
+}
+
 function parsePlaySessionResponse(
   value: unknown,
   sessionId: string,
@@ -2551,6 +2913,153 @@ function parsePlaySessionResponse(
     throw new Error('Play session request returned an invalid payload.');
   }
   return value as unknown as { session: PlaySession };
+}
+
+function parsePlaySessionDetailResponse(
+  value: unknown,
+  sessionId: string,
+): { detail: PlaySessionSelectedDetail } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['detail']) ||
+    !isPlaySessionSelectedDetail(value.detail, sessionId)
+  ) {
+    throw new Error('Play session detail returned an invalid payload.');
+  }
+  return value as unknown as { detail: PlaySessionSelectedDetail };
+}
+
+function parsePlayContextTraceListResponse(
+  value: unknown,
+  sessionId: string,
+): { traces: PlayTurnContextTrace[] } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['traces']) ||
+    !Array.isArray(value.traces) ||
+    !value.traces.every((trace) => isPlayTurnContextTrace(trace, sessionId))
+  ) {
+    throw new Error('Play context traces returned an invalid payload.');
+  }
+  return value as unknown as { traces: PlayTurnContextTrace[] };
+}
+
+function parsePlaySourceDriftResponse(
+  value: unknown,
+  sessionId: string,
+): { status: PlaySourceDriftStatus } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['status']) ||
+    !isPlaySourceDriftStatus(value.status, sessionId)
+  ) {
+    throw new Error('Play source drift status returned an invalid payload.');
+  }
+  return value as unknown as { status: PlaySourceDriftStatus };
+}
+
+function parsePlaySourceDriftDecisionResponse(
+  value: unknown,
+  sourceSessionId: string,
+  decision: PlaySourceDriftDecision,
+): PlaySourceDriftDecisionResult {
+  const expectedSessionId = decision.kind === 'fork'
+    ? decision.newSessionId
+    : sourceSessionId;
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'session',
+      'resolution',
+      'status',
+      'sourceSessionId',
+      'createdSessionId',
+    ]) ||
+    value.sourceSessionId !== sourceSessionId ||
+    (decision.kind === 'fork'
+      ? value.createdSessionId !== decision.newSessionId
+      : value.createdSessionId !== undefined) ||
+    !isPlaySessionEnvelope(value.session, expectedSessionId) ||
+    !isPlaySourceDriftResolution(value.resolution) ||
+    value.resolution.kind !== decision.kind ||
+    value.resolution.sourceSessionId !== sourceSessionId ||
+    !isPlaySourceDriftStatus(value.status, expectedSessionId) ||
+    value.status.sessionRevision !== value.session.revision
+  ) {
+    throw new Error('Play source drift decision returned an invalid payload.');
+  }
+  return value as unknown as PlaySourceDriftDecisionResult;
+}
+
+function normalizePlaySessionDetailQuery(options: {
+  limit?: number;
+  transcriptCursor?: string;
+  eventCursor?: string;
+}): string {
+  if (!isRecord(options) ||
+      !hasOnlyKnownFields(options, ['limit', 'transcriptCursor', 'eventCursor'])) {
+    throw new Error('Play session detail options are invalid.');
+  }
+  if (
+    options.limit !== undefined &&
+    (!isPositiveSafeInteger(options.limit) || options.limit > 200)
+  ) {
+    throw new Error('Play session detail limit must be between 1 and 200.');
+  }
+  for (const cursor of [options.transcriptCursor, options.eventCursor]) {
+    if (cursor !== undefined && (!isNonEmptyString(cursor) || cursor.length > 4096)) {
+      throw new Error('Play session detail cursor is invalid.');
+    }
+  }
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set('limit', String(options.limit));
+  if (options.transcriptCursor) query.set('transcriptCursor', options.transcriptCursor);
+  if (options.eventCursor) query.set('eventCursor', options.eventCursor);
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
+}
+
+function normalizePlaySourceDriftDecision(
+  value: PlaySourceDriftDecision,
+  sessionId: string,
+): PlaySourceDriftDecision {
+  if (!isRecord(value) ||
+      (value.kind !== 'continueFrozen' &&
+        value.kind !== 'reassemble' &&
+        value.kind !== 'fork') ||
+      !isNonNegativeSafeInteger(value.baseRevision)) {
+    throw new Error('Play source drift decision is invalid.');
+  }
+  const allowed = value.kind === 'fork'
+    ? ['kind', 'baseRevision', 'newSessionId', 'title']
+    : ['kind', 'baseRevision'];
+  if (!hasOnlyKnownFields(value, allowed)) {
+    throw new Error('Play source drift decision contains unknown fields.');
+  }
+  if (value.kind !== 'fork') {
+    return { kind: value.kind, baseRevision: value.baseRevision };
+  }
+  const newSessionId = requireSafePlayClientId(
+    value.newSessionId,
+    'Play source drift fork session id',
+  );
+  if (newSessionId === sessionId) {
+    throw new Error('Play source drift fork requires a new session id.');
+  }
+  if (
+    value.title !== undefined &&
+    (!isNonEmptyString(value.title) ||
+      value.title !== value.title.trim() ||
+      value.title.length > 160)
+  ) {
+    throw new Error('Play source drift fork title is invalid.');
+  }
+  return {
+    kind: 'fork',
+    baseRevision: value.baseRevision,
+    newSessionId,
+    ...(value.title ? { title: value.title } : {}),
+  };
 }
 
 function normalizePlayOutcomeRequest(
@@ -4487,12 +4996,21 @@ function hasValidPlayKnowledgeTransition(
   }
   const projections = new Map<string, PlayKnowledgePlayerProjection>();
   for (const record of predecessorKnowledge.records) {
-    projections.set(record.subjectEventId, record.playerProjection);
+    if (record.kind === 'eventReveal') {
+      projections.set(record.subjectEventId, record.playerProjection);
+    }
   }
   const changedSubjects = new Set<string>();
   const usedRevealEvents = new Set<string>();
 
   for (const [index, record] of appendedRecords.entries()) {
+    if (record.id !== `knowledge-${artifact.revision}-${index + 1}`) {
+      return false;
+    }
+    if (record.kind === 'participantGrant') {
+      if (record.grantedAtTurnId !== refereeTurnId) return false;
+      continue;
+    }
     const previousProjection = projections.get(record.subjectEventId) ??
       'playerUnknown';
     const subjectEvent = eventsById.get(record.subjectEventId);
@@ -4510,7 +5028,6 @@ function hasValidPlayKnowledgeTransition(
     const revealEvent = matchingRevealEvents[0];
 
     if (
-      record.id !== `knowledge-${artifact.revision}-${index + 1}` ||
       changedSubjects.has(record.subjectEventId) ||
       record.previousPlayerProjection !== previousProjection ||
       !subjectEvent ||
@@ -4729,6 +5246,470 @@ function compareClientScheduledEvents(
   return (right.priority ?? 0) - (left.priority ?? 0) ||
     left.scheduledAtTurn - right.scheduledAtTurn ||
     (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+}
+
+function isPlaySessionSummary(value: unknown): value is PlaySessionSummary {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'schemaVersion', 'id', 'title', 'createdAt', 'latestActivityAt', 'revision',
+    'purpose', 'startMode', 'selectedArtifactId', 'selectedTurnCount',
+    'transcriptCount', 'eventCount', 'worldClock', 'canonical',
+  ])) return false;
+  return (value.schemaVersion === 4 || value.schemaVersion === 5)
+    && isSafePlayFactId(value.id)
+    && isNonEmptyString(value.title)
+    && isValidPlayTimestamp(value.createdAt)
+    && isValidPlayTimestamp(value.latestActivityAt)
+    && isNonNegativeSafeInteger(value.revision)
+    && (value.purpose === 'immersiveJourney' || value.purpose === 'sceneRehearsal')
+    && (value.startMode === 'quick' || value.startMode === 'guided')
+    && (value.selectedArtifactId === undefined || isSafePlayFactId(value.selectedArtifactId))
+    && isNonNegativeSafeInteger(value.selectedTurnCount)
+    && isNonNegativeSafeInteger(value.transcriptCount)
+    && isNonNegativeSafeInteger(value.eventCount)
+    && isPlayWorldClock(value.worldClock)
+    && value.worldClock.revision === value.revision
+    && value.canonical === false
+    && (value.selectedTurnCount === 0
+      ? value.selectedArtifactId === undefined
+      : value.selectedArtifactId !== undefined)
+    && (value.schemaVersion === 5
+      ? value.purpose === 'sceneRehearsal'
+      : value.purpose === 'immersiveJourney');
+}
+
+function isPlaySessionSelectedDetail(
+  value: unknown,
+  sessionId: string,
+): value is PlaySessionSelectedDetail {
+  if (!isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'summary', 'snapshot', 'transcript', 'events', 'eventPresentation',
+      'selectedArtifactPresentation',
+    ])
+    || !isPlaySessionSummary(value.summary)
+    || value.summary.id !== sessionId
+    || !isPlaySessionSelectedSnapshot(value.snapshot, value.summary)
+    || !isPlayCursorWindow(value.transcript, isPlayTranscriptTurn)
+    || !isPlayCursorWindow(value.events, isPlayWorldEventEnvelope)
+    || value.transcript.totalCount !== value.summary.transcriptCount
+    || value.events.totalCount !== value.summary.eventCount
+    || !Array.isArray(value.eventPresentation)
+    || value.eventPresentation.length !== value.events.items.length
+  ) return false;
+
+  const eventPresentation = value.eventPresentation;
+  const events = value.events.items;
+  const snapshot = value.snapshot;
+  if (!eventPresentation.every((item, index) =>
+    isPlayEventPresentationEvidence(
+      item,
+      events[index],
+      snapshot.selectedTurnIds,
+      snapshot.revision,
+    ))) return false;
+
+  return value.summary.selectedArtifactId === undefined
+    ? value.selectedArtifactPresentation === undefined
+    : isPlaySelectedArtifactPresentation(
+        value.selectedArtifactPresentation,
+        value.summary,
+        value.snapshot,
+      );
+}
+
+function isPlayEventPresentationEvidence(
+  value: unknown,
+  event: PlayWorldEvent | undefined,
+  selectedArtifactIds: readonly string[],
+  sessionRevision: number,
+): value is PlayEventPresentationEvidence {
+  if (!event || !isRecord(value) || !hasOnlyKnownFields(value, [
+    'eventId', 'causes', 'stateImpacts', 'stateImpactOmittedCount', 'reveal',
+    'author',
+  ]) || value.eventId !== event.id || !isPlayEventPresentationCauses(value.causes) ||
+      !isPlayEventPresentationStateImpacts(value.stateImpacts) ||
+      !isNonNegativeSafeInteger(value.stateImpactOmittedCount) ||
+      (value.reveal !== undefined && !isPlayEventPresentationReveal(value.reveal)) ||
+      !isPlayEventPresentationAuthorEvidence(
+        value.author,
+        event,
+        selectedArtifactIds,
+        sessionRevision,
+      )) return false;
+  return true;
+}
+
+function isPlayEventPresentationCauses(
+  value: unknown,
+): value is PlayEventPresentationCauses {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'actions', 'sourceEvents', 'scheduled', 'pressure', 'agenda',
+  ]) || !Array.isArray(value.actions) || value.actions.length > 24 ||
+      !value.actions.every((cause) => isRecord(cause) &&
+        hasOnlyKnownFields(cause, ['actionKind', 'contentExcerpt']) &&
+        (cause.actionKind === undefined || isPlayActionKind(cause.actionKind)) &&
+        isBoundedNonEmptyString(cause.contentExcerpt, 160)) ||
+      !Array.isArray(value.sourceEvents) || value.sourceEvents.length > 24 ||
+      !value.sourceEvents.every((cause) => isRecord(cause) &&
+        hasOnlyKnownFields(cause, ['title']) && isNonEmptyString(cause.title))) {
+    return false;
+  }
+  return (value.scheduled === undefined || (
+    isRecord(value.scheduled) &&
+    hasOnlyKnownFields(value.scheduled, ['label', 'trigger']) &&
+    isNonEmptyString(value.scheduled.label) &&
+    isPlayEventTrigger(value.scheduled.trigger)
+  )) && (value.pressure === undefined || (
+    isRecord(value.pressure) &&
+    hasOnlyKnownFields(value.pressure, ['label']) &&
+    isNonEmptyString(value.pressure.label)
+  )) && (value.agenda === undefined || (
+    isRecord(value.agenda) &&
+    hasOnlyKnownFields(value.agenda, ['ownerEntityId', 'summary']) &&
+    isNonEmptyString(value.agenda.ownerEntityId) &&
+    isNonEmptyString(value.agenda.summary)
+  ));
+}
+
+function isPlayEventPresentationStateImpacts(
+  value: unknown,
+): value is PlayEventPresentationStateImpact[] {
+  return Array.isArray(value) && value.length <= 64 && value.every((impact) =>
+    isRecord(impact) && hasOnlyKnownFields(impact, ['path', 'value']) &&
+    isBoundedNonEmptyString(impact.path, 160) &&
+    typeof impact.value === 'string' && impact.value.length <= 160);
+}
+
+function isPlayEventPresentationReveal(
+  value: unknown,
+): value is PlayEventPresentationReveal {
+  return isRecord(value) && hasOnlyKnownFields(value, ['status']) &&
+    (value.status === 'rumorSurfaced' || value.status === 'informationConfirmed');
+}
+
+function isPlayEventPresentationAuthorEvidence(
+  value: unknown,
+  event: PlayWorldEvent,
+  selectedArtifactIds: readonly string[],
+  sessionRevision: number,
+): value is PlayEventPresentationAuthorEvidence {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'reason', 'technicalRefs', 'hiddenCauses', 'stateImpacts',
+    'stateImpactOmittedCount', 'reveal',
+  ]) || value.reason !== event.cause.reason ||
+      !isPlayEventPresentationTechnicalRefs(
+        value.technicalRefs,
+        event,
+        selectedArtifactIds,
+        sessionRevision,
+      ) || !isPlayEventPresentationCauses(value.hiddenCauses) ||
+      !isPlayEventPresentationStateImpacts(value.stateImpacts) ||
+      !isNonNegativeSafeInteger(value.stateImpactOmittedCount)) return false;
+  return value.reveal === undefined ||
+    isPlayEventPresentationAuthorReveal(value.reveal, event);
+}
+
+function isPlayEventPresentationTechnicalRefs(
+  value: unknown,
+  event: PlayWorldEvent,
+  selectedArtifactIds: readonly string[],
+  sessionRevision: number,
+): value is PlayEventPresentationTechnicalRefs {
+  return isRecord(value) && hasOnlyKnownFields(value, [
+    'artifactId', 'artifactRevision', 'turnId', 'sourceTurnIds',
+    'sourceEventIds', 'triggerId', 'pressureId', 'agendaId',
+  ]) && isSafePlayFactId(value.artifactId) &&
+    selectedArtifactIds.includes(value.artifactId) &&
+    isNonNegativeSafeInteger(value.artifactRevision) &&
+    value.artifactRevision <= sessionRevision && value.turnId === event.turnId &&
+    isDeepEqualJson(value.sourceTurnIds, event.cause.sourceTurnIds ?? []) &&
+    isDeepEqualJson(value.sourceEventIds, event.cause.sourceEventIds ?? []) &&
+    value.triggerId === event.cause.triggerId &&
+    value.pressureId === event.cause.pressureId &&
+    value.agendaId === event.cause.agendaId;
+}
+
+function isPlayEventPresentationAuthorReveal(
+  value: unknown,
+  event: PlayWorldEvent,
+): value is PlayEventPresentationAuthorReveal {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'recordId', 'subjectEventId', 'subjectTitle', 'subjectSummary',
+    'subjectWorldClock', 'subjectReason', 'revealedByEventId',
+    'previousPlayerProjection', 'playerProjection', 'knownByParticipantRefs',
+  ])) return false;
+  return isSafePlayFactId(value.recordId) && isSafePlayFactId(value.subjectEventId) &&
+    isNonEmptyString(value.subjectTitle) && isNonEmptyString(value.subjectSummary) &&
+    isPlayWorldClock(value.subjectWorldClock) &&
+    (value.subjectReason === undefined || isNonEmptyString(value.subjectReason)) &&
+    value.revealedByEventId === event.id &&
+    (value.previousPlayerProjection === 'playerUnknown' ||
+      value.previousPlayerProjection === 'rumor') &&
+    (value.playerProjection === 'rumor' || value.playerProjection === 'playerVisible') &&
+    value.playerProjection === event.visibility &&
+    Array.isArray(value.knownByParticipantRefs) &&
+    value.knownByParticipantRefs.length === 0;
+}
+
+function isPlaySelectedArtifactPresentation(
+  value: unknown,
+  summary: PlaySessionSummary,
+  snapshot: PlaySessionSelectedSnapshot,
+): value is PlaySelectedArtifactPresentation {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'id', 'revision', 'eventIds', 'stateDelta',
+    'playLocalStateVisibilitySnapshot', 'rehearsalEvidenceRefs', 'canonical',
+  ]) || value.id !== summary.selectedArtifactId ||
+      snapshot.selectedTurnIds.at(-1) !== value.id ||
+      !isNonNegativeSafeInteger(value.revision) ||
+      value.revision > summary.revision ||
+      !isUniqueSafePlayIdArray(value.eventIds) ||
+      !isRecord(value.stateDelta) ||
+      !hasValidPlayReservedStateDelta(value.stateDelta) ||
+      !isPlayVisibilityMap(value.playLocalStateVisibilitySnapshot) ||
+      (value.rehearsalEvidenceRefs !== undefined &&
+        !isUniqueSafePlayIdArray(value.rehearsalEvidenceRefs)) ||
+      value.canonical !== false) return false;
+
+  const visibilitySnapshot = value.playLocalStateVisibilitySnapshot;
+  return Object.keys(value.stateDelta).every((key) =>
+    Object.hasOwn(visibilitySnapshot, key));
+}
+
+function isPlaySessionSelectedSnapshot(
+  value: unknown,
+  summary: PlaySessionSummary,
+): value is PlaySessionSelectedSnapshot {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'schemaVersion', 'id', 'title', 'createdAt', 'revision', 'userPersona',
+    'sceneStart', 'characters', 'selectedTurnIds',
+    'branchSnapshotRequiredFromRevision', 'metadataExtensions', 'playLocalState',
+    'playLocalStateVisibility', 'worldClock', 'eventPolicy', 'scheduledEvents',
+    'suggestedActions', 'activatedSources', 'observations', 'adoptionCandidates',
+    'sceneRehearsal', 'rehearsalScenes',
+  ])) return false;
+  return value.schemaVersion === summary.schemaVersion
+    && value.id === summary.id
+    && value.title === summary.title
+    && value.createdAt === summary.createdAt
+    && value.revision === summary.revision
+    && (value.userPersona === undefined || typeof value.userPersona === 'string')
+    && isNonEmptyString(value.sceneStart)
+    && isStringArray(value.characters)
+    && isUniqueSafePlayIdArray(value.selectedTurnIds)
+    && value.selectedTurnIds.length === summary.selectedTurnCount
+    && value.selectedTurnIds.at(-1) === summary.selectedArtifactId
+    && isNonNegativeSafeInteger(value.branchSnapshotRequiredFromRevision)
+    && isRecord(value.metadataExtensions)
+    && isRecord(value.playLocalState)
+    && isPlayVisibilityMap(value.playLocalStateVisibility)
+    && [...Object.keys(value.playLocalState)].sort().join('\0') ===
+      [...Object.keys(value.playLocalStateVisibility)].sort().join('\0')
+    && isPlayWorldClock(value.worldClock)
+    && value.worldClock.revision === value.revision
+    && isPlayEventPolicy(value.eventPolicy)
+    && isPlayScheduledEventList(value.scheduledEvents)
+    && isStringArray(value.suggestedActions)
+    && Array.isArray(value.activatedSources)
+    && value.activatedSources.every(isPlayActivatedSourceEnvelope)
+    && Array.isArray(value.observations)
+    && value.observations.every(isPlayObservationEnvelope)
+    && Array.isArray(value.adoptionCandidates)
+    && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope)
+    && (value.schemaVersion === 5
+      ? isRecord(value.sceneRehearsal) &&
+        Array.isArray(value.rehearsalScenes) &&
+        value.rehearsalScenes.every(isRecord)
+      : value.sceneRehearsal === undefined && value.rehearsalScenes === undefined);
+}
+
+function isPlayCursorWindow<T>(
+  value: unknown,
+  isItem: (item: unknown) => item is T,
+): value is PlayCursorWindow<T> {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'items', 'totalCount', 'hasMoreBefore', 'nextCursor',
+    ])
+    && Array.isArray(value.items)
+    && value.items.every(isItem)
+    && isNonNegativeSafeInteger(value.totalCount)
+    && value.items.length <= value.totalCount
+    && typeof value.hasMoreBefore === 'boolean'
+    && (value.nextCursor === undefined ||
+      (isNonEmptyString(value.nextCursor) && value.nextCursor.length <= 4096))
+    && value.hasMoreBefore === (value.nextCursor !== undefined);
+}
+
+function isPlayTurnContextTrace(
+  value: unknown,
+  sessionId: string,
+): value is PlayTurnContextTrace {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'schemaVersion', 'sessionId', 'sessionRevision', 'artifactId', 'createdAt',
+      'transcriptWindow', 'eventWindow', 'sources', 'canonical',
+    ])
+    && value.schemaVersion === 1
+    && value.sessionId === sessionId
+    && isNonNegativeSafeInteger(value.sessionRevision)
+    && isSafePlayFactId(value.artifactId)
+    && isValidPlayTimestamp(value.createdAt)
+    && isPlayContextWindowTrace(value.transcriptWindow, 'transcript')
+    && isPlayContextWindowTrace(value.eventWindow, 'event')
+    && Array.isArray(value.sources)
+    && value.sources.every(isPlayContextSourceTrace)
+    && new Set(value.sources.map((source) => source.sourceId)).size ===
+      value.sources.length
+    && value.canonical === false;
+}
+
+function isPlayContextWindowTrace(
+  value: unknown,
+  kind: 'transcript' | 'event',
+): value is PlayContextWindowTrace {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'kind', 'availableCount', 'selectedCount', 'selectedIds', 'omittedCount',
+    'limit', 'omissionReason',
+  ])) return false;
+  return value.kind === kind
+    && isNonNegativeSafeInteger(value.availableCount)
+    && isNonNegativeSafeInteger(value.selectedCount)
+    && isUniqueSafePlayIdArray(value.selectedIds)
+    && value.selectedIds.length === value.selectedCount
+    && isNonNegativeSafeInteger(value.omittedCount)
+    && value.availableCount === value.selectedCount + value.omittedCount
+    && isPositiveSafeInteger(value.limit)
+    && value.selectedCount <= value.limit
+    && (value.omittedCount > 0
+      ? value.omissionReason === 'windowLimit'
+      : value.omissionReason === undefined);
+}
+
+function isPlayContextSourceTrace(value: unknown): value is PlayContextSourceTrace {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'sourceId', 'path', 'role', 'trust', 'budgetLayer', 'semanticBoundary',
+    'expectedContentHash', 'actualContentHash', 'driftState', 'outcome',
+    'selectedCharacterCount', 'omissionReason',
+  ])) return false;
+  const validOmission = [
+    'sourceCountLimit', 'excerptCharacterLimit', 'canonicalDrift', 'missing',
+    'invalid', 'empty', 'notSelected', 'unsafe',
+  ].includes(value.omissionReason as string);
+  return isNonEmptyString(value.sourceId)
+    && value.sourceId.length <= 256
+    && (value.path === undefined || isNonEmptyString(value.path))
+    && (value.role === undefined || [
+      'chapter', 'character', 'world', 'timeline', 'state', 'other',
+    ].includes(value.role as string))
+    && ['canonical', 'interactionHint', 'playLocal', 'modelImprovisation']
+      .includes(value.trust as string)
+    && ['L0', 'L1', 'L2', 'L3'].includes(value.budgetLayer as string)
+    && ['protected', 'compressible', 'excluded']
+      .includes(value.semanticBoundary as string)
+    && (value.expectedContentHash === undefined || isSha256Hex(value.expectedContentHash))
+    && (value.actualContentHash === undefined || isSha256Hex(value.actualContentHash))
+    && (value.driftState === undefined ||
+      value.driftState === 'current' || value.driftState === 'changed' ||
+      value.driftState === 'missing' || value.driftState === 'invalid')
+    && (value.selectedCharacterCount === undefined ||
+      isNonNegativeSafeInteger(value.selectedCharacterCount))
+    && (value.outcome === 'selected'
+      ? value.omissionReason === undefined
+      : value.outcome === 'omitted' && validOmission);
+}
+
+function isPlaySourceDriftStatus(
+  value: unknown,
+  sessionId: string,
+): value is PlaySourceDriftStatus {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'sessionId', 'sessionRevision', 'overall', 'sources', 'activeResolution',
+    'availableDecisions', 'canonical',
+  ])) return false;
+  if (!Array.isArray(value.sources) ||
+      !value.sources.every(isPlaySourceDriftSourceStatus) ||
+      new Set(value.sources.map((source) => source.sourceId)).size !==
+        value.sources.length ||
+      !Array.isArray(value.availableDecisions) ||
+      !value.availableDecisions.every(isPlaySourceDriftDecisionKind) ||
+      new Set(value.availableDecisions).size !== value.availableDecisions.length) {
+    return false;
+  }
+  const expectedOverall: PlaySourceDriftOverall = value.sources.some((source) =>
+    source.state === 'missing' || source.state === 'invalid')
+    ? 'unavailable'
+    : value.sources.some((source) => source.state === 'changed')
+      ? 'drifted'
+      : 'current';
+  const canRefresh = value.sources.every((source) =>
+    source.state === 'current' || source.state === 'changed');
+  const expectedDecisions: PlaySourceDriftDecisionKind[] =
+    expectedOverall === 'current'
+      ? []
+      : ['continueFrozen', ...(canRefresh ? ['reassemble', 'fork'] as const : [])];
+  return value.sessionId === sessionId
+    && isNonNegativeSafeInteger(value.sessionRevision)
+    && value.overall === expectedOverall
+    && JSON.stringify(value.availableDecisions) === JSON.stringify(expectedDecisions)
+    && (value.activeResolution === undefined ||
+      isPlaySourceDriftResolution(value.activeResolution))
+    && value.canonical === false;
+}
+
+function isPlaySourceDriftResolution(
+  value: unknown,
+): value is PlaySourceDriftResolution {
+  if (!isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'schemaVersion', 'kind', 'decidedAt', 'sourceSessionId', 'sourceRevision',
+      'snapshots', 'excludedSourceIds', 'canonical',
+    ])
+    || value.schemaVersion !== 1
+    || !isPlaySourceDriftDecisionKind(value.kind)
+    || !isValidPlayTimestamp(value.decidedAt)
+    || !isSafePlayFactId(value.sourceSessionId)
+    || !isNonNegativeSafeInteger(value.sourceRevision)
+    || !Array.isArray(value.snapshots)
+    || !isUniqueNonEmptyStringArray(value.excludedSourceIds)
+    || value.canonical !== false
+  ) {
+    return false;
+  }
+
+  const snapshots: unknown[] = value.snapshots;
+  return snapshots.every(isPlaySourceDriftSourceStatus)
+    && value.excludedSourceIds.every((sourceId) =>
+      snapshots.some((source) =>
+        isPlaySourceDriftSourceStatus(source) && source.sourceId === sourceId));
+}
+
+function isPlaySourceDriftSourceStatus(
+  value: unknown,
+): value is PlaySourceDriftSourceStatus {
+  if (!isRecord(value) || !hasOnlyKnownFields(value, [
+    'sourceId', 'path', 'expectedContentHash', 'actualContentHash', 'state',
+  ])) return false;
+  if (!isNonEmptyString(value.sourceId) || value.sourceId.length > 256 ||
+      (value.path !== undefined && !isNonEmptyString(value.path)) ||
+      (value.expectedContentHash !== undefined && !isSha256Hex(value.expectedContentHash)) ||
+      (value.actualContentHash !== undefined && !isSha256Hex(value.actualContentHash))) {
+    return false;
+  }
+  return value.state === 'current'
+    ? value.expectedContentHash === value.actualContentHash
+    : value.state === 'changed'
+      ? value.expectedContentHash !== undefined &&
+        value.actualContentHash !== undefined &&
+        value.expectedContentHash !== value.actualContentHash
+      : (value.state === 'missing' || value.state === 'invalid') &&
+        value.actualContentHash === undefined;
+}
+
+function isPlaySourceDriftDecisionKind(
+  value: unknown,
+): value is PlaySourceDriftDecisionKind {
+  return value === 'continueFrozen' || value === 'reassemble' || value === 'fork';
 }
 
 function isPlayWorldClock(value: unknown): value is PlayWorldClock {
@@ -5831,13 +6812,14 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
     value.schemaVersion !== PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION ||
     !Array.isArray(value.records) ||
     value.records.length > MAX_PLAY_KNOWLEDGE_RECORDS ||
-    !value.records.every(isPlayEventRevealRecord)
+    !value.records.every(isPlayKnowledgeRecord)
   ) {
     return false;
   }
 
   const recordIds = new Set<string>();
   const revealEventIds = new Set<string>();
+  const interventionRefs = new Set<string>();
   const projections = new Map<string, PlayKnowledgePlayerProjection>();
   const subjectCounts = new Map<string, number>();
   let previousRevision = -1;
@@ -5852,9 +6834,6 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
     }
     const revision = Number(idMatch[1]);
     const localIndex = Number(idMatch[2]);
-    const previousProjection = projections.get(record.subjectEventId) ??
-      'playerUnknown';
-    const subjectCount = subjectCounts.get(record.subjectEventId) ?? 0;
     if (
       !Number.isSafeInteger(revision) ||
       !Number.isSafeInteger(localIndex) ||
@@ -5862,14 +6841,33 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
       (revision === previousRevision
         ? localIndex !== previousLocalIndex + 1
         : localIndex !== 1) ||
-      recordIds.has(record.id) ||
-      revealEventIds.has(record.revealedByEventId) ||
-      subjectCount >= 2 ||
-      record.previousPlayerProjection !== previousProjection
+      recordIds.has(record.id)
     ) {
       return false;
     }
     recordIds.add(record.id);
+    if (record.kind === 'participantGrant') {
+      const turnMatch = /^turn-(0|[1-9][0-9]*)-referee$/u.exec(
+        record.grantedAtTurnId,
+      );
+      if (
+        !turnMatch ||
+        Number(turnMatch[1]) !== revision ||
+        interventionRefs.has(record.interventionRef)
+      ) return false;
+      interventionRefs.add(record.interventionRef);
+      previousRevision = revision;
+      previousLocalIndex = localIndex;
+      continue;
+    }
+    const previousProjection = projections.get(record.subjectEventId) ??
+      'playerUnknown';
+    const subjectCount = subjectCounts.get(record.subjectEventId) ?? 0;
+    if (
+      revealEventIds.has(record.revealedByEventId) ||
+      subjectCount >= 2 ||
+      record.previousPlayerProjection !== previousProjection
+    ) return false;
     revealEventIds.add(record.revealedByEventId);
     projections.set(record.subjectEventId, record.playerProjection);
     subjectCounts.set(record.subjectEventId, subjectCount + 1);
@@ -5877,6 +6875,12 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
     previousLocalIndex = localIndex;
   }
   return true;
+}
+
+function isPlayKnowledgeRecord(value: unknown): value is PlayKnowledgeRecord {
+  return isRecord(value) && value.kind === 'participantGrant'
+    ? isPlayParticipantKnowledgeGrantRecord(value)
+    : isPlayEventRevealRecord(value);
 }
 
 function isPlayEventRevealRecord(
@@ -5908,6 +6912,46 @@ function isPlayEventRevealRecord(
     && isSafePlayFactId(value.revealedAtTurnId)
     && isSafePlayFactId(value.revealedByEventId)
     && value.canonical === false;
+}
+
+function isPlayParticipantKnowledgeGrantRecord(
+  value: unknown,
+): value is PlayParticipantKnowledgeGrantRecord {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'kind',
+      'participantRef',
+      'effectiveFromStepRef',
+      'interventionRef',
+      'grant',
+      'grantedAtTurnId',
+      'canonical',
+    ])
+    && isSafePlayFactId(value.id)
+    && value.kind === 'participantGrant'
+    && isSafePlayFactId(value.participantRef)
+    && isSafePlayFactId(value.effectiveFromStepRef)
+    && isSafePlayFactId(value.interventionRef)
+    && isPlayParticipantKnowledgeGrant(value.grant)
+    && isSafePlayFactId(value.grantedAtTurnId)
+    && value.canonical === false;
+}
+
+function isPlayParticipantKnowledgeGrant(
+  value: unknown,
+): value is PlayParticipantKnowledgeGrantRecord['grant'] {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'existingFact') {
+    return hasOnlyKnownFields(value, ['kind', 'factRefs'])
+      && isUniqueSafePlayIdArray(value.factRefs)
+      && value.factRefs.length > 0;
+  }
+  return value.kind === 'authorProvidedPlayFact'
+    && hasOnlyKnownFields(value, ['kind', 'summary', 'visibility', 'providedAt'])
+    && isNonEmptyString(value.summary)
+    && isPlayVisibility(value.visibility)
+    && isNonEmptyString(value.providedAt);
 }
 
 function isPlayWorldMomentum(value: unknown): value is PlayWorldMomentum {

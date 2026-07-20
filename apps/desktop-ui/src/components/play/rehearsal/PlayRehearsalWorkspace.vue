@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, useTemplateRef, watch } from 'vue';
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue';
 
 import PlayActorQueue from './PlayActorQueue.vue';
 import PlayDirectorControls from './PlayDirectorControls.vue';
+import PlayDirectorInterventionPanel from './PlayDirectorInterventionPanel.vue';
 import PlayRehearsalHeader from './PlayRehearsalHeader.vue';
 import PlayRehearsalInspector from './PlayRehearsalInspector.vue';
 import PlayRehearsalProviderGate from './PlayRehearsalProviderGate.vue';
 import PlayRehearsalRecoveryNotice from './PlayRehearsalRecoveryNotice.vue';
 import PlayRehearsalResult from './PlayRehearsalResult.vue';
 import PlayRehearsalStepPanel from './PlayRehearsalStepPanel.vue';
+import PlaySceneMemoryPanel from './PlaySceneMemoryPanel.vue';
 import type {
+  PlayDirectorInterventionDraft,
+  PlayDirectorPanelMode,
   PlayRehearsalActorQueueItem,
   PlayRehearsalAttemptView,
   PlayRehearsalClockView,
@@ -17,6 +21,7 @@ import type {
   PlayRehearsalPerceptionView,
   PlayRehearsalResultView,
   PlayRehearsalSceneContractView,
+  PlaySceneMemoryView,
   PlayRehearsalStepRunView,
   PlayRehearsalStepView,
   PlayRehearsalVisibleEventView,
@@ -40,6 +45,11 @@ const props = defineProps<{
   recoveryRequired?: boolean;
   recoveryMessage?: string;
   recovering?: boolean;
+  lens?: 'player' | 'director';
+  memory?: Readonly<PlaySceneMemoryView>;
+  memoryLoading?: boolean;
+  memoryRebuilding?: boolean;
+  memoryError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -48,15 +58,20 @@ const emit = defineEmits<{
   stopStep: [];
   accept: [stepRef: string];
   retry: [stepRef: string];
+  intervene: [draft: PlayDirectorInterventionDraft];
   finish: [];
   cancel: [];
   reconcileStep: [];
   configureProvider: [];
+  updateLens: [lens: 'player' | 'director'];
+  refreshMemory: [];
+  rebuildMemory: [];
 }>();
 
 const runtimePanel = useTemplateRef<HTMLElement>('runtimePanel');
 const launchButton = useTemplateRef<HTMLButtonElement>('launchButton');
 const resultPanel = useTemplateRef<HTMLElement>('resultPanel');
+const interventionMode = shallowRef<PlayDirectorPanelMode>();
 const activeStep = computed(() =>
   props.steps.find((step) => step.status === 'provisional'),
 );
@@ -128,6 +143,20 @@ function launch(): void {
     emit('startAttempt');
   }
 }
+
+function openIntervention(mode: PlayDirectorPanelMode): void {
+  if (!props.busy) interventionMode.value = mode;
+}
+
+function closeIntervention(): void {
+  if (!props.busy) interventionMode.value = undefined;
+}
+
+function submitIntervention(draft: PlayDirectorInterventionDraft): void {
+  if (props.busy) return;
+  emit('intervene', draft);
+  interventionMode.value = undefined;
+}
 </script>
 
 <template>
@@ -143,6 +172,18 @@ function launch(): void {
     />
 
     <p v-if="error" class="play-rehearsal-workspace-error" role="alert">{{ error }}</p>
+    <p
+      v-if="attempt?.supersededStepRefs?.length"
+      class="play-rehearsal-workspace-notice"
+    >
+      {{ attempt.supersededStepRefs.length }} earlier step variant(s) are superseded; Finish will use only the current selected prefix.
+    </p>
+    <p
+      v-if="attempt?.stagnation?.warning"
+      class="play-rehearsal-workspace-notice"
+    >
+      {{ attempt.stagnation.consecutiveNoMaterialSteps }} consecutive steps had no material effect. The Director may redirect or continue without manufacturing conflict.
+    </p>
 
     <PlayRehearsalRecoveryNotice
       v-if="recoveryRequired"
@@ -200,12 +241,26 @@ function launch(): void {
         </div>
       </main>
 
-      <PlayRehearsalInspector
-        :scene="scene"
-        :active-actor="currentActor"
-        :perception="perception"
-        :visible-events="visibleEvents"
-      />
+      <div class="play-rehearsal-inspector-stack">
+        <PlayRehearsalInspector
+          :scene="scene"
+          :active-actor="currentActor"
+          :perception="perception"
+          :visible-events="visibleEvents"
+          :lens="lens ?? 'director'"
+          @update-lens="emit('updateLens', $event)"
+        />
+        <PlaySceneMemoryPanel
+          :memory="memory"
+          :lens="lens ?? 'director'"
+          :loading="memoryLoading ?? false"
+          :rebuilding="memoryRebuilding ?? false"
+          :error="memoryError"
+          @update-lens="emit('updateLens', $event)"
+          @refresh="emit('refreshMemory')"
+          @rebuild="emit('rebuildMemory')"
+        />
+      </div>
     </div>
 
     <PlayDirectorControls
@@ -214,11 +269,24 @@ function launch(): void {
       :attempt-status="attempt!.status"
       :busy="busy"
       :capabilities="capabilities"
+      :active-panel="interventionMode"
       :announcement="announcement"
       @accept="emit('accept', $event)"
       @retry="emit('retry', $event)"
+      @open-intervention="openIntervention"
       @finish="emit('finish')"
       @cancel="emit('cancel')"
+    />
+
+    <PlayDirectorInterventionPanel
+      v-if="showDirectorControls && interventionMode"
+      :mode="interventionMode"
+      :steps="steps"
+      :participants="queue"
+      :active-step-ref="activeStep?.id"
+      :busy="busy"
+      @close="closeIntervention"
+      @submit="submitIntervention"
     />
 
     <p class="play-rehearsal-workspace-announcement" role="status" aria-live="polite" aria-atomic="true">
@@ -246,6 +314,14 @@ function launch(): void {
   font-size: 11px;
 }
 
+.play-rehearsal-workspace-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--play-line-strong, var(--editor-hairline-strong));
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 10px;
+}
+
 .play-rehearsal-launch button {
   min-height: 34px;
   padding: 0 10px;
@@ -269,6 +345,19 @@ function launch(): void {
   grid-template-rows: auto minmax(280px, 1fr) auto;
   gap: 10px;
   outline: none;
+}
+
+.play-rehearsal-inspector-stack {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+}
+
+.play-rehearsal-inspector-stack > .play-rehearsal-inspector {
+  overflow: visible;
 }
 
 .play-rehearsal-runtime:focus-visible {
