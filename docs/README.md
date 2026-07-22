@@ -34,6 +34,7 @@
 - [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md): InkOS 参考项目的功能、特色和优点归纳。
 - [INKOS_REFERENCE_LESSONS.md](INKOS_REFERENCE_LESSONS.md): InkOS 对 OAN 可借鉴和不宜照搬的设计点。
 - [OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md](OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md): OAN 当前 agent 写作指引状态，以及多个参考项目来源的可吸收升级点。
+- [REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md](REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md): 将现有 reference import / selector 骨架升级为可确认、可恢复、可追溯的 AI 深度拆解流水线。
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md): 分阶段开发计划。
 - [tasks/README.md](tasks/README.md): 从开发计划拆出的可执行任务文档。
 - [AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md): 给 Codex / Claude Code / Aider 等开发 Agent 的长期操作手册草案。
