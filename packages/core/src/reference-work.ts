@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
 
@@ -9,6 +15,26 @@ import type {
   SemanticBoundary,
 } from './agent-context-package.js';
 import type { NovelCopilotCapabilityId } from './novel-copilot-skill.js';
+import {
+  createNotAnalyzedReferenceManifest,
+  createReferenceDiagnostics,
+  createReferenceProgressProjection,
+  createReferenceStructureFingerprint,
+  assertReferenceProgress,
+} from './reference-deconstruction.js';
+import type {
+  ReferenceDeconstructionStageId,
+  ReferenceProgress as DeconstructionReferenceProgress,
+  ReferencePublishedDeconstructionStatus,
+} from './reference-deconstruction.js';
+import {
+  assertReferenceMetadata,
+  assertReferenceSourceManifest,
+  inspectReferenceWorkReadiness,
+} from './reference-deconstruction-store.js';
+import type {
+  ReferenceReadinessReason,
+} from './reference-deconstruction-store.js';
 
 export type ReferenceSourceType =
   | 'novel'
@@ -30,11 +56,7 @@ export type ReferenceAllowedUsage =
   | 'structureReference'
   | 'noDirectQuotation';
 
-export type ReferenceProgressStage =
-  | 'importSource'
-  | 'detectStructure'
-  | 'quickPreview'
-  | 'distillForOan';
+export type ReferenceProgressStage = ReferenceDeconstructionStageId;
 
 export interface ReferenceImportInput {
   workspaceRoot: string;
@@ -58,10 +80,13 @@ export interface ReferenceChapterBoundary {
 }
 
 export interface ReferenceSourceManifest {
+  version: 1;
+  referenceId: string;
   originalFile: string;
   originalFileName: string;
   sourcePath?: string;
   checksumSha256: string;
+  structureFingerprint: string;
   importedAt: string;
   byteLength: number;
   charLength: number;
@@ -74,6 +99,7 @@ export interface ReferenceSourceManifest {
 }
 
 export interface ReferenceMetadata {
+  version: 1;
   id: string;
   title: string;
   sourceType: ReferenceSourceType;
@@ -86,17 +112,7 @@ export interface ReferenceMetadata {
   notes?: string;
 }
 
-export interface ReferenceProgress {
-  currentStage: ReferenceProgressStage;
-  completedStages: ReferenceProgressStage[];
-  failedStages: Array<{
-    stage: ReferenceProgressStage;
-    message: string;
-    failedAt: string;
-  }>;
-  resumable: boolean;
-  updatedAt: string;
-}
+export type ReferenceProgress = DeconstructionReferenceProgress;
 
 export interface ReferenceWorkSummary {
   id: string;
@@ -111,6 +127,10 @@ export interface ReferenceWorkSummary {
   summaryPath: string;
   distilledPaths: string[];
   chapterCount: number;
+  structureConfidence: ReferenceSourceManifest['detectedStructure']['confidence'];
+  deconstructionStatus: ReferencePublishedDeconstructionStatus;
+  contextEligible: boolean;
+  readinessReason: ReferenceReadinessReason;
   progress: ReferenceProgress;
 }
 
@@ -142,14 +162,32 @@ export interface ReferenceContextSelection {
     semanticBoundary: SemanticBoundary;
     estimatedTokens: number;
     content: string;
+    deconstructionStatus: 'completed';
+    contextEligible: true;
+    reasonCode: 'ready';
   }>;
   omitted: Array<{
     id: string;
     title: string;
     reason: string;
     budgetLayer: ContextBudgetLayer;
+    deconstructionStatus: ReferencePublishedDeconstructionStatus;
+    contextEligible: false;
+    reasonCode: ReferenceContextOmissionReason;
   }>;
 }
+
+export type ReferenceContextOmissionReason =
+  | 'disabled'
+  | 'notExplicitlyRequested'
+  | 'maxReferenceCountReached'
+  | 'notAnalyzed'
+  | 'stale'
+  | 'qualityFailed'
+  | 'needsRebuild'
+  | 'missingContextSummary'
+  | 'invalidContextPath'
+  | 'tokenBudgetExceeded';
 
 interface ReferencesIndex {
   version: number;
@@ -189,24 +227,35 @@ export async function importReferenceWork(
   const source = await readReferenceSource(input);
   const importedAt = new Date().toISOString();
   const checksumSha256 = createHash('sha256').update(source.content).digest('hex');
-  const referenceId = await createUniqueReferenceId(workspaceRoot, title, checksumSha256);
-  const bundlePath = join(workspaceRoot, 'examples', 'references', referenceId);
+  const referencesRoot = await ensureSafeReferencesRoot(workspaceRoot);
+  const referenceId = await createUniqueReferenceId(
+    workspaceRoot,
+    referencesRoot,
+    title,
+    checksumSha256,
+  );
+  const bundlePath = join(referencesRoot, referenceId);
   const originalExtension = sanitizeExtension(extname(source.originalFileName)) || '.txt';
   const originalFile = `original${originalExtension}`;
   const originalRelativePath = `examples/references/${referenceId}/sources/${originalFile}`;
   const detectedStructure = detectReferenceStructure(source.content);
-  const manifest: ReferenceSourceManifest = {
+  const structureFingerprint = createReferenceStructureFingerprint(detectedStructure);
+  const manifest = assertReferenceSourceManifest({
+    version: 1,
+    referenceId,
     originalFile,
     originalFileName: source.originalFileName,
     sourcePath: source.sourcePath,
     checksumSha256,
+    structureFingerprint,
     importedAt,
     byteLength: Buffer.byteLength(source.content, 'utf-8'),
     charLength: source.content.length,
     lineCount: source.content.split(/\r?\n/u).length,
     detectedStructure,
-  };
-  const metadata: ReferenceMetadata = {
+  });
+  const metadata = assertReferenceMetadata({
+    version: 1,
     id: referenceId,
     title,
     sourceType: input.sourceType ?? 'novel',
@@ -217,22 +266,44 @@ export async function importReferenceWork(
     checksumSha256,
     sourcePath: source.sourcePath,
     notes: normalizeOptionalString(input.notes),
-  };
-  const progress: ReferenceProgress = {
-    currentStage: 'distillForOan',
-    completedStages: ['importSource', 'detectStructure', 'quickPreview', 'distillForOan'],
-    failedStages: [],
-    resumable: true,
-    updatedAt: importedAt,
-  };
+  });
+  const deconstructionManifest = createNotAnalyzedReferenceManifest({
+    referenceId,
+    sourceChecksumSha256: checksumSha256,
+    structureFingerprint,
+  });
+  const progress = createReferenceProgressProjection(deconstructionManifest, importedAt);
+  const diagnostics = createReferenceDiagnostics({
+    referenceId,
+    sourceChecksumSha256: checksumSha256,
+    generatedAt: importedAt,
+    items: detectedStructure.confidence === 'low'
+      ? [{
+          id: 'structure-low-confidence',
+          code: 'structure.lowConfidence',
+          severity: 'warning',
+          blocking: false,
+          message: 'Chapter structure confidence is low; confirm the preview range before analysis.',
+          evidenceRefs: [],
+          stageId: 'detectStructure',
+        }]
+      : [],
+  });
   const createdFiles: string[] = [];
 
-  await mkdir(join(bundlePath, 'sources'), { recursive: true });
-  await mkdir(join(bundlePath, 'deconstruction', 'chapters'), { recursive: true });
-  await mkdir(join(bundlePath, 'distilled'), { recursive: true });
-  await mkdir(join(bundlePath, 'context'), { recursive: true });
+  try {
+    await mkdir(bundlePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`Reference bundle already exists: ${referenceId}`);
+    }
+    throw error;
+  }
+  await mkdir(join(bundlePath, 'sources'));
+  await mkdir(join(bundlePath, 'distilled'));
+  await mkdir(join(bundlePath, 'context'));
 
-  await writeReferenceFile(
+  await writeReferenceRawFile(
     workspaceRoot,
     originalRelativePath,
     source.content,
@@ -256,8 +327,24 @@ export async function importReferenceWork(
     progress,
     createdFiles,
   );
-  await writeInitialDeconstructionFiles(workspaceRoot, metadata, manifest, createdFiles);
-  await writeInitialDistilledFiles(workspaceRoot, metadata, manifest, createdFiles);
+  await writeReferenceYaml(
+    workspaceRoot,
+    `examples/references/${referenceId}/deconstruction-manifest.yaml`,
+    deconstructionManifest,
+    createdFiles,
+  );
+  await writeReferenceYaml(
+    workspaceRoot,
+    `examples/references/${referenceId}/diagnostics.yaml`,
+    diagnostics,
+    createdFiles,
+  );
+  await writeReferenceFile(
+    workspaceRoot,
+    `examples/references/${referenceId}/distilled/do-not-copy.md`,
+    formatDoNotCopy(metadata),
+    createdFiles,
+  );
   await writeReferenceYaml(
     workspaceRoot,
     `examples/references/${referenceId}/context/index.yaml`,
@@ -272,7 +359,14 @@ export async function importReferenceWork(
   );
   await writeExamplesReadme(workspaceRoot, createdFiles);
 
-  const reference = createReferenceSummary(metadata, manifest, progress);
+  const reference = createReferenceSummary(
+    metadata,
+    manifest,
+    progress,
+    'notAnalyzed',
+    false,
+    'notAnalyzed',
+  );
   await upsertReferencesIndex(workspaceRoot, reference);
 
   return {
@@ -283,7 +377,34 @@ export async function importReferenceWork(
 }
 
 export async function listReferenceWorks(workspaceRoot: string): Promise<ReferenceWorkSummary[]> {
-  return (await readReferencesIndex(resolve(workspaceRoot))).references;
+  const root = resolve(workspaceRoot);
+  const index = await readReferencesIndex(root);
+  return Promise.all(index.references.map(async (indexed) => {
+    const inspection = await inspectReferenceWorkReadiness(root, indexed.id);
+    const metadata = inspection.metadata;
+    const manifest = inspection.sourceManifest;
+    if (!metadata || !manifest) {
+      return {
+        ...indexed,
+        deconstructionStatus: inspection.status,
+        contextEligible: false,
+        readinessReason: inspection.reason,
+        progress: {
+          ...indexed.progress,
+          status: inspection.status,
+          contextEligible: false,
+        },
+      };
+    }
+    return createReferenceSummary(
+      metadata,
+      manifest,
+      inspection.progress ?? indexed.progress,
+      inspection.status,
+      inspection.contextEligible,
+      inspection.reason,
+    );
+  }));
 }
 
 export async function setReferenceEnabled(
@@ -292,30 +413,57 @@ export async function setReferenceEnabled(
   enabled: boolean,
 ): Promise<ReferenceWorkSummary> {
   const root = resolve(workspaceRoot);
+  const safeId = assertSafeReferenceId(id);
   const index = await readReferencesIndex(root);
-  const reference = index.references.find((item) => item.id === id);
+  const reference = index.references.find((item) => item.id === safeId);
 
   if (!reference) {
-    throw new Error(`Reference not found: ${id}`);
+    throw new Error(`Reference not found: ${safeId}`);
   }
+  await assertSafeExistingReferenceBundle(root, safeId);
 
-  reference.enabled = enabled;
-  await writeReferencesIndex(root, index);
-
-  const metadataPath = join(root, reference.bundlePath, 'metadata.yaml');
-  const metadata = parse(await readFile(metadataPath, 'utf-8')) as ReferenceMetadata;
+  const metadataPath = join(
+    root,
+    'examples',
+    'references',
+    safeId,
+    'metadata.yaml',
+  );
+  await assertPathIsNotSymlink(metadataPath);
+  const metadata = assertReferenceMetadata(parse(await readFile(metadataPath, 'utf-8')) as unknown);
+  if (reference.id !== safeId || metadata.id !== safeId) {
+    throw new Error('Reference identities do not match the requested bundle.');
+  }
+  if (typeof enabled !== 'boolean') throw new Error('Reference enabled must be boolean.');
   metadata.enabled = enabled;
   await writeFile(metadataPath, stringify(metadata), 'utf-8');
-
-  return reference;
+  const inspection = await inspectReferenceWorkReadiness(root, safeId);
+  const next = {
+    ...reference,
+    enabled,
+    structureConfidence:
+      inspection.sourceManifest?.detectedStructure.confidence
+      ?? reference.structureConfidence,
+    deconstructionStatus: inspection.status,
+    contextEligible: inspection.contextEligible,
+    readinessReason: inspection.reason,
+    progress: {
+      ...(inspection.progress ?? reference.progress),
+      contextEligible: inspection.contextEligible,
+      status: inspection.status,
+    },
+  };
+  index.references = index.references.map((item) => item.id === safeId ? next : item);
+  await writeReferencesIndex(root, index);
+  return next;
 }
 
 export async function selectReferenceContext(
   input: ReferenceContextSelectionInput,
 ): Promise<ReferenceContextSelection> {
   const workspaceRoot = resolve(input.workspaceRoot);
-  const tokenBudget = input.tokenBudget ?? 1_500;
-  const maxReferences = input.maxReferences ?? 3;
+  const tokenBudget = normalizeSelectionBound(input.tokenBudget, 1_500, 1, 100_000, 'tokenBudget');
+  const maxReferences = normalizeSelectionBound(input.maxReferences, 3, 1, 20, 'maxReferences');
   const explicitReferenceIds = new Set(input.explicitReferenceIds ?? []);
   const references = await listReferenceWorks(workspaceRoot);
   const included: ReferenceContextSelection['included'] = [];
@@ -329,6 +477,9 @@ export async function selectReferenceContext(
         title: reference.title,
         reason: 'disabled',
         budgetLayer: 'L3',
+        deconstructionStatus: reference.deconstructionStatus,
+        contextEligible: false,
+        reasonCode: 'disabled',
       });
       continue;
     }
@@ -339,6 +490,23 @@ export async function selectReferenceContext(
         title: reference.title,
         reason: 'not explicitly requested for this turn',
         budgetLayer: 'L3',
+        deconstructionStatus: reference.deconstructionStatus,
+        contextEligible: false,
+        reasonCode: 'notExplicitlyRequested',
+      });
+      continue;
+    }
+
+    if (!reference.contextEligible || reference.deconstructionStatus !== 'completed') {
+      const reasonCode = readinessToOmissionReason(reference.readinessReason);
+      omitted.push({
+        id: reference.id,
+        title: reference.title,
+        reason: formatReadinessOmissionReason(reasonCode),
+        budgetLayer: 'L3',
+        deconstructionStatus: reference.deconstructionStatus,
+        contextEligible: false,
+        reasonCode,
       });
       continue;
     }
@@ -349,31 +517,38 @@ export async function selectReferenceContext(
         title: reference.title,
         reason: 'max reference count reached',
         budgetLayer: 'L3',
+        deconstructionStatus: reference.deconstructionStatus,
+        contextEligible: false,
+        reasonCode: 'maxReferenceCountReached',
       });
       continue;
     }
 
-    const summaryPath = join(workspaceRoot, reference.summaryPath);
-    let content = '';
-    try {
-      content = await readFile(summaryPath, 'utf-8');
-    } catch {
+    const inspection = await inspectReferenceWorkReadiness(workspaceRoot, reference.id);
+    if (!inspection.contextEligible || !inspection.summaryPath || inspection.summaryContent === undefined) {
+      const reasonCode = readinessToOmissionReason(inspection.reason);
       omitted.push({
         id: reference.id,
         title: reference.title,
-        reason: 'missing context summary',
+        reason: formatReadinessOmissionReason(reasonCode),
         budgetLayer: 'L3',
+        deconstructionStatus: inspection.status,
+        contextEligible: false,
+        reasonCode,
       });
       continue;
     }
-
+    const content = inspection.summaryContent;
     const estimatedTokens = estimateTokens(content);
-    if (usedTokens + estimatedTokens > tokenBudget && included.length > 0) {
+    if (usedTokens + estimatedTokens > tokenBudget) {
       omitted.push({
         id: reference.id,
         title: reference.title,
         reason: 'token budget exceeded',
         budgetLayer: 'L3',
+        deconstructionStatus: reference.deconstructionStatus,
+        contextEligible: false,
+        reasonCode: 'tokenBudgetExceeded',
       });
       continue;
     }
@@ -381,12 +556,15 @@ export async function selectReferenceContext(
     included.push({
       id: reference.id,
       title: reference.title,
-      path: reference.summaryPath,
+      path: inspection.summaryPath,
       reason: formatReferenceSelectionReason(input, reference),
       budgetLayer: referenceBudgetLayer(input.capability),
       semanticBoundary: 'compressible',
       estimatedTokens,
       content,
+      deconstructionStatus: 'completed',
+      contextEligible: true,
+      reasonCode: 'ready',
     });
     usedTokens += estimatedTokens;
   }
@@ -524,106 +702,13 @@ function normalizeChapterTitle(line: string, index: number): string {
   return title || `Chapter ${index}`;
 }
 
-async function writeInitialDeconstructionFiles(
-  workspaceRoot: string,
-  metadata: ReferenceMetadata,
-  manifest: ReferenceSourceManifest,
-  createdFiles: string[],
-): Promise<void> {
-  const prefix = `examples/references/${metadata.id}/deconstruction`;
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/quick-preview.md`,
-    formatQuickPreview(metadata, manifest),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/plotlines.md`,
-    formatPendingAnalysis('Plotlines', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/characters.md`,
-    formatPendingAnalysis('Characters', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/relationships.md`,
-    formatPendingAnalysis('Relationships', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/worldbuilding.md`,
-    formatPendingAnalysis('Worldbuilding', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/timeline.md`,
-    formatPendingAnalysis('Timeline', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/tropes.md`,
-    formatPendingAnalysis('Tropes', metadata),
-    createdFiles,
-  );
-  await writeReferenceFile(
-    workspaceRoot,
-    `${prefix}/style-profile.md`,
-    formatPendingAnalysis('Style Profile', metadata),
-    createdFiles,
-  );
-
-  for (const chapter of manifest.detectedStructure.chapters.slice(0, 12)) {
-    await writeReferenceFile(
-      workspaceRoot,
-      `${prefix}/chapters/${chapter.id}-summary.md`,
-      formatChapterStub(metadata, chapter),
-      createdFiles,
-    );
-  }
-}
-
-async function writeInitialDistilledFiles(
-  workspaceRoot: string,
-  metadata: ReferenceMetadata,
-  manifest: ReferenceSourceManifest,
-  createdFiles: string[],
-): Promise<void> {
-  const prefix = `examples/references/${metadata.id}/distilled`;
-  const files: Record<string, string> = {
-    'writing-style.md': formatDistilledStub('Writing Style', metadata, manifest),
-    'pacing.md': formatDistilledStub('Pacing', metadata, manifest),
-    'hooks.md': formatDistilledStub('Hooks', metadata, manifest),
-    'scene-techniques.md': formatDistilledStub('Scene Techniques', metadata, manifest),
-    'character-techniques.md': formatDistilledStub('Character Techniques', metadata, manifest),
-    'do-not-copy.md': formatDoNotCopy(metadata),
-  };
-
-  for (const [fileName, content] of Object.entries(files)) {
-    await writeReferenceFile(workspaceRoot, `${prefix}/${fileName}`, content, createdFiles);
-  }
-}
-
 function createReferenceContextIndex(referenceId: string): Record<string, unknown> {
   return {
     version: 1,
     referenceId,
-    defaultContext: [
-      'context/reference-summary.md',
-      'distilled/writing-style.md',
-      'distilled/pacing.md',
-      'distilled/hooks.md',
-      'distilled/scene-techniques.md',
-      'distilled/character-techniques.md',
-      'distilled/do-not-copy.md',
-    ],
+    status: 'notAnalyzed',
+    contextEligible: false,
+    defaultContext: [],
     excludedByDefault: [
       'sources/original.*',
       'deconstruction/chapters/*-summary.md',
@@ -641,6 +726,9 @@ function createReferenceSummary(
   metadata: ReferenceMetadata,
   manifest: ReferenceSourceManifest,
   progress: ReferenceProgress,
+  deconstructionStatus: ReferencePublishedDeconstructionStatus,
+  contextEligible: boolean,
+  readinessReason: ReferenceReadinessReason,
 ): ReferenceWorkSummary {
   return {
     id: metadata.id,
@@ -653,9 +741,19 @@ function createReferenceSummary(
     checksumSha256: metadata.checksumSha256,
     bundlePath: `examples/references/${metadata.id}`,
     summaryPath: `examples/references/${metadata.id}/context/reference-summary.md`,
-    distilledPaths: DISTILLED_FILES.map((file) => `examples/references/${metadata.id}/distilled/${file}`),
+    distilledPaths: deconstructionStatus === 'completed'
+      ? DISTILLED_FILES.map((file) => `examples/references/${metadata.id}/distilled/${file}`)
+      : [`examples/references/${metadata.id}/distilled/do-not-copy.md`],
     chapterCount: manifest.detectedStructure.chapterCount,
-    progress,
+    structureConfidence: manifest.detectedStructure.confidence,
+    deconstructionStatus,
+    contextEligible,
+    readinessReason,
+    progress: {
+      ...progress,
+      status: deconstructionStatus,
+      contextEligible,
+    },
   };
 }
 
@@ -675,14 +773,24 @@ async function readReferencesIndex(workspaceRoot: string): Promise<ReferencesInd
   const filePath = join(workspaceRoot, 'examples', 'references.yaml');
 
   try {
+    await assertExistingDirectoryChainSafe(workspaceRoot, ['examples']);
+    await assertPathIsNotSymlink(filePath);
     const parsed = parse(await readFile(filePath, 'utf-8')) as unknown;
-    if (!isRecord(parsed) || !Array.isArray(parsed.references)) {
-      return { version: 1, references: [] };
+    if (
+      !isRecord(parsed)
+      || parsed.version !== 1
+      || !Array.isArray(parsed.references)
+    ) {
+      throw new Error('Unsupported or invalid references index.');
     }
-
+    const references = parsed.references.map((value, index) =>
+      assertReferenceIndexEntry(value, index));
+    if (new Set(references.map((reference) => reference.id)).size !== references.length) {
+      throw new Error('References index contains duplicate reference ids.');
+    }
     return {
-      version: typeof parsed.version === 'number' ? parsed.version : 1,
-      references: parsed.references as ReferenceWorkSummary[],
+      version: 1,
+      references,
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -693,11 +801,39 @@ async function readReferencesIndex(workspaceRoot: string): Promise<ReferencesInd
   }
 }
 
+async function assertExistingDirectoryChainSafe(
+  workspaceRoot: string,
+  segments: readonly string[],
+): Promise<void> {
+  const root = resolve(workspaceRoot);
+  const realWorkspaceRoot = await realpath(root);
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    let information: Awaited<ReturnType<typeof lstat>>;
+    try {
+      information = await lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    if (information.isSymbolicLink() || !information.isDirectory()) {
+      throw new Error(`Reference directory is not a safe directory: ${current}`);
+    }
+    assertRealPathContained(
+      realWorkspaceRoot,
+      await realpath(current),
+      'Reference directory resolves outside workspace.',
+    );
+  }
+}
+
 async function writeReferencesIndex(
   workspaceRoot: string,
   index: ReferencesIndex,
 ): Promise<void> {
-  await mkdir(join(workspaceRoot, 'examples'), { recursive: true });
+  await ensureSafeReferencesRoot(workspaceRoot);
+  await assertPathIsNotSymlink(join(workspaceRoot, 'examples', 'references.yaml'));
   await writeFile(
     join(workspaceRoot, 'examples', 'references.yaml'),
     stringify(index),
@@ -708,6 +844,7 @@ async function writeReferencesIndex(
 async function writeExamplesReadme(workspaceRoot: string, createdFiles: string[]): Promise<void> {
   const relativePath = 'examples/README.md';
   const absolutePath = resolveWorkspaceOutputPath(workspaceRoot, relativePath);
+  await assertPathIsNotSymlink(absolutePath);
 
   try {
     await readFile(absolutePath, 'utf-8');
@@ -726,9 +863,11 @@ async function writeExamplesReadme(workspaceRoot: string, createdFiles: string[]
 \`examples/\` stores external reference material for analysis, technique extraction, and benchmarking.
 It is not the active novel workspace and should not become a hidden source of story truth.
 
-Default writing context should use each reference bundle's \`context/reference-summary.md\`
-and \`distilled/*\` files. Original source files under \`sources/\` are retained for
-review, checksum verification, and explicit re-deconstruction only.
+Default writing context must omit imported-only, preview-only, stale, incomplete, or
+quality-failed bundles. Only an enabled, accepted, current, quality-passed published
+deconstruction may expose its \`context/reference-summary.md\` and \`distilled/*\` files.
+Original source files under \`sources/\` are retained for checksum verification and
+explicit deconstruction only; they are never placed in ordinary writing context.
 `,
     createdFiles,
   );
@@ -751,7 +890,21 @@ async function writeReferenceFile(
 ): Promise<void> {
   const absolutePath = resolveWorkspaceOutputPath(workspaceRoot, relativePath);
   await mkdir(dirname(absolutePath), { recursive: true });
+  await assertPathIsNotSymlink(absolutePath);
   await writeFile(absolutePath, ensureTrailingNewline(content), 'utf-8');
+  createdFiles.push(relativePath);
+}
+
+async function writeReferenceRawFile(
+  workspaceRoot: string,
+  relativePath: string,
+  content: string,
+  createdFiles: string[],
+): Promise<void> {
+  const absolutePath = resolveWorkspaceOutputPath(workspaceRoot, relativePath);
+  await mkdir(dirname(absolutePath), { recursive: true });
+  await assertPathIsNotSymlink(absolutePath);
+  await writeFile(absolutePath, content, 'utf-8');
   createdFiles.push(relativePath);
 }
 
@@ -781,24 +934,107 @@ function resolveWorkspaceOutputPath(workspaceRoot: string, relativePath: string)
 
 async function createUniqueReferenceId(
   workspaceRoot: string,
+  referencesRoot: string,
   title: string,
   checksumSha256: string,
 ): Promise<string> {
   const base = `${slugify(title)}-${checksumSha256.slice(0, 8)}`;
   const index = await readReferencesIndex(workspaceRoot);
 
-  if (!index.references.some((item) => item.id === base)) {
+  if (
+    !index.references.some((item) => item.id === base)
+    && !await pathExists(join(referencesRoot, base))
+  ) {
     return base;
   }
 
   for (let suffix = 2; suffix < 100; suffix += 1) {
     const candidate = `${base}-${suffix}`;
-    if (!index.references.some((item) => item.id === candidate)) {
+    if (
+      !index.references.some((item) => item.id === candidate)
+      && !await pathExists(join(referencesRoot, candidate))
+    ) {
       return candidate;
     }
   }
 
   throw new Error(`Unable to create a unique reference id for: ${title}`);
+}
+
+async function ensureSafeReferencesRoot(workspaceRoot: string): Promise<string> {
+  const root = resolve(workspaceRoot);
+  await mkdir(root, { recursive: true });
+  const realWorkspaceRoot = await realpath(root);
+  let current = root;
+  for (const segment of ['examples', 'references']) {
+    current = join(current, segment);
+    try {
+      const information = await lstat(current);
+      if (information.isSymbolicLink() || !information.isDirectory()) {
+        throw new Error(`Reference directory is not a safe directory: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await mkdir(current);
+    }
+    const realCurrent = await realpath(current);
+    assertRealPathContained(
+      realWorkspaceRoot,
+      realCurrent,
+      'Reference directory resolves outside workspace.',
+    );
+  }
+  return current;
+}
+
+async function assertSafeExistingReferenceBundle(
+  workspaceRoot: string,
+  referenceId: string,
+): Promise<void> {
+  const referencesRoot = await ensureSafeReferencesRoot(workspaceRoot);
+  const bundlePath = join(referencesRoot, referenceId);
+  const information = await lstat(bundlePath);
+  if (information.isSymbolicLink() || !information.isDirectory()) {
+    throw new Error('Reference bundle is not a safe directory.');
+  }
+  assertRealPathContained(
+    await realpath(workspaceRoot),
+    await realpath(bundlePath),
+    'Reference bundle resolves outside workspace.',
+  );
+}
+
+async function assertPathIsNotSymlink(path: string): Promise<void> {
+  try {
+    if ((await lstat(path)).isSymbolicLink()) {
+      throw new Error(`Refusing to write through symbolic link: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function assertRealPathContained(root: string, candidatePath: string, message: string): void {
+  const candidate = relative(root, candidatePath);
+  if (
+    candidate === ''
+    || candidate === '..'
+    || candidate.startsWith(`..${sep}`)
+    || isAbsolute(candidate)
+  ) {
+    throw new Error(message);
+  }
 }
 
 function formatReferenceSummary(
@@ -810,12 +1046,14 @@ function formatReferenceSummary(
 Source type: ${metadata.sourceType}
 Rights: ${metadata.rights}
 Allowed usage: ${metadata.allowedUsage.join(', ')}
-Enabled: ${metadata.enabled ? 'yes' : 'no'}
 Checksum: ${manifest.checksumSha256}
+
+Deconstruction status: Not analyzed
+Context eligible: no
 
 ## Context Boundary
 
-- Default writing context may read this summary and \`distilled/*\`.
+- Default writing context must omit this bundle until an accepted, current, quality-passed deconstruction is published.
 - Original source is retained at \`sources/${manifest.originalFile}\` but is not read by default.
 - This reference is for transformed technique analysis only; do not copy text, scenes, or recognizable expression.
 - Any adoption into OAN truth files must be proposed through PendingAction review.
@@ -826,91 +1064,10 @@ Checksum: ${manifest.checksumSha256}
 - Detection confidence: ${manifest.detectedStructure.confidence}
 - Source length: ${manifest.charLength} chars, ${manifest.lineCount} lines
 
-## Initial Use Guidance
+## Next Step
 
-This bundle has completed deterministic import and quick preview. Deep deconstruction files are placeholders until the author runs a reference deconstruction pass.
-Use it only as light technique context for style, pacing, hooks, scene construction, and character technique.
-`;
-}
-
-function formatQuickPreview(
-  metadata: ReferenceMetadata,
-  manifest: ReferenceSourceManifest,
-): string {
-  const chapters = manifest.detectedStructure.chapters.slice(0, 6)
-    .map((chapter) =>
-      `- ${chapter.id}: ${chapter.title} (lines ${chapter.lineStart}-${chapter.lineEnd}, approx ${chapter.wordCount} words)`,
-    )
-    .join('\n');
-
-  return `# Quick Preview
-
-Reference: ${metadata.title}
-Imported at: ${metadata.importedAt}
-
-## Detected Structure
-
-- Chapter count: ${manifest.detectedStructure.chapterCount}
-- Confidence: ${manifest.detectedStructure.confidence}
-- Original source: \`sources/${manifest.originalFile}\`
-
-${chapters || '- No chapter-like headings detected; treat this as a single source block.'}
-
-## Suitability
-
-- Suitable for: structure, pacing, scene technique, hook handling, and high-level style analysis after deconstruction.
-- Not suitable for: direct quotation, close paraphrase, or importing facts into the current novel truth files.
-
-## Next Gate
-
-Run a full deconstruction pass only if this quick preview matches the intended benchmark. Keep the original source out of default prompts.
-`;
-}
-
-function formatChapterStub(
-  metadata: ReferenceMetadata,
-  chapter: ReferenceChapterBoundary,
-): string {
-  return `# ${chapter.id} ${chapter.title}
-
-Reference: ${metadata.title}
-Source pointer: lines ${chapter.lineStart}-${chapter.lineEnd}
-
-Status: Pending AI deconstruction.
-
-Expected future content:
-
-- Chapter-level summary in transformed language.
-- Key technique observations.
-- Hooks opened, delayed, paid, or reframed.
-- Character / world / timeline pointers with confidence.
-`;
-}
-
-function formatPendingAnalysis(title: string, metadata: ReferenceMetadata): string {
-  return `# ${title}
-
-Reference: ${metadata.title}
-
-Status: Pending AI deconstruction.
-
-This file should contain transformed analysis only. Do not paste source text here.
-`;
-}
-
-function formatDistilledStub(
-  title: string,
-  metadata: ReferenceMetadata,
-  manifest: ReferenceSourceManifest,
-): string {
-  return `# ${title}
-
-Reference: ${metadata.title}
-Source checksum: ${manifest.checksumSha256}
-
-Status: Initial import placeholder.
-
-Use this file for distilled, transformed technique notes after deconstruction. It must not contain copied source prose or close paraphrase.
+This bundle has completed deterministic source import only. It has not completed an AI Quick Preview or deep deconstruction and is not eligible for writing context.
+Quick Preview candidates are stored under \`.workspace/sessions/<run-id>/reference-deconstruction/\`; they do not publish or modify this reference bundle.
 `;
 }
 
@@ -945,7 +1102,7 @@ function slugify(value: string): string {
   const slug = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/giu, '-')
+    .replace(/[^a-z0-9]+/giu, '-')
     .replace(/^-+|-+$/gu, '');
 
   return slug || 'reference';
@@ -995,6 +1152,240 @@ function normalizeOptionalString(value?: string): string | undefined {
 
 function ensureTrailingNewline(value: string): string {
   return value.endsWith('\n') ? value : `${value}\n`;
+}
+
+function assertReferenceIndexEntry(value: unknown, index: number): ReferenceWorkSummary {
+  if (!isRecord(value)) {
+    throw new Error(`Reference index entry ${index} must be an object.`);
+  }
+  const allowedFields = new Set([
+    'id',
+    'title',
+    'sourceType',
+    'rights',
+    'allowedUsage',
+    'enabled',
+    'importedAt',
+    'checksumSha256',
+    'bundlePath',
+    'summaryPath',
+    'distilledPaths',
+    'chapterCount',
+    'structureConfidence',
+    'deconstructionStatus',
+    'contextEligible',
+    'readinessReason',
+    'progress',
+  ]);
+  const unknownField = Object.keys(value).find((field) => !allowedFields.has(field));
+  if (unknownField) {
+    throw new Error(`Reference index entry contains unknown field: ${unknownField}.`);
+  }
+  const id = assertSafeReferenceId(value.id);
+  const canonicalBundlePath = `examples/references/${id}`;
+  const canonicalSummaryPath = `${canonicalBundlePath}/context/reference-summary.md`;
+  if (
+    value.bundlePath !== canonicalBundlePath
+    || value.summaryPath !== canonicalSummaryPath
+  ) {
+    throw new Error(`Reference index entry ${id} contains a non-canonical path.`);
+  }
+  if (!Array.isArray(value.allowedUsage) || !Array.isArray(value.distilledPaths)) {
+    throw new Error(`Reference index entry ${id} contains invalid arrays.`);
+  }
+  const allowedUsage = value.allowedUsage.map((item) => {
+    if (
+      item !== 'analysisOnly'
+      && item !== 'styleInspiration'
+      && item !== 'structureReference'
+      && item !== 'noDirectQuotation'
+    ) {
+      throw new Error(`Reference index entry ${id} contains invalid allowed usage.`);
+    }
+    return item;
+  });
+  const sourceType = value.sourceType;
+  if (
+    sourceType !== 'novel'
+    && sourceType !== 'chapterSample'
+    && sourceType !== 'styleSample'
+    && sourceType !== 'settingBible'
+    && sourceType !== 'notes'
+  ) {
+    throw new Error(`Reference index entry ${id} contains invalid source type.`);
+  }
+  const rights = value.rights;
+  if (
+    rights !== 'owned'
+    && rights !== 'publicDomain'
+    && rights !== 'licensed'
+    && rights !== 'excerpt'
+    && rights !== 'unknown'
+  ) {
+    throw new Error(`Reference index entry ${id} contains invalid rights.`);
+  }
+  if (
+    typeof value.title !== 'string'
+    || !value.title.trim()
+    || value.title.length > 300
+    || typeof value.enabled !== 'boolean'
+    || typeof value.importedAt !== 'string'
+    || Number.isNaN(Date.parse(value.importedAt))
+    || typeof value.checksumSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.checksumSha256)
+    || !Number.isSafeInteger(value.chapterCount)
+    || (value.chapterCount as number) < 1
+  ) {
+    throw new Error(`Reference index entry ${id} contains invalid scalar fields.`);
+  }
+  const distilledPaths = value.distilledPaths.map((item) => {
+    if (
+      typeof item !== 'string'
+      || !item.startsWith(`${canonicalBundlePath}/distilled/`)
+      || item.split(/[\\/]+/u).some((part) => part === '..' || part === '.')
+    ) {
+      throw new Error(`Reference index entry ${id} contains invalid distilled path.`);
+    }
+    return item;
+  });
+  let progress: ReferenceProgress;
+  try {
+    progress = assertReferenceProgress(value.progress);
+    if (progress.referenceId !== id) throw new Error('progress identity mismatch');
+  } catch {
+    progress = createNeedsRebuildProgress(id, value.importedAt);
+  }
+  const deconstructionStatus = isPublishedStatus(value.deconstructionStatus)
+    ? value.deconstructionStatus
+    : 'needsRebuild';
+  const readinessReason = isReadinessReason(value.readinessReason)
+    ? value.readinessReason
+    : 'needsRebuild';
+  const structureConfidence = value.structureConfidence === undefined
+    ? 'low'
+    : assertStructureConfidence(value.structureConfidence, id);
+  return {
+    id,
+    title: value.title.trim(),
+    sourceType,
+    rights,
+    allowedUsage,
+    enabled: value.enabled,
+    importedAt: value.importedAt,
+    checksumSha256: value.checksumSha256,
+    bundlePath: canonicalBundlePath,
+    summaryPath: canonicalSummaryPath,
+    distilledPaths,
+    chapterCount: value.chapterCount as number,
+    structureConfidence,
+    deconstructionStatus,
+    contextEligible: false,
+    readinessReason,
+    progress: { ...progress, contextEligible: false },
+  };
+}
+
+function assertStructureConfidence(
+  value: unknown,
+  referenceId: string,
+): ReferenceSourceManifest['detectedStructure']['confidence'] {
+  if (value !== 'low' && value !== 'medium' && value !== 'high') {
+    throw new Error(
+      `Reference index entry ${referenceId} contains invalid structure confidence.`,
+    );
+  }
+  return value;
+}
+
+function createNeedsRebuildProgress(
+  referenceId: string,
+  updatedAt: string,
+): ReferenceProgress {
+  return {
+    version: 1,
+    referenceId,
+    status: 'needsRebuild',
+    currentStage: null,
+    nextStage: 'quickPreview',
+    completedStages: [],
+    failedStages: [],
+    stages: {
+      detectStructure: 'stale',
+      quickPreview: 'notStarted',
+      chapterAnalysis: 'notStarted',
+      aggregateAnalysis: 'notStarted',
+      styleProfile: 'notStarted',
+      distillForOan: 'notStarted',
+      qualityGate: 'notStarted',
+    },
+    resumable: false,
+    contextEligible: false,
+    updatedAt,
+  };
+}
+
+function isPublishedStatus(value: unknown): value is ReferencePublishedDeconstructionStatus {
+  return value === 'notAnalyzed'
+    || value === 'completed'
+    || value === 'stale'
+    || value === 'qualityFailed'
+    || value === 'needsRebuild';
+}
+
+function isReadinessReason(value: unknown): value is ReferenceReadinessReason {
+  return value === 'ready'
+    || value === 'disabled'
+    || value === 'notAnalyzed'
+    || value === 'stale'
+    || value === 'qualityFailed'
+    || value === 'needsRebuild'
+    || value === 'missingContextSummary';
+}
+
+function readinessToOmissionReason(
+  reason: ReferenceReadinessReason,
+): ReferenceContextOmissionReason {
+  return reason === 'ready' ? 'needsRebuild' : reason;
+}
+
+function formatReadinessOmissionReason(reason: ReferenceContextOmissionReason): string {
+  switch (reason) {
+    case 'notAnalyzed': return 'reference has not been analyzed';
+    case 'stale': return 'reference analysis is stale';
+    case 'qualityFailed': return 'reference analysis failed its quality gate';
+    case 'missingContextSummary': return 'missing current context summary';
+    case 'invalidContextPath': return 'invalid context summary path';
+    case 'needsRebuild': return 'reference bundle needs rebuild';
+    case 'tokenBudgetExceeded': return 'token budget exceeded';
+    case 'notExplicitlyRequested': return 'not explicitly requested for this turn';
+    case 'maxReferenceCountReached': return 'max reference count reached';
+    case 'disabled': return 'disabled';
+  }
+}
+
+function normalizeSelectionBound(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  label: string,
+): number {
+  const normalized = value ?? fallback;
+  if (!Number.isSafeInteger(normalized) || normalized < minimum || normalized > maximum) {
+    throw new Error(`${label} must be a safe integer from ${minimum} to ${maximum}.`);
+  }
+  return normalized;
+}
+
+function assertSafeReferenceId(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value)
+    || value.includes('..')
+  ) {
+    throw new Error('Reference id is invalid.');
+  }
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

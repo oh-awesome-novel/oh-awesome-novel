@@ -1,4 +1,16 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type IncomingMessage } from 'node:http';
@@ -8,6 +20,11 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
+import {
+  createReferenceEvidencePointerMap,
+  normalizeReferenceQuickPreviewModelOutput,
+  reserveReferenceQuickPreview,
+} from '@oh-awesome-novel/core';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import { createWriteIntentTools } from '@oh-awesome-novel/tools';
 import type { ToolSet } from 'ai';
@@ -217,7 +234,7 @@ describe('novel HTTP backend', () => {
       });
   });
 
-  it('imports reference works and selects only enabled distilled context', async () => {
+  it('imports reference works as not analyzed and keeps them out of context', async () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startNovelHttpBackend({ workspaceRoot });
     servers.push(backend);
@@ -247,7 +264,10 @@ describe('novel HTTP backend', () => {
       title: 'Backend Reference',
       chapterCount: 2,
     });
+    expect(imported.createdFiles).toContain(`${imported.reference.bundlePath}/deconstruction-manifest.yaml`);
+    expect(imported.createdFiles).toContain(`${imported.reference.bundlePath}/diagnostics.yaml`);
     expect(imported.createdFiles).toContain(`${imported.reference.bundlePath}/context/reference-summary.md`);
+    expect(imported.createdFiles).not.toContain(`${imported.reference.bundlePath}/deconstruction/quick-preview.md`);
 
     await expect(fetchJson(`${backend.url}/api/workspace/references`))
       .resolves
@@ -256,6 +276,8 @@ describe('novel HTTP backend', () => {
           expect.objectContaining({
             id: imported.reference.id,
             enabled: true,
+            contextEligible: false,
+            deconstructionStatus: 'notAnalyzed',
           }),
         ],
       });
@@ -267,10 +289,11 @@ describe('novel HTTP backend', () => {
       .resolves
       .toMatchObject({
         selection: {
-          included: [
+          included: [],
+          omitted: [
             expect.objectContaining({
               id: imported.reference.id,
-              path: imported.reference.summaryPath,
+              reasonCode: 'notAnalyzed',
             }),
           ],
         },
@@ -308,6 +331,1117 @@ describe('novel HTTP backend', () => {
     await expect(readFile(join(workspaceRoot, imported.reference.summaryPath), 'utf-8'))
       .resolves
       .toContain('Original source is retained');
+  });
+
+  it('runs a bounded reference Quick Preview in workspace shadow and gates full approval', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const previewSelections: Array<Record<string, unknown>> = [];
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        previewSelections.push(input.selection as unknown as Record<string, unknown>);
+        const evidenceRefs = input.selection.windows.map((window) => window.pointerId);
+        const chapterPreviews = input.selection.selectedChapterIds.map((chapterId) => ({
+          chapterId,
+          summary: `A transformed summary for ${chapterId}.`,
+          evidenceRefs: input.selection.windows
+            .filter((window) => window.pointer.chapterId === chapterId)
+            .map((window) => window.pointerId),
+          confidence: 'medium' as const,
+        }));
+        const preview = normalizeReferenceQuickPreviewModelOutput({
+          sourceOverview: 'A bounded opening preview with transformed analysis.',
+          chapterPreviews,
+          findings: [{
+            kind: 'hook' as const,
+            observation: 'The opening establishes a concrete reader question.',
+            technique: 'Pair an immediate uncertainty with a visible decision.',
+            confidence: 'medium' as const,
+            evidenceRefs: evidenceRefs.slice(0, 1),
+            generalInference: false,
+          }],
+          borrowablePatterns: [{
+            title: 'Question before explanation',
+            technique: 'Create curiosity before supplying background.',
+            evidenceRefs: evidenceRefs.slice(0, 1),
+            confidence: 'medium' as const,
+          }],
+          doNotCopy: ['Do not reuse names, prose, or scene execution.'],
+          differentiationRequirements: ['Change premise, causality, and character motivation.'],
+          differentiationPrompts: ['What different promise serves this novel\'s own canon?'],
+          canonContaminationWarnings: ['Reference facts are not current novel facts.'],
+          confidence: 'medium' as const,
+          uncertainties: [],
+        }, {
+          runId: input.runId,
+          referenceId: input.selection.referenceId,
+          sourceChecksumSha256: input.selection.sourceChecksumSha256,
+          selectedChapterIds: input.selection.selectedChapterIds,
+          allowedPointers: createReferenceEvidencePointerMap(input.selection),
+          sourceWindows: input.selection.windows,
+        });
+        return {
+          status: 'completed' as const,
+          finishReason: 'stop' as const,
+          preview,
+        };
+      },
+    });
+    servers.push(backend);
+
+    const imported = await fetchJson<{
+      reference: { id: string; bundlePath: string };
+    }>(`${backend.url}/api/workspace/references/import`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Preview Reference',
+        sourceText: [
+          '第一章 开端',
+          '开端内容。',
+          '第二章 选择',
+          '选择内容。',
+          '第三章 代价',
+          '代价内容。',
+          '第四章 余波',
+          '这部分不应进入 Quick Preview。',
+        ].join('\n'),
+        rights: 'owned',
+      }),
+    });
+
+    const created = await fetchJson<{
+      run: {
+        id: string;
+        runRevision: number;
+        status: string;
+        selectedChapterIds: string[];
+        evidence: unknown[];
+      };
+      receipt: { idempotencyKey: string; resultingRunRevision: number };
+      replayed: boolean;
+    }>(`${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`, {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'quickPreview',
+        baseRunRevision: 0,
+        idempotencyKey: 'create-preview-1',
+      }),
+    });
+
+    expect(created).toMatchObject({
+      run: {
+        runRevision: 0,
+        status: 'created',
+        selectedChapterIds: ['0001', '0002', '0003'],
+      },
+      receipt: {
+        idempotencyKey: 'create-preview-1',
+        resultingRunRevision: 0,
+      },
+      replayed: false,
+    });
+    expect(JSON.stringify(created.run)).not.toContain('开端内容');
+
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'quickPreview',
+          baseRunRevision: 0,
+          idempotencyKey: 'create-preview-1',
+        }),
+      },
+    )).resolves.toMatchObject({
+      run: { id: created.run.id, status: 'created' },
+      replayed: true,
+    });
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'quickPreview',
+          baseRunRevision: 0,
+          idempotencyKey: 'create-preview-conflict',
+        }),
+      },
+    )).rejects.toThrow('activeRunExists');
+
+    const advanced = await fetchJson<{
+      run: {
+        runRevision: number;
+        status: string;
+        preview: { sourceOverview: string; coverage: { chapterCoveragePercent: number } };
+      };
+      receipt: { idempotencyKey: string; resultingRunRevision: number; resultStatus: string };
+    }>(`${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/${created.run.id}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({ baseRunRevision: 0, idempotencyKey: 'advance-preview-1' }),
+    });
+
+    expect(advanced).toMatchObject({
+      run: {
+        runRevision: 1,
+        status: 'awaitingFullApproval',
+        preview: { coverage: { chapterCoveragePercent: 100 } },
+      },
+      receipt: {
+        idempotencyKey: 'advance-preview-1',
+        resultingRunRevision: 1,
+        resultStatus: 'awaitingFullApproval',
+      },
+    });
+    expect(previewSelections).toHaveLength(1);
+    expect((previewSelections[0]?.selectedChapterIds as string[])).toHaveLength(3);
+    expect(previewSelections[0]?.totalChars).toEqual(expect.any(Number));
+
+    const approved = await fetchJson<{
+      run: { runRevision: number; status: string; fullApprovedAt?: string };
+    }>(`${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/${created.run.id}/approve-full`, {
+      method: 'POST',
+      body: JSON.stringify({ baseRunRevision: 1, idempotencyKey: 'approve-full-1' }),
+    });
+    expect(approved.run).toMatchObject({
+      runRevision: 2,
+      status: 'fullApproved',
+      fullApprovedAt: expect.any(String),
+    });
+
+    await expect(readFile(
+      join(workspaceRoot, imported.reference.bundlePath, 'deconstruction-manifest.yaml'),
+      'utf-8',
+    )).resolves.toContain('status: notAnalyzed');
+    await expect(readFile(
+      join(workspaceRoot, imported.reference.bundlePath, 'deconstruction', 'quick-preview.md'),
+      'utf-8',
+    )).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const active = await fetchJson<{ run: { id: string; status: string } | null }>(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`,
+    );
+    expect(active.run).toMatchObject({ id: created.run.id, status: 'fullApproved' });
+  });
+
+  it('requires and audits confirmation for a low-confidence detected preview range', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-low-confidence-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerCalls += 1;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Low Confidence Preview',
+      'An undelimited opening sample with no deterministic chapter heading.',
+    );
+    const createUrl = `${backend.url}/api/workspace/references/` +
+      `${imported.reference.id}/deconstruction-runs`;
+
+    const unconfirmed = await fetch(createUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'quickPreview',
+        baseRunRevision: 0,
+        idempotencyKey: 'create-low-confidence-unconfirmed',
+      }),
+    });
+    expect(unconfirmed.status).toBe(422);
+    await expect(unconfirmed.json()).resolves.toMatchObject({
+      code: 'rangeConfirmationRequired',
+    });
+    await expect(fetchJson(
+      `${backend.url}/api/workspace/references/${imported.reference.id}` +
+      '/deconstruction-runs/active',
+    )).resolves.toEqual({ run: null });
+    expect(providerCalls).toBe(0);
+
+    const created = await fetchJson<{
+      run: { id: string; runRevision: number; status: string };
+    }>(createUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'quickPreview',
+        baseRunRevision: 0,
+        idempotencyKey: 'create-low-confidence-confirmed',
+        confirmDetectedRange: true,
+      }),
+    });
+    expect(created.run).toMatchObject({ status: 'created', runRevision: 0 });
+    const request = await readFile(join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+      'request.yaml',
+    ), 'utf-8');
+    expect(request).toContain('structureConfidence: low');
+    expect(request).toContain('rangeConfirmed: true');
+
+    await expect(fetchJson(
+      `${referenceRunUrl(backend.url, imported.reference.id, created.run.id)}/advance`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          baseRunRevision: 0,
+          idempotencyKey: 'advance-low-confidence-confirmed',
+        }),
+      },
+    )).resolves.toMatchObject({
+      run: { status: 'awaitingFullApproval' },
+    });
+    expect(providerCalls).toBe(1);
+
+    const explicitlySelected = await importReferenceForPreview(
+      backend.url,
+      'Low Confidence Explicit Selection',
+      'Another undelimited sample whose single detected range is selected explicitly.',
+    );
+    await expect(createReferencePreviewRun(
+      backend.url,
+      explicitlySelected.reference.id,
+      'create-low-confidence-explicit',
+      ['0001'],
+    )).resolves.toMatchObject({
+      run: { status: 'created', selectedChapterIds: ['0001'] },
+    });
+  });
+
+  it('cancels an active reference Quick Preview without publishing partial output', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-cancel-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: (input) => new Promise((resolve) => {
+        const finish = (): void => resolve({
+          status: 'aborted',
+          reason: 'cancelled in backend test',
+        });
+        if (input.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        input.abortSignal?.addEventListener('abort', finish, { once: true });
+      }),
+    });
+    servers.push(backend);
+
+    const imported = await fetchJson<{ reference: { id: string; bundlePath: string } }>(
+      `${backend.url}/api/workspace/references/import`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Cancelable Preview',
+          sourceText: '第一章 开端\n一个只用于取消测试的片段。',
+          rights: 'owned',
+        }),
+      },
+    );
+    const created = await fetchJson<{ run: { id: string } }>(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'quickPreview',
+          baseRunRevision: 0,
+          idempotencyKey: 'create-cancel-preview',
+        }),
+      },
+    );
+    const runUrl = `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/${created.run.id}`;
+    const advancePromise = fetchJson(`${runUrl}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-cancel-preview',
+      }),
+    });
+
+    await expect.poll(async () => {
+      const result = await fetchJson<{ run: { status: string; runRevision: number } }>(runUrl);
+      return result.run.status;
+    }).toBe('previewRunning');
+    const running = await fetchJson<{ run: { runRevision: number } }>(runUrl);
+    const cancelled = await fetchJson<{
+      run: { status: string; runRevision: number };
+      receipt: { resultStatus: string };
+    }>(`${runUrl}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: running.run.runRevision,
+        idempotencyKey: 'cancel-preview-1',
+      }),
+    });
+
+    expect(cancelled).toMatchObject({
+      run: { status: 'cancelled', runRevision: 2 },
+      receipt: { resultStatus: 'cancelled' },
+    });
+    await expect(advancePromise).rejects.toThrow('advanceSuperseded');
+    await expect(readFile(
+      join(workspaceRoot, imported.reference.bundlePath, 'deconstruction', 'quick-preview.md'),
+      'utf-8',
+    )).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('settles a throwing reference Preview provider and releases the workspace guard', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const nextWorkspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      globalConfigDir: await createTempWorkspace(),
+      providerConfig: {
+        id: 'reference-preview-throw-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async () => {
+        throw new Error('provider secret must not escape');
+      },
+    });
+    servers.push(backend);
+
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Throwing Preview',
+      '第一章 开端\n一个用于 provider failure 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-throw-preview',
+    );
+    const result = await fetchJson<{
+      run: {
+        status: string;
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+      receipt: { resultStatus: string };
+    }>(referenceRunUrl(backend.url, imported.reference.id, created.run.id) + '/advance', {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-throw-preview',
+      }),
+    });
+
+    expect(result).toMatchObject({
+      run: {
+        status: 'failed',
+        diagnostics: [expect.objectContaining({ code: 'preview.provider_error' })],
+      },
+      receipt: { resultStatus: 'failed' },
+    });
+    expect(JSON.stringify(result)).not.toContain('provider secret');
+
+    const switched = await fetch(`${backend.url}/api/workspaces/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: nextWorkspaceRoot }),
+    });
+    expect(switched.status).toBe(200);
+  });
+
+  it('settles source drift during reference Preview advance before reading its request', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-preflight-drift-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerCalls += 1;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Preflight Drift Preview',
+      '第一章 开端\n用于 advance 前 source drift 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-preflight-drift-preview',
+    );
+    await writeFile(
+      join(
+        workspaceRoot,
+        imported.reference.bundlePath,
+        'sources',
+        imported.manifest.originalFile,
+      ),
+      '第一章 已变化\nAdvance must settle this run as stale.\n',
+      'utf-8',
+    );
+
+    const advanced = await fetchJson<{
+      run: {
+        status: string;
+        runRevision: number;
+        diagnostics: Array<{ code: string }>;
+      };
+      receipt: { resultStatus: string };
+      replayed: boolean;
+    }>(referenceRunUrl(backend.url, imported.reference.id, created.run.id) + '/advance', {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-preflight-drift-preview',
+      }),
+    });
+
+    expect(advanced).toMatchObject({
+      run: {
+        status: 'stale',
+        runRevision: 1,
+        diagnostics: [expect.objectContaining({ code: 'source.stale' })],
+      },
+      receipt: { resultStatus: 'stale' },
+      replayed: false,
+    });
+    expect(providerCalls).toBe(0);
+    const leaseDirectory = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+    );
+    await expect(readdir(leaseDirectory)).resolves.not.toContainEqual(
+      expect.stringMatching(/^provider-lease/u),
+    );
+  });
+
+  it('fails an invalid reference Preview request after reserve without stranding the run', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-invalid-request-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerCalls += 1;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Invalid Request Preview',
+      '第一章 开端\n用于 request artifact validation 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-invalid-request-preview',
+    );
+    const runArtifactRoot = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+    );
+    await writeFile(join(runArtifactRoot, 'request.yaml'), 'version: invalid\n', 'utf-8');
+
+    const advanced = await fetchJson<{
+      run: {
+        status: string;
+        runRevision: number;
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+      receipt: { resultStatus: string };
+    }>(referenceRunUrl(backend.url, imported.reference.id, created.run.id) + '/advance', {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-invalid-request-preview',
+      }),
+    });
+
+    expect(advanced).toMatchObject({
+      run: {
+        status: 'failed',
+        runRevision: 1,
+        diagnostics: [expect.objectContaining({ code: 'preview.request_invalid' })],
+      },
+      receipt: { resultStatus: 'failed' },
+    });
+    expect(JSON.stringify(advanced)).not.toContain('version: invalid');
+    expect(providerCalls).toBe(0);
+    await expect(readdir(runArtifactRoot)).resolves.not.toContainEqual(
+      expect.stringMatching(/^provider-lease/u),
+    );
+  });
+
+  it('reconciles a running reference Preview after restart and replays without a provider', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const firstBackend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(firstBackend);
+    const imported = await importReferenceForPreview(
+      firstBackend.url,
+      'Restart Preview',
+      '第一章 开端\n一个用于 restart reconciliation 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      firstBackend.url,
+      imported.reference.id,
+      'create-restart-preview',
+    );
+
+    await reserveReferenceQuickPreview({
+      workspaceRoot,
+      referenceId: imported.reference.id,
+      runId: created.run.id,
+      baseRunRevision: 0,
+      idempotencyKey: 'advance-restart-preview',
+    });
+    await firstBackend.close();
+    servers.splice(servers.indexOf(firstBackend), 1);
+
+    const restarted = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(restarted);
+    const active = await fetchJson<{
+      run: {
+        status: string;
+        runRevision: number;
+        diagnostics: Array<{ code: string }>;
+      } | null;
+    }>(`${restarted.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`);
+    expect(active.run).toMatchObject({
+      status: 'interrupted',
+      runRevision: 1,
+      diagnostics: [expect.objectContaining({ code: 'preview.interrupted' })],
+    });
+
+    const replay = await fetchJson<{
+      run: { status: string; runRevision: number };
+      receipt: { resultStatus: string };
+      replayed: boolean;
+    }>(referenceRunUrl(restarted.url, imported.reference.id, created.run.id) + '/advance', {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-restart-preview',
+      }),
+    });
+    expect(replay).toMatchObject({
+      run: { status: 'interrupted', runRevision: 1 },
+      receipt: { resultStatus: 'interrupted' },
+      replayed: true,
+    });
+  });
+
+  it('keeps a live reference Preview running when read by a second backend instance', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let releaseProvider!: () => void;
+    let providerStarted = false;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const providerBackend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-lease-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerStarted = true;
+        await providerGate;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    const readerBackend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(providerBackend, readerBackend);
+    const imported = await importReferenceForPreview(
+      providerBackend.url,
+      'Cross Backend Preview',
+      '第一章 开端\n用于跨 backend provider lease 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      providerBackend.url,
+      imported.reference.id,
+      'create-cross-backend-preview',
+    );
+    const runUrl = referenceRunUrl(
+      providerBackend.url,
+      imported.reference.id,
+      created.run.id,
+    );
+    const leasePath = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+      'provider-lease.json',
+    );
+    const advancePromise = fetchJson<{
+      run: { status: string; runRevision: number };
+    }>(`${runUrl}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-cross-backend-preview',
+      }),
+    });
+
+    let observed: { run: { status: string; runRevision: number } | null } | undefined;
+    let observedDetail: { run: { status: string; runRevision: number } } | undefined;
+    try {
+      await expect.poll(() => providerStarted).toBe(true);
+      await expect.poll(async () => {
+        try {
+          return JSON.parse(await readFile(leasePath, 'utf-8')) as unknown;
+        } catch {
+          return undefined;
+        }
+      }).toMatchObject({
+        pid: process.pid,
+        instanceId: expect.any(String),
+        startedAt: expect.any(String),
+      });
+      observed = await fetchJson(
+        `${readerBackend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`,
+      );
+      observedDetail = await fetchJson(referenceRunUrl(
+        readerBackend.url,
+        imported.reference.id,
+        created.run.id,
+      ));
+    } finally {
+      releaseProvider();
+    }
+
+    expect(observed?.run).toMatchObject({
+      status: 'previewRunning',
+      runRevision: 1,
+    });
+    expect(observedDetail?.run).toMatchObject({
+      status: 'previewRunning',
+      runRevision: 1,
+    });
+    await expect(advancePromise).resolves.toMatchObject({
+      run: { status: 'awaitingFullApproval', runRevision: 1 },
+    });
+    await expect(readFile(leasePath, 'utf-8'))
+      .rejects
+      .toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(join(leasePath, '..'))).resolves.not.toContainEqual(
+      expect.stringMatching(/^provider-lease/u),
+    );
+  });
+
+  it('recovers dead and same-process orphan Preview provider leases', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const firstBackend = await startNovelHttpBackend({ workspaceRoot });
+    const restartedBackend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(firstBackend, restartedBackend);
+    const imported = await importReferenceForPreview(
+      firstBackend.url,
+      'Dead Lease Preview',
+      '第一章 开端\n用于 dead provider lease reconciliation 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      firstBackend.url,
+      imported.reference.id,
+      'create-dead-lease-preview',
+    );
+    await reserveReferenceQuickPreview({
+      workspaceRoot,
+      referenceId: imported.reference.id,
+      runId: created.run.id,
+      baseRunRevision: 0,
+      idempotencyKey: 'advance-dead-lease-preview',
+    });
+    const leasePath = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+      'provider-lease.json',
+    );
+    const deadLease = `${JSON.stringify({
+      pid: 2_147_483_647,
+      instanceId: 'dead-backend-instance',
+      startedAt: '2026-07-22T00:00:00.000Z',
+    })}\n`;
+    await writeFile(leasePath, deadLease, 'utf-8');
+    await link(
+      leasePath,
+      `${leasePath}.stale-${createHash('sha256')
+        .update(deadLease)
+        .digest('hex')
+        .slice(0, 24)}`,
+    );
+
+    const active = await fetchJson<{
+      run: {
+        status: string;
+        runRevision: number;
+        diagnostics: Array<{ code: string }>;
+      } | null;
+    }>(`${restartedBackend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`);
+
+    expect(active.run).toMatchObject({
+      status: 'interrupted',
+      runRevision: 1,
+      diagnostics: [expect.objectContaining({ code: 'preview.interrupted' })],
+    });
+    await expect(readFile(leasePath, 'utf-8'))
+      .rejects
+      .toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(join(leasePath, '..'))).resolves.not.toContainEqual(
+      expect.stringMatching(/^provider-lease/u),
+    );
+
+    const orphaned = await importReferenceForPreview(
+      firstBackend.url,
+      'Same Process Orphan Lease Preview',
+      '第一章 开端\n用于 same-process orphan provider lease reconciliation 的片段。',
+    );
+    const orphanedRun = await createReferencePreviewRun(
+      firstBackend.url,
+      orphaned.reference.id,
+      'create-same-process-orphan-preview',
+    );
+    await reserveReferenceQuickPreview({
+      workspaceRoot,
+      referenceId: orphaned.reference.id,
+      runId: orphanedRun.run.id,
+      baseRunRevision: 0,
+      idempotencyKey: 'advance-same-process-orphan-preview',
+    });
+    const orphanedLeasePath = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      orphanedRun.run.id,
+      'reference-deconstruction',
+      'provider-lease.json',
+    );
+    await writeFile(orphanedLeasePath, `${JSON.stringify({
+      pid: process.pid,
+      instanceId: 'orphaned-controller-instance',
+      startedAt: '2026-07-22T00:00:00.000Z',
+    })}\n`, 'utf-8');
+
+    await expect(fetchJson<{
+      run: { status: string; diagnostics: Array<{ code: string }> } | null;
+    }>(`${restartedBackend.url}/api/workspace/references/` +
+      `${orphaned.reference.id}/deconstruction-runs/active`))
+      .resolves.toMatchObject({
+        run: {
+          status: 'interrupted',
+          diagnostics: [expect.objectContaining({ code: 'preview.interrupted' })],
+        },
+      });
+    await expect(readFile(orphanedLeasePath, 'utf-8'))
+      .rejects
+      .toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects a reference Preview lease parent symlink without writing outside workspace', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const externalRoot = await createTempWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-symlink-lease-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerCalls += 1;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Symlink Lease Preview',
+      '第一章 开端\n用于 provider lease symlink containment 的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-symlink-lease-preview',
+    );
+    const runArtifactRoot = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+    );
+    const escapedArtifactRoot = join(externalRoot, 'escaped-reference-deconstruction');
+    await rename(runArtifactRoot, escapedArtifactRoot);
+    const externalFiles = await readdir(escapedArtifactRoot);
+    const externalBefore = await Promise.all(externalFiles.map(async (name) => ({
+      name,
+      content: await readFile(join(escapedArtifactRoot, name), 'utf-8'),
+    })));
+    await symlink(escapedArtifactRoot, runArtifactRoot, 'dir');
+
+    const response = await fetch(
+      referenceRunUrl(backend.url, imported.reference.id, created.run.id) + '/advance',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          baseRunRevision: 0,
+          idempotencyKey: 'advance-symlink-lease-preview',
+        }),
+      },
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: 'validationFailed' });
+    expect(providerCalls).toBe(0);
+    await expect(readdir(escapedArtifactRoot)).resolves.toEqual(externalFiles);
+    await expect(Promise.all(externalFiles.map(async (name) => ({
+      name,
+      content: await readFile(join(escapedArtifactRoot, name), 'utf-8'),
+    })))).resolves.toEqual(externalBefore);
+  });
+
+  it('serializes concurrent reference Preview advances and rejects stale revisions', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerCalls = 0;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-concurrency-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerCalls += 1;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Concurrent Preview',
+      '第一章 开端\n并发测试片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-concurrent-preview',
+    );
+    const runUrl = referenceRunUrl(backend.url, imported.reference.id, created.run.id);
+
+    const results = await Promise.allSettled([
+      fetchJson(`${runUrl}/advance`, {
+        method: 'POST',
+        body: JSON.stringify({
+          baseRunRevision: 0,
+          idempotencyKey: 'advance-concurrent-a',
+        }),
+      }),
+      fetchJson(`${runUrl}/advance`, {
+        method: 'POST',
+        body: JSON.stringify({
+          baseRunRevision: 0,
+          idempotencyKey: 'advance-concurrent-b',
+        }),
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(String(results.find((result) => result.status === 'rejected')?.reason))
+      .toContain('revisionConflict');
+    expect(providerCalls).toBe(1);
+
+    await expect(fetchJson(`${runUrl}/approve-full`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'approve-stale-preview',
+      }),
+    })).rejects.toThrow('revisionConflict');
+  });
+
+  it('honors selected chapters and settles source drift without saving a Preview', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let providerInput: ReferenceQuickPreviewRunnerInput | undefined;
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: {
+        id: 'reference-preview-drift-test',
+        kind: 'custom',
+        model: 'mock-reference-preview',
+      },
+      runReferenceQuickPreview: async (input) => {
+        providerInput = input;
+        await providerGate;
+        return createCompletedReferencePreview(input);
+      },
+    });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Drifting Preview',
+      '第一章 开端\n开端片段。\n第二章 转折\n转折片段。',
+    );
+
+    const invalidSelection = await fetch(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'quickPreview',
+          baseRunRevision: 0,
+          idempotencyKey: 'create-invalid-selection',
+          selectedChapterIds: ['9999'],
+        }),
+      },
+    );
+    expect(invalidSelection.status).toBe(422);
+    await expect(invalidSelection.json()).resolves.toMatchObject({ code: 'validationFailed' });
+
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-drift-preview',
+      ['0002'],
+    );
+    expect(created.run.selectedChapterIds).toEqual(['0002']);
+    const runUrl = referenceRunUrl(backend.url, imported.reference.id, created.run.id);
+    const advancePromise = fetchJson<{
+      run: {
+        status: string;
+        runRevision: number;
+        diagnostics: Array<{ code: string }>;
+        preview?: unknown;
+      };
+      receipt: { resultStatus: string };
+    }>(`${runUrl}/advance`, {
+      method: 'POST',
+      body: JSON.stringify({
+        baseRunRevision: 0,
+        idempotencyKey: 'advance-drift-preview',
+      }),
+    });
+
+    await expect.poll(() => providerInput?.selection.selectedChapterIds)
+      .toEqual(['0002']);
+    await writeFile(
+      join(
+        workspaceRoot,
+        imported.reference.bundlePath,
+        'sources',
+        imported.manifest.originalFile,
+      ),
+      '第一章 已变化\nSource drift after provider reservation.\n',
+      'utf-8',
+    );
+    releaseProvider();
+
+    const drifted = await advancePromise;
+    expect(drifted).toMatchObject({
+      run: {
+        status: 'stale',
+        runRevision: 1,
+        diagnostics: [expect.objectContaining({ code: 'source.stale' })],
+      },
+      receipt: { resultStatus: 'stale' },
+    });
+    expect(drifted.run.preview).toBeUndefined();
+    await expect(readFile(
+      join(
+        workspaceRoot,
+        '.workspace',
+        'sessions',
+        created.run.id,
+        'reference-deconstruction',
+        'preview.md',
+      ),
+      'utf-8',
+    )).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('fails closed when more than one active reference Preview run is present', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const imported = await importReferenceForPreview(
+      backend.url,
+      'Duplicate Active Preview',
+      '第一章 开端\n用于多 active run 检测的片段。',
+    );
+    const created = await createReferencePreviewRun(
+      backend.url,
+      imported.reference.id,
+      'create-duplicate-active',
+    );
+    const duplicateRunId = 'reference-preview-duplicate-active';
+    const originalStatePath = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      created.run.id,
+      'reference-deconstruction',
+      'run-state.yaml',
+    );
+    const duplicateRoot = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      duplicateRunId,
+      'reference-deconstruction',
+    );
+    await mkdir(duplicateRoot, { recursive: true });
+    await writeFile(
+      join(duplicateRoot, 'run-state.yaml'),
+      (await readFile(originalStatePath, 'utf-8')).replaceAll(created.run.id, duplicateRunId),
+      'utf-8',
+    );
+
+    const response = await fetch(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`,
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: 'validationFailed' });
   });
 
   it('creates a workspace and stores onboarding answers', async () => {
@@ -3667,6 +4801,110 @@ async function readMockJsonBody(request: IncomingMessage): Promise<Record<string
   }
 
   return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
+}
+
+type ReferenceQuickPreviewRunner = NonNullable<
+  Parameters<typeof startNovelHttpBackend>[0]['runReferenceQuickPreview']
+>;
+type ReferenceQuickPreviewRunnerInput = Parameters<ReferenceQuickPreviewRunner>[0];
+type ReferenceQuickPreviewRunnerResult = Awaited<ReturnType<ReferenceQuickPreviewRunner>>;
+
+async function importReferenceForPreview(
+  backendUrl: string,
+  title: string,
+  sourceText: string,
+): Promise<{
+  reference: { id: string; bundlePath: string };
+  manifest: { originalFile: string };
+}> {
+  return fetchJson(`${backendUrl}/api/workspace/references/import`, {
+    method: 'POST',
+    body: JSON.stringify({ title, sourceText, rights: 'owned' }),
+  });
+}
+
+async function createReferencePreviewRun(
+  backendUrl: string,
+  referenceId: string,
+  idempotencyKey: string,
+  selectedChapterIds?: string[],
+): Promise<{
+  run: {
+    id: string;
+    runRevision: number;
+    status: string;
+    selectedChapterIds: string[];
+  };
+}> {
+  return fetchJson(
+    `${backendUrl}/api/workspace/references/${referenceId}/deconstruction-runs`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'quickPreview',
+        baseRunRevision: 0,
+        idempotencyKey,
+        ...(selectedChapterIds ? { selectedChapterIds } : {}),
+      }),
+    },
+  );
+}
+
+function referenceRunUrl(
+  backendUrl: string,
+  referenceId: string,
+  runId: string,
+): string {
+  return `${backendUrl}/api/workspace/references/${referenceId}/deconstruction-runs/${runId}`;
+}
+
+function createCompletedReferencePreview(
+  input: ReferenceQuickPreviewRunnerInput,
+): ReferenceQuickPreviewRunnerResult {
+  const evidenceRefs = input.selection.windows.map((window) => window.pointerId);
+  const preview = normalizeReferenceQuickPreviewModelOutput({
+    sourceOverview: 'A bounded transformed overview.',
+    chapterPreviews: input.selection.selectedChapterIds.map((chapterId) => ({
+      chapterId,
+      summary: `A transformed summary for ${chapterId}.`,
+      evidenceRefs: input.selection.windows
+        .filter((window) => window.pointer.chapterId === chapterId)
+        .map((window) => window.pointerId),
+      confidence: 'medium' as const,
+    })),
+    findings: [{
+      kind: 'hook' as const,
+      observation: 'The selected opening creates a bounded reader question.',
+      technique: 'Introduce a concrete uncertainty before background.',
+      confidence: 'medium' as const,
+      evidenceRefs: evidenceRefs.slice(0, 1),
+      generalInference: false,
+    }],
+    borrowablePatterns: [{
+      title: 'Question before explanation',
+      technique: 'Create curiosity before supplying background.',
+      evidenceRefs: evidenceRefs.slice(0, 1),
+      confidence: 'medium' as const,
+    }],
+    doNotCopy: ['Do not reuse names, prose, or scene execution.'],
+    differentiationRequirements: ['Change premise, causality, and character motivation.'],
+    differentiationPrompts: ['What different promise serves this novel own canon?'],
+    canonContaminationWarnings: ['Reference facts are not current novel facts.'],
+    confidence: 'medium' as const,
+    uncertainties: [],
+  }, {
+    runId: input.runId,
+    referenceId: input.selection.referenceId,
+    sourceChecksumSha256: input.selection.sourceChecksumSha256,
+    selectedChapterIds: input.selection.selectedChapterIds,
+    allowedPointers: createReferenceEvidencePointerMap(input.selection),
+    sourceWindows: input.selection.windows,
+  });
+  return {
+    status: 'completed',
+    finishReason: 'stop',
+    preview,
+  };
 }
 
 async function fetchJson<T = unknown>(

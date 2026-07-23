@@ -353,6 +353,14 @@ export {
   formatPlayRehearsalActorPrompt,
   streamPlayRehearsalActorGeneration,
 } from './play-rehearsal.js';
+export {
+  MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS,
+  MAX_REFERENCE_QUICK_PREVIEW_INPUT_CHARACTERS,
+  MAX_REFERENCE_QUICK_PREVIEW_OUTPUT_TOKENS,
+  REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+  formatReferenceQuickPreviewPrompt,
+  generateReferenceQuickPreview,
+} from './reference-deconstruction.js';
 export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
   AgentSessionMetadata,
@@ -385,6 +393,12 @@ export type {
   PlayRehearsalRefereeCompletionResult,
   StreamPlayRehearsalActorGenerationInput,
 } from './play-rehearsal.js';
+export type {
+  GenerateReferenceQuickPreviewInput,
+  ReferenceDeconstructionModelResolver,
+  ReferenceQuickPreviewGenerationError,
+  ReferenceQuickPreviewGenerationResult,
+} from './reference-deconstruction.js';
 export type { RuntimeEventUiStreamOptions } from './ui-stream';
 
 async function prepareAgentSession(input: {

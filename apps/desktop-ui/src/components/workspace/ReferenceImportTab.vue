@@ -3,6 +3,10 @@ import { computed, onMounted, shallowRef } from 'vue';
 
 import ReferenceImportForm from './ReferenceImportForm.vue';
 import ReferenceList from './ReferenceList.vue';
+import ReferenceContextSelectionPanel from './reference/ReferenceContextSelectionPanel.vue';
+import ReferenceDeconstructionPanel from './reference/ReferenceDeconstructionPanel.vue';
+import ReferenceImportResultCard from './reference/ReferenceImportResultCard.vue';
+import { useReferenceDeconstruction } from '../../composables/useReferenceDeconstruction';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type {
   ReferenceContextSelection,
@@ -19,24 +23,32 @@ const loading = shallowRef(false);
 const importing = shallowRef(false);
 const updatingId = shallowRef('');
 const error = shallowRef('');
+const deconstruction = useReferenceDeconstruction({ client: api });
 
 const enabledCount = computed(() =>
   references.value.filter((reference) => reference.enabled).length,
+);
+const eligibleCount = computed(() =>
+  references.value.filter((reference) => reference.contextEligible).length,
 );
 
 onMounted(() => {
   void refreshReferences();
 });
 
-async function refreshReferences() {
+async function refreshReferences(): Promise<void> {
   loading.value = true;
   error.value = '';
 
   try {
-    references.value = (await api.listReferences()).references;
+    const listed = await api.listReferences();
+    references.value = listed.references;
+    await deconstruction.syncReferences(listed.references);
     selection.value = (await api.selectReferenceContext({
       tokenBudget: 1500,
       maxReferences: 3,
+      capability: 'novel.write_chapter',
+      goal: 'Inspect eligible distilled reference context from the References panel.',
     })).selection;
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
@@ -45,7 +57,7 @@ async function refreshReferences() {
   }
 }
 
-async function importReference(input: ReferenceImportInput) {
+async function importReference(input: ReferenceImportInput): Promise<void> {
   importing.value = true;
   error.value = '';
 
@@ -59,7 +71,7 @@ async function importReference(input: ReferenceImportInput) {
   }
 }
 
-async function toggleReference(reference: ReferenceWorkSummary) {
+async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
   updatingId.value = reference.id;
   error.value = '';
 
@@ -79,133 +91,58 @@ async function toggleReference(reference: ReferenceWorkSummary) {
     <div class="panel-heading">
       <div>
         <h2 class="panel-title">References</h2>
-        <p class="empty-copy">{{ enabledCount }} enabled · {{ references.length }} total</p>
+        <p class="empty-copy">
+          {{ enabledCount }} enabled preferences · {{ eligibleCount }} context eligible ·
+          {{ references.length }} total
+        </p>
       </div>
-      <button class="ghost-button tight-button" type="button" :disabled="loading" @click="refreshReferences">
+      <button
+        class="ghost-button tight-button"
+        type="button"
+        :disabled="loading || deconstruction.advancing.value"
+        @click="refreshReferences"
+      >
         Refresh
       </button>
     </div>
 
-    <p v-if="error" class="error-copy">{{ error }}</p>
+    <p v-if="error" class="error-copy" role="alert">{{ error }}</p>
     <p v-if="loading" class="empty-copy">Reading references...</p>
 
     <ReferenceImportForm :importing="importing" @import="importReference" />
+    <ReferenceImportResultCard v-if="lastImport" :result="lastImport" />
+    <ReferenceContextSelectionPanel :selection="selection" />
 
-    <article v-if="lastImport" class="reference-import-result">
-      <div class="panel-heading">
-        <h3 class="panel-title">{{ lastImport.reference.title }}</h3>
-        <span class="status-pill">{{ lastImport.manifest.detectedStructure.confidence }}</span>
-      </div>
-      <div class="reference-meta-grid">
-        <div class="status-block">
-          <span>Chapters</span>
-          <strong>{{ lastImport.manifest.detectedStructure.chapterCount }}</strong>
-        </div>
-        <div class="status-block">
-          <span>Files</span>
-          <strong>{{ lastImport.createdFiles.length }}</strong>
-        </div>
-      </div>
-      <p class="reference-path">{{ lastImport.reference.bundlePath }}</p>
-      <p class="reference-checksum">{{ lastImport.reference.checksumSha256 }}</p>
-    </article>
-
-    <section class="reference-context-panel" aria-label="Reference context selection">
-      <div class="panel-heading">
-        <h3 class="panel-title">Context Selector</h3>
-        <span class="status-pill">{{ selection?.originalSourceRead ? 'source read' : 'distilled only' }}</span>
-      </div>
-      <p class="empty-copy">{{ selection?.tokenBudget ?? 1500 }} tokens · no-copy guardrail active</p>
-      <div v-if="selection?.noCopyWarnings.length" class="reference-context-list">
-        <div v-for="warning in selection.noCopyWarnings" :key="warning" class="reference-context-row">
-          <strong>No-copy</strong>
-          <span>{{ warning }}</span>
-        </div>
-      </div>
-      <div v-if="selection?.included.length" class="reference-context-list">
-        <div v-for="item in selection.included" :key="item.id" class="reference-context-row">
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.path }} · {{ item.budgetLayer }}/{{ item.semanticBoundary }} · {{ item.reason }}</span>
-        </div>
-      </div>
-      <p v-else class="empty-copy">No reference context selected.</p>
-      <div v-if="selection?.omitted.length" class="reference-context-list">
-        <div v-for="item in selection.omitted" :key="`${item.id}:${item.reason}`" class="reference-context-row">
-          <strong>{{ item.title }}</strong>
-          <span>Omitted {{ item.budgetLayer }}: {{ item.reason }}</span>
-        </div>
-      </div>
-    </section>
+    <ReferenceDeconstructionPanel
+      :reference="deconstruction.selectedReference.value"
+      :run="deconstruction.run.value"
+      :loading-active-run="deconstruction.loadingActiveRun.value"
+      :creating="deconstruction.creating.value"
+      :advancing="deconstruction.advancing.value"
+      :cancelling="deconstruction.cancelling.value"
+      :approving="deconstruction.approving.value"
+      :reconciling="deconstruction.reconciling.value"
+      :indeterminate="deconstruction.indeterminate.value"
+      :error="deconstruction.error.value"
+      :can-start="deconstruction.canStart.value"
+      :can-advance="deconstruction.canAdvance.value"
+      :can-cancel="deconstruction.canCancel.value"
+      :can-approve="deconstruction.canApprove.value"
+      :needs-reconcile="deconstruction.needsReconcile.value"
+      @start-preview="deconstruction.startPreview(undefined, $event)"
+      @advance-preview="deconstruction.advancePreview()"
+      @cancel="deconstruction.cancel()"
+      @reconcile="deconstruction.reconcile()"
+      @approve-full="deconstruction.approveFull()"
+    />
 
     <ReferenceList
       :references="references"
       :updating-id="updatingId"
+      :selected-id="deconstruction.selectedReference.value?.id ?? ''"
+      :selection-disabled="deconstruction.busy.value"
+      @select="deconstruction.selectReference($event)"
       @toggle-enabled="toggleReference"
     />
   </section>
 </template>
-
-<style scoped>
-.reference-import-result,
-.reference-context-panel {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  background: rgb(255 255 255);
-}
-
-:global([data-theme="dark"]) .reference-import-result,
-:global([data-theme="dark"]) .reference-context-panel {
-  border-color: rgb(64 64 64);
-  background: rgb(23 23 23);
-}
-
-.reference-meta-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.reference-path,
-.reference-checksum {
-  margin: 8px 0 0;
-  overflow-wrap: anywhere;
-  color: rgb(100 116 139);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-}
-
-:global([data-theme="dark"]) .reference-path,
-:global([data-theme="dark"]) .reference-checksum {
-  color: rgb(163 163 163);
-}
-
-.reference-context-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.reference-context-row {
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  border-radius: 8px;
-  background: rgb(248 250 252);
-}
-
-:global([data-theme="dark"]) .reference-context-row {
-  background: rgb(38 38 38);
-}
-
-.reference-context-row span {
-  overflow-wrap: anywhere;
-  color: rgb(100 116 139);
-  font-size: 12px;
-}
-
-:global([data-theme="dark"]) .reference-context-row span {
-  color: rgb(163 163 163);
-}
-</style>

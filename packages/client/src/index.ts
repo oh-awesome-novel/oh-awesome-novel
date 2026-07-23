@@ -6,6 +6,20 @@ import {
   createPlayRehearsalClientMethods,
   isPlayRehearsalSessionEnvelope,
 } from './play-rehearsal.js';
+import {
+  assertCreateReferenceDeconstructionRunInput,
+  assertMutateReferenceDeconstructionRunInput,
+  assertReferenceContextRequest,
+  assertReferenceImportInput,
+  assertReferenceWireId,
+  parseActiveReferenceDeconstructionRunReadResult,
+  parseReferenceContextEnvelope,
+  parseReferenceDeconstructionRunMutationResult,
+  parseReferenceDeconstructionRunReadResult,
+  parseReferenceEnvelope,
+  parseReferenceImportResult,
+  parseReferenceListEnvelope,
+} from './reference-deconstruction.js';
 import type {
   CreatePlaySceneRehearsalSessionInput,
   PlayRehearsalClientMethods,
@@ -14,6 +28,14 @@ import type {
   PlaySceneRehearsalSidecar,
   PlaySessionPurpose,
 } from './play-rehearsal.js';
+import type {
+  ActiveReferenceDeconstructionRunReadResult,
+  CreateReferenceDeconstructionRunInput,
+  MutateReferenceDeconstructionRunInput,
+  NovelCopilotCapabilityId,
+  ReferenceDeconstructionRunMutationResult,
+  ReferenceDeconstructionRunReadResult,
+} from './reference-deconstruction.js';
 
 export {
   OanRequestError,
@@ -67,6 +89,28 @@ export type {
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
 } from './play-rehearsal.js';
+export type {
+  ActiveReferenceDeconstructionRunReadResult,
+  CreateReferenceDeconstructionRunInput,
+  MutateReferenceDeconstructionRunInput,
+  NovelCopilotCapabilityId,
+  ReferenceDeconstructionConfidence,
+  ReferenceDeconstructionDiagnostic,
+  ReferenceDeconstructionDiagnosticSeverity,
+  ReferenceDeconstructionMutationReceipt,
+  ReferenceDeconstructionRun,
+  ReferenceDeconstructionRunMutationResult,
+  ReferenceDeconstructionRunReadResult,
+  ReferenceDeconstructionRunStatus,
+  ReferencePreviewEvidence,
+  ReferenceQuickPreview,
+  ReferenceQuickPreviewBorrowablePattern,
+  ReferenceQuickPreviewChapter,
+  ReferenceQuickPreviewCoverage,
+  ReferenceQuickPreviewFinding,
+  ReferenceQuickPreviewFindingKind,
+  ReferenceSourcePointer,
+} from './reference-deconstruction.js';
 
 export type ThemeMode = 'light' | 'dark';
 export type ComposerSubmitShortcutPreference = 'enter' | 'meta-enter' | 'ctrl-enter';
@@ -243,15 +287,67 @@ export interface ReferenceImportInput {
   notes?: string;
 }
 
+export type ReferenceDeconstructionStageId =
+  | 'detectStructure'
+  | 'quickPreview'
+  | 'chapterAnalysis'
+  | 'aggregateAnalysis'
+  | 'styleProfile'
+  | 'distillForOan'
+  | 'qualityGate';
+
+export type ReferenceDeconstructionStageStatus =
+  | 'notStarted'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'stale';
+
+export type ReferencePublishedDeconstructionStatus =
+  | 'notAnalyzed'
+  | 'completed'
+  | 'stale'
+  | 'qualityFailed'
+  | 'needsRebuild';
+
+export type ReferenceReadinessReason =
+  | 'ready'
+  | 'disabled'
+  | 'notAnalyzed'
+  | 'stale'
+  | 'qualityFailed'
+  | 'needsRebuild'
+  | 'missingContextSummary';
+
+export type ReferenceContextOmissionReason =
+  | 'disabled'
+  | 'notExplicitlyRequested'
+  | 'maxReferenceCountReached'
+  | 'notAnalyzed'
+  | 'stale'
+  | 'qualityFailed'
+  | 'needsRebuild'
+  | 'missingContextSummary'
+  | 'invalidContextPath'
+  | 'tokenBudgetExceeded';
+
 export interface ReferenceProgress {
-  currentStage: string;
-  completedStages: string[];
+  version: 1;
+  referenceId: string;
+  status: ReferencePublishedDeconstructionStatus;
+  currentStage: ReferenceDeconstructionStageId | null;
+  nextStage: ReferenceDeconstructionStageId | null;
+  completedStages: ReferenceDeconstructionStageId[];
   failedStages: Array<{
-    stage: string;
+    stage: ReferenceDeconstructionStageId;
     message: string;
     failedAt: string;
   }>;
+  stages: Record<ReferenceDeconstructionStageId, ReferenceDeconstructionStageStatus>;
   resumable: boolean;
+  contextEligible: boolean;
   updatedAt: string;
 }
 
@@ -268,14 +364,21 @@ export interface ReferenceWorkSummary {
   summaryPath: string;
   distilledPaths: string[];
   chapterCount: number;
+  structureConfidence: 'low' | 'medium' | 'high';
   progress: ReferenceProgress;
+  deconstructionStatus: ReferencePublishedDeconstructionStatus;
+  contextEligible: boolean;
+  readinessReason: ReferenceReadinessReason;
 }
 
 export interface ReferenceSourceManifest {
+  version: 1;
+  referenceId: string;
   originalFile: string;
   originalFileName: string;
   sourcePath?: string;
   checksumSha256: string;
+  structureFingerprint: string;
   importedAt: string;
   byteLength: number;
   charLength: number;
@@ -312,12 +415,18 @@ export interface ReferenceContextSelection {
     semanticBoundary: 'protected' | 'compressible' | 'excluded';
     estimatedTokens: number;
     content: string;
+    deconstructionStatus: 'completed';
+    contextEligible: true;
+    reasonCode: 'ready';
   }>;
   omitted: Array<{
     id: string;
     title: string;
     reason: string;
     budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
+    deconstructionStatus: ReferencePublishedDeconstructionStatus;
+    contextEligible: false;
+    reasonCode: ReferenceContextOmissionReason;
   }>;
 }
 
@@ -1573,7 +1682,37 @@ export interface OanClient extends PlayRehearsalClientMethods {
   selectReferenceContext(input?: {
     tokenBudget?: number;
     maxReferences?: number;
+    capability?: NovelCopilotCapabilityId;
+    goal?: string;
+    explicitReferenceIds?: string[];
   }): Promise<{ selection: ReferenceContextSelection }>;
+  createReferenceDeconstructionRun(
+    referenceId: string,
+    input: CreateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
+  getReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+  ): Promise<ReferenceDeconstructionRunReadResult>;
+  getActiveReferenceDeconstructionRun(
+    referenceId: string,
+  ): Promise<ActiveReferenceDeconstructionRunReadResult>;
+  advanceReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+    options?: { signal?: AbortSignal },
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
+  cancelReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
+  approveFullReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
   getGitStatus(): Promise<GitWorkspaceStatus>;
   getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
   getGitCommit(hash: string): Promise<GitCommitDetail>;
@@ -1882,25 +2021,118 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       ),
     getWorkspaceStatus: () => requestJson<WorkspaceStatus>('/api/workspace/status'),
     listReferences: () =>
-      requestJson<{ references: ReferenceWorkSummary[] }>('/api/workspace/references'),
-    importReference: (input) =>
-      requestJson<ReferenceImportResult>('/api/workspace/references/import', {
+      requestJson<unknown>('/api/workspace/references').then(parseReferenceListEnvelope),
+    importReference: (input) => {
+      assertReferenceImportInput(input);
+      return requestJson<unknown>('/api/workspace/references/import', {
         method: 'POST',
         body: input,
-      }),
-    setReferenceEnabled: (id, enabled) =>
-      requestJson<{ reference: ReferenceWorkSummary }>(
-        `/api/workspace/references/${encodeURIComponent(id)}`,
+      }).then(parseReferenceImportResult);
+    },
+    setReferenceEnabled: (id, enabled) => {
+      const referenceId = assertReferenceWireId(id, 'Reference id');
+      if (typeof enabled !== 'boolean') {
+        throw new Error('Reference enabled state is invalid.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}`,
         {
           method: 'PATCH',
           body: { enabled },
         },
-      ),
-    selectReferenceContext: (input = {}) =>
-      requestJson<{ selection: ReferenceContextSelection }>('/api/workspace/references/context', {
+      ).then((value) => parseReferenceEnvelope(value, referenceId));
+    },
+    selectReferenceContext: (input = {}) => {
+      assertReferenceContextRequest(input);
+      return requestJson<unknown>('/api/workspace/references/context', {
         method: 'POST',
         body: input,
-      }),
+      }).then(parseReferenceContextEnvelope);
+    },
+    createReferenceDeconstructionRun: (referenceIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      assertCreateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}/deconstruction-runs`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+      ));
+    },
+    getReferenceDeconstructionRun: (referenceIdValue, runIdValue) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}`,
+      ).then((value) => parseReferenceDeconstructionRunReadResult(
+        value,
+        referenceId,
+        runId,
+      ));
+    },
+    getActiveReferenceDeconstructionRun: (referenceIdValue) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        '/deconstruction-runs/active',
+      ).then((value) => parseActiveReferenceDeconstructionRunReadResult(
+        value,
+        referenceId,
+      ));
+    },
+    advanceReferenceDeconstructionRun: (
+      referenceIdValue,
+      runIdValue,
+      input,
+      requestOptions = {},
+    ) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/advance`,
+        { method: 'POST', body: input, signal: requestOptions.signal },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
+    cancelReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/cancel`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
+    approveFullReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/approve-full`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
     getGitStatus: () => requestJson<GitWorkspaceStatus>('/api/git/status'),
     getGitLog: (maxCount = 30) =>
       requestJson<{ commits: GitCommitSummary[]; error?: GitCommandError }>(

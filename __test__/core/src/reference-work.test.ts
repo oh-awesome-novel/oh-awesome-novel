@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -14,6 +21,17 @@ import {
 } from '@oh-awesome-novel/core';
 
 describe('reference work import', () => {
+  it('rejects invalid metadata values before creating a reference bundle', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
+
+    await expect(importReferenceWork({
+      workspaceRoot,
+      title: 'Invalid Runtime Metadata',
+      sourceText: 'Chapter 1\nText.',
+      sourceType: 'futureSourceType',
+    } as never)).rejects.toThrow('sourceType');
+  });
+
   it('imports pasted reference text into an examples reference bundle', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
     const result = await importReferenceWork({
@@ -38,10 +56,17 @@ describe('reference work import', () => {
       rights: 'owned',
       enabled: true,
       chapterCount: 3,
+      structureConfidence: 'high',
+      deconstructionStatus: 'notAnalyzed',
+      contextEligible: false,
+      readinessReason: 'notAnalyzed',
     });
     expect(result.createdFiles).toContain('examples/README.md');
     expect(result.createdFiles).toContain(`examples/references/${result.reference.id}/context/reference-summary.md`);
     expect(result.createdFiles).toContain(`examples/references/${result.reference.id}/distilled/do-not-copy.md`);
+    expect(result.createdFiles).toContain(`examples/references/${result.reference.id}/deconstruction-manifest.yaml`);
+    expect(result.createdFiles).toContain(`examples/references/${result.reference.id}/diagnostics.yaml`);
+    expect(result.createdFiles).not.toContain(`examples/references/${result.reference.id}/deconstruction/quick-preview.md`);
 
     const sourceManifest = parse(await readFile(
       join(workspaceRoot, result.reference.bundlePath, 'sources', 'source-manifest.yaml'),
@@ -60,11 +85,11 @@ describe('reference work import', () => {
       join(workspaceRoot, result.reference.summaryPath),
       'utf-8',
     );
-    expect(summary).toContain('Original source is retained');
-    expect(summary).toContain('not read by default');
+    expect(summary).toContain('Not analyzed');
+    expect(summary).toContain('Context eligible: no');
   });
 
-  it('lists references and omits disabled references from selected context', async () => {
+  it('keeps enabled separate from context eligibility and omits unanalyzed references', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
     const first = await importReferenceWork({
       workspaceRoot,
@@ -89,26 +114,27 @@ describe('reference work import', () => {
       goal: 'continue rain-city pacing',
       tokenBudget: 2_000,
     });
-    expect(selection.included.map((item) => item.id)).toEqual([first.reference.id]);
-    expect(selection.included[0]?.reason).toContain('original source not read');
+    expect(selection.included).toEqual([]);
     expect(selection.originalSourceRead).toBe(false);
     expect(selection.noCopyWarnings.join('\n')).toContain('do not copy');
-    expect(selection.included[0]).toMatchObject({
-      budgetLayer: 'L2',
-      semanticBoundary: 'compressible',
-    });
+    expect(selection.omitted).toContainEqual(expect.objectContaining({
+      id: first.reference.id,
+      reasonCode: 'notAnalyzed',
+      deconstructionStatus: 'notAnalyzed',
+      contextEligible: false,
+    }));
     expect(selection.omitted).toContainEqual({
       id: second.reference.id,
       title: 'Disabled Reference',
       reason: 'disabled',
       budgetLayer: 'L3',
+      deconstructionStatus: 'notAnalyzed',
+      contextEligible: false,
+      reasonCode: 'disabled',
     });
 
     const contextSources = referenceSelectionToContextSources(selection);
-    expect(contextSources.selected[0]).toMatchObject({
-      sourceId: 'referenceDistilled',
-      path: first.reference.summaryPath,
-    });
+    expect(contextSources.selected).toEqual([]);
     expect(contextSources.omitted[0]).toMatchObject({
       sourceId: 'referenceDistilled',
       semanticBoundary: 'excluded',
@@ -143,5 +169,35 @@ describe('reference work import', () => {
       enabled: false,
       sourcePath,
     });
+  });
+
+  it('does not reuse orphan bundles or write through a references parent symlink', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
+    const sourceText = 'Chapter 1\nA filesystem collision must not be overwritten.';
+    const baseId = `orphan-bundle-${createHash('sha256')
+      .update(sourceText)
+      .digest('hex')
+      .slice(0, 8)}`;
+    const orphanRoot = join(workspaceRoot, 'examples', 'references', baseId);
+    await mkdir(orphanRoot, { recursive: true });
+    await writeFile(join(orphanRoot, 'sentinel.txt'), 'preserve me', 'utf-8');
+
+    const imported = await importReferenceWork({
+      workspaceRoot,
+      title: 'Orphan Bundle',
+      sourceText,
+    });
+    expect(imported.reference.id).toBe(`${baseId}-2`);
+    await expect(readFile(join(orphanRoot, 'sentinel.txt'), 'utf-8'))
+      .resolves.toBe('preserve me');
+
+    const symlinkWorkspace = await mkdtemp(join(tmpdir(), 'oan-reference-'));
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'oan-reference-outside-'));
+    await symlink(outsideRoot, join(symlinkWorkspace, 'examples'), 'dir');
+    await expect(importReferenceWork({
+      workspaceRoot: symlinkWorkspace,
+      title: 'Unsafe Parent',
+      sourceText: 'Chapter 1\nDo not write outside.',
+    })).rejects.toThrow('safe directory');
   });
 });

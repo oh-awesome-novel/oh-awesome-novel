@@ -4,22 +4,32 @@ import type { ReferenceWorkSummary } from '../../composables/useWorkspaceApi';
 defineProps<{
   references: ReferenceWorkSummary[];
   updatingId: string;
+  selectedId: string;
+  selectionDisabled: boolean;
 }>();
 
 const emit = defineEmits<{
   toggleEnabled: [reference: ReferenceWorkSummary];
+  select: [reference: ReferenceWorkSummary];
 }>();
 </script>
 
 <template>
   <div class="reference-list">
-    <article v-for="reference in references" :key="reference.id" class="reference-card">
+    <article
+      v-for="reference in references"
+      :key="reference.id"
+      class="reference-card"
+      :class="{ 'reference-card-selected': selectedId === reference.id }"
+    >
       <div class="panel-heading">
         <div class="reference-card-title">
           <strong>{{ reference.title }}</strong>
           <span>{{ reference.id }}</span>
         </div>
-        <span class="status-pill">{{ reference.enabled ? 'Enabled' : 'Disabled' }}</span>
+        <span class="status-pill">
+          Preference {{ reference.enabled ? 'enabled' : 'disabled' }}
+        </span>
       </div>
       <div class="reference-meta-grid">
         <div class="status-block">
@@ -35,14 +45,31 @@ const emit = defineEmits<{
           <strong>{{ reference.chapterCount }}</strong>
         </div>
         <div class="status-block">
-          <span>Stage</span>
-          <strong>{{ reference.progress.currentStage }}</strong>
+          <span>Boundary confidence</span>
+          <strong>{{ reference.structureConfidence }}</strong>
+        </div>
+        <div class="status-block">
+          <span>Analysis</span>
+          <strong>{{ reference.deconstructionStatus }}</strong>
+        </div>
+        <div class="status-block">
+          <span>Writing context</span>
+          <strong>{{ reference.contextEligible ? 'Eligible' : 'Not eligible' }}</strong>
         </div>
       </div>
+      <p class="reference-readiness">{{ reference.readinessReason }}</p>
       <p class="reference-path">{{ reference.summaryPath }}</p>
       <p class="reference-path">{{ reference.bundlePath }}</p>
       <p class="reference-checksum">{{ reference.checksumSha256 }}</p>
       <div class="pending-actions">
+        <button
+          class="ghost-button tight-button"
+          type="button"
+          :disabled="selectionDisabled || selectedId === reference.id"
+          @click="emit('select', reference)"
+        >
+          {{ selectedId === reference.id ? 'Selected' : 'Open' }}
+        </button>
         <button
           class="secondary-button tight-button"
           type="button"
@@ -74,6 +101,11 @@ const emit = defineEmits<{
   background: rgb(248 250 252);
 }
 
+.reference-card-selected {
+  border-color: rgb(37 99 235);
+  box-shadow: 0 0 0 1px rgb(37 99 235 / 20%);
+}
+
 :global([data-theme="dark"]) .reference-card {
   border-color: rgb(64 64 64);
   background: rgb(38 38 38);
@@ -89,6 +121,7 @@ const emit = defineEmits<{
 }
 
 .reference-card-title span,
+.reference-readiness,
 .reference-path,
 .reference-checksum {
   overflow-wrap: anywhere;
@@ -98,6 +131,7 @@ const emit = defineEmits<{
 }
 
 :global([data-theme="dark"]) .reference-card-title span,
+:global([data-theme="dark"]) .reference-readiness,
 :global([data-theme="dark"]) .reference-path,
 :global([data-theme="dark"]) .reference-checksum {
   color: rgb(163 163 163);
@@ -112,5 +146,11 @@ const emit = defineEmits<{
 .reference-path,
 .reference-checksum {
   margin: 8px 0 0;
+}
+
+.reference-readiness {
+  margin: 8px 0 0;
+  color: rgb(100 116 139);
+  font-size: 12px;
 }
 </style>

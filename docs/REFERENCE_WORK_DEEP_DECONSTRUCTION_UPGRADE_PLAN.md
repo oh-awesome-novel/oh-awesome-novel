@@ -1,6 +1,6 @@
 # OAN 参考作品深度拆解升级计划
 
-> 计划状态：Proposed，已具备进入 D0 / D1 实施的边界。
+> 计划状态：In Progress。D0 / D1 已于 2026-07-22 落地；D2–D5 仍待实施。
 >
 > 关联任务：`docs/tasks/0900.md`（保持 `Needs Review`，不另建重复领域任务）。
 >
@@ -35,6 +35,16 @@
 4. 增加 manifest、diagnostics、source pointer、用户继续确认和失败恢复。
 
 完整全书拆解、聚合与 distilled entry 选择在后续纵向切片继续完成，但从第一步就冻结最终需要的身份、来源和恢复边界。
+
+### 1.1 实施状态（2026-07-22）
+
+| 切片 | 状态 | 已落地边界 |
+| --- | --- | --- |
+| D0 | Completed | import-only `notAnalyzed`、manifest / diagnostics / progress、readiness / stale / quality gate、严格 Reference transport 与 selector 硬预算 |
+| D1 | Completed | bounded Quick Preview、低置信范围确认、单模型 typed runner、`.workspace` run、CAS / idempotency / cancel / restart reconcile、跨 Backend provider lease、Desktop 审阅与 full confirmation gate |
+| D2–D5 | Planned | 分章恢复、聚合 / style / quality、PendingAction publish、entry-level selector |
+
+D1 的 `fullApproved` 只记录 D2 计算授权；当前不会启动分章拆解，也不会把 Preview 写入 published reference bundle。为了让 Desktop 在重开后发现权威 run，实施额外提供 `GET /api/workspace/references/:referenceId/deconstruction-runs/active`，它不改变原有 run lifecycle。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
 
 ## 2. 当前基线与真实缺口
 

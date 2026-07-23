@@ -120,8 +120,12 @@ function submitImport() {
       </label>
       <label class="reference-check">
         <input v-model="form.enabled" type="checkbox">
-        <span>Enabled in selector</span>
+        <span>Enable reference preference after it becomes context eligible</span>
       </label>
+      <p class="field-hint">
+        New imports remain Not analyzed and stay out of writing context until an accepted,
+        current, quality-passed deconstruction is published.
+      </p>
     </fieldset>
 
     <button class="primary-button" type="submit" :disabled="!canSubmit || importing">
@@ -174,6 +178,14 @@ function submitImport() {
   gap: 6px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.field-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: rgb(100 116 139);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (max-width: 880px) {

@@ -16,6 +16,7 @@ import { cors } from 'hono/cors';
 
 import {
   MAX_PLAY_LAUNCH_SOURCE_BYTES,
+  NOVEL_COPILOT_CAPABILITY_IDS,
   PlaySessionWriteConflictError,
   PlayLaunchSourceValidationError,
   addPlayAdoptionCandidate,
@@ -99,6 +100,7 @@ import type {
   LlmProviderConfig,
   LlmProviderConfigState,
   LlmProviderKind,
+  NovelCopilotCapabilityId,
   ThemePreference,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
@@ -144,6 +146,10 @@ import {
 } from '@oh-awesome-novel/agent';
 import type { AiSdkProviderResolver } from '@oh-awesome-novel/agent';
 import type { NovelAgentPlayWritingReferenceInput } from '@oh-awesome-novel/agent';
+import type {
+  GenerateReferenceQuickPreviewInput,
+  ReferenceQuickPreviewGenerationResult,
+} from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
   createPlayRehearsalBackendController,
@@ -154,6 +160,14 @@ import type {
   NovelBackendPlayRehearsalRefereeInput,
   PlayRehearsalBackendController,
 } from './play-rehearsal.js';
+import {
+  ReferenceDeconstructionRequestError,
+  createReferenceDeconstructionBackendController,
+  toReferenceDeconstructionErrorResponse,
+} from './reference-deconstruction.js';
+import type {
+  ReferenceDeconstructionBackendController,
+} from './reference-deconstruction.js';
 import {
   buildChapterIndex,
   acceptPendingAction,
@@ -218,6 +232,9 @@ export interface NovelBackendOptions {
   runPlayRehearsalReferee?: (
     input: NovelBackendPlayRehearsalRefereeInput,
   ) => Promise<string>;
+  runReferenceQuickPreview?: (
+    input: GenerateReferenceQuickPreviewInput,
+  ) => Promise<ReferenceQuickPreviewGenerationResult>;
 }
 
 export interface NovelBackendAgentInput {
@@ -253,6 +270,7 @@ interface BackendState {
   activePlayTurns: Set<string>;
   playTurnRuns: Map<string, PlayTurnRunRecord>;
   playRehearsal?: PlayRehearsalBackendController;
+  referenceDeconstruction?: ReferenceDeconstructionBackendController;
 }
 
 type PlayTurnRunStatus =
@@ -352,6 +370,28 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       : {}),
   });
   state.playRehearsal = playRehearsal;
+  const referenceDeconstruction = createReferenceDeconstructionBackendController({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    async getModelRuntime() {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig
+        ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) {
+        throw new ReferenceDeconstructionRequestError(
+          'Reference Quick Preview requires model mode with provider config.',
+          'providerNotConfigured',
+        );
+      }
+      return {
+        providerConfig,
+        resolveModel: options.resolveModel ?? createAiSdkProviderResolver(),
+      };
+    },
+    ...(options.runReferenceQuickPreview
+      ? { runQuickPreview: options.runReferenceQuickPreview }
+      : {}),
+  });
+  state.referenceDeconstruction = referenceDeconstruction;
 
   app.use('*', cors({
     origin: '*',
@@ -395,6 +435,46 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleUpdateReferenceWork(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/references/context', (context) =>
     handleSelectReferenceContext(options, state, context));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs', (context) =>
+    handleCreateReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/references/:referenceId/deconstruction-runs/active', (context) =>
+    handleReadActiveReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/references/:referenceId/deconstruction-runs/:runId', (context) =>
+    handleReadReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/advance', (context) =>
+    handleAdvanceReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/approve-full', (context) =>
+    handleApproveReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/cancel', (context) =>
+    handleCancelReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
   app.get('/api/git/status', (context) => handleGitStatus(options, state, context));
   app.get('/api/git/log', (context) => handleGitLog(options, state, context));
   app.get('/api/git/show/:hash', (context) =>
@@ -1277,6 +1357,20 @@ async function handleImportReferenceWork(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const body = await readJsonBody(context);
+  const importFields = new Set([
+    'title',
+    'sourcePath',
+    'sourceText',
+    'originalFileName',
+    'sourceType',
+    'rights',
+    'allowedUsage',
+    'enabled',
+    'notes',
+  ]);
+  if (Object.keys(body).some((key) => !importFields.has(key))) {
+    return jsonResponse(context, 400, { error: 'Reference import contains unknown fields.' });
+  }
   const title = getOptionalString(body, 'title')?.trim();
   const sourcePath = getOptionalString(body, 'sourcePath')?.trim();
   const sourceText = getOptionalString(body, 'sourceText');
@@ -1290,6 +1384,26 @@ async function handleImportReferenceWork(
 
   if (!sourcePath && !sourceText?.trim()) {
     return jsonResponse(context, 400, { error: 'Reference sourcePath or sourceText is required.' });
+  }
+
+  for (const key of [
+    'title',
+    'sourcePath',
+    'sourceText',
+    'originalFileName',
+    'sourceType',
+    'rights',
+    'notes',
+  ]) {
+    if (hasOwn(body, key) && typeof body[key] !== 'string') {
+      return jsonResponse(context, 400, { error: `Reference ${key} must be a string.` });
+    }
+  }
+  if (hasOwn(body, 'enabled') && typeof body.enabled !== 'boolean') {
+    return jsonResponse(context, 400, { error: 'Reference enabled must be a boolean.' });
+  }
+  if (hasOwn(body, 'allowedUsage') && !Array.isArray(body.allowedUsage)) {
+    return jsonResponse(context, 400, { error: 'Reference allowedUsage must be an array.' });
   }
 
   if (getOptionalString(body, 'sourceType') && !sourceType) {
@@ -1335,7 +1449,7 @@ async function handleUpdateReferenceWork(
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const body = await readJsonBody(context);
 
-  if (typeof body.enabled !== 'boolean') {
+  if (Object.keys(body).length !== 1 || typeof body.enabled !== 'boolean') {
     return jsonResponse(context, 400, { error: 'Reference enabled must be a boolean.' });
   }
 
@@ -1360,15 +1474,204 @@ async function handleSelectReferenceContext(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const body = await readJsonBody(context);
+  const allowedFields = new Set([
+    'tokenBudget',
+    'maxReferences',
+    'capability',
+    'goal',
+    'explicitReferenceIds',
+  ]);
+  if (Object.keys(body).some((key) => !allowedFields.has(key))) {
+    return jsonResponse(context, 400, { error: 'Reference context request contains unknown fields.' });
+  }
   const tokenBudget = getOptionalNumber(body, 'tokenBudget');
   const maxReferences = getOptionalNumber(body, 'maxReferences');
+  const requestedCapability = getOptionalString(body, 'capability');
+  const capability = requestedCapability && isNovelCopilotCapabilityId(requestedCapability)
+    ? requestedCapability
+    : undefined;
+  const goal = getOptionalString(body, 'goal');
+  const explicitReferenceIds = readStringArray(body, 'explicitReferenceIds');
+
+  if (hasOwn(body, 'capability') && (!requestedCapability || !capability)) {
+    return jsonResponse(context, 400, { error: 'Reference capability is invalid.' });
+  }
+  if (hasOwn(body, 'explicitReferenceIds') && (
+    !Array.isArray(body.explicitReferenceIds)
+    || explicitReferenceIds.length !== body.explicitReferenceIds.length
+    || explicitReferenceIds.length > 32
+    || new Set(explicitReferenceIds).size !== explicitReferenceIds.length
+    || explicitReferenceIds.some((id) => !/^[\p{L}\p{N}_:-]{1,128}$/u.test(id))
+  )) {
+    return jsonResponse(context, 400, { error: 'Reference ids must be non-empty strings.' });
+  }
+  if (hasOwn(body, 'goal') && (typeof body.goal !== 'string' || body.goal.length > 4_000)) {
+    return jsonResponse(context, 400, { error: 'Reference goal is invalid.' });
+  }
+  if (hasOwn(body, 'tokenBudget') && (tokenBudget === undefined ||
+    !Number.isSafeInteger(tokenBudget) || tokenBudget < 1 || tokenBudget > 100_000
+  )) {
+    return jsonResponse(context, 400, { error: 'Reference tokenBudget is invalid.' });
+  }
+  if (hasOwn(body, 'maxReferences') && (maxReferences === undefined ||
+    !Number.isSafeInteger(maxReferences) || maxReferences < 1 || maxReferences > 32
+  )) {
+    return jsonResponse(context, 400, { error: 'Reference maxReferences is invalid.' });
+  }
   const selection = await selectReferenceContext({
     workspaceRoot,
     tokenBudget,
     maxReferences,
+    capability,
+    goal,
+    explicitReferenceIds,
   });
 
   return jsonResponse(context, 200, { selection });
+}
+
+async function handleCreateReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, [
+      'mode',
+      'baseRunRevision',
+      'idempotencyKey',
+      'selectedChapterIds',
+      'confirmDetectedRange',
+    ]);
+    if (body.mode !== 'quickPreview' || body.baseRunRevision !== 0) {
+      throw new ReferenceDeconstructionRequestError(
+        'Reference deconstruction create request is invalid.',
+        'invalidRequest',
+      );
+    }
+    const idempotencyKey = requireReferenceWireId(
+      getOptionalString(body, 'idempotencyKey') ?? '',
+      'idempotencyKey',
+    );
+    const selectedChapterIds = hasOwn(body, 'selectedChapterIds')
+      ? requireReferenceWireIdArray(body.selectedChapterIds, 'selectedChapterIds', 3)
+      : undefined;
+    const confirmDetectedRange = hasOwn(body, 'confirmDetectedRange')
+      ? body.confirmDetectedRange
+      : undefined;
+    if (confirmDetectedRange !== undefined && confirmDetectedRange !== true) {
+      throw new ReferenceDeconstructionRequestError(
+        'Reference deconstruction range confirmation is invalid.',
+        'invalidRequest',
+      );
+    }
+    return controller.createRun(referenceId, {
+      mode: 'quickPreview',
+      baseRunRevision: 0,
+      idempotencyKey,
+      ...(selectedChapterIds ? { selectedChapterIds } : {}),
+      ...(confirmDetectedRange === true ? { confirmDetectedRange: true } : {}),
+    });
+  });
+}
+
+async function handleReadReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    requireReferenceWireId(runId, 'runId');
+    return controller.readRun(referenceId, runId);
+  });
+}
+
+async function handleReadActiveReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    return controller.readActiveRun(referenceId);
+  });
+}
+
+async function handleAdvanceReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.advanceRun(referenceId, runId, input, context.req.raw.signal);
+  });
+}
+
+async function handleApproveReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.approveFull(referenceId, runId, input);
+  });
+}
+
+async function handleCancelReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.cancelRun(referenceId, runId, input);
+  });
+}
+
+async function readReferenceDeconstructionMutationRequest(
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<{ baseRunRevision: number; idempotencyKey: string }> {
+  requireReferenceWireId(referenceId, 'referenceId');
+  requireReferenceWireId(runId, 'runId');
+  const body = await readJsonBody(context);
+  assertOnlyJsonFields(body, ['baseRunRevision', 'idempotencyKey']);
+  const baseRunRevision = body.baseRunRevision;
+  if (!Number.isSafeInteger(baseRunRevision) || (baseRunRevision as number) < 0) {
+    throw new ReferenceDeconstructionRequestError(
+      'Reference deconstruction baseRunRevision is invalid.',
+      'invalidRequest',
+    );
+  }
+  return {
+    baseRunRevision: baseRunRevision as number,
+    idempotencyKey: requireReferenceWireId(
+      getOptionalString(body, 'idempotencyKey') ?? '',
+      'idempotencyKey',
+    ),
+  };
 }
 
 async function handleGitStatus(
@@ -5720,12 +6023,14 @@ function createPlayTurnRunKey(
 function hasActivePlayMutation(state: BackendState, workspaceRoot: string): boolean {
   const prefix = `${workspaceRoot}:`;
   return [...state.activePlayTurns].some((key) => key.startsWith(prefix)) ||
-    Boolean(state.playRehearsal?.hasActiveStepRun(workspaceRoot));
+    Boolean(state.playRehearsal?.hasActiveStepRun(workspaceRoot)) ||
+    Boolean(state.referenceDeconstruction?.hasActivePreview(workspaceRoot));
 }
 
 function hasAnyActivePlayMutation(state: BackendState): boolean {
   return state.activePlayTurns.size > 0 ||
-    Boolean(state.playRehearsal?.hasActiveStepRun());
+    Boolean(state.playRehearsal?.hasActiveStepRun()) ||
+    Boolean(state.referenceDeconstruction?.hasActivePreview());
 }
 
 function tryBeginWorkspaceTransition(state: BackendState): boolean {
@@ -6761,6 +7066,10 @@ function isReferenceAllowedUsage(value: string): value is ReferenceAllowedUsage 
   ].includes(value);
 }
 
+function isNovelCopilotCapabilityId(value: string): value is NovelCopilotCapabilityId {
+  return NOVEL_COPILOT_CAPABILITY_IDS.includes(value as NovelCopilotCapabilityId);
+}
+
 function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] {
   const rawModels = Array.isArray(value.models) ? value.models : [];
 
@@ -6823,6 +7132,70 @@ async function handlePlayRehearsalJsonRequest(
     }
     const response = toPlayRehearsalErrorResponse(error);
     return jsonResponse(context, response.status, response.body);
+  }
+}
+
+async function handleReferenceDeconstructionJsonRequest(
+  context: NovelBackendContext,
+  operation: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    return jsonResponse(context, 200, await operation());
+  } catch (error) {
+    if (error instanceof InvalidJsonBodyError) {
+      return jsonResponse(context, 400, {
+        error: error.message,
+        code: 'invalidRequest',
+      });
+    }
+    const response = toReferenceDeconstructionErrorResponse(error);
+    return jsonResponse(context, response.status, response.body);
+  }
+}
+
+function requireReferenceWireId(value: string, label: string): string {
+  if (!/^[\p{L}\p{N}_:-]{1,128}$/u.test(value)) {
+    throw new ReferenceDeconstructionRequestError(
+      `Reference ${label} is invalid.`,
+      'invalidRequest',
+    );
+  }
+  return value;
+}
+
+function requireReferenceWireIdArray(
+  value: unknown,
+  label: string,
+  maxItems: number,
+): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > maxItems) {
+    throw new ReferenceDeconstructionRequestError(
+      `Reference ${label} is invalid.`,
+      'invalidRequest',
+    );
+  }
+  const items = value.map((item, index) =>
+    requireReferenceWireId(typeof item === 'string' ? item : '', `${label}[${index}]`),
+  );
+  if (new Set(items).size !== items.length) {
+    throw new ReferenceDeconstructionRequestError(
+      `Reference ${label} must contain unique ids.`,
+      'invalidRequest',
+    );
+  }
+  return items;
+}
+
+function assertOnlyJsonFields(
+  value: Record<string, unknown>,
+  allowedFields: readonly string[],
+): void {
+  const allowed = new Set(allowedFields);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new ReferenceDeconstructionRequestError(
+      'Reference deconstruction request contains unknown fields.',
+      'invalidRequest',
+    );
   }
 }
 
