@@ -1,6 +1,7 @@
 import type {
   ReferenceContextSelection,
   ReferenceDeconstructionStageId,
+  ReferenceDeconstructionStageStatus,
   ReferenceImportInput,
   ReferenceImportResult,
   ReferenceSourceManifest,
@@ -28,6 +29,11 @@ export type ReferenceDeconstructionRunStatus =
   | 'previewRunning'
   | 'awaitingFullApproval'
   | 'fullApproved'
+  | 'fullRunning'
+  | 'paused'
+  | 'reviewReady'
+  | 'publishing'
+  | 'completed'
   | 'cancelled'
   | 'failed'
   | 'interrupted'
@@ -61,6 +67,8 @@ export interface ReferenceDeconstructionDiagnostic {
   stageId?: ReferenceDeconstructionStageId;
   chapterId?: string;
   pointerId?: string;
+  unitId?: string;
+  attemptId?: string;
 }
 
 export type ReferenceQuickPreviewFindingKind =
@@ -135,6 +143,87 @@ export interface ReferenceDeconstructionMutationReceipt {
   resultStatus: ReferenceDeconstructionRunStatus;
 }
 
+export type ReferenceDeconstructionUnitKind =
+  | 'chapterChunk'
+  | 'aggregate'
+  | 'style'
+  | 'analysisQuality';
+
+export type ReferenceDeconstructionUnitStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'cancelled'
+  | 'stale';
+
+export type ReferenceDeconstructionAttemptStatus =
+  Exclude<ReferenceDeconstructionUnitStatus, 'queued'>;
+
+export interface ReferenceDeconstructionFullStageSummary {
+  stageId: ReferenceDeconstructionStageId;
+  status: ReferenceDeconstructionStageStatus;
+  plannedUnits: number;
+  completedUnits: number;
+  failedUnits: number;
+}
+
+export interface ReferenceDeconstructionFullProgress {
+  plannedUnits: number;
+  completedUnits: number;
+  failedUnits: number;
+  completedChapters: number;
+  totalChapters: number;
+  percent: number;
+}
+
+export interface ReferenceDeconstructionUnitSummary {
+  id: string;
+  ordinal: number;
+  stageId: ReferenceDeconstructionStageId;
+  kind: ReferenceDeconstructionUnitKind;
+  chapterId?: string;
+  chunkId?: string;
+  status: ReferenceDeconstructionUnitStatus;
+  attemptCount: number;
+  selectedAttemptId?: string;
+}
+
+export interface ReferenceDeconstructionAttemptSummary {
+  id: string;
+  unitId: string;
+  attemptNumber: number;
+  status: ReferenceDeconstructionAttemptStatus;
+  inputFingerprint: string;
+  outputHash?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export type ReferenceDeconstructionAnalysisQualityStatus =
+  | 'notEvaluated'
+  | 'passed'
+  | 'failed';
+
+export interface ReferenceDeconstructionAnalysisQuality {
+  status: ReferenceDeconstructionAnalysisQualityStatus;
+  coveragePercent: number;
+  blockingDiagnosticCount: number;
+  outputHashes: string[];
+}
+
+export interface ReferenceDeconstructionFullRun {
+  stages: ReferenceDeconstructionFullStageSummary[];
+  progress: ReferenceDeconstructionFullProgress;
+  nextUnit?: ReferenceDeconstructionUnitSummary;
+  currentUnit?: ReferenceDeconstructionUnitSummary;
+  failedUnit?: ReferenceDeconstructionUnitSummary;
+  recentUnits: ReferenceDeconstructionUnitSummary[];
+  recentAttempts: ReferenceDeconstructionAttemptSummary[];
+  analysisQuality?: ReferenceDeconstructionAnalysisQuality;
+}
+
 export interface ReferenceDeconstructionRun {
   schemaVersion: 1;
   id: string;
@@ -150,6 +239,8 @@ export interface ReferenceDeconstructionRun {
   preview?: ReferenceQuickPreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
+  receiptCount: number;
+  full?: ReferenceDeconstructionFullRun;
   createdAt: string;
   updatedAt: string;
   fullApprovedAt?: string;
@@ -166,6 +257,11 @@ export interface CreateReferenceDeconstructionRunInput {
 export interface MutateReferenceDeconstructionRunInput {
   baseRunRevision: number;
   idempotencyKey: string;
+}
+
+export interface RetryReferenceDeconstructionRunInput
+  extends MutateReferenceDeconstructionRunInput {
+  unitId: string;
 }
 
 export interface ReferenceDeconstructionRunMutationResult {
@@ -204,6 +300,11 @@ const RUN_STATUSES: ReadonlySet<string> = new Set([
   'previewRunning',
   'awaitingFullApproval',
   'fullApproved',
+  'fullRunning',
+  'paused',
+  'reviewReady',
+  'publishing',
+  'completed',
   'cancelled',
   'failed',
   'interrupted',
@@ -219,6 +320,42 @@ const FINDING_KINDS: ReadonlySet<string> = new Set([
   'characterTechnique',
   'worldbuildingTechnique',
 ]);
+const FULL_STAGE_IDS: readonly ReferenceDeconstructionStageId[] = [
+  'chapterAnalysis',
+  'aggregateAnalysis',
+  'styleProfile',
+  'qualityGate',
+];
+const UNIT_KINDS: ReadonlySet<string> = new Set([
+  'chapterChunk',
+  'aggregate',
+  'style',
+  'analysisQuality',
+]);
+const UNIT_STATUSES: ReadonlySet<string> = new Set([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'interrupted',
+  'cancelled',
+  'stale',
+]);
+const ATTEMPT_STATUSES: ReadonlySet<string> = new Set([
+  'running',
+  'completed',
+  'failed',
+  'interrupted',
+  'cancelled',
+  'stale',
+]);
+const ANALYSIS_QUALITY_STATUSES: ReadonlySet<string> = new Set([
+  'notEvaluated',
+  'passed',
+  'failed',
+]);
+const MAX_FULL_DECONSTRUCTION_UNITS = 2_048;
+const MAX_FULL_DECONSTRUCTION_RECENT_ITEMS = 64;
 
 export function assertReferenceWireId(value: string, label: string): string {
   if (!isSafeId(value)) {
@@ -294,6 +431,20 @@ export function assertMutateReferenceDeconstructionRunInput(
     !isSafeId(value.idempotencyKey)
   ) {
     throw new Error('Reference deconstruction mutation request is invalid.');
+  }
+}
+
+export function assertRetryReferenceDeconstructionRunInput(
+  value: RetryReferenceDeconstructionRunInput,
+): void {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['baseRunRevision', 'idempotencyKey', 'unitId']) ||
+    !isNonNegativeSafeInteger(value.baseRunRevision) ||
+    !isSafeId(value.idempotencyKey) ||
+    !isSafeId(value.unitId)
+  ) {
+    throw new Error('Reference deconstruction retry request is invalid.');
   }
 }
 
@@ -450,7 +601,8 @@ export function parseReferenceDeconstructionRunMutationResult(
     value.receipt.idempotencyKey !== expectedIdempotencyKey ||
     value.receipt.resultingRunRevision > value.run.runRevision ||
     (!value.replayed && value.receipt.resultingRunRevision !== value.run.runRevision) ||
-    !value.run.mutationReceipts.some((receipt) => deepEqual(receipt, value.receipt))
+    (!value.replayed && !value.run.mutationReceipts.some((receipt) =>
+      deepEqual(receipt, value.receipt)))
   ) {
     throw new Error('Reference deconstruction mutation returned an invalid payload.');
   }
@@ -477,6 +629,8 @@ export function isReferenceDeconstructionRun(
       'preview',
       'diagnostics',
       'mutationReceipts',
+      'receiptCount',
+      'full',
       'createdAt',
       'updatedAt',
       'fullApprovedAt',
@@ -507,17 +661,30 @@ export function isReferenceDeconstructionRun(
     !value.diagnostics.every(isDiagnostic) ||
     !hasUniqueIds(value.diagnostics) ||
     !(value.diagnostics as ReferenceDeconstructionDiagnostic[]).every((diagnostic) =>
-      diagnostic.evidenceRefs.every((id) =>
-        (value.evidence as ReferencePreviewEvidence[]).some((item) => item.id === id))) ||
+      isRunDiagnosticClosed(
+        diagnostic,
+        value.evidence as ReferencePreviewEvidence[],
+        value.full,
+        value.diagnostics,
+      )) ||
     !Array.isArray(value.mutationReceipts) ||
-    value.mutationReceipts.length > 256 ||
+    value.mutationReceipts.length === 0 ||
+    value.mutationReceipts.length > 64 ||
     !value.mutationReceipts.every(isReferenceDeconstructionMutationReceipt) ||
     !hasUniqueIds(value.mutationReceipts, 'idempotencyKey') ||
+    !isPositiveSafeInteger(value.receiptCount) ||
+    value.receiptCount !== (value.runRevision as number) + 1 ||
+    value.receiptCount < value.mutationReceipts.length ||
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.updatedAt) ||
     (value.fullApprovedAt !== undefined && !isTimestamp(value.fullApprovedAt)) ||
-    (value.status === 'fullApproved' && value.fullApprovedAt === undefined) ||
-    (value.fullApprovedAt !== undefined && value.status !== 'fullApproved') ||
+    (isDefinitelyPostApprovalRunStatus(value.status) &&
+      value.fullApprovedAt === undefined) ||
+    (value.fullApprovedAt !== undefined &&
+      isPreApprovalRunStatus(value.status)) ||
+    (value.full !== undefined &&
+      !isReferenceDeconstructionFullRun(value.full, value.diagnostics)) ||
+    ((value.full === undefined) !== (value.fullApprovedAt === undefined)) ||
     (value.preview !== undefined && !isQuickPreview(
       value.preview,
       value.id as string,
@@ -526,8 +693,14 @@ export function isReferenceDeconstructionRun(
       new Set((value.evidence as ReferencePreviewEvidence[]).map((item) => item.id)),
       value.selectedChapterIds as string[],
     )) ||
-    (value.preview !== undefined && !deepEqual(value.diagnostics, value.preview.diagnostics)) ||
-    (requiresPreview(value.status) && value.preview === undefined) ||
+    (value.preview !== undefined && !arePreviewDiagnosticsConsistent(
+      value.preview,
+      value.diagnostics as ReferenceDeconstructionDiagnostic[],
+      value.full !== undefined,
+    )) ||
+    (requiresPreview(value.status, value.fullApprovedAt) && value.preview === undefined) ||
+    (value.status === 'reviewReady' &&
+      !isReviewReadyFullRun(value.full, value.diagnostics)) ||
     value.mutationReceipts.some((receipt) =>
       receipt.resultingRunRevision > (value.runRevision as number))
   ) {
@@ -535,14 +708,386 @@ export function isReferenceDeconstructionRun(
   }
 
   const receiptRevisions = (value.mutationReceipts as ReferenceDeconstructionMutationReceipt[])
-    .map((receipt) => receipt.resultingRunRevision)
-    .sort((left, right) => left - right);
-  return receiptRevisions.length === (value.runRevision as number) + 1 &&
-    receiptRevisions.every((revision, index) => revision === index) &&
-    (value.mutationReceipts as ReferenceDeconstructionMutationReceipt[])
-      .some((receipt) =>
-        receipt.resultingRunRevision === value.runRevision &&
-        receipt.resultStatus === value.status);
+    .map((receipt) => receipt.resultingRunRevision);
+  const firstExpectedRevision = (value.receiptCount as number) - receiptRevisions.length;
+  return receiptRevisions.every((revision, index) =>
+    revision === firstExpectedRevision + index) &&
+    receiptRevisions.at(-1) === value.runRevision &&
+    (value.mutationReceipts as ReferenceDeconstructionMutationReceipt[]).at(-1)
+      ?.resultStatus === value.status;
+}
+
+function isReferenceDeconstructionFullRun(
+  value: unknown,
+  diagnostics: unknown,
+): value is ReferenceDeconstructionFullRun {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'stages',
+      'progress',
+      'nextUnit',
+      'currentUnit',
+      'failedUnit',
+      'recentUnits',
+      'recentAttempts',
+      'analysisQuality',
+    ]) ||
+    !Array.isArray(value.stages) ||
+    value.stages.length !== FULL_STAGE_IDS.length ||
+    !value.stages.every(isFullStageSummary) ||
+    !value.stages.every((stage, index) =>
+      (stage as ReferenceDeconstructionFullStageSummary).stageId ===
+        FULL_STAGE_IDS[index]) ||
+    !isFullProgress(value.progress) ||
+    (value.nextUnit !== undefined && (
+      !isUnitSummary(value.nextUnit) ||
+      value.nextUnit.status !== 'queued'
+    )) ||
+    (value.currentUnit !== undefined && (
+      !isUnitSummary(value.currentUnit) ||
+      value.currentUnit.status !== 'running'
+    )) ||
+    (value.failedUnit !== undefined && (
+      !isUnitSummary(value.failedUnit) ||
+      !['failed', 'interrupted'].includes(value.failedUnit.status)
+    )) ||
+    !Array.isArray(value.recentUnits) ||
+    value.recentUnits.length > MAX_FULL_DECONSTRUCTION_RECENT_ITEMS ||
+    !value.recentUnits.every(isUnitSummary) ||
+    !hasUniqueIds(value.recentUnits) ||
+    !hasUniqueOrdinals(value.recentUnits) ||
+    !Array.isArray(value.recentAttempts) ||
+    value.recentAttempts.length > MAX_FULL_DECONSTRUCTION_RECENT_ITEMS ||
+    !value.recentAttempts.every(isAttemptSummary) ||
+    !hasUniqueIds(value.recentAttempts) ||
+    !hasUniqueAttemptNumbers(value.recentAttempts) ||
+    (value.analysisQuality !== undefined &&
+      !isAnalysisQuality(value.analysisQuality, diagnostics)) ||
+    !areSpecialUnitsConsistentWithRecent(value) ||
+    !isFullProgressConsistentWithStages(value.progress, value.stages)
+  ) {
+    return false;
+  }
+
+  const progress = value.progress as ReferenceDeconstructionFullProgress;
+  const units = [
+    ...(value.recentUnits as ReferenceDeconstructionUnitSummary[]),
+    ...[value.nextUnit, value.currentUnit, value.failedUnit]
+      .filter((item): item is ReferenceDeconstructionUnitSummary => item !== undefined),
+  ];
+  return units.every((unit) => unit.ordinal <= progress.plannedUnits);
+}
+
+function isFullStageSummary(
+  value: unknown,
+): value is ReferenceDeconstructionFullStageSummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'stageId',
+      'status',
+      'plannedUnits',
+      'completedUnits',
+      'failedUnits',
+    ]) ||
+    !FULL_STAGE_IDS.includes(value.stageId as ReferenceDeconstructionStageId) ||
+    !isReferenceStageStatus(value.status) ||
+    !isBoundedUnitCount(value.plannedUnits) ||
+    !isBoundedUnitCount(value.completedUnits) ||
+    !isBoundedUnitCount(value.failedUnits) ||
+    (value.completedUnits as number) + (value.failedUnits as number) >
+      (value.plannedUnits as number)
+  ) {
+    return false;
+  }
+  if (
+    value.status === 'notStarted' &&
+    (value.completedUnits !== 0 || value.failedUnits !== 0)
+  ) return false;
+  if (
+    value.status === 'completed' &&
+    (
+      value.completedUnits !== value.plannedUnits ||
+      value.failedUnits !== 0
+    )
+  ) return false;
+  return value.status !== 'failed' || (value.failedUnits as number) > 0;
+}
+
+function isFullProgress(
+  value: unknown,
+): value is ReferenceDeconstructionFullProgress {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'plannedUnits',
+      'completedUnits',
+      'failedUnits',
+      'completedChapters',
+      'totalChapters',
+      'percent',
+    ]) ||
+    !isPositiveSafeInteger(value.plannedUnits) ||
+    (value.plannedUnits as number) > MAX_FULL_DECONSTRUCTION_UNITS ||
+    !isBoundedUnitCount(value.completedUnits) ||
+    !isBoundedUnitCount(value.failedUnits) ||
+    (value.completedUnits as number) + (value.failedUnits as number) >
+      (value.plannedUnits as number) ||
+    !isNonNegativeSafeInteger(value.completedChapters) ||
+    !isPositiveSafeInteger(value.totalChapters) ||
+    (value.totalChapters as number) > MAX_FULL_DECONSTRUCTION_UNITS ||
+    (value.completedChapters as number) > (value.totalChapters as number) ||
+    (value.totalChapters as number) > (value.plannedUnits as number) ||
+    !isPercent(value.percent)
+  ) {
+    return false;
+  }
+  return value.percent === Math.round(
+    ((value.completedUnits as number) / (value.plannedUnits as number)) * 100,
+  );
+}
+
+function isUnitSummary(
+  value: unknown,
+): value is ReferenceDeconstructionUnitSummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'ordinal',
+      'stageId',
+      'kind',
+      'chapterId',
+      'chunkId',
+      'status',
+      'attemptCount',
+      'selectedAttemptId',
+    ]) ||
+    !isSafeId(value.id) ||
+    !isNonNegativeSafeInteger(value.ordinal) ||
+    (value.ordinal as number) > MAX_FULL_DECONSTRUCTION_UNITS ||
+    !FULL_STAGE_IDS.includes(value.stageId as ReferenceDeconstructionStageId) ||
+    typeof value.kind !== 'string' ||
+    !UNIT_KINDS.has(value.kind) ||
+    typeof value.status !== 'string' ||
+    !UNIT_STATUSES.has(value.status) ||
+    !isNonNegativeSafeInteger(value.attemptCount) ||
+    (value.attemptCount as number) > 4_096 ||
+    (value.selectedAttemptId !== undefined && !isSafeId(value.selectedAttemptId))
+  ) {
+    return false;
+  }
+
+  const isChapterChunk = value.kind === 'chapterChunk';
+  if (
+    isChapterChunk !== (
+      value.stageId === 'chapterAnalysis' &&
+      isSafeId(value.chapterId) &&
+      isSafeId(value.chunkId)
+    )
+  ) return false;
+  if (
+    !isChapterChunk &&
+    (value.chapterId !== undefined || value.chunkId !== undefined)
+  ) return false;
+  if (
+    (value.kind === 'aggregate') !== (value.stageId === 'aggregateAnalysis') ||
+    (value.kind === 'style') !== (value.stageId === 'styleProfile') ||
+    (value.kind === 'analysisQuality') !== (value.stageId === 'qualityGate')
+  ) return false;
+  if (
+    value.status === 'queued' &&
+    value.selectedAttemptId !== undefined
+  ) return false;
+  if (
+    value.status !== 'queued' &&
+    (value.attemptCount as number) < 1
+  ) return false;
+  return value.status === 'completed'
+    ? value.selectedAttemptId !== undefined
+    : value.selectedAttemptId === undefined;
+}
+
+function isAttemptSummary(
+  value: unknown,
+): value is ReferenceDeconstructionAttemptSummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'id',
+      'unitId',
+      'attemptNumber',
+      'status',
+      'inputFingerprint',
+      'outputHash',
+      'startedAt',
+      'completedAt',
+    ]) ||
+    !isSafeId(value.id) ||
+    !isSafeId(value.unitId) ||
+    !isPositiveSafeInteger(value.attemptNumber) ||
+    (value.attemptNumber as number) > 4_096 ||
+    typeof value.status !== 'string' ||
+    !ATTEMPT_STATUSES.has(value.status) ||
+    !isSha256(value.inputFingerprint) ||
+    (value.outputHash !== undefined && !isSha256(value.outputHash)) ||
+    !isTimestamp(value.startedAt) ||
+    (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
+    (value.completedAt !== undefined &&
+      Date.parse(value.completedAt as string) < Date.parse(value.startedAt as string))
+  ) {
+    return false;
+  }
+  if (value.status === 'running') {
+    return value.completedAt === undefined && value.outputHash === undefined;
+  }
+  if (value.completedAt === undefined) return false;
+  return value.status !== 'completed' || value.outputHash !== undefined;
+}
+
+function isAnalysisQuality(
+  value: unknown,
+  diagnostics: unknown,
+): value is ReferenceDeconstructionAnalysisQuality {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'status',
+      'coveragePercent',
+      'blockingDiagnosticCount',
+      'outputHashes',
+    ]) ||
+    typeof value.status !== 'string' ||
+    !ANALYSIS_QUALITY_STATUSES.has(value.status) ||
+    !isPercent(value.coveragePercent) ||
+    !isNonNegativeSafeInteger(value.blockingDiagnosticCount) ||
+    (value.blockingDiagnosticCount as number) > 128 ||
+    !Array.isArray(value.outputHashes) ||
+    value.outputHashes.length > MAX_FULL_DECONSTRUCTION_UNITS ||
+    !value.outputHashes.every(isSha256) ||
+    new Set(value.outputHashes).size !== value.outputHashes.length ||
+    !Array.isArray(diagnostics) ||
+    value.blockingDiagnosticCount !== diagnostics.filter((diagnostic) =>
+      isRecord(diagnostic) && diagnostic.blocking === true).length
+  ) {
+    return false;
+  }
+  if (value.status === 'passed') {
+    return value.coveragePercent === 100 &&
+      value.blockingDiagnosticCount === 0 &&
+      value.outputHashes.length > 0;
+  }
+  return value.status !== 'failed' || (value.blockingDiagnosticCount as number) > 0;
+}
+
+function isFullProgressConsistentWithStages(
+  progressValue: unknown,
+  stagesValue: unknown,
+): boolean {
+  if (!isFullProgress(progressValue) || !Array.isArray(stagesValue)) return false;
+  const stages = stagesValue as ReferenceDeconstructionFullStageSummary[];
+  return sum(stages.map((stage) => stage.plannedUnits)) === progressValue.plannedUnits &&
+    sum(stages.map((stage) => stage.completedUnits)) === progressValue.completedUnits &&
+    sum(stages.map((stage) => stage.failedUnits)) === progressValue.failedUnits;
+}
+
+function areSpecialUnitsConsistentWithRecent(
+  value: Record<string, unknown>,
+): boolean {
+  const recentUnits = value.recentUnits as ReferenceDeconstructionUnitSummary[];
+  return [value.nextUnit, value.currentUnit, value.failedUnit]
+    .filter((item): item is ReferenceDeconstructionUnitSummary => item !== undefined)
+    .every((unit) => {
+      const recent = recentUnits.find((candidate) => candidate.id === unit.id);
+      return !recent || deepEqual(recent, unit);
+    });
+}
+
+function hasUniqueOrdinals(value: readonly unknown[]): boolean {
+  const ordinals = value.map((item) =>
+    isRecord(item) && isNonNegativeSafeInteger(item.ordinal)
+      ? item.ordinal
+      : undefined);
+  return ordinals.every((ordinal): ordinal is number => ordinal !== undefined) &&
+    new Set(ordinals).size === ordinals.length;
+}
+
+function hasUniqueAttemptNumbers(value: readonly unknown[]): boolean {
+  const identities = value.map((item) =>
+    isRecord(item) && typeof item.unitId === 'string' &&
+    isPositiveSafeInteger(item.attemptNumber)
+      ? `${item.unitId}\u0000${item.attemptNumber}`
+      : undefined);
+  return identities.every((identity): identity is string => identity !== undefined) &&
+    new Set(identities).size === identities.length;
+}
+
+function isBoundedUnitCount(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value) &&
+    value <= MAX_FULL_DECONSTRUCTION_UNITS;
+}
+
+function isPercent(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 100;
+}
+
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function isReviewReadyFullRun(
+  value: unknown,
+  diagnostics: unknown,
+): boolean {
+  if (!isReferenceDeconstructionFullRun(value, diagnostics)) return false;
+  return value.progress.completedUnits === value.progress.plannedUnits &&
+    value.progress.failedUnits === 0 &&
+    value.progress.completedChapters === value.progress.totalChapters &&
+    value.progress.percent === 100 &&
+    value.nextUnit === undefined &&
+    value.currentUnit === undefined &&
+    value.failedUnit === undefined &&
+    value.stages.every((stage) => stage.status === 'completed') &&
+    value.analysisQuality?.status === 'passed' &&
+    value.analysisQuality.coveragePercent === 100 &&
+    value.analysisQuality.blockingDiagnosticCount === 0 &&
+    Array.isArray(diagnostics) &&
+    !diagnostics.some((diagnostic) =>
+      isRecord(diagnostic) && diagnostic.blocking === true);
+}
+
+function isRunDiagnosticClosed(
+  diagnostic: ReferenceDeconstructionDiagnostic,
+  evidence: readonly ReferencePreviewEvidence[],
+  full: unknown,
+  diagnostics: unknown,
+): boolean {
+  const fullRun = full === undefined
+    ? undefined
+    : isReferenceDeconstructionFullRun(full, diagnostics)
+      ? full
+      : undefined;
+  if (diagnostic.unitId !== undefined && !fullRun) return false;
+  const previewClosed = diagnostic.evidenceRefs.every((id) =>
+    evidence.some((item) => item.id === id));
+  if (previewClosed && diagnostic.attemptId === undefined) return true;
+  if (diagnostic.unitId === undefined || !fullRun) return false;
+  if (diagnostic.attemptId === undefined) return true;
+  const attempt = fullRun.recentAttempts.find((item) =>
+    item.id === diagnostic.attemptId);
+  return attempt === undefined || attempt.unitId === diagnostic.unitId;
+}
+
+function arePreviewDiagnosticsConsistent(
+  preview: ReferenceQuickPreview,
+  diagnostics: readonly ReferenceDeconstructionDiagnostic[],
+  hasFullRun: boolean,
+): boolean {
+  if (!hasFullRun) return deepEqual(diagnostics, preview.diagnostics);
+  return preview.diagnostics.every((diagnostic) =>
+    diagnostics.some((candidate) =>
+      candidate.id === diagnostic.id && deepEqual(candidate, diagnostic)));
 }
 
 function isQuickPreview(
@@ -758,6 +1303,8 @@ function isDiagnostic(value: unknown): value is ReferenceDeconstructionDiagnosti
       'stageId',
       'chapterId',
       'pointerId',
+      'unitId',
+      'attemptId',
     ]) &&
     isSafeId(value.id) &&
     typeof value.severity === 'string' && DIAGNOSTIC_SEVERITIES.has(value.severity) &&
@@ -767,6 +1314,9 @@ function isDiagnostic(value: unknown): value is ReferenceDeconstructionDiagnosti
     isUniqueSafeIdArray(value.evidenceRefs, 32) &&
     (value.stageId === undefined || isReferenceStage(value.stageId)) &&
     (value.chapterId === undefined || isSafeId(value.chapterId)) &&
+    (value.unitId === undefined || isSafeId(value.unitId)) &&
+    (value.attemptId === undefined || isSafeId(value.attemptId)) &&
+    (value.attemptId === undefined || value.unitId !== undefined) &&
     (value.pointerId === undefined || (
       isSafeId(value.pointerId) &&
       (value.evidenceRefs as string[]).includes(value.pointerId)
@@ -1171,8 +1721,21 @@ function isConfidence(value: unknown): value is ReferenceDeconstructionConfidenc
   return typeof value === 'string' && CONFIDENCE_VALUES.has(value);
 }
 
-function requiresPreview(status: unknown): boolean {
-  return status === 'awaitingFullApproval' || status === 'fullApproved';
+function isDefinitelyPostApprovalRunStatus(status: unknown): boolean {
+  return status === 'fullApproved' || status === 'fullRunning' || status === 'paused' ||
+    status === 'reviewReady' || status === 'publishing' || status === 'completed';
+}
+
+function isPreApprovalRunStatus(status: unknown): boolean {
+  return status === 'created' ||
+    status === 'previewRunning' ||
+    status === 'awaitingFullApproval';
+}
+
+function requiresPreview(status: unknown, fullApprovedAt: unknown): boolean {
+  return status === 'awaitingFullApproval' ||
+    isDefinitelyPostApprovalRunStatus(status) ||
+    fullApprovedAt !== undefined;
 }
 
 function isSafeId(value: unknown): value is string {

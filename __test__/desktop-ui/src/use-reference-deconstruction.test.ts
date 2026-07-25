@@ -5,6 +5,7 @@ import {
   type ReferenceDeconstructionClient,
 } from '../../../apps/desktop-ui/src/composables/useReferenceDeconstruction';
 import type {
+  ReferenceDeconstructionFullRun,
   ReferenceDeconstructionMutationReceipt,
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
@@ -167,12 +168,24 @@ describe('useReferenceDeconstruction', () => {
     expect(flow.indeterminate.value).toBe(false);
   });
 
-  it('does not send a stale cancel after GET proves full approval already won the race', async () => {
-    const cancel = vi.fn();
+  it('re-reads authority and cancels a full-approved run with its latest revision', async () => {
+    const approved = approvedRun();
+    const cancelled = {
+      ...approved,
+      status: 'cancelled' as const,
+      runRevision: 3,
+      mutationReceipts: [
+        ...approved.mutationReceipts,
+        receipt('cancel-key', 3, 'cancelled', 'f'),
+      ],
+      receiptCount: 4,
+      updatedAt: '2026-07-22T00:03:00.000Z',
+    };
+    const cancel = vi.fn(async () => mutation(cancelled, 'cancel-key'));
     const flow = useReferenceDeconstruction({
       client: client({
         active: async () => ({ run: runningRun() }),
-        get: async () => ({ run: approvedRun() }),
+        get: async () => ({ run: approved }),
         cancel,
       }),
       createIdempotencyKey: () => 'cancel-key',
@@ -181,8 +194,11 @@ describe('useReferenceDeconstruction', () => {
     await flow.selectReference(reference());
     await flow.cancel();
 
-    expect(cancel).not.toHaveBeenCalled();
-    expect(flow.run.value?.status).toBe('fullApproved');
+    expect(cancel).toHaveBeenCalledWith('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'cancel-key',
+    });
+    expect(flow.run.value?.status).toBe('cancelled');
   });
 
   it('discovers an interrupted run after restart and resumes only on explicit advance', async () => {
@@ -253,7 +269,7 @@ describe('useReferenceDeconstruction', () => {
     expect(flow.error.value).toContain('immutable run identity');
   });
 
-  it('records full approval without starting D2', async () => {
+  it('records full approval and exposes the first unit without starting it', async () => {
     const approve = vi.fn(async () => mutation(approvedRun(), 'approve-key'));
     const flow = useReferenceDeconstruction({
       client: client({
@@ -271,7 +287,206 @@ describe('useReferenceDeconstruction', () => {
       idempotencyKey: 'approve-key',
     });
     expect(flow.run.value?.status).toBe('fullApproved');
+    expect(flow.run.value?.full?.nextUnit?.id).toBe('chapter-0001');
+    expect(flow.canAdvanceFull.value).toBe(true);
     expect(flow.canStart.value).toBe(false);
+  });
+
+  it('advances exactly one full unit per explicit action', async () => {
+    const advance = vi.fn(async () => mutation(fullRunningRun(), 'full-advance-key'));
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: approvedRun() }),
+        advance,
+      }),
+      createIdempotencyKey: () => 'full-advance-key',
+    });
+
+    await flow.selectReference(reference());
+    expect(advance).not.toHaveBeenCalled();
+    await flow.advanceFull();
+
+    expect(advance).toHaveBeenCalledTimes(1);
+    expect(advance).toHaveBeenCalledWith(
+      'reference-1',
+      'run-1',
+      { baseRunRevision: 2, idempotencyKey: 'full-advance-key' },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(flow.run.value?.full?.progress.completedUnits).toBe(1);
+    expect(flow.canAdvanceFull.value).toBe(true);
+  });
+
+  it('does not offer pause while an authoritative full unit is still running', async () => {
+    const pause = vi.fn();
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: activeFullUnitRun() }),
+        pause,
+      }),
+    });
+
+    await flow.selectReference(reference());
+
+    expect(flow.run.value?.full?.currentUnit?.status).toBe('running');
+    expect(flow.canPause.value).toBe(false);
+    await flow.pauseFull();
+    expect(pause).not.toHaveBeenCalled();
+  });
+
+  it('pauses and resumes full analysis without automatically advancing another unit', async () => {
+    const advance = vi.fn();
+    const pause = vi.fn(async () => mutation(pausedFullRun(), 'pause-key'));
+    const resume = vi.fn(async () => mutation(resumedFullRun(), 'resume-key'));
+    const keys = ['pause-key', 'resume-key'];
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: fullRunningRun() }),
+        advance,
+        pause,
+        resume,
+      }),
+      createIdempotencyKey: () => keys.shift()!,
+    });
+
+    await flow.selectReference(reference());
+    expect(flow.canPause.value).toBe(true);
+    await flow.pauseFull();
+    expect(flow.run.value?.status).toBe('paused');
+    expect(flow.canResume.value).toBe(true);
+
+    await flow.resumeFull();
+    expect(flow.run.value?.status).toBe('fullRunning');
+    expect(advance).not.toHaveBeenCalled();
+    expect(flow.canAdvanceFull.value).toBe(true);
+  });
+
+  it('keeps an unknown pause pending, blocks reference switching, and replays its original key', async () => {
+    let pauseAttempt = 0;
+    const pause = vi.fn(async (
+      _referenceId: string,
+      _runId: string,
+      input: { baseRunRevision: number; idempotencyKey: string },
+    ) => {
+      pauseAttempt += 1;
+      if (pauseAttempt === 1) throw new Error('pause response lost');
+      return mutation(pausedFullRun(), input.idempotencyKey);
+    });
+    const get = vi.fn(async () => ({ run: fullRunningRun() }));
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: fullRunningRun() }),
+        get,
+        pause,
+      }),
+      createIdempotencyKey: () => 'pause-key',
+    });
+
+    await flow.selectReference(reference());
+    await flow.pauseFull();
+
+    expect(flow.indeterminate.value).toBe(true);
+    expect(flow.canPause.value).toBe(false);
+    await flow.selectReference(otherReference());
+    expect(flow.selectedReference.value?.id).toBe('reference-1');
+    expect(flow.error.value).toContain('finish or reconcile');
+
+    await flow.reconcile();
+
+    expect(pause).toHaveBeenCalledTimes(2);
+    expect(pause.mock.calls[1]?.[2]).toEqual(pause.mock.calls[0]?.[2]);
+    expect(pause.mock.calls[1]?.[2]).toEqual({
+      baseRunRevision: 3,
+      idempotencyKey: 'pause-key',
+    });
+    expect(flow.run.value?.status).toBe('paused');
+    expect(flow.indeterminate.value).toBe(false);
+  });
+
+  it('accepts a lost resume response only after GET proves its receipt and revision', async () => {
+    const resume = vi.fn(async () => {
+      throw new Error('resume response lost');
+    });
+    const get = vi.fn(async () => ({ run: resumedFullRun() }));
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: pausedFullRun() }),
+        get,
+        resume,
+      }),
+      createIdempotencyKey: () => 'resume-key',
+    });
+
+    await flow.selectReference(reference());
+    await flow.resumeFull();
+
+    expect(get).toHaveBeenCalledWith('reference-1', 'run-1');
+    expect(flow.run.value?.status).toBe('fullRunning');
+    expect(flow.indeterminate.value).toBe(false);
+    expect(flow.error.value).toBe('');
+  });
+
+  it('requeues only the authoritative failed unit and waits for explicit advance', async () => {
+    const advance = vi.fn();
+    const retry = vi.fn(async () => mutation(retriedFullRun(), 'retry-key'));
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: failedFullRun() }),
+        advance,
+        retry,
+      }),
+      createIdempotencyKey: () => 'retry-key',
+    });
+
+    await flow.selectReference(reference());
+    expect(flow.canRetry.value).toBe(true);
+    await flow.retryFailedUnit('chapter-0001');
+
+    expect(retry).toHaveBeenCalledWith('reference-1', 'run-1', {
+      baseRunRevision: 3,
+      idempotencyKey: 'retry-key',
+      unitId: 'chapter-0001',
+    });
+    expect(flow.run.value?.full?.failedUnit).toBeUndefined();
+    expect(flow.run.value?.full?.nextUnit?.id).toBe('chapter-0001');
+    expect(advance).not.toHaveBeenCalled();
+  });
+
+  it('replays an unknown failed-unit retry with the same unit and idempotency key', async () => {
+    let retryAttempt = 0;
+    const retry = vi.fn(async (
+      _referenceId: string,
+      _runId: string,
+      input: { baseRunRevision: number; idempotencyKey: string; unitId: string },
+    ) => {
+      retryAttempt += 1;
+      if (retryAttempt === 1) throw new Error('retry response lost');
+      return mutation(retriedFullRun(), input.idempotencyKey);
+    });
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: failedFullRun() }),
+        get: async () => ({ run: failedFullRun() }),
+        retry,
+      }),
+      createIdempotencyKey: () => 'retry-key',
+    });
+
+    await flow.selectReference(reference());
+    await flow.retryFailedUnit('chapter-0001');
+    expect(flow.indeterminate.value).toBe(true);
+
+    await flow.reconcile();
+
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(retry.mock.calls[1]?.[2]).toEqual(retry.mock.calls[0]?.[2]);
+    expect(retry.mock.calls[1]?.[2]).toEqual({
+      baseRunRevision: 3,
+      idempotencyKey: 'retry-key',
+      unitId: 'chapter-0001',
+    });
+    expect(flow.run.value?.status).toBe('fullRunning');
+    expect(flow.indeterminate.value).toBe(false);
   });
 
   it('does not change reference identity while full approval is pending', async () => {
@@ -363,6 +578,9 @@ function client(overrides: {
   get?: ReferenceDeconstructionClient['getReferenceDeconstructionRun'];
   active?: ReferenceDeconstructionClient['getActiveReferenceDeconstructionRun'];
   advance?: ReferenceDeconstructionClient['advanceReferenceDeconstructionRun'];
+  pause?: ReferenceDeconstructionClient['pauseReferenceDeconstructionRun'];
+  resume?: ReferenceDeconstructionClient['resumeReferenceDeconstructionRun'];
+  retry?: ReferenceDeconstructionClient['retryReferenceDeconstructionRun'];
   cancel?: ReferenceDeconstructionClient['cancelReferenceDeconstructionRun'];
   approve?: ReferenceDeconstructionClient['approveFullReferenceDeconstructionRun'];
 } = {}): ReferenceDeconstructionClient {
@@ -373,6 +591,12 @@ function client(overrides: {
     getActiveReferenceDeconstructionRun: overrides.active ?? (async () => ({ run: null })),
     advanceReferenceDeconstructionRun: overrides.advance ?? (async () =>
       mutation(previewRun(), 'advance-key')),
+    pauseReferenceDeconstructionRun: overrides.pause ?? (async () =>
+      mutation(pausedFullRun(), 'pause-key')),
+    resumeReferenceDeconstructionRun: overrides.resume ?? (async () =>
+      mutation(resumedFullRun(), 'resume-key')),
+    retryReferenceDeconstructionRun: overrides.retry ?? (async () =>
+      mutation(retriedFullRun(), 'retry-key')),
     cancelReferenceDeconstructionRun: overrides.cancel ?? (async () =>
       mutation(cancelledRun(), 'cancel-key')),
     approveFullReferenceDeconstructionRun: overrides.approve ?? (async () =>
@@ -542,14 +766,218 @@ function approvedRun(): ReferenceDeconstructionRun {
       ...preview.mutationReceipts,
       receipt('approve-key', 2, 'fullApproved', '6'),
     ],
+    receiptCount: 3,
+    full: initialFull(),
     updatedAt: '2026-07-22T00:02:00.000Z',
     fullApprovedAt: '2026-07-22T00:02:00.000Z',
+  };
+}
+
+function fullRunningRun(): ReferenceDeconstructionRun {
+  const approved = approvedRun();
+  const nextUnit = chapterUnit({
+    id: 'chapter-0002',
+    ordinal: 1,
+    chapterId: '0002',
+    chunkId: 'chapter-0002-chunk-0001',
+  });
+  return {
+    ...approved,
+    status: 'fullRunning',
+    runRevision: 3,
+    mutationReceipts: [
+      ...approved.mutationReceipts,
+      receipt('full-advance-key', 3, 'fullRunning', '7'),
+    ],
+    receiptCount: 4,
+    full: {
+      ...initialFull(),
+      stages: [
+        fullStage('chapterAnalysis', 'running', 2, 1),
+        fullStage('aggregateAnalysis', 'notStarted', 1),
+        fullStage('styleProfile', 'notStarted', 1),
+        fullStage('qualityGate', 'notStarted', 1),
+      ],
+      progress: fullProgress(1, 0, 1),
+      nextUnit,
+      recentUnits: [
+        chapterUnit({
+          status: 'completed',
+          attemptCount: 1,
+          selectedAttemptId: 'chapter-0001-attempt-0001',
+        }),
+        nextUnit,
+      ],
+      recentAttempts: [{
+        id: 'chapter-0001-attempt-0001',
+        unitId: 'chapter-0001',
+        attemptNumber: 1,
+        status: 'completed',
+        inputFingerprint: 'c'.repeat(64),
+        outputHash: 'd'.repeat(64),
+        startedAt: '2026-07-22T00:02:01.000Z',
+        completedAt: '2026-07-22T00:03:00.000Z',
+      }],
+    },
+    updatedAt: '2026-07-22T00:03:00.000Z',
+  };
+}
+
+function activeFullUnitRun(): ReferenceDeconstructionRun {
+  const running = fullRunningRun();
+  const currentUnit = chapterUnit({
+    id: 'chapter-0002',
+    ordinal: 1,
+    chapterId: '0002',
+    chunkId: 'chapter-0002-chunk-0001',
+    status: 'running',
+    attemptCount: 1,
+  });
+  return {
+    ...running,
+    full: {
+      ...running.full!,
+      currentUnit,
+      nextUnit: undefined,
+      recentUnits: [currentUnit],
+      recentAttempts: [{
+        id: 'chapter-0002-attempt-0001',
+        unitId: currentUnit.id,
+        attemptNumber: 1,
+        status: 'running',
+        inputFingerprint: 'e'.repeat(64),
+        startedAt: '2026-07-22T00:03:01.000Z',
+      }],
+    },
+  };
+}
+
+function pausedFullRun(): ReferenceDeconstructionRun {
+  const running = fullRunningRun();
+  return {
+    ...running,
+    status: 'paused',
+    runRevision: 4,
+    mutationReceipts: [
+      ...running.mutationReceipts,
+      receipt('pause-key', 4, 'paused', '8'),
+    ],
+    receiptCount: 5,
+    updatedAt: '2026-07-22T00:04:00.000Z',
+  };
+}
+
+function resumedFullRun(): ReferenceDeconstructionRun {
+  const paused = pausedFullRun();
+  const running = fullRunningRun();
+  return {
+    ...running,
+    runRevision: 5,
+    mutationReceipts: [
+      ...paused.mutationReceipts,
+      receipt('resume-key', 5, 'fullRunning', '9'),
+    ],
+    receiptCount: 6,
+    updatedAt: '2026-07-22T00:05:00.000Z',
+  };
+}
+
+function failedFullRun(): ReferenceDeconstructionRun {
+  const approved = approvedRun();
+  const failedUnit = chapterUnit({ status: 'failed', attemptCount: 1 });
+  return {
+    ...approved,
+    status: 'failed',
+    runRevision: 3,
+    diagnostics: [{
+      id: 'full-failed',
+      severity: 'error',
+      code: 'full.provider_failed',
+      message: 'The bounded chapter unit failed.',
+      blocking: true,
+      evidenceRefs: [],
+      stageId: 'chapterAnalysis',
+      chapterId: '0001',
+      unitId: failedUnit.id,
+      attemptId: 'chapter-0001-attempt-0001',
+    }],
+    mutationReceipts: [
+      ...approved.mutationReceipts,
+      receipt('failed-key', 3, 'failed', 'a'),
+    ],
+    receiptCount: 4,
+    full: {
+      ...initialFull(),
+      stages: [
+        fullStage('chapterAnalysis', 'failed', 2, 0, 1),
+        fullStage('aggregateAnalysis', 'notStarted', 1),
+        fullStage('styleProfile', 'notStarted', 1),
+        fullStage('qualityGate', 'notStarted', 1),
+      ],
+      progress: fullProgress(0, 1, 0),
+      nextUnit: undefined,
+      failedUnit,
+      recentUnits: [failedUnit],
+      recentAttempts: [{
+        id: 'chapter-0001-attempt-0001',
+        unitId: failedUnit.id,
+        attemptNumber: 1,
+        status: 'failed',
+        inputFingerprint: 'e'.repeat(64),
+        startedAt: '2026-07-22T00:02:01.000Z',
+        completedAt: '2026-07-22T00:03:00.000Z',
+      }],
+      analysisQuality: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 1,
+        outputHashes: [],
+      },
+    },
+    updatedAt: '2026-07-22T00:03:00.000Z',
+  };
+}
+
+function retriedFullRun(): ReferenceDeconstructionRun {
+  const failed = failedFullRun();
+  const nextUnit = chapterUnit({ attemptCount: 1 });
+  return {
+    ...failed,
+    status: 'fullRunning',
+    runRevision: 4,
+    diagnostics: [],
+    mutationReceipts: [
+      ...failed.mutationReceipts,
+      receipt('retry-key', 4, 'fullRunning', 'b'),
+    ],
+    receiptCount: 5,
+    full: {
+      ...failed.full!,
+      stages: [
+        fullStage('chapterAnalysis', 'queued', 2),
+        fullStage('aggregateAnalysis', 'notStarted', 1),
+        fullStage('styleProfile', 'notStarted', 1),
+        fullStage('qualityGate', 'notStarted', 1),
+      ],
+      progress: fullProgress(0, 0, 0),
+      nextUnit,
+      failedUnit: undefined,
+      recentUnits: [nextUnit],
+      analysisQuality: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
+    },
+    updatedAt: '2026-07-22T00:04:00.000Z',
   };
 }
 
 function baseRun(
   patch: Partial<ReferenceDeconstructionRun>,
 ): ReferenceDeconstructionRun {
+  const mutationReceipts = patch.mutationReceipts ?? [];
   return {
     schemaVersion: 1,
     id: 'run-1',
@@ -563,10 +991,74 @@ function baseRun(
     selectedChapterIds: ['0001'],
     evidence: [],
     diagnostics: [],
-    mutationReceipts: [],
+    mutationReceipts,
+    receiptCount: mutationReceipts.length,
     createdAt: '2026-07-22T00:00:00.000Z',
     updatedAt: '2026-07-22T00:00:00.000Z',
     ...patch,
+  };
+}
+
+function initialFull(): ReferenceDeconstructionFullRun {
+  const nextUnit = chapterUnit();
+  return {
+    stages: [
+      fullStage('chapterAnalysis', 'queued', 2),
+      fullStage('aggregateAnalysis', 'notStarted', 1),
+      fullStage('styleProfile', 'notStarted', 1),
+      fullStage('qualityGate', 'notStarted', 1),
+    ],
+    progress: fullProgress(0, 0, 0),
+    nextUnit,
+    recentUnits: [nextUnit],
+    recentAttempts: [],
+    analysisQuality: {
+      status: 'notEvaluated',
+      coveragePercent: 0,
+      blockingDiagnosticCount: 0,
+      outputHashes: [],
+    },
+  };
+}
+
+function chapterUnit(
+  patch: Partial<ReferenceDeconstructionFullRun['recentUnits'][number]> = {},
+): ReferenceDeconstructionFullRun['recentUnits'][number] {
+  return {
+    id: 'chapter-0001',
+    ordinal: 0,
+    stageId: 'chapterAnalysis',
+    kind: 'chapterChunk',
+    chapterId: '0001',
+    chunkId: 'chapter-0001-chunk-0001',
+    status: 'queued',
+    attemptCount: 0,
+    ...patch,
+  };
+}
+
+function fullStage(
+  stageId: ReferenceDeconstructionFullRun['stages'][number]['stageId'],
+  status: ReferenceDeconstructionFullRun['stages'][number]['status'],
+  plannedUnits: number,
+  completedUnits = 0,
+  failedUnits = 0,
+): ReferenceDeconstructionFullRun['stages'][number] {
+  return { stageId, status, plannedUnits, completedUnits, failedUnits };
+}
+
+function fullProgress(
+  completedUnits: number,
+  failedUnits: number,
+  completedChapters: number,
+): ReferenceDeconstructionFullRun['progress'] {
+  return {
+    plannedUnits: 5,
+    completedUnits,
+    failedUnits,
+    completedChapters,
+    totalChapters: 2,
+    percent: Math.round((completedUnits / 5) * 100),
   };
 }
 

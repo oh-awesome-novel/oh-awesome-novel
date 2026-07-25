@@ -12,6 +12,9 @@ const api = vi.hoisted(() => ({
   getReferenceDeconstructionRun: vi.fn(),
   getActiveReferenceDeconstructionRun: vi.fn(),
   advanceReferenceDeconstructionRun: vi.fn(),
+  pauseReferenceDeconstructionRun: vi.fn(),
+  resumeReferenceDeconstructionRun: vi.fn(),
+  retryReferenceDeconstructionRun: vi.fn(),
   cancelReferenceDeconstructionRun: vi.fn(),
   approveFullReferenceDeconstructionRun: vi.fn(),
 }));
@@ -22,13 +25,17 @@ import ReferenceImportTab from '../../../apps/desktop-ui/src/components/workspac
 import {
   approvedReferenceRun,
   createdReferenceRun,
+  failedFullReferenceRun,
   mutationResult,
+  pausedFullReferenceRun,
   previewReferenceRun,
   referenceContextFixture,
   referenceFixture,
+  retriedFullReferenceRun,
+  runningFullReferenceRun,
 } from './support/referenceDeconstructionFixture';
 
-describe('References product D0/D1 journey', () => {
+describe('References product D0-D3 journey', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.listReferences.mockResolvedValue({ references: [referenceFixture()] });
@@ -96,8 +103,8 @@ describe('References product D0/D1 journey', () => {
 
     expect(api.approveFullReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('Full analysis approved');
-    expect(wrapper.text()).toContain('D2 chapter processing is not part of this slice');
-    expect(wrapper.text()).toContain('has not started');
+    expect(wrapper.text()).toContain('0/5 units');
+    expect(wrapper.text()).toContain('Run next unit');
     expect(wrapper.text()).not.toContain('chunk-0001-0001');
     wrapper.unmount();
   });
@@ -141,6 +148,117 @@ describe('References product D0/D1 journey', () => {
     expect(api.createReferenceDeconstructionRun.mock.calls[0]?.[1])
       .toMatchObject({ confirmDetectedRange: true });
     expect(wrapper.text()).toContain('Preview ready');
+    wrapper.unmount();
+  });
+
+  it('advances one full unit, then pauses and resumes without hidden continuation', async () => {
+    const approved = approvedReferenceRun();
+    const running = runningFullReferenceRun();
+    const paused = pausedFullReferenceRun();
+    api.getActiveReferenceDeconstructionRun.mockResolvedValue({ run: approved });
+    api.advanceReferenceDeconstructionRun.mockImplementation(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => mutationResult({
+      ...running,
+      mutationReceipts: [
+        ...approved.mutationReceipts,
+        {
+          ...running.mutationReceipts.at(-1)!,
+          idempotencyKey: input.idempotencyKey,
+        },
+      ],
+    }, input.idempotencyKey));
+    api.pauseReferenceDeconstructionRun.mockImplementation(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => mutationResult({
+      ...paused,
+      mutationReceipts: [
+        ...running.mutationReceipts,
+        {
+          ...paused.mutationReceipts.at(-1)!,
+          idempotencyKey: input.idempotencyKey,
+        },
+      ],
+    }, input.idempotencyKey));
+    api.resumeReferenceDeconstructionRun.mockImplementation(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => mutationResult({
+      ...running,
+      runRevision: 5,
+      receiptCount: 6,
+      mutationReceipts: [
+        ...paused.mutationReceipts,
+        {
+          idempotencyKey: input.idempotencyKey,
+          requestFingerprint: 'f'.repeat(64),
+          resultingRunRevision: 5,
+          resultStatus: 'fullRunning',
+        },
+      ],
+      updatedAt: '2026-07-22T00:05:00.000Z',
+    }, input.idempotencyKey));
+
+    const wrapper = mount(ReferenceImportTab);
+    await flushPromises();
+
+    await button(wrapper, 'Run next unit').trigger('click');
+    await flushPromises();
+    expect(api.advanceReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('1/5 units');
+    expect(wrapper.text()).toContain('Attempt 1 · completed');
+
+    await button(wrapper, 'Pause between units').trigger('click');
+    await flushPromises();
+    expect(api.pauseReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('Full analysis paused');
+    expect(api.advanceReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
+
+    await button(wrapper, 'Resume full analysis').trigger('click');
+    await flushPromises();
+    expect(api.resumeReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
+    expect(api.advanceReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('Run next unit');
+    wrapper.unmount();
+  });
+
+  it('requeues a failed unit without executing it until the next explicit advance', async () => {
+    const failed = failedFullReferenceRun();
+    const retried = retriedFullReferenceRun();
+    api.getActiveReferenceDeconstructionRun.mockResolvedValue({ run: failed });
+    api.retryReferenceDeconstructionRun.mockImplementation(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => mutationResult({
+      ...retried,
+      mutationReceipts: [
+        ...failed.mutationReceipts,
+        {
+          ...retried.mutationReceipts.at(-1)!,
+          idempotencyKey: input.idempotencyKey,
+        },
+      ],
+    }, input.idempotencyKey));
+
+    const wrapper = mount(ReferenceImportTab);
+    await flushPromises();
+
+    await button(wrapper, 'Retry failed unit').trigger('click');
+    await flushPromises();
+
+    expect(api.retryReferenceDeconstructionRun).toHaveBeenCalledWith(
+      'reference-1',
+      'run-1',
+      expect.objectContaining({ unitId: 'chapter-0001' }),
+    );
+    expect(api.advanceReferenceDeconstructionRun).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('Run next unit');
     wrapper.unmount();
   });
 });

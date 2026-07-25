@@ -2,9 +2,11 @@
 import { computed, shallowRef, watch } from 'vue';
 
 import ReferenceDiagnostics from './ReferenceDiagnostics.vue';
+import ReferenceFullDeconstructionProgress from './ReferenceFullDeconstructionProgress.vue';
 import ReferenceQuickPreview from './ReferenceQuickPreview.vue';
 import type {
   ReferenceDeconstructionRun,
+  ReferenceDeconstructionRunStatus,
   ReferenceWorkSummary,
 } from '../../../composables/useWorkspaceApi';
 
@@ -16,11 +18,18 @@ const props = defineProps<{
   advancing: boolean;
   cancelling: boolean;
   approving: boolean;
+  pausing: boolean;
+  resuming: boolean;
+  retrying: boolean;
   reconciling: boolean;
   indeterminate: boolean;
   error: string;
   canStart: boolean;
   canAdvance: boolean;
+  canAdvanceFull: boolean;
+  canPause: boolean;
+  canResume: boolean;
+  canRetry: boolean;
   canCancel: boolean;
   canApprove: boolean;
   needsReconcile: boolean;
@@ -32,7 +41,27 @@ const emit = defineEmits<{
   cancel: [];
   reconcile: [];
   approveFull: [];
+  advanceFull: [];
+  pauseFull: [];
+  resumeFull: [];
+  retryFailedUnit: [unitId: string];
 }>();
+
+const runStatusLabels: Record<ReferenceDeconstructionRunStatus, string> = {
+  created: 'Preview created',
+  previewRunning: 'Preview running',
+  awaitingFullApproval: 'Preview ready',
+  fullApproved: 'Full analysis approved',
+  fullRunning: 'Full analysis in progress',
+  paused: 'Full analysis paused',
+  reviewReady: 'Analysis ready for review',
+  publishing: 'Publishing',
+  completed: 'Published',
+  cancelled: 'Deconstruction cancelled',
+  failed: 'Deconstruction failed',
+  interrupted: 'Deconstruction interrupted',
+  stale: 'Source changed',
+};
 
 const confirmingFull = shallowRef(false);
 const confirmingLowConfidenceRange = shallowRef(false);
@@ -49,18 +78,12 @@ const hasLowBoundaryConfidence = computed(() =>
 const statusLabel = computed(() => {
   if (props.loadingActiveRun) return 'Checking run';
   if (props.creating) return 'Creating preview';
-  if (props.advancing) return 'Preview running';
+  if (props.advancing) return props.run?.full ? 'Running one full unit' : 'Preview running';
+  if (props.pausing) return 'Pausing full analysis';
+  if (props.resuming) return 'Resuming full analysis';
+  if (props.retrying) return 'Requeuing failed unit';
   if (!props.run) return props.reference?.deconstructionStatus ?? 'Not selected';
-  switch (props.run.status) {
-    case 'created': return 'Preview created';
-    case 'previewRunning': return 'Preview running';
-    case 'awaitingFullApproval': return 'Preview ready';
-    case 'fullApproved': return 'Full analysis approved';
-    case 'cancelled': return 'Preview cancelled';
-    case 'failed': return 'Preview failed';
-    case 'interrupted': return 'Preview interrupted';
-    case 'stale': return 'Source changed';
-  }
+  return runStatusLabels[props.run.status];
 });
 
 watch(
@@ -151,7 +174,7 @@ function requestFullApproval(): void {
           :disabled="cancelling"
           @click="emit('cancel')"
         >
-          {{ cancelling ? 'Cancelling…' : 'Stop / cancel preview' }}
+          {{ cancelling ? 'Cancelling…' : 'Cancel deconstruction' }}
         </button>
         <button
           v-if="needsReconcile"
@@ -169,6 +192,23 @@ function requestFullApproval(): void {
         :preview="run.preview"
         :evidence="run.evidence"
       />
+      <ReferenceFullDeconstructionProgress
+        v-if="run?.full"
+        :full="run.full"
+        :status="run.status"
+        :advancing="advancing"
+        :pausing="pausing"
+        :resuming="resuming"
+        :retrying="retrying"
+        :can-advance="canAdvanceFull"
+        :can-pause="canPause"
+        :can-resume="canResume"
+        :can-retry="canRetry"
+        @advance="emit('advanceFull')"
+        @pause="emit('pauseFull')"
+        @resume="emit('resumeFull')"
+        @retry="emit('retryFailedUnit', $event)"
+      />
       <ReferenceDiagnostics
         v-if="run"
         :diagnostics="run.diagnostics"
@@ -181,8 +221,8 @@ function requestFullApproval(): void {
       >
         <strong>Continue full deconstruction?</strong>
         <p>
-          This records explicit permission for later bounded chapter analysis. It does not publish
-          artifacts or start D2 automatically.
+          This creates the deterministic full-analysis work plan. It does not publish artifacts or
+          start a chapter unit automatically.
         </p>
         <p v-if="blockingDiagnosticCount" class="error-copy" role="alert">
           {{ blockingDiagnosticCount }} blocking diagnostic(s) must be resolved before full
@@ -207,11 +247,6 @@ function requestFullApproval(): void {
           </button>
         </div>
       </section>
-
-      <p v-if="run?.status === 'fullApproved'" class="reference-full-approved">
-        Full deconstruction is explicitly approved. D2 chapter processing is not part of this slice
-        and has not started.
-      </p>
     </template>
   </section>
 </template>
@@ -248,7 +283,6 @@ function requestFullApproval(): void {
 }
 
 .reference-full-gate,
-.reference-full-approved,
 .reference-range-warning {
   margin: 0;
   padding: 10px;
@@ -279,8 +313,7 @@ function requestFullApproval(): void {
   color: rgb(163 163 163);
 }
 
-:global([data-theme="dark"]) .reference-full-gate,
-:global([data-theme="dark"]) .reference-full-approved {
+:global([data-theme="dark"]) .reference-full-gate {
   background: rgb(30 58 138 / 25%);
 }
 

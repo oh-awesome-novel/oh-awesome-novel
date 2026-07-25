@@ -9,6 +9,7 @@ import {
 import {
   assertCreateReferenceDeconstructionRunInput,
   assertMutateReferenceDeconstructionRunInput,
+  assertRetryReferenceDeconstructionRunInput,
   assertReferenceContextRequest,
   assertReferenceImportInput,
   assertReferenceWireId,
@@ -35,6 +36,7 @@ import type {
   NovelCopilotCapabilityId,
   ReferenceDeconstructionRunMutationResult,
   ReferenceDeconstructionRunReadResult,
+  RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
 
 export {
@@ -94,14 +96,24 @@ export type {
   CreateReferenceDeconstructionRunInput,
   MutateReferenceDeconstructionRunInput,
   NovelCopilotCapabilityId,
+  ReferenceDeconstructionAnalysisQuality,
+  ReferenceDeconstructionAnalysisQualityStatus,
+  ReferenceDeconstructionAttemptStatus,
+  ReferenceDeconstructionAttemptSummary,
   ReferenceDeconstructionConfidence,
   ReferenceDeconstructionDiagnostic,
   ReferenceDeconstructionDiagnosticSeverity,
   ReferenceDeconstructionMutationReceipt,
+  ReferenceDeconstructionFullProgress,
+  ReferenceDeconstructionFullRun,
+  ReferenceDeconstructionFullStageSummary,
   ReferenceDeconstructionRun,
   ReferenceDeconstructionRunMutationResult,
   ReferenceDeconstructionRunReadResult,
   ReferenceDeconstructionRunStatus,
+  ReferenceDeconstructionUnitKind,
+  ReferenceDeconstructionUnitStatus,
+  ReferenceDeconstructionUnitSummary,
   ReferencePreviewEvidence,
   ReferenceQuickPreview,
   ReferenceQuickPreviewBorrowablePattern,
@@ -110,6 +122,7 @@ export type {
   ReferenceQuickPreviewFinding,
   ReferenceQuickPreviewFindingKind,
   ReferenceSourcePointer,
+  RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
 
 export type ThemeMode = 'light' | 'dark';
@@ -1703,6 +1716,21 @@ export interface OanClient extends PlayRehearsalClientMethods {
     input: MutateReferenceDeconstructionRunInput,
     options?: { signal?: AbortSignal },
   ): Promise<ReferenceDeconstructionRunMutationResult>;
+  pauseReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
+  resumeReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
+  retryReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: RetryReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionRunMutationResult>;
   cancelReferenceDeconstructionRun(
     referenceId: string,
     runId: string,
@@ -2096,6 +2124,51 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/api/workspace/references/${encodeURIComponent(referenceId)}` +
         `/deconstruction-runs/${encodeURIComponent(runId)}/advance`,
         { method: 'POST', body: input, signal: requestOptions.signal },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
+    pauseReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/pause`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
+    resumeReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/resume`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionRunMutationResult(
+        value,
+        referenceId,
+        input.idempotencyKey,
+        runId,
+      ));
+    },
+    retryReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertRetryReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/retry`,
+        { method: 'POST', body: input },
       ).then((value) => parseReferenceDeconstructionRunMutationResult(
         value,
         referenceId,

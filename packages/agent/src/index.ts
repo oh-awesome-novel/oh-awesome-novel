@@ -354,6 +354,25 @@ export {
   streamPlayRehearsalActorGeneration,
 } from './play-rehearsal.js';
 export {
+  MAX_REFERENCE_AGGREGATE_ANALYSIS_OUTPUT_TOKENS,
+  MAX_REFERENCE_ANALYSIS_ROLLING_CONTEXT_CHARACTERS,
+  MAX_REFERENCE_CHAPTER_ANALYSIS_INPUT_CHARACTERS,
+  MAX_REFERENCE_CHAPTER_ANALYSIS_OUTPUT_TOKENS,
+  MAX_REFERENCE_CHAPTER_ANALYSIS_WINDOWS,
+  MAX_REFERENCE_REDUCTION_FINDINGS,
+  MAX_REFERENCE_REDUCTION_INPUT_CHARACTERS,
+  MAX_REFERENCE_STYLE_PROFILE_OUTPUT_TOKENS,
+  REFERENCE_AGGREGATE_ANALYSIS_SYSTEM_PROMPT,
+  REFERENCE_CHAPTER_ANALYSIS_SYSTEM_PROMPT,
+  REFERENCE_STYLE_PROFILE_SYSTEM_PROMPT,
+  formatReferenceAggregateAnalysisPrompt,
+  formatReferenceChapterAnalysisPrompt,
+  formatReferenceStyleProfilePrompt,
+  generateReferenceAggregateAnalysis,
+  generateReferenceChapterAnalysis,
+  generateReferenceStyleProfile,
+} from './reference-deconstruction-full.js';
+export {
   MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS,
   MAX_REFERENCE_QUICK_PREVIEW_INPUT_CHARACTERS,
   MAX_REFERENCE_QUICK_PREVIEW_OUTPUT_TOKENS,
@@ -393,6 +412,22 @@ export type {
   PlayRehearsalRefereeCompletionResult,
   StreamPlayRehearsalActorGenerationInput,
 } from './play-rehearsal.js';
+export type {
+  GenerateReferenceAggregateAnalysisInput,
+  GenerateReferenceChapterAnalysisInput,
+  GenerateReferenceStyleProfileInput,
+  ReferenceAggregateAnalysisOutput,
+  ReferenceAggregateAnalysisPromptInput,
+  ReferenceAnalysisRollingContext,
+  ReferenceChapterAnalysisOutput,
+  ReferenceChapterAnalysisPromptInput,
+  ReferenceFullAnalysisFindingKind,
+  ReferenceFullDeconstructionGenerationError,
+  ReferenceFullDeconstructionGenerationResult,
+  ReferenceStyleProfileOutput,
+  ReferenceStyleProfilePromptInput,
+  ReferenceVerifiedAnalysisFinding,
+} from './reference-deconstruction-full.js';
 export type {
   GenerateReferenceQuickPreviewInput,
   ReferenceDeconstructionModelResolver,

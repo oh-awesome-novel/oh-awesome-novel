@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOanClient,
   type ReferenceContextSelection,
+  type ReferenceDeconstructionFullRun,
   type ReferenceDeconstructionMutationReceipt,
   type ReferenceDeconstructionRun,
   type ReferenceImportResult,
@@ -33,6 +34,27 @@ describe('reference deconstruction client', () => {
       }
       if (url.endsWith('/advance')) {
         return json(mutationResult(previewRun(), body.idempotencyKey as string));
+      }
+      if (url.endsWith('/pause')) {
+        return json(mutationResult(fullMutationRun(
+          'paused',
+          body.idempotencyKey as string,
+          body.baseRunRevision as number,
+        ), body.idempotencyKey as string));
+      }
+      if (url.endsWith('/resume')) {
+        return json(mutationResult(fullMutationRun(
+          'fullRunning',
+          body.idempotencyKey as string,
+          body.baseRunRevision as number,
+        ), body.idempotencyKey as string));
+      }
+      if (url.endsWith('/retry')) {
+        return json(mutationResult(fullMutationRun(
+          'fullRunning',
+          body.idempotencyKey as string,
+          body.baseRunRevision as number,
+        ), body.idempotencyKey as string));
       }
       if (url.endsWith('/cancel')) {
         return json(mutationResult(terminalRun(
@@ -73,6 +95,19 @@ describe('reference deconstruction client', () => {
       baseRunRevision: 0,
       idempotencyKey: 'advance-1',
     }, { signal: controller.signal });
+    await client.pauseReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'pause-1',
+    });
+    await client.resumeReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'resume-1',
+    });
+    await client.retryReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'retry-1',
+      unitId: 'chapter-0001-chunk-001',
+    });
     await client.cancelReferenceDeconstructionRun('reference-1', 'run-1', {
       baseRunRevision: 0,
       idempotencyKey: 'cancel-1',
@@ -103,10 +138,18 @@ describe('reference deconstruction client', () => {
       'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/active',
       'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1',
       'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/advance',
+      'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/pause',
+      'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/resume',
+      'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/retry',
       'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/cancel',
       'http://backend.test/api/workspace/references/reference-1/deconstruction-runs/run-1/approve-full',
     ]);
     expect(calls[5]?.init?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(calls[8]?.init?.body))).toEqual({
+      baseRunRevision: 2,
+      idempotencyKey: 'retry-1',
+      unitId: 'chapter-0001-chunk-001',
+    });
   });
 
   it('strictly validates import identity, manifest version, and source fingerprint', async () => {
@@ -199,6 +242,103 @@ describe('reference deconstruction client', () => {
     }
   });
 
+  it('accepts a bounded D2/D3 full summary and a non-zero receipt window', async () => {
+    const valid = reviewReadyRun(70);
+    const replayReceipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey: 'old-replayed-command',
+      requestFingerprint: '9'.repeat(64),
+      resultingRunRevision: 2,
+      resultStatus: 'fullApproved',
+    };
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { run: valid },
+        {
+          run: valid,
+          receipt: replayReceipt,
+          replayed: true,
+        },
+      ]),
+    });
+
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: valid });
+    await expect(client.pauseReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 70,
+      idempotencyKey: 'old-replayed-command',
+    })).resolves.toMatchObject({
+      run: { status: 'reviewReady', receiptCount: 71 },
+      receipt: replayReceipt,
+      replayed: true,
+    });
+    expect(valid.mutationReceipts).toHaveLength(64);
+    expect(valid.mutationReceipts[0]?.resultingRunRevision).toBe(7);
+    expect(valid.mutationReceipts.at(-1)?.resultingRunRevision).toBe(70);
+  });
+
+  it('fails closed on inconsistent full progress, unit, attempt, quality, and receipt windows', async () => {
+    const cases: ReferenceDeconstructionRun[] = [];
+
+    const missingFull = reviewReadyRun();
+    delete missingFull.full;
+    cases.push(missingFull);
+
+    const wrongPercent = reviewReadyRun();
+    wrongPercent.full!.progress.percent = 99;
+    cases.push(wrongPercent);
+
+    const unknownUnitKind = reviewReadyRun();
+    unknownUnitKind.full!.recentUnits[0]!.kind = 'futureUnit' as never;
+    cases.push(unknownUnitKind);
+
+    const unknownAttemptStatus = reviewReadyRun();
+    unknownAttemptStatus.full!.recentAttempts[0]!.status = 'futureAttempt' as never;
+    cases.push(unknownAttemptStatus);
+
+    const unknownQualityStatus = reviewReadyRun();
+    unknownQualityStatus.full!.analysisQuality!.status = 'futureQuality' as never;
+    cases.push(unknownQualityStatus);
+
+    const failedQualityAtReview = reviewReadyRun();
+    failedQualityAtReview.full!.analysisQuality = {
+      status: 'failed',
+      coveragePercent: 100,
+      blockingDiagnosticCount: 0,
+      outputHashes: ['1'.repeat(64)],
+    };
+    cases.push(failedQualityAtReview);
+
+    const inconsistentStageTotals = reviewReadyRun();
+    inconsistentStageTotals.full!.stages[0]!.plannedUnits = 3;
+    cases.push(inconsistentStageTotals);
+
+    const oversizedRecentWindow = reviewReadyRun();
+    oversizedRecentWindow.full!.recentUnits = Array.from({ length: 65 }, (_, index) => ({
+      ...oversizedRecentWindow.full!.recentUnits[0]!,
+      id: `oversized-unit-${index}`,
+      ordinal: index,
+      selectedAttemptId: `oversized-attempt-${index}`,
+    }));
+    cases.push(oversizedRecentWindow);
+
+    const gappedReceiptWindow = reviewReadyRun(70);
+    gappedReceiptWindow.mutationReceipts[1] = {
+      ...gappedReceiptWindow.mutationReceipts[1]!,
+      resultingRunRevision: 9,
+    };
+    cases.push(gappedReceiptWindow);
+
+    for (const payload of cases) {
+      const client = createOanClient({
+        backendBaseUrl: 'http://backend.test',
+        fetch: sequenceFetch([{ run: payload }]),
+      });
+      await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+        .rejects.toThrow('invalid payload');
+    }
+  });
+
   it('accepts diagnostics without optional location fields', async () => {
     const valid = previewRun();
     const diagnostic = {
@@ -273,6 +413,17 @@ describe('reference deconstruction client', () => {
       idempotencyKey: 'create-1',
       confirmDetectedRange: false,
     } as never)).toThrow('create request is invalid');
+    expect(() => client.retryReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'retry-1',
+      unitId: '../escape',
+    })).toThrow('retry request is invalid');
+    expect(() => client.retryReferenceDeconstructionRun('reference-1', 'run-1', {
+      baseRunRevision: 2,
+      idempotencyKey: 'retry-1',
+      unitId: 'unit-1',
+      hidden: true,
+    } as never)).toThrow('retry request is invalid');
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
@@ -407,6 +558,7 @@ function run(status: ReferenceDeconstructionRun['status']): ReferenceDeconstruct
     }],
     diagnostics: [],
     mutationReceipts: [receipt],
+    receiptCount: 1,
     createdAt: '2026-07-22T00:00:00.000Z',
     updatedAt: '2026-07-22T00:00:00.000Z',
   };
@@ -448,6 +600,7 @@ function previewRun(): ReferenceDeconstructionRun {
     evidence,
     diagnostics,
     mutationReceipts: [...run('created').mutationReceipts, advanceReceipt],
+    receiptCount: 2,
     updatedAt: '2026-07-22T00:01:00.000Z',
     preview: {
       version: 1,
@@ -513,6 +666,7 @@ function terminalRun(
     runRevision: baseRevision + 1,
     status,
     mutationReceipts: [...base.mutationReceipts, receipt],
+    receiptCount: baseRevision + 2,
     updatedAt: '2026-07-22T00:02:00.000Z',
   };
 }
@@ -530,8 +684,238 @@ function approvedRun(idempotencyKey: string): ReferenceDeconstructionRun {
     runRevision: 2,
     status: 'fullApproved',
     mutationReceipts: [...base.mutationReceipts, receipt],
+    receiptCount: 3,
     updatedAt: '2026-07-22T00:02:00.000Z',
     fullApprovedAt: '2026-07-22T00:02:00.000Z',
+    full: initialFullRun(),
+  };
+}
+
+function fullMutationRun(
+  status: 'fullRunning' | 'paused',
+  idempotencyKey: string,
+  baseRevision: number,
+): ReferenceDeconstructionRun {
+  const resultRevision = baseRevision + 1;
+  const receipts = Array.from({ length: resultRevision + 1 }, (_, revision) => ({
+    idempotencyKey: revision === resultRevision
+      ? idempotencyKey
+      : `full-history-${revision}`,
+    requestFingerprint: (revision % 16).toString(16).repeat(64),
+    resultingRunRevision: revision,
+    resultStatus: revision === resultRevision
+      ? status
+      : revision === 0
+        ? 'created' as const
+        : revision === 1
+          ? 'awaitingFullApproval' as const
+          : revision === 2
+            ? 'fullApproved' as const
+            : 'fullRunning' as const,
+  }));
+  const preview = previewRun();
+  return {
+    ...preview,
+    runRevision: resultRevision,
+    status,
+    mutationReceipts: receipts,
+    receiptCount: receipts.length,
+    fullApprovedAt: '2026-07-22T00:02:00.000Z',
+    full: initialFullRun(),
+    updatedAt: '2026-07-22T00:03:00.000Z',
+  };
+}
+
+function initialFullRun(): ReferenceDeconstructionFullRun {
+  const nextUnit = {
+    id: 'chapter-0001-chunk-001',
+    ordinal: 1,
+    stageId: 'chapterAnalysis' as const,
+    kind: 'chapterChunk' as const,
+    chapterId: '0001',
+    chunkId: '0001-chunk-001',
+    status: 'queued' as const,
+    attemptCount: 0,
+  };
+  return {
+    stages: [
+      {
+        stageId: 'chapterAnalysis',
+        status: 'queued',
+        plannedUnits: 2,
+        completedUnits: 0,
+        failedUnits: 0,
+      },
+      {
+        stageId: 'aggregateAnalysis',
+        status: 'notStarted',
+        plannedUnits: 1,
+        completedUnits: 0,
+        failedUnits: 0,
+      },
+      {
+        stageId: 'styleProfile',
+        status: 'notStarted',
+        plannedUnits: 1,
+        completedUnits: 0,
+        failedUnits: 0,
+      },
+      {
+        stageId: 'qualityGate',
+        status: 'notStarted',
+        plannedUnits: 1,
+        completedUnits: 0,
+        failedUnits: 0,
+      },
+    ],
+    progress: {
+      plannedUnits: 5,
+      completedUnits: 0,
+      failedUnits: 0,
+      completedChapters: 0,
+      totalChapters: 2,
+      percent: 0,
+    },
+    nextUnit,
+    recentUnits: [nextUnit],
+    recentAttempts: [],
+  };
+}
+
+function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
+  const preview = previewRun();
+  const units = [
+    completedUnit('chapter-0001-chunk-001', 1, 'chapterAnalysis', 'chapterChunk', {
+      chapterId: '0001',
+      chunkId: '0001-chunk-001',
+    }),
+    completedUnit('chapter-0002-chunk-001', 2, 'chapterAnalysis', 'chapterChunk', {
+      chapterId: '0002',
+      chunkId: '0002-chunk-001',
+    }),
+    completedUnit('aggregate-final', 3, 'aggregateAnalysis', 'aggregate'),
+    completedUnit('style-final', 4, 'styleProfile', 'style'),
+    completedUnit('quality-final', 5, 'qualityGate', 'analysisQuality'),
+  ];
+  const attempts = units.map((unit, index) => ({
+    id: unit.selectedAttemptId!,
+    unitId: unit.id,
+    attemptNumber: 1,
+    status: 'completed' as const,
+    inputFingerprint: ((index + 1) % 10).toString().repeat(64),
+    outputHash: (10 + index).toString(16).repeat(64),
+    startedAt: `2026-07-22T00:0${index + 3}:00.000Z`,
+    completedAt: `2026-07-22T00:0${index + 3}:30.000Z`,
+  }));
+  const fullDiagnostic = {
+    id: 'diagnostic-full-uncertainty',
+    severity: 'warning' as const,
+    code: 'chapter.uncertainty',
+    message: 'A bounded chapter inference remains uncertain.',
+    blocking: false,
+    evidenceRefs: ['full-pointer-1'],
+    stageId: 'chapterAnalysis' as const,
+    chapterId: '0001',
+    unitId: units[0]!.id,
+    attemptId: attempts[0]!.id,
+  };
+  const firstRevision = Math.max(0, runRevision - 63);
+  const receipts = Array.from(
+    { length: runRevision - firstRevision + 1 },
+    (_, index) => {
+      const revision = firstRevision + index;
+      return {
+        idempotencyKey: `review-history-${revision}`,
+        requestFingerprint: (revision % 16).toString(16).repeat(64),
+        resultingRunRevision: revision,
+        resultStatus: revision === runRevision
+          ? 'reviewReady' as const
+          : revision === 0
+            ? 'created' as const
+            : revision === 1
+              ? 'awaitingFullApproval' as const
+              : revision === 2
+                ? 'fullApproved' as const
+                : 'fullRunning' as const,
+      };
+    },
+  );
+  return {
+    ...preview,
+    runRevision,
+    status: 'reviewReady',
+    diagnostics: [...preview.diagnostics, fullDiagnostic],
+    mutationReceipts: receipts,
+    receiptCount: runRevision + 1,
+    fullApprovedAt: '2026-07-22T00:02:00.000Z',
+    full: {
+      stages: [
+        {
+          stageId: 'chapterAnalysis',
+          status: 'completed',
+          plannedUnits: 2,
+          completedUnits: 2,
+          failedUnits: 0,
+        },
+        {
+          stageId: 'aggregateAnalysis',
+          status: 'completed',
+          plannedUnits: 1,
+          completedUnits: 1,
+          failedUnits: 0,
+        },
+        {
+          stageId: 'styleProfile',
+          status: 'completed',
+          plannedUnits: 1,
+          completedUnits: 1,
+          failedUnits: 0,
+        },
+        {
+          stageId: 'qualityGate',
+          status: 'completed',
+          plannedUnits: 1,
+          completedUnits: 1,
+          failedUnits: 0,
+        },
+      ],
+      progress: {
+        plannedUnits: 5,
+        completedUnits: 5,
+        failedUnits: 0,
+        completedChapters: 2,
+        totalChapters: 2,
+        percent: 100,
+      },
+      recentUnits: units,
+      recentAttempts: attempts,
+      analysisQuality: {
+        status: 'passed',
+        coveragePercent: 100,
+        blockingDiagnosticCount: 0,
+        outputHashes: attempts.map((attempt) => attempt.outputHash),
+      },
+    },
+    updatedAt: '2026-07-22T00:08:00.000Z',
+  };
+}
+
+function completedUnit(
+  id: string,
+  ordinal: number,
+  stageId: 'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'qualityGate',
+  kind: 'chapterChunk' | 'aggregate' | 'style' | 'analysisQuality',
+  location: { chapterId: string; chunkId: string } | undefined = undefined,
+) {
+  return {
+    id,
+    ordinal,
+    stageId,
+    kind,
+    ...(location ?? {}),
+    status: 'completed' as const,
+    attemptCount: 1,
+    selectedAttemptId: `${id}-attempt-1`,
   };
 }
 

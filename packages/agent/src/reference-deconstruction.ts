@@ -1,5 +1,6 @@
 import {
   NoObjectGeneratedError,
+  NoOutputGeneratedError,
   Output,
   generateText,
   jsonSchema,
@@ -304,7 +305,7 @@ export async function generateReferenceQuickPreview(
       return createAbortResult(input.abortSignal.reason);
     }
 
-    if (result.finishReason === 'error' || result.finishReason === 'tool-calls') {
+    if (result.finishReason !== 'stop') {
       return createFailureResult(
         'invalid_output',
         new Error('Reference quick preview ended without a valid structured result.'),
@@ -322,7 +323,10 @@ export async function generateReferenceQuickPreview(
       return createAbortResult(input.abortSignal.reason);
     }
 
-    if (NoObjectGeneratedError.isInstance(error)) {
+    if (
+      NoObjectGeneratedError.isInstance(error)
+      || NoOutputGeneratedError.isInstance(error)
+    ) {
       return createFailureResult(
         'invalid_output',
         new Error('Reference quick preview did not match the required schema.'),

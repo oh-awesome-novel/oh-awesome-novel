@@ -1,4 +1,5 @@
 import type {
+  ReferenceDeconstructionFullRun,
   ReferenceContextSelection,
   ReferenceDeconstructionMutationReceipt,
   ReferenceDeconstructionRun,
@@ -178,8 +179,234 @@ export function approvedReferenceRun(
       ...preview.mutationReceipts,
       receipt(approveKey, 2, 'fullApproved', '3'),
     ],
+    receiptCount: 3,
+    full: fullReferenceFixture(),
     updatedAt: '2026-07-22T00:02:00.000Z',
     fullApprovedAt: '2026-07-22T00:02:00.000Z',
+  };
+}
+
+export function runningFullReferenceRun(
+  fullAdvanceKey = 'full-advance-key',
+): ReferenceDeconstructionRun {
+  const approved = approvedReferenceRun();
+  const completedUnit = chapterUnit({
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: 'chapter-0001-attempt-0001',
+  });
+  const nextUnit = chapterUnit({
+    id: 'chapter-0002',
+    ordinal: 1,
+    chapterId: '0002',
+    chunkId: 'chapter-0002-chunk-0001',
+  });
+  return {
+    ...approved,
+    status: 'fullRunning',
+    runRevision: 3,
+    mutationReceipts: [
+      ...approved.mutationReceipts,
+      receipt(fullAdvanceKey, 3, 'fullRunning', '4'),
+    ],
+    receiptCount: 4,
+    full: {
+      ...fullReferenceFixture(),
+      stages: [
+        stage('chapterAnalysis', 'running', 2, 1),
+        stage('aggregateAnalysis', 'notStarted', 1),
+        stage('styleProfile', 'notStarted', 1),
+        stage('qualityGate', 'notStarted', 1),
+      ],
+      progress: progress(1, 0, 1),
+      nextUnit,
+      recentUnits: [completedUnit, nextUnit],
+      recentAttempts: [completedAttempt()],
+    },
+    updatedAt: '2026-07-22T00:03:00.000Z',
+  };
+}
+
+export function pausedFullReferenceRun(
+  pauseKey = 'pause-key',
+): ReferenceDeconstructionRun {
+  const running = runningFullReferenceRun();
+  return {
+    ...running,
+    status: 'paused',
+    runRevision: 4,
+    mutationReceipts: [
+      ...running.mutationReceipts,
+      receipt(pauseKey, 4, 'paused', '5'),
+    ],
+    receiptCount: 5,
+    updatedAt: '2026-07-22T00:04:00.000Z',
+  };
+}
+
+export function failedFullReferenceRun(
+  fullAdvanceKey = 'full-failed-key',
+): ReferenceDeconstructionRun {
+  const approved = approvedReferenceRun();
+  const failedUnit = chapterUnit({
+    status: 'failed',
+    attemptCount: 1,
+  });
+  const failedAttempt = {
+    id: 'chapter-0001-attempt-0001',
+    unitId: failedUnit.id,
+    attemptNumber: 1,
+    status: 'failed' as const,
+    inputFingerprint: 'd'.repeat(64),
+    startedAt: '2026-07-22T00:03:00.000Z',
+    completedAt: '2026-07-22T00:03:30.000Z',
+  };
+  const diagnostic = {
+    id: 'full-unit-failed-chapter-0001-1',
+    severity: 'error' as const,
+    code: 'full.provider_failed',
+    message: 'The bounded chapter unit failed.',
+    blocking: true,
+    evidenceRefs: [],
+    stageId: 'chapterAnalysis' as const,
+    chapterId: '0001',
+    unitId: failedUnit.id,
+    attemptId: failedAttempt.id,
+  };
+  return {
+    ...approved,
+    status: 'failed',
+    runRevision: 3,
+    diagnostics: [...approved.diagnostics, diagnostic],
+    mutationReceipts: [
+      ...approved.mutationReceipts,
+      receipt(fullAdvanceKey, 3, 'failed', '6'),
+    ],
+    receiptCount: 4,
+    full: {
+      ...fullReferenceFixture(),
+      stages: [
+        stage('chapterAnalysis', 'failed', 2, 0, 1),
+        stage('aggregateAnalysis', 'notStarted', 1),
+        stage('styleProfile', 'notStarted', 1),
+        stage('qualityGate', 'notStarted', 1),
+      ],
+      progress: progress(0, 1, 0),
+      nextUnit: undefined,
+      failedUnit,
+      recentUnits: [failedUnit],
+      recentAttempts: [failedAttempt],
+      analysisQuality: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 1,
+        outputHashes: [],
+      },
+    },
+    updatedAt: '2026-07-22T00:03:30.000Z',
+  };
+}
+
+export function retriedFullReferenceRun(
+  retryKey = 'retry-key',
+): ReferenceDeconstructionRun {
+  const failed = failedFullReferenceRun();
+  const nextUnit = chapterUnit({ attemptCount: 1 });
+  return {
+    ...failed,
+    status: 'fullRunning',
+    runRevision: 4,
+    diagnostics: [],
+    mutationReceipts: [
+      ...failed.mutationReceipts,
+      receipt(retryKey, 4, 'fullRunning', '7'),
+    ],
+    receiptCount: 5,
+    full: {
+      ...failed.full!,
+      stages: [
+        stage('chapterAnalysis', 'queued', 2),
+        stage('aggregateAnalysis', 'notStarted', 1),
+        stage('styleProfile', 'notStarted', 1),
+        stage('qualityGate', 'notStarted', 1),
+      ],
+      progress: progress(0, 0, 0),
+      nextUnit,
+      failedUnit: undefined,
+      recentUnits: [nextUnit],
+      analysisQuality: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
+    },
+    updatedAt: '2026-07-22T00:04:00.000Z',
+  };
+}
+
+export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
+  const approved = approvedReferenceRun();
+  const units = [
+    chapterUnit({
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'chapter-0001-attempt-0001',
+    }),
+    chapterUnit({
+      id: 'chapter-0002',
+      ordinal: 1,
+      chapterId: '0002',
+      chunkId: 'chapter-0002-chunk-0001',
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'chapter-0002-attempt-0001',
+    }),
+    nonChapterUnit('aggregate-root', 2, 'aggregateAnalysis', 'aggregate'),
+    nonChapterUnit('style-profile', 3, 'styleProfile', 'style'),
+    nonChapterUnit('analysis-quality', 4, 'qualityGate', 'analysisQuality'),
+  ];
+  const attempts = units.map((unit, index) => ({
+    id: unit.selectedAttemptId!,
+    unitId: unit.id,
+    attemptNumber: 1,
+    status: 'completed' as const,
+    inputFingerprint: String(index + 1).repeat(64),
+    outputHash: String(index + 5).repeat(64),
+    startedAt: `2026-07-22T00:0${index + 3}:00.000Z`,
+    completedAt: `2026-07-22T00:0${index + 3}:30.000Z`,
+  }));
+  const fullReceipts = units.map((_, index) =>
+    receipt(
+      `full-advance-${index + 1}`,
+      index + 3,
+      index === units.length - 1 ? 'reviewReady' : 'fullRunning',
+      ['8', '9', 'a', 'b', 'c'][index]!,
+    ));
+  return {
+    ...approved,
+    status: 'reviewReady',
+    runRevision: 7,
+    mutationReceipts: [...approved.mutationReceipts, ...fullReceipts],
+    receiptCount: 8,
+    full: {
+      stages: [
+        stage('chapterAnalysis', 'completed', 2, 2),
+        stage('aggregateAnalysis', 'completed', 1, 1),
+        stage('styleProfile', 'completed', 1, 1),
+        stage('qualityGate', 'completed', 1, 1),
+      ],
+      progress: progress(5, 0, 2),
+      recentUnits: units,
+      recentAttempts: attempts,
+      analysisQuality: {
+        status: 'passed',
+        coveragePercent: 100,
+        blockingDiagnosticCount: 0,
+        outputHashes: attempts.map((attempt) => attempt.outputHash),
+      },
+    },
+    updatedAt: '2026-07-22T00:08:30.000Z',
   };
 }
 
@@ -198,6 +425,7 @@ export function mutationResult(
 function baseReferenceRun(
   patch: Partial<ReferenceDeconstructionRun>,
 ): ReferenceDeconstructionRun {
+  const mutationReceipts = patch.mutationReceipts ?? [];
   return {
     schemaVersion: 1,
     id: 'run-1',
@@ -211,10 +439,104 @@ function baseReferenceRun(
     selectedChapterIds: ['0001'],
     evidence: [],
     diagnostics: [],
-    mutationReceipts: [],
+    mutationReceipts,
+    receiptCount: mutationReceipts.length,
     createdAt: '2026-07-22T00:00:00.000Z',
     updatedAt: '2026-07-22T00:00:00.000Z',
     ...patch,
+  };
+}
+
+function fullReferenceFixture(): ReferenceDeconstructionFullRun {
+  const nextUnit = chapterUnit();
+  return {
+    stages: [
+      stage('chapterAnalysis', 'queued', 2),
+      stage('aggregateAnalysis', 'notStarted', 1),
+      stage('styleProfile', 'notStarted', 1),
+      stage('qualityGate', 'notStarted', 1),
+    ],
+    progress: progress(0, 0, 0),
+    nextUnit,
+    recentUnits: [nextUnit],
+    recentAttempts: [],
+    analysisQuality: {
+      status: 'notEvaluated',
+      coveragePercent: 0,
+      blockingDiagnosticCount: 0,
+      outputHashes: [],
+    },
+  };
+}
+
+function chapterUnit(
+  patch: Partial<ReferenceDeconstructionFullRun['recentUnits'][number]> = {},
+): ReferenceDeconstructionFullRun['recentUnits'][number] {
+  return {
+    id: 'chapter-0001',
+    ordinal: 0,
+    stageId: 'chapterAnalysis',
+    kind: 'chapterChunk',
+    chapterId: '0001',
+    chunkId: 'chapter-0001-chunk-0001',
+    status: 'queued',
+    attemptCount: 0,
+    ...patch,
+  };
+}
+
+function nonChapterUnit(
+  id: string,
+  ordinal: number,
+  stageId: 'aggregateAnalysis' | 'styleProfile' | 'qualityGate',
+  kind: 'aggregate' | 'style' | 'analysisQuality',
+): ReferenceDeconstructionFullRun['recentUnits'][number] {
+  return {
+    id,
+    ordinal,
+    stageId,
+    kind,
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: `${id}-attempt-0001`,
+  };
+}
+
+function completedAttempt(): ReferenceDeconstructionFullRun['recentAttempts'][number] {
+  return {
+    id: 'chapter-0001-attempt-0001',
+    unitId: 'chapter-0001',
+    attemptNumber: 1,
+    status: 'completed',
+    inputFingerprint: 'c'.repeat(64),
+    outputHash: 'e'.repeat(64),
+    startedAt: '2026-07-22T00:02:01.000Z',
+    completedAt: '2026-07-22T00:03:00.000Z',
+  };
+}
+
+function stage(
+  stageId: ReferenceDeconstructionFullRun['stages'][number]['stageId'],
+  status: ReferenceDeconstructionFullRun['stages'][number]['status'],
+  plannedUnits: number,
+  completedUnits = 0,
+  failedUnits = 0,
+): ReferenceDeconstructionFullRun['stages'][number] {
+  return { stageId, status, plannedUnits, completedUnits, failedUnits };
+}
+
+function progress(
+  completedUnits: number,
+  failedUnits: number,
+  completedChapters: number,
+): ReferenceDeconstructionFullRun['progress'] {
+  return {
+    plannedUnits: 5,
+    completedUnits,
+    failedUnits,
+    completedChapters,
+    totalChapters: 2,
+    percent: Math.round((completedUnits / 5) * 100),
   };
 }
 

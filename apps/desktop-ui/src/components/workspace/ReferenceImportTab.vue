@@ -99,7 +99,7 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       <button
         class="ghost-button tight-button"
         type="button"
-        :disabled="loading || deconstruction.advancing.value"
+        :disabled="loading || deconstruction.busy.value"
         @click="refreshReferences"
       >
         Refresh
@@ -121,11 +121,18 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       :advancing="deconstruction.advancing.value"
       :cancelling="deconstruction.cancelling.value"
       :approving="deconstruction.approving.value"
+      :pausing="deconstruction.pausing.value"
+      :resuming="deconstruction.resuming.value"
+      :retrying="deconstruction.retrying.value"
       :reconciling="deconstruction.reconciling.value"
       :indeterminate="deconstruction.indeterminate.value"
       :error="deconstruction.error.value"
       :can-start="deconstruction.canStart.value"
       :can-advance="deconstruction.canAdvance.value"
+      :can-advance-full="deconstruction.canAdvanceFull.value"
+      :can-pause="deconstruction.canPause.value"
+      :can-resume="deconstruction.canResume.value"
+      :can-retry="deconstruction.canRetry.value"
       :can-cancel="deconstruction.canCancel.value"
       :can-approve="deconstruction.canApprove.value"
       :needs-reconcile="deconstruction.needsReconcile.value"
@@ -134,6 +141,10 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       @cancel="deconstruction.cancel()"
       @reconcile="deconstruction.reconcile()"
       @approve-full="deconstruction.approveFull()"
+      @advance-full="deconstruction.advanceFull()"
+      @pause-full="deconstruction.pauseFull()"
+      @resume-full="deconstruction.resumeFull()"
+      @retry-failed-unit="deconstruction.retryFailedUnit($event)"
     />
 
     <ReferenceList

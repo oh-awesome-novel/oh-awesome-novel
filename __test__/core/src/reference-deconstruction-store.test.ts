@@ -151,14 +151,6 @@ describe('reference deconstruction run store', () => {
       fullApprovedAt: '2026-07-22T00:03:00.000Z',
     });
     expect(approved.run.mutationReceipts).toHaveLength(3);
-    await expect(cancelReferenceDeconstructionRun({
-      workspaceRoot: fixture.workspaceRoot,
-      referenceId: fixture.referenceId,
-      runId: created.run.runId,
-      baseRunRevision: 2,
-      idempotencyKey: 'cancel-approved-001',
-    })).rejects.toMatchObject({ conflictCode: 'invalidTransition' });
-
     await writeFile(fixture.originalPath, `${fixture.sourceText}\nchanged after approval`, 'utf-8');
     const staleApproved = await readReferenceDeconstructionRun(
       fixture.workspaceRoot,
@@ -167,7 +159,7 @@ describe('reference deconstruction run store', () => {
       { reconcile: true },
     );
     expect(staleApproved.status).toBe('stale');
-    expect(staleApproved.fullApprovedAt).toBeUndefined();
+    expect(staleApproved.fullApprovedAt).toBe('2026-07-22T00:03:00.000Z');
     expect(staleApproved.preview?.diagnostics).toEqual(staleApproved.diagnostics);
     expect(projectReferenceDeconstructionRunForTransport(staleApproved).preview?.diagnostics)
       .toEqual(staleApproved.diagnostics);

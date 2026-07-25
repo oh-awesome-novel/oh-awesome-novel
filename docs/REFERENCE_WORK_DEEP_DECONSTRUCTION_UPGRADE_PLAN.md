@@ -1,6 +1,6 @@
 # OAN 参考作品深度拆解升级计划
 
-> 计划状态：In Progress。D0 / D1 已于 2026-07-22 落地；D2–D5 仍待实施。
+> 计划状态：In Progress。D0 / D1 已于 2026-07-22 落地，D2 / D3 已于 2026-07-23 落地；D4–D5 仍待实施。
 >
 > 关联任务：`docs/tasks/0900.md`（保持 `Needs Review`，不另建重复领域任务）。
 >
@@ -27,24 +27,28 @@
 
 这不是新的多 Agent 平台、隐藏 RAG 或小说导入器。它是一个由用户启动、可暂停、可恢复、可复核的单模型长任务，产物仍是 Markdown / YAML 文件，并严格与当前小说 truth files 隔离。
 
-本计划最先交付 D0 + D1：
+本计划先后交付 D0 + D1 与 D2 + D3：
 
 1. 修正当前“导入即标记拆解完成”的状态语义。
 2. 未正式发布的 stub / preview 不得进入写作 context。
 3. 完成前三章或用户选段的真实 AI Quick Preview。
 4. 增加 manifest、diagnostics、source pointer、用户继续确认和失败恢复。
+5. 完成可恢复、可暂停和可局部重试的全书 chapter / chunk 分析。
+6. 通过 bounded reduction tree 聚合全局观察，生成 Style Profile，并执行 deterministic analysis quality gate。
 
-完整全书拆解、聚合与 distilled entry 选择在后续纵向切片继续完成，但从第一步就冻结最终需要的身份、来源和恢复边界。
+后续纵向切片只剩 distilled entry 候选、PendingAction 发布与 entry-level selector；D0–D3 已冻结并实现身份、来源、恢复、聚合和分析质量边界。
 
-### 1.1 实施状态（2026-07-22）
+### 1.1 实施状态（2026-07-23）
 
 | 切片 | 状态 | 已落地边界 |
 | --- | --- | --- |
 | D0 | Completed | import-only `notAnalyzed`、manifest / diagnostics / progress、readiness / stale / quality gate、严格 Reference transport 与 selector 硬预算 |
 | D1 | Completed | bounded Quick Preview、低置信范围确认、单模型 typed runner、`.workspace` run、CAS / idempotency / cancel / restart reconcile、跨 Backend provider lease、Desktop 审阅与 full confirmation gate |
-| D2–D5 | Planned | 分章恢复、聚合 / style / quality、PendingAction publish、entry-level selector |
+| D2 | Completed | deterministic chapter / chunk work plan、request-bounded advance、append-only attempts、pause / resume / retry / cancel、restart adoption / interruption、source drift 与 downstream invalidation |
+| D3 | Completed | bounded aggregate reduction tree、Style Profile、evidence / predecessor closure、deterministic analysis quality gate、diagnostics inspector 与 `reviewReady` |
+| D4–D5 | Planned | distilled entry 候选、PendingAction publish、entry-level selector 与完整发布旅程 |
 
-D1 的 `fullApproved` 只记录 D2 计算授权；当前不会启动分章拆解，也不会把 Preview 写入 published reference bundle。为了让 Desktop 在重开后发现权威 run，实施额外提供 `GET /api/workspace/references/:referenceId/deconstruction-runs/active`，它不改变原有 run lifecycle。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
+`fullApproved` 仍只记录显式计算授权；第一次 full `advance` 才进入 `fullRunning`，之后每个请求最多处理一个确定 unit，用户未继续时没有后台任务。D3 的 `reviewReady` 只表示分析质量门通过，可以进入 D4，并不会把 Preview 或 provisional analysis 写入 published reference bundle。Desktop 重开后通过 `GET /api/workspace/references/:referenceId/deconstruction-runs/active` 找回权威 run。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
 
 ## 2. 当前基线与真实缺口
 
@@ -286,6 +290,7 @@ type ReferenceDeconstructionRunStatus =
   | 'created'
   | 'previewRunning'
   | 'awaitingFullApproval'
+  | 'fullApproved'
   | 'fullRunning'
   | 'paused'
   | 'reviewReady'
@@ -304,14 +309,16 @@ created
   -> previewRunning
   -> awaitingFullApproval
       -> cancelled
-      -> fullRunning
-          -> paused -> fullRunning
-          -> interrupted -> fullRunning
-          -> failed -> fullRunning (explicit retry)
-          -> reviewReady
-              -> cancelled
-              -> publishing
-                  -> completed
+      -> fullApproved
+          -> cancelled
+          -> fullRunning
+              -> paused -> fullRunning
+              -> interrupted -> fullRunning
+              -> failed -> fullRunning (explicit retry)
+              -> reviewReady
+                  -> cancelled
+                  -> publishing
+                      -> completed
 ```
 
 任何 source checksum、structure fingerprint 或 predecessor output hash 漂移，都会把依赖 stage 与 run 标记为 `stale`；不得继续 publish。
@@ -843,7 +850,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 完成标准：Preview 不读取全书、不写 published bundle；用户能审阅可追溯结果并决定继续或取消。
 
-### D2：可恢复的分章拆解
+### D2：可恢复的分章拆解（Completed, 2026-07-23）
 
 目标：长文本可暂停、重启和局部重试。
 
@@ -858,7 +865,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 完成标准：完成章节不会因失败或重开丢失；失败章节可新建 attempt 重试，不覆盖历史结果。
 
-### D3：聚合、Style 与质量门
+### D3：聚合、Style 与质量门（Completed, 2026-07-23）
 
 目标：从可追溯 chapter findings 得到结构化全局观察。
 
@@ -986,21 +993,21 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 只有同时满足以下条件，`0900` 才能从 `Needs Review` 更新为 `Completed`：
 
-- [ ] Import 不再把 deterministic stub 标记为已完成 AI 拆解。
-- [ ] 未完成、未接受、stale 或 qualityFailed reference 不进入写作 context。
-- [ ] Quick Preview 使用 bounded first-1–3-chapter / selected excerpt 输入。
-- [ ] Full deconstruction 必须经过 Preview 后的显式用户确认。
-- [ ] 分章拆解支持 pause、cancel、restart resume 和局部 retry。
-- [ ] 每个 finding 都有合法 source pointer 或明确 general inference boundary。
-- [ ] Aggregate / style / distilled 不依赖一次性全文 prompt。
+- [x] Import 不再把 deterministic stub 标记为已完成 AI 拆解。
+- [x] 未完成、未接受、stale 或 qualityFailed reference 不进入写作 context。
+- [x] Quick Preview 使用 bounded first-1–3-chapter / selected excerpt 输入。
+- [x] Full deconstruction 必须经过 Preview 后的显式用户确认。
+- [x] 分章拆解支持 pause、cancel、restart resume 和局部 retry。
+- [x] 每个 finding 都有合法 source pointer 或明确 general inference boundary。
+- [x] Aggregate / style 不依赖一次性全文 prompt；distilled 留待 D4。
 - [ ] Published bundle 具有 current manifest、diagnostics、output hashes 和 quality pass。
 - [ ] Candidate 发布前只写 `.workspace`；Accept 前真实 bundle 与 Git working tree 不改变。
 - [ ] Reject / Cancel / provider failure / validation failure 不产生部分 published artifact。
 - [ ] Selector 只读取 accepted distilled entries，普通写作路径 `originalSourceRead` 始终为 false。
-- [ ] Reference 不自动修改当前小说 truth files。
-- [ ] no-copy、prompt-injection、source drift、并发、恢复和 strict transport 测试通过。
-- [ ] Core、Agent、Backend、Client、Desktop 全量相关回归和真实组件旅程通过。
-- [ ] Task、Implementation Notes、schema fixtures 与本计划同步更新。
+- [x] Reference 不自动修改当前小说 truth files。
+- [x] no-copy、prompt-injection、source drift、并发、恢复和 strict transport 测试通过。
+- [x] Core、Agent、Backend、Client、Desktop 全量相关回归和真实组件旅程通过。
+- [x] Task、Implementation Notes、schema fixtures 与本计划同步更新。
 
 ## 18. 后续候选，不属于本计划
 
@@ -1012,7 +1019,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 4. 更精细的跨 reference 技法比较与作者自定义标签。
 5. 与 `1110` usage stats 联动的 per-stage token / cost inspector。
 
-这些候选都不能反向扩大 D0 / D1 范围。
+这些候选都不能反向扩大 D0–D3 范围。
 
 ## 19. 参考来源与吸收边界
 
@@ -1039,4 +1046,4 @@ D0 状态 / manifest / selector ready gate
   -> D5 entry-level selector / 完整旅程
 ```
 
-下一次开始实现时，应先为 D0 + D1 创建执行级 plan，逐文件列出 Core schema、Agent runner、Backend routes、Client guards、Desktop components 和根目录测试；不要直接从 D2 全书拆解开工。
+D0–D3 的执行级计划与实现已经完成。下一次应先为 D4 创建独立执行级 plan，明确 distilled schema、deterministic formatter、多文件 PendingAction、Accept 后原子发布与 Git 行为；不要提前把 D5 selector 旅程并入 D4。

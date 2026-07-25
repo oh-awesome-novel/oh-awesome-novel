@@ -147,8 +147,15 @@ import {
 import type { AiSdkProviderResolver } from '@oh-awesome-novel/agent';
 import type { NovelAgentPlayWritingReferenceInput } from '@oh-awesome-novel/agent';
 import type {
+  GenerateReferenceAggregateAnalysisInput,
+  GenerateReferenceChapterAnalysisInput,
   GenerateReferenceQuickPreviewInput,
+  GenerateReferenceStyleProfileInput,
+  ReferenceAggregateAnalysisOutput,
+  ReferenceChapterAnalysisOutput,
+  ReferenceFullDeconstructionGenerationResult,
   ReferenceQuickPreviewGenerationResult,
+  ReferenceStyleProfileOutput,
 } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
@@ -235,6 +242,15 @@ export interface NovelBackendOptions {
   runReferenceQuickPreview?: (
     input: GenerateReferenceQuickPreviewInput,
   ) => Promise<ReferenceQuickPreviewGenerationResult>;
+  runReferenceChapterAnalysis?: (
+    input: GenerateReferenceChapterAnalysisInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceChapterAnalysisOutput>>;
+  runReferenceAggregateAnalysis?: (
+    input: GenerateReferenceAggregateAnalysisInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceAggregateAnalysisOutput>>;
+  runReferenceStyleProfile?: (
+    input: GenerateReferenceStyleProfileInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceStyleProfileOutput>>;
 }
 
 export interface NovelBackendAgentInput {
@@ -390,6 +406,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ...(options.runReferenceQuickPreview
       ? { runQuickPreview: options.runReferenceQuickPreview }
       : {}),
+    ...(options.runReferenceChapterAnalysis
+      ? { runChapterAnalysis: options.runReferenceChapterAnalysis }
+      : {}),
+    ...(options.runReferenceAggregateAnalysis
+      ? { runAggregateAnalysis: options.runReferenceAggregateAnalysis }
+      : {}),
+    ...(options.runReferenceStyleProfile
+      ? { runStyleProfile: options.runReferenceStyleProfile }
+      : {}),
   });
   state.referenceDeconstruction = referenceDeconstruction;
 
@@ -463,6 +488,27 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/approve-full', (context) =>
     handleApproveReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/pause', (context) =>
+    handlePauseReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/resume', (context) =>
+    handleResumeReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/retry', (context) =>
+    handleRetryReferenceDeconstructionUnit(
       referenceDeconstruction,
       context.req.param('referenceId') ?? '',
       context.req.param('runId') ?? '',
@@ -1633,6 +1679,68 @@ async function handleApproveReferenceDeconstructionRun(
   });
 }
 
+async function handlePauseReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.pauseRun(referenceId, runId, input);
+  });
+}
+
+async function handleResumeReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.resumeRun(referenceId, runId, input);
+  });
+}
+
+async function handleRetryReferenceDeconstructionUnit(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    requireReferenceWireId(runId, 'runId');
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, [
+      'baseRunRevision',
+      'idempotencyKey',
+      'unitId',
+    ]);
+    const baseRunRevision = requireReferenceBaseRunRevision(body.baseRunRevision);
+    return controller.retryUnit(referenceId, runId, {
+      baseRunRevision,
+      idempotencyKey: requireReferenceWireId(
+        getOptionalString(body, 'idempotencyKey') ?? '',
+        'idempotencyKey',
+      ),
+      unitId: requireReferenceWireId(
+        getOptionalString(body, 'unitId') ?? '',
+        'unitId',
+      ),
+    });
+  });
+}
+
 async function handleCancelReferenceDeconstructionRun(
   controller: ReferenceDeconstructionBackendController,
   referenceId: string,
@@ -1658,20 +1766,24 @@ async function readReferenceDeconstructionMutationRequest(
   requireReferenceWireId(runId, 'runId');
   const body = await readJsonBody(context);
   assertOnlyJsonFields(body, ['baseRunRevision', 'idempotencyKey']);
-  const baseRunRevision = body.baseRunRevision;
-  if (!Number.isSafeInteger(baseRunRevision) || (baseRunRevision as number) < 0) {
-    throw new ReferenceDeconstructionRequestError(
-      'Reference deconstruction baseRunRevision is invalid.',
-      'invalidRequest',
-    );
-  }
+  const baseRunRevision = requireReferenceBaseRunRevision(body.baseRunRevision);
   return {
-    baseRunRevision: baseRunRevision as number,
+    baseRunRevision,
     idempotencyKey: requireReferenceWireId(
       getOptionalString(body, 'idempotencyKey') ?? '',
       'idempotencyKey',
     ),
   };
+}
+
+function requireReferenceBaseRunRevision(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new ReferenceDeconstructionRequestError(
+      'Reference deconstruction baseRunRevision is invalid.',
+      'invalidRequest',
+    );
+  }
+  return value as number;
 }
 
 async function handleGitStatus(
@@ -6024,13 +6136,13 @@ function hasActivePlayMutation(state: BackendState, workspaceRoot: string): bool
   const prefix = `${workspaceRoot}:`;
   return [...state.activePlayTurns].some((key) => key.startsWith(prefix)) ||
     Boolean(state.playRehearsal?.hasActiveStepRun(workspaceRoot)) ||
-    Boolean(state.referenceDeconstruction?.hasActivePreview(workspaceRoot));
+    Boolean(state.referenceDeconstruction?.hasActiveExecution(workspaceRoot));
 }
 
 function hasAnyActivePlayMutation(state: BackendState): boolean {
   return state.activePlayTurns.size > 0 ||
     Boolean(state.playRehearsal?.hasActiveStepRun()) ||
-    Boolean(state.referenceDeconstruction?.hasActivePreview());
+    Boolean(state.referenceDeconstruction?.hasActiveExecution());
 }
 
 function tryBeginWorkspaceTransition(state: BackendState): boolean {

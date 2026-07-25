@@ -5,13 +5,19 @@ import { describe, expect, it } from 'vitest';
 
 import ReferenceDeconstructionPanel from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceDeconstructionPanel.vue';
 import ReferenceList from '../../../apps/desktop-ui/src/components/workspace/ReferenceList.vue';
+import ReferenceDiagnostics from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceDiagnostics.vue';
+import ReferenceFullDeconstructionProgress from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceFullDeconstructionProgress.vue';
 import ReferenceQuickPreview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceQuickPreview.vue';
 import {
+  approvedReferenceRun,
+  failedFullReferenceRun,
   previewReferenceRun,
   referenceFixture,
+  reviewReadyReferenceRun,
+  runningFullReferenceRun,
 } from './support/referenceDeconstructionFixture';
 
-describe('Reference D0/D1 components', () => {
+describe('Reference D0-D3 components', () => {
   it('keeps enabled preference, analysis status and context eligibility visibly separate', async () => {
     const reference = referenceFixture();
     const wrapper = mount(ReferenceList, {
@@ -85,10 +91,12 @@ describe('Reference D0/D1 components', () => {
     expect(wrapper.emitted('startPreview')).toEqual([[true]]);
   });
 
-  it('requires two explicit clicks before full approval and states that D2 did not start', async () => {
+  it('requires two explicit clicks before full approval and never starts a unit automatically', async () => {
     const run = previewReferenceRun();
     const wrapper = mountPanel({ run, canApprove: true });
 
+    expect(wrapper.text()).toContain('does not publish artifacts');
+    expect(wrapper.text()).toContain('start a chapter unit automatically');
     await button(wrapper, 'Continue full deconstruction').trigger('click');
     expect(wrapper.emitted('approveFull')).toBeUndefined();
     expect(button(wrapper, 'Confirm full deconstruction').exists()).toBe(true);
@@ -97,16 +105,14 @@ describe('Reference D0/D1 components', () => {
     expect(wrapper.emitted('approveFull')).toHaveLength(1);
 
     await wrapper.setProps({
-      run: {
-        ...run,
-        status: 'fullApproved',
-        runRevision: 2,
-        fullApprovedAt: '2026-07-22T00:02:00.000Z',
-      },
+      run: approvedReferenceRun(),
       canApprove: false,
+      canAdvanceFull: true,
     });
-    expect(wrapper.text()).toContain('D2 chapter processing is not part of this slice');
-    expect(wrapper.text()).toContain('has not started');
+    expect(wrapper.text()).toContain('Full Deconstruction');
+    expect(wrapper.text()).toContain('0/5 units');
+    expect(wrapper.text()).toContain('No full-analysis attempt has started');
+    expect(button(wrapper, 'Run next unit').exists()).toBe(true);
   });
 
   it('offers one explicit retry for interrupted preview and reconciliation for unknown truth', async () => {
@@ -145,6 +151,104 @@ describe('Reference D0/D1 components', () => {
     expect(wrapper.text()).toContain('1 blocking diagnostic(s) must be resolved');
     expect(button(wrapper, 'Continue full deconstruction').attributes('disabled')).toBeDefined();
   });
+
+  it('presents coverage and attempt history while emitting only explicit full-run actions', async () => {
+    const run = runningFullReferenceRun();
+    const wrapper = mount(ReferenceFullDeconstructionProgress, {
+      props: {
+        full: run.full!,
+        status: run.status,
+        advancing: false,
+        pausing: false,
+        resuming: false,
+        retrying: false,
+        canAdvance: true,
+        canPause: true,
+        canResume: false,
+        canRetry: false,
+      },
+    });
+
+    expect(wrapper.text()).toContain('20%');
+    expect(wrapper.text()).toContain('1/5 units');
+    expect(wrapper.text()).toContain('1/2 chapters');
+    expect(wrapper.text()).toContain('Chapter analysis');
+    expect(wrapper.text()).toContain('Attempt 1 · completed');
+
+    await button(wrapper, 'Run next unit').trigger('click');
+    await button(wrapper, 'Pause between units').trigger('click');
+    expect(wrapper.emitted('advance')).toHaveLength(1);
+    expect(wrapper.emitted('pause')).toHaveLength(1);
+  });
+
+  it('emits the failed unit identity for an explicit retry and explains the separate advance', async () => {
+    const run = failedFullReferenceRun();
+    const wrapper = mount(ReferenceFullDeconstructionProgress, {
+      props: {
+        full: run.full!,
+        status: run.status,
+        advancing: false,
+        pausing: false,
+        resuming: false,
+        retrying: false,
+        canAdvance: false,
+        canPause: false,
+        canResume: false,
+        canRetry: true,
+      },
+    });
+
+    expect(wrapper.text()).toContain('Retry only requeues this unit');
+    expect(wrapper.text()).toContain('separate explicit advance');
+    await button(wrapper, 'Retry failed unit').trigger('click');
+    expect(wrapper.emitted('retry')).toEqual([['chapter-0001']]);
+  });
+
+  it('shows review-ready as analysis-complete but not published', () => {
+    const run = reviewReadyReferenceRun();
+    const wrapper = mountPanel({ run });
+
+    expect(wrapper.text()).toContain('Analysis ready for review');
+    expect(wrapper.text()).toContain('Analysis quality: passed');
+    expect(wrapper.text()).toContain('the reference bundle has not been published');
+  });
+
+  it('filters diagnostics by severity, stage, and chapter while retaining blocking context', async () => {
+    const failed = failedFullReferenceRun();
+    const wrapper = mount(ReferenceDiagnostics, {
+      props: {
+        diagnostics: [
+          ...failed.diagnostics,
+          {
+            id: 'style-info',
+            severity: 'info',
+            code: 'style.uncertainty',
+            message: 'Style coverage is still provisional.',
+            blocking: false,
+            evidenceRefs: [],
+            stageId: 'styleProfile',
+            chapterId: '0002',
+          },
+        ],
+      },
+    });
+    const [severity, stage, chapter] = wrapper.findAll('select');
+
+    expect(wrapper.text()).toContain('prevent full approval or review-ready quality completion');
+    await severity!.setValue('error');
+    expect(wrapper.text()).toContain('full.provider_failed');
+    expect(wrapper.text()).not.toContain('preview.low-sample');
+
+    await severity!.setValue('all');
+    await stage!.setValue('quickPreview');
+    expect(wrapper.text()).toContain('preview.low-sample');
+    expect(wrapper.text()).not.toContain('style.uncertainty');
+
+    await stage!.setValue('all');
+    await chapter!.setValue('0002');
+    expect(wrapper.text()).toContain('style.uncertainty');
+    expect(wrapper.text()).not.toContain('full.provider_failed');
+  });
 });
 
 function mountPanel(overrides: Record<string, unknown> = {}) {
@@ -157,11 +261,18 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       advancing: false,
       cancelling: false,
       approving: false,
+      pausing: false,
+      resuming: false,
+      retrying: false,
       reconciling: false,
       indeterminate: false,
       error: '',
       canStart: false,
       canAdvance: false,
+      canAdvanceFull: false,
+      canPause: false,
+      canResume: false,
+      canRetry: false,
       canCancel: false,
       canApprove: false,
       needsReconcile: false,

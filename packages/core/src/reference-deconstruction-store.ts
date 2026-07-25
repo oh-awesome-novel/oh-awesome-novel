@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  link,
   lstat,
   mkdir,
   readFile,
@@ -23,6 +24,7 @@ import { parse, stringify } from 'yaml';
 import {
   MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
   MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS,
+  MAX_REFERENCE_DECONSTRUCTION_TRANSPORT_RECEIPTS,
   MAX_REFERENCE_QUICK_PREVIEW_WINDOWS,
   REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
   REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
@@ -43,6 +45,7 @@ import type {
   ReferenceDeconstructionDiagnostics,
   ReferenceDeconstructionManifest,
   ReferenceDeconstructionRunStatus,
+  ReferenceDeconstructionStageId,
   ReferencePublishedDeconstructionStatus,
   ReferenceQuickPreview,
   ReferenceQuickPreviewSelection,
@@ -52,6 +55,36 @@ import type {
   ReferenceMetadata,
   ReferenceSourceManifest,
 } from './reference-work.js';
+import {
+  MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS,
+  collectReferenceAnalysisFindings,
+  createReferenceDeconstructionStageInputFingerprint,
+  createReferenceDeconstructionWorkPlan,
+  parseReferenceAggregateAnalysisResult,
+  parseReferenceChapterAnalysisResult,
+  parseReferenceStyleProfileResult,
+  resolveReferenceChapterWorkUnitWindow,
+} from './reference-deconstruction-full.js';
+import type {
+  ReferenceAggregateAnalysisResult,
+  ReferenceChapterAnalysisResult,
+  ReferenceChapterWorkUnitWindow,
+  ReferenceDeconstructionFinding,
+  ReferenceDeconstructionWorkPlan,
+  ReferenceDeconstructionWorkUnit,
+  ReferenceRollingContext,
+  ReferenceStyleProfileResult,
+} from './reference-deconstruction-full.js';
+import {
+  evaluateReferenceAnalysisCopyRisk,
+  evaluateReferenceDeconstructionAnalysisQuality,
+  parseReferenceDeconstructionAnalysisQualityReport,
+} from './reference-deconstruction-quality.js';
+import type {
+  ReferenceDeconstructionAnalysisOutput,
+  ReferenceDeconstructionAnalysisQualityReport,
+  ReferenceDeconstructionQualitySelectedAttempt,
+} from './reference-deconstruction-quality.js';
 
 export type ReferenceReadinessReason =
   | 'ready'
@@ -159,9 +192,92 @@ export interface ReferenceQuickPreviewEvidence {
 }
 
 export interface ReferenceQuickPreviewReservation {
+  kind: 'preview';
   id: string;
   idempotencyKey: string;
   startedAt: string;
+}
+
+export type ReferenceDeconstructionUnitStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'cancelled'
+  | 'stale';
+
+export type ReferenceDeconstructionAttemptStatus = Exclude<
+  ReferenceDeconstructionUnitStatus,
+  'queued'
+>;
+
+export interface ReferenceDeconstructionStoredUnit extends ReferenceDeconstructionWorkUnit {
+  status: ReferenceDeconstructionUnitStatus;
+  attemptIds: string[];
+  selectedAttemptId?: string;
+}
+
+export interface ReferenceDeconstructionAttemptSummary {
+  id: string;
+  unitId: string;
+  attemptNumber: number;
+  status: ReferenceDeconstructionAttemptStatus;
+  inputFingerprint: string;
+  predecessorOutputHashes: string[];
+  outputHash?: string;
+  startedAt: string;
+  completedAt?: string;
+  failure?: ReferenceDeconstructionRunFailure;
+}
+
+export interface ReferenceDeconstructionAnalysisQualitySummary {
+  status: 'notEvaluated' | 'passed' | 'failed';
+  coveragePercent: number;
+  blockingDiagnosticCount: number;
+  outputHashes: string[];
+}
+
+export interface ReferenceFullDeconstructionState {
+  plan: ReferenceDeconstructionWorkPlan;
+  units: ReferenceDeconstructionStoredUnit[];
+  attempts: ReferenceDeconstructionAttemptSummary[];
+  analysisQuality?: ReferenceDeconstructionAnalysisQualitySummary;
+}
+
+export interface ReferenceFullDeconstructionReservation {
+  kind: 'fullUnit';
+  id: string;
+  idempotencyKey: string;
+  unitId: string;
+  attemptId: string;
+  inputFingerprint: string;
+  startedAt: string;
+}
+
+export type ReferenceDeconstructionReservation =
+  | ReferenceQuickPreviewReservation
+  | ReferenceFullDeconstructionReservation;
+
+export type ReferenceFullDeconstructionOutput =
+  | ReferenceChapterAnalysisResult
+  | ReferenceAggregateAnalysisResult
+  | ReferenceStyleProfileResult
+  | ReferenceDeconstructionAnalysisQualityReport;
+
+export interface ReferenceFullDeconstructionExecution {
+  unit: ReferenceDeconstructionWorkUnit;
+  sourceWindows?: ReferenceChapterWorkUnitWindow[];
+  rollingContext?: ReferenceRollingContext;
+  verifiedSourceFindings?: ReferenceDeconstructionFinding[];
+  coveredUnitIds?: string[];
+  coveredChapterIds?: string[];
+}
+
+export interface ReferenceFullDeconstructionReservationResult
+  extends ReferenceDeconstructionMutationResult {
+  reservation?: ReferenceFullDeconstructionReservation;
+  execution?: ReferenceFullDeconstructionExecution;
 }
 
 export interface ReferenceDeconstructionRunFailure {
@@ -184,7 +300,8 @@ export interface ReferenceDeconstructionRun {
   preview?: ReferenceQuickPreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
-  activeReservation?: ReferenceQuickPreviewReservation;
+  full?: ReferenceFullDeconstructionState;
+  activeReservation?: ReferenceDeconstructionReservation;
   failure?: ReferenceDeconstructionRunFailure;
   createdAt: string;
   updatedAt: string;
@@ -207,10 +324,58 @@ export interface ReferenceDeconstructionRunTransport {
   preview?: ReferenceQuickPreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
+  receiptCount: number;
+  full?: ReferenceFullDeconstructionTransport;
   createdAt: string;
   updatedAt: string;
   fullApprovedAt?: string;
 }
+
+export interface ReferenceFullDeconstructionStageSummary {
+  stageId: Extract<
+    ReferenceDeconstructionStageId,
+    'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'qualityGate'
+  >;
+  status: 'notStarted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale';
+  plannedUnits: number;
+  completedUnits: number;
+  failedUnits: number;
+}
+
+export interface ReferenceFullDeconstructionTransport {
+  stages: ReferenceFullDeconstructionStageSummary[];
+  progress: {
+    plannedUnits: number;
+    completedUnits: number;
+    failedUnits: number;
+    completedChapters: number;
+    totalChapters: number;
+    percent: number;
+  };
+  nextUnit?: ReferenceDeconstructionUnitTransport;
+  currentUnit?: ReferenceDeconstructionUnitTransport;
+  failedUnit?: ReferenceDeconstructionUnitTransport;
+  recentUnits: ReferenceDeconstructionUnitTransport[];
+  recentAttempts: ReferenceDeconstructionAttemptTransport[];
+  analysisQuality?: ReferenceDeconstructionAnalysisQualitySummary;
+}
+
+export interface ReferenceDeconstructionUnitTransport {
+  id: string;
+  ordinal: number;
+  stageId: ReferenceDeconstructionWorkUnit['stageId'];
+  kind: ReferenceDeconstructionWorkUnit['kind'];
+  chapterId?: string;
+  chunkId?: string;
+  status: ReferenceDeconstructionUnitStatus;
+  attemptCount: number;
+  selectedAttemptId?: string;
+}
+
+export type ReferenceDeconstructionAttemptTransport = Omit<
+  ReferenceDeconstructionAttemptSummary,
+  'predecessorOutputHashes' | 'failure'
+>;
 
 export interface ReferenceDeconstructionRunRequest {
   version: typeof REFERENCE_DECONSTRUCTION_SCHEMA_VERSION;
@@ -290,23 +455,68 @@ export interface InterruptReferenceQuickPreviewInput {
   now?: string;
 }
 
+export interface CompleteReferenceFullDeconstructionUnitInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  baseRunRevision: number;
+  reservationId: string;
+  output: ReferenceFullDeconstructionOutput;
+  now?: string;
+}
+
+export interface FailReferenceFullDeconstructionUnitInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  baseRunRevision: number;
+  reservationId: string;
+  errorCode: string;
+  errorMessage: string;
+  now?: string;
+}
+
+export interface InterruptReferenceFullDeconstructionUnitInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  baseRunRevision: number;
+  reservationId?: string;
+  now?: string;
+}
+
+export interface RetryReferenceDeconstructionUnitInput
+  extends MutateReferenceDeconstructionRunInput {
+  unitId: string;
+}
+
 const ACTIVE_RUN_STATUSES: readonly ReferenceDeconstructionRunStatus[] = [
   'created',
   'previewRunning',
   'awaitingFullApproval',
   'fullApproved',
+  'fullRunning',
+  'paused',
+  'reviewReady',
+  'publishing',
+  'failed',
   'interrupted',
 ];
 const CANCELLABLE_RUN_STATUSES: readonly ReferenceDeconstructionRunStatus[] = [
   'created',
   'previewRunning',
   'awaitingFullApproval',
+  'fullApproved',
+  'fullRunning',
+  'paused',
+  'reviewReady',
+  'failed',
   'interrupted',
 ];
 const RUN_STATUS_VALUES: readonly ReferenceDeconstructionRunStatus[] = [
   ...ACTIVE_RUN_STATUSES,
   'cancelled',
-  'failed',
+  'completed',
   'stale',
 ];
 const lockTails = new Map<string, Promise<void>>();
@@ -523,6 +733,7 @@ export async function reserveReferenceQuickPreview(
       revision: run.revision + 1,
       status: 'previewRunning',
       activeReservation: {
+        kind: 'preview',
         id: reservationId,
         idempotencyKey: receipt.idempotencyKey,
         startedAt: now,
@@ -640,17 +851,541 @@ export async function interruptReferenceQuickPreview(
 export async function approveReferenceFullDeconstruction(
   input: MutateReferenceDeconstructionRunInput,
 ): Promise<ReferenceDeconstructionMutationResult> {
-  return mutateWithReceipt(
-    input,
-    'approve-full',
-    ['awaitingFullApproval'],
-    (run, _receipt, now) => ({
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const requestFingerprint = fingerprintMutation({
+      command: 'approve-full',
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+    });
+    const previousReceipt = run.mutationReceipts.find((candidate) =>
+      candidate.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (run.status !== 'awaitingFullApproval' || !run.preview) {
+      throw invalidTransition(run.status, 'fullApproved');
+    }
+    if (run.diagnostics.some((diagnostic) => diagnostic.blocking)) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference Quick Preview has blocking diagnostics and cannot be approved.',
+      );
+    }
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      return persistNewStaleMutation(
+        input,
+        run,
+        requestFingerprint,
+        drift,
+      );
+    }
+    assertReceiptCapacity(run);
+    const source = await readReferencePreviewSource(input.workspaceRoot, run.referenceId);
+    let plan: ReferenceDeconstructionWorkPlan;
+    try {
+      plan = createReferenceDeconstructionWorkPlan({
+        referenceId: run.referenceId,
+        sourceChecksumSha256: run.sourceChecksumSha256,
+        structureFingerprint: run.structureFingerprint,
+        sourceText: source.sourceText,
+        chapters: source.sourceManifest.detectedStructure.chapters,
+      });
+    } catch (error) {
+      throw validationFrom(error, 'Reference full work plan is invalid.');
+    }
+    const now = normalizeNow(input.now);
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus: 'fullApproved',
+    };
+    const full: ReferenceFullDeconstructionState = {
+      plan,
+      units: plan.units.map((unit) => ({
+        ...unit,
+        status: 'queued',
+        attemptIds: [],
+      })),
+      attempts: [],
+      analysisQuality: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
+    };
+    const next: ReferenceDeconstructionRun = {
       ...run,
-      revision: run.revision + 1,
+      revision,
       status: 'fullApproved',
+      full,
       fullApprovedAt: now,
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      failure: undefined,
       updatedAt: now,
+    };
+    await writeRunYamlAtomic(input.workspaceRoot, run.runId, 'work-plan.yaml', plan);
+    await writeRunState(input.workspaceRoot, next);
+    await writeRunDiagnostics(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false };
+  });
+}
+
+export async function reserveReferenceFullDeconstructionUnit(
+  input: MutateReferenceDeconstructionRunInput,
+): Promise<ReferenceFullDeconstructionReservationResult> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const requestFingerprint = fingerprintMutation({
+      command: 'advance-full',
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+    });
+    const previousReceipt = run.mutationReceipts.find((candidate) =>
+      candidate.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (!['fullApproved', 'fullRunning'].includes(run.status) || !run.full) {
+      throw invalidTransition(run.status, 'fullRunning');
+    }
+    if (run.activeReservation) throw reservationConflict();
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      return persistNewStaleMutation(input, run, requestFingerprint, drift);
+    }
+    assertReceiptCapacity(run);
+
+    const unit = run.full.units.find((candidate) =>
+      candidate.status === 'queued'
+      && candidate.predecessorUnitIds.every((predecessorId) => {
+        const predecessor = run.full!.units.find((item) => item.id === predecessorId);
+        return predecessor?.status === 'completed' && Boolean(predecessor.selectedAttemptId);
+      }));
+    if (!unit) {
+      throw new ReferenceDeconstructionConflictError(
+        'Reference full deconstruction has no ready work unit.',
+        'invalidTransition',
+      );
+    }
+
+    const predecessorAttempts = unit.predecessorUnitIds.map((predecessorId) =>
+      requireSelectedAttempt(run.full!, predecessorId));
+    const rollingContext = unit.kind === 'chapterChunk' && predecessorAttempts.length
+      ? await readRollingContextFromAttempt(
+          input.workspaceRoot,
+          run.runId,
+          predecessorAttempts.at(-1)!,
+        )
+      : undefined;
+    const predecessorOutputHashes = predecessorAttempts.map((attempt) =>
+      requireAttemptOutputHash(attempt));
+    const inputFingerprint = createReferenceDeconstructionStageInputFingerprint({
+      sourceChecksumSha256: run.sourceChecksumSha256,
+      structureFingerprint: run.structureFingerprint,
+      stageId: unit.stageId,
+      unitId: unit.id,
+      options: {
+        kind: unit.kind,
+        chapterId: unit.chapterId ?? null,
+        chunkId: unit.chunkId ?? null,
+      },
+      predecessorOutputHashes,
+      ...(rollingContext ? { rollingContextHash: rollingContext.checksumSha256 } : {}),
+    });
+    const execution = await prepareReferenceFullExecution(input.workspaceRoot, run, unit);
+    const attemptNumber = unit.attemptIds.length + 1;
+    const attemptId = `${unit.id}-attempt-${String(attemptNumber).padStart(4, '0')}`;
+    const now = await ensureReferenceAttemptInputManifest(
+      input.workspaceRoot,
+      run,
+      unit,
+      attemptId,
+      inputFingerprint,
+      predecessorOutputHashes,
+      normalizeNow(input.now),
+    );
+    const reservation: ReferenceFullDeconstructionReservation = {
+      kind: 'fullUnit',
+      id: `full-reservation-${run.revision + 1}-${randomUUID()}`,
+      idempotencyKey,
+      unitId: unit.id,
+      attemptId,
+      inputFingerprint,
+      startedAt: now,
+    };
+    const attempt: ReferenceDeconstructionAttemptSummary = {
+      id: attemptId,
+      unitId: unit.id,
+      attemptNumber,
+      status: 'running',
+      inputFingerprint,
+      predecessorOutputHashes,
+      startedAt: now,
+    };
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus: 'fullRunning',
+    };
+    const full: ReferenceFullDeconstructionState = {
+      ...run.full,
+      units: run.full.units.map((candidate) => candidate.id === unit.id
+        ? {
+            ...candidate,
+            status: 'running',
+            attemptIds: [...candidate.attemptIds, attemptId],
+          }
+        : candidate),
+      attempts: [...run.full.attempts, attempt],
+    };
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      revision,
+      status: 'fullRunning',
+      full,
+      activeReservation: reservation,
+      failure: undefined,
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      updatedAt: now,
+    };
+    await writeRunState(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false, reservation, execution };
+  });
+}
+
+export async function completeReferenceFullDeconstructionUnit(
+  input: CompleteReferenceFullDeconstructionUnitInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    assertRevision(run, input.baseRunRevision);
+    const reservation = assertFullReservation(run, input.reservationId);
+    const full = run.full!;
+    const unit = requireStoredUnit(full, reservation.unitId);
+    const attempt = requireAttempt(full, reservation.attemptId);
+    if (attempt.status !== 'running' || unit.status !== 'running') {
+      throw reservationConflict();
+    }
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      return persistStaleRun(
+        input.workspaceRoot,
+        run,
+        normalizeNow(input.now),
+        drift,
+        reservation.idempotencyKey,
+        false,
+      );
+    }
+    let output: ReferenceFullDeconstructionOutput;
+    try {
+      output = await parseStoredFullOutput(
+        input.workspaceRoot,
+        run,
+        unit,
+        input.output,
+        createStoredOutputValidationContext(),
+      );
+    } catch (error) {
+      const now = normalizeNow(input.now);
+      return settleFullAttemptFailure(
+        input.workspaceRoot,
+        run,
+        unit,
+        attempt,
+        reservation,
+        {
+          code: 'invalid_output',
+          message: boundedText(
+            sanitizeErrorMessage(error),
+            'invalid output message',
+            1_000,
+          ),
+          failedAt: now,
+        },
+        now,
+      );
+    }
+    const outputHash = sha256(stableJson(output));
+    const now = normalizeNow(input.now);
+    try {
+      await writeReferenceAttemptYaml(
+        input.workspaceRoot,
+        run.runId,
+        unit,
+        attempt.id,
+        'findings.yaml',
+        output,
+      );
+      await writeReferenceAttemptYaml(
+        input.workspaceRoot,
+        run.runId,
+        unit,
+        attempt.id,
+        'receipt.yaml',
+        {
+          version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+          runId: run.runId,
+          unitId: unit.id,
+          attemptId: attempt.id,
+          status: 'completed',
+          inputFingerprint: attempt.inputFingerprint,
+          outputHash,
+          completedAt: now,
+        },
+      );
+    } catch (error) {
+      return settleFullAttemptFailure(
+        input.workspaceRoot,
+        run,
+        unit,
+        attempt,
+        reservation,
+        {
+          code: 'artifact_conflict',
+          message: boundedText(
+            sanitizeErrorMessage(error),
+            'attempt artifact failure message',
+            1_000,
+          ),
+          failedAt: now,
+        },
+        now,
+      );
+    }
+    const qualityReport = unit.kind === 'analysisQuality'
+      ? output as ReferenceDeconstructionAnalysisQualityReport
+      : undefined;
+    const quality = qualityReport
+      ? {
+          status: qualityReport.status,
+          coveragePercent: qualityReport.coverage.percent,
+          blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
+            item.blocking).length,
+          outputHashes: [...qualityReport.outputHashes],
+        } satisfies ReferenceDeconstructionAnalysisQualitySummary
+      : full.analysisQuality;
+    const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
+      ? quality?.status === 'passed' ? 'reviewReady' : 'failed'
+      : 'fullRunning';
+    const nextFull: ReferenceFullDeconstructionState = {
+      ...full,
+      units: full.units.map((candidate) => candidate.id === unit.id
+        ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
+        : candidate),
+      attempts: full.attempts.map((candidate) => candidate.id === attempt.id
+        ? { ...candidate, status: 'completed', outputHash, completedAt: now }
+        : candidate),
+      ...(quality ? { analysisQuality: quality } : {}),
+    };
+    const diagnostics = qualityReport
+      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
+      : run.diagnostics;
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      status: resultStatus,
+      full: nextFull,
+      diagnostics,
+      mutationReceipts: updateReceiptStatus(
+        run.mutationReceipts,
+        reservation.idempotencyKey,
+        run.revision,
+        resultStatus,
+      ),
+      activeReservation: undefined,
+      ...(resultStatus === 'failed'
+        ? {
+            failure: {
+              code: 'analysis_quality_failed',
+              message: 'Reference analysis quality gate failed.',
+              failedAt: now,
+            },
+          }
+        : { failure: undefined }),
+      updatedAt: now,
+    };
+    await writeRunState(input.workspaceRoot, next);
+    await writeRunDiagnostics(input.workspaceRoot, next);
+    return next;
+  });
+}
+
+export async function failReferenceFullDeconstructionUnit(
+  input: FailReferenceFullDeconstructionUnitInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    assertRevision(run, input.baseRunRevision);
+    const reservation = assertFullReservation(run, input.reservationId);
+    const full = run.full!;
+    const unit = requireStoredUnit(full, reservation.unitId);
+    const attempt = requireAttempt(full, reservation.attemptId);
+    const now = normalizeNow(input.now);
+    const failure: ReferenceDeconstructionRunFailure = {
+      code: assertCode(input.errorCode, 'errorCode'),
+      message: boundedText(input.errorMessage, 'errorMessage', 1_000),
+      failedAt: now,
+    };
+    return settleFullAttemptFailure(
+      input.workspaceRoot,
+      run,
+      unit,
+      attempt,
+      reservation,
+      failure,
+      now,
+    );
+  });
+}
+
+async function settleFullAttemptFailure(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+  attempt: ReferenceDeconstructionAttemptSummary,
+  reservation: ReferenceFullDeconstructionReservation,
+  failure: ReferenceDeconstructionRunFailure,
+  completedAt: string,
+): Promise<ReferenceDeconstructionRun> {
+  await writeReferenceAttemptYaml(
+    workspaceRoot,
+    run.runId,
+    unit,
+    attempt.id,
+    'receipt.yaml',
+    {
+      version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+      runId: run.runId,
+      unitId: unit.id,
+      attemptId: attempt.id,
+      status: 'failed',
+      inputFingerprint: attempt.inputFingerprint,
+      failure,
+      completedAt,
+    },
+  );
+  return adoptFailedFullAttempt(
+    workspaceRoot,
+    run,
+    unit,
+    attempt,
+    reservation,
+    failure,
+    completedAt,
+  );
+}
+
+export async function interruptReferenceFullDeconstructionUnit(
+  input: InterruptReferenceFullDeconstructionUnitInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    assertRevision(run, input.baseRunRevision);
+    if (
+      run.status !== 'fullRunning'
+      || run.activeReservation?.kind !== 'fullUnit'
+      || input.reservationId && run.activeReservation.id !== input.reservationId
+    ) {
+      throw reservationConflict();
+    }
+    return persistInterruptedFullRun(input.workspaceRoot, run, normalizeNow(input.now));
+  });
+}
+
+export async function pauseReferenceDeconstructionRun(
+  input: MutateReferenceDeconstructionRunInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  return mutateFullControl(input, 'pause', ['fullRunning'], 'paused', (run) => {
+    if (run.activeReservation) {
+      throw new ReferenceDeconstructionConflictError(
+        'A running provider unit must settle before the run can be paused.',
+        'reservationConflict',
+      );
+    }
+    return run;
+  });
+}
+
+export async function resumeReferenceDeconstructionRun(
+  input: MutateReferenceDeconstructionRunInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  return mutateFullControl(
+    input,
+    'resume',
+    ['paused', 'interrupted'],
+    'fullRunning',
+    (run) => ({
+      ...run,
+      full: run.full
+        ? {
+            ...run.full,
+            units: run.full.units.map((unit) => unit.status === 'interrupted'
+              ? { ...unit, status: 'queued' }
+              : unit),
+          }
+        : undefined,
     }),
+  );
+}
+
+export async function retryReferenceDeconstructionUnit(
+  input: RetryReferenceDeconstructionUnitInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  const unitId = assertSafeIdentifier(input.unitId, 'unitId');
+  return mutateFullControl(
+    input,
+    'retry',
+    ['failed', 'fullRunning', 'paused', 'interrupted'],
+    'fullRunning',
+    (run) => {
+      if (!run.full || run.activeReservation) throw reservationConflict();
+      const selected = requireStoredUnit(run.full, unitId);
+      if (!['failed', 'completed', 'interrupted'].includes(selected.status)) {
+        throw new ReferenceDeconstructionConflictError(
+          `Reference unit ${unitId} is not retryable from ${selected.status}.`,
+          'invalidTransition',
+        );
+      }
+      const invalidated = collectDependentUnitIds(run.full, unitId);
+      return {
+        ...run,
+        full: {
+          ...run.full,
+          units: run.full.units.map((unit) => invalidated.has(unit.id)
+            ? { ...unit, status: 'queued', selectedAttemptId: undefined }
+            : unit),
+          analysisQuality: {
+            status: 'notEvaluated',
+            coveragePercent: 0,
+            blockingDiagnosticCount: 0,
+            outputHashes: [],
+          },
+        },
+        diagnostics: run.diagnostics.filter((diagnostic) =>
+          !diagnostic.code.startsWith('quality.')
+          && diagnostic.stageId !== 'qualityGate'
+          && (!diagnostic.unitId || !invalidated.has(diagnostic.unitId))),
+      };
+    },
+    { unitId },
   );
 }
 
@@ -661,14 +1396,33 @@ export async function cancelReferenceDeconstructionRun(
     input,
     'cancel',
     CANCELLABLE_RUN_STATUSES,
-    (run, _receipt, now) => ({
-      ...run,
-      revision: run.revision + 1,
-      status: 'cancelled',
-      activeReservation: undefined,
-      cancelledAt: now,
-      updatedAt: now,
-    }),
+    (run, _receipt, now) => {
+      const reservation = run.activeReservation;
+      return {
+        ...run,
+        revision: run.revision + 1,
+        status: 'cancelled',
+        ...(run.full
+          ? {
+              full: {
+                ...run.full,
+                units: run.full.units.map((unit) =>
+                  reservation?.kind === 'fullUnit' && unit.id === reservation.unitId
+                    ? { ...unit, status: 'cancelled' as const }
+                    : unit),
+                attempts: run.full.attempts.map((attempt) =>
+                  reservation?.kind === 'fullUnit' && attempt.id === reservation.attemptId
+                    ? { ...attempt, status: 'cancelled' as const, completedAt: now }
+                    : attempt),
+              },
+            }
+          : {}),
+        activeReservation: undefined,
+        failure: undefined,
+        cancelledAt: now,
+        updatedAt: now,
+      };
+    },
   );
 }
 
@@ -699,9 +1453,230 @@ export async function reconcileReferenceDeconstructionRun(
         );
       }
     }
-    if (run.status !== 'previewRunning') return run;
-    return persistInterruptedRun(workspaceRoot, run, normalizeNow(now));
+    if (run.status === 'previewRunning') {
+      return persistInterruptedRun(workspaceRoot, run, normalizeNow(now));
+    }
+    if (run.status === 'fullRunning' && run.activeReservation?.kind === 'fullUnit') {
+      const adopted = await tryAdoptTerminalFullAttempt(
+        workspaceRoot,
+        run,
+        normalizeNow(now),
+      );
+      if (adopted) return adopted;
+      return persistInterruptedFullRun(workspaceRoot, run, normalizeNow(now));
+    }
+    return run;
   });
+}
+
+async function tryAdoptTerminalFullAttempt(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  now: string,
+): Promise<ReferenceDeconstructionRun | undefined> {
+  if (!run.full || run.activeReservation?.kind !== 'fullUnit') return undefined;
+  const reservation = run.activeReservation;
+  const unit = requireStoredUnit(run.full, reservation.unitId);
+  const attempt = requireAttempt(run.full, reservation.attemptId);
+  let receiptValue: unknown;
+  try {
+    const receiptPath = await resolveReferenceDeconstructionAttemptArtifactPath(
+      workspaceRoot,
+      run.runId,
+      unit.stageId,
+      attempt.id,
+      'receipt.yaml',
+      { requireExistingArtifact: true },
+    );
+    receiptValue = await readYamlOrValidation(
+      receiptPath,
+      'Reference attempt receipt is invalid.',
+    );
+  } catch (error) {
+    if (error instanceof ReferenceDeconstructionNotFoundError) return undefined;
+    return undefined;
+  }
+  const receipt = isRecord(receiptValue) ? receiptValue : undefined;
+  if (!receipt) return undefined;
+  try {
+    if (
+      receipt.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION
+      || receipt.runId !== run.runId
+      || receipt.unitId !== unit.id
+      || receipt.attemptId !== attempt.id
+      || receipt.inputFingerprint !== reservation.inputFingerprint
+      || receipt.inputFingerprint !== attempt.inputFingerprint
+    ) return undefined;
+    if (receipt.status === 'failed') {
+      assertOnlyKnownFields(receipt, [
+        'version',
+        'runId',
+        'unitId',
+        'attemptId',
+        'status',
+        'inputFingerprint',
+        'failure',
+        'completedAt',
+      ]);
+      const failure = assertStoredFailure(receipt.failure);
+      const completedAt = assertIsoDate(receipt.completedAt, 'attempt receipt completedAt');
+      if (failure.failedAt !== completedAt) return undefined;
+      return adoptFailedFullAttempt(
+        workspaceRoot,
+        run,
+        unit,
+        attempt,
+        reservation,
+        failure,
+        completedAt,
+      );
+    }
+    assertOnlyKnownFields(receipt, [
+      'version',
+      'runId',
+      'unitId',
+      'attemptId',
+      'status',
+      'inputFingerprint',
+      'outputHash',
+      'completedAt',
+    ]);
+    if (receipt.status !== 'completed') return undefined;
+    const outputHash = assertSha256(receipt.outputHash, 'attempt receipt outputHash');
+    const completedAt = assertIsoDate(receipt.completedAt, 'attempt receipt completedAt');
+    const findingsPath = await resolveReferenceDeconstructionAttemptArtifactPath(
+      workspaceRoot,
+      run.runId,
+      unit.stageId,
+      attempt.id,
+      'findings.yaml',
+      { requireExistingArtifact: true },
+    );
+    const storedOutput = await readYamlOrValidation(
+      findingsPath,
+      'Reference attempt findings are invalid.',
+    );
+    if (sha256(stableJson(storedOutput)) !== outputHash) return undefined;
+    const output = await parseStoredFullOutput(
+      workspaceRoot,
+      run,
+      unit,
+      storedOutput,
+      createStoredOutputValidationContext(),
+    );
+    const qualityReport = unit.kind === 'analysisQuality'
+      ? output as ReferenceDeconstructionAnalysisQualityReport
+      : undefined;
+    const quality = qualityReport
+      ? {
+          status: qualityReport.status,
+          coveragePercent: qualityReport.coverage.percent,
+          blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
+            item.blocking).length,
+          outputHashes: [...qualityReport.outputHashes],
+        } satisfies ReferenceDeconstructionAnalysisQualitySummary
+      : run.full.analysisQuality;
+    const diagnostics = qualityReport
+      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
+      : run.diagnostics;
+    const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
+      ? quality?.status === 'passed' ? 'reviewReady' : 'failed'
+      : 'fullRunning';
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      status: resultStatus,
+      full: {
+        ...run.full,
+        units: run.full.units.map((candidate) => candidate.id === unit.id
+          ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
+          : candidate),
+        attempts: run.full.attempts.map((candidate) => candidate.id === attempt.id
+          ? { ...candidate, status: 'completed', outputHash, completedAt }
+          : candidate),
+        ...(quality ? { analysisQuality: quality } : {}),
+      },
+      diagnostics,
+      mutationReceipts: updateReceiptStatus(
+        run.mutationReceipts,
+        reservation.idempotencyKey,
+        run.revision,
+        resultStatus,
+      ),
+      activeReservation: undefined,
+      ...(resultStatus === 'failed'
+        ? {
+            failure: {
+              code: 'analysis_quality_failed',
+              message: 'Reference analysis quality gate failed.',
+              failedAt: now,
+            },
+          }
+        : { failure: undefined }),
+      updatedAt: now,
+    };
+    await writeRunState(workspaceRoot, next);
+    await writeRunDiagnostics(workspaceRoot, next);
+    return next;
+  } catch {
+    return undefined;
+  }
+}
+
+async function adoptFailedFullAttempt(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+  attempt: ReferenceDeconstructionAttemptSummary,
+  reservation: ReferenceFullDeconstructionReservation,
+  failure: ReferenceDeconstructionRunFailure,
+  completedAt: string,
+): Promise<ReferenceDeconstructionRun> {
+  const diagnostic = normalizeStoreDiagnostic({
+    id: `full-unit-failed-${unit.id}-${attempt.attemptNumber}`,
+    code: `full.${failure.code}`,
+    severity: 'error',
+    blocking: true,
+    message: failure.message,
+    evidenceRefs: [],
+    stageId: unit.stageId,
+    unitId: unit.id,
+    attemptId: attempt.id,
+  });
+  const diagnostics = appendLifecycleDiagnostic(run.diagnostics, diagnostic);
+  const next: ReferenceDeconstructionRun = {
+    ...run,
+    status: 'failed',
+    full: {
+      ...run.full!,
+      units: run.full!.units.map((candidate) => candidate.id === unit.id
+        ? { ...candidate, status: 'failed' }
+        : candidate),
+      attempts: run.full!.attempts.map((candidate) => candidate.id === attempt.id
+        ? { ...candidate, status: 'failed', completedAt, failure }
+        : candidate),
+      analysisQuality: {
+        ...(run.full!.analysisQuality ?? {
+          status: 'notEvaluated',
+          coveragePercent: 0,
+          outputHashes: [],
+        }),
+        blockingDiagnosticCount: diagnostics.filter((item) => item.blocking).length,
+      },
+    },
+    diagnostics,
+    mutationReceipts: updateReceiptStatus(
+      run.mutationReceipts,
+      reservation.idempotencyKey,
+      run.revision,
+      'failed',
+    ),
+    activeReservation: undefined,
+    failure,
+    updatedAt: completedAt,
+  };
+  await writeRunState(workspaceRoot, next);
+  await writeRunDiagnostics(workspaceRoot, next);
+  return next;
 }
 
 export async function listReferenceDeconstructionRuns(
@@ -731,10 +1706,110 @@ export function projectReferenceDeconstructionRunForTransport(
     })),
     ...(run.preview ? { preview: run.preview } : {}),
     diagnostics: [...run.diagnostics],
-    mutationReceipts: [...run.mutationReceipts],
+    mutationReceipts: run.mutationReceipts.slice(
+      -MAX_REFERENCE_DECONSTRUCTION_TRANSPORT_RECEIPTS,
+    ),
+    receiptCount: run.mutationReceipts.length,
+    ...(run.full ? { full: projectReferenceFullDeconstruction(run.full) } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     ...(run.fullApprovedAt ? { fullApprovedAt: run.fullApprovedAt } : {}),
+  };
+}
+
+function projectReferenceFullDeconstruction(
+  full: ReferenceFullDeconstructionState,
+): ReferenceFullDeconstructionTransport {
+  const stageIds: ReferenceFullDeconstructionStageSummary['stageId'][] = [
+    'chapterAnalysis',
+    'aggregateAnalysis',
+    'styleProfile',
+    'qualityGate',
+  ];
+  const stages = stageIds.map((stageId): ReferenceFullDeconstructionStageSummary => {
+    const units = full.units.filter((unit) => unit.stageId === stageId);
+    const completedUnits = units.filter((unit) => unit.status === 'completed').length;
+    const failedUnits = units.filter((unit) =>
+      unit.status === 'failed' || unit.status === 'interrupted').length;
+    const status: ReferenceFullDeconstructionStageSummary['status'] = units.every((unit) =>
+      unit.status === 'completed')
+      ? 'completed'
+      : units.some((unit) => unit.status === 'stale')
+        ? 'stale'
+        : units.some((unit) => unit.status === 'cancelled')
+          ? 'cancelled'
+          : failedUnits
+            ? 'failed'
+            : units.some((unit) => unit.status === 'running' || unit.status === 'completed')
+              ? 'running'
+              : 'queued';
+    return {
+      stageId,
+      status,
+      plannedUnits: units.length,
+      completedUnits,
+      failedUnits,
+    };
+  });
+  const completedUnits = full.units.filter((unit) => unit.status === 'completed').length;
+  const failedUnits = full.units.filter((unit) =>
+    unit.status === 'failed' || unit.status === 'interrupted').length;
+  const completedChapters = new Set(full.units.filter((unit) =>
+    unit.kind === 'chapterChunk'
+    && unit.isLastChunkInChapter
+    && unit.status === 'completed')
+    .map((unit) => unit.chapterId)).size;
+  const ready = (unit: ReferenceDeconstructionStoredUnit) =>
+    unit.status === 'queued'
+    && unit.predecessorUnitIds.every((predecessorId) => {
+      const predecessor = full.units.find((candidate) => candidate.id === predecessorId);
+      return predecessor?.status === 'completed' && Boolean(predecessor.selectedAttemptId);
+    });
+  const nextUnit = full.units.find(ready);
+  const currentUnit = full.units.find((unit) => unit.status === 'running');
+  const failedUnit = full.units.find((unit) =>
+    unit.status === 'failed' || unit.status === 'interrupted');
+  return {
+    stages,
+    progress: {
+      plannedUnits: full.units.length,
+      completedUnits,
+      failedUnits,
+      completedChapters,
+      totalChapters: full.plan.chapterIds.length,
+      percent: Math.round((completedUnits / full.units.length) * 100),
+    },
+    ...(nextUnit ? { nextUnit: projectReferenceFullUnit(nextUnit) } : {}),
+    ...(currentUnit ? { currentUnit: projectReferenceFullUnit(currentUnit) } : {}),
+    ...(failedUnit ? { failedUnit: projectReferenceFullUnit(failedUnit) } : {}),
+    recentUnits: full.units.slice(-64).map(projectReferenceFullUnit),
+    recentAttempts: full.attempts.slice(-64).map((attempt) => ({
+      id: attempt.id,
+      unitId: attempt.unitId,
+      attemptNumber: attempt.attemptNumber,
+      status: attempt.status,
+      inputFingerprint: attempt.inputFingerprint,
+      ...(attempt.outputHash ? { outputHash: attempt.outputHash } : {}),
+      startedAt: attempt.startedAt,
+      ...(attempt.completedAt ? { completedAt: attempt.completedAt } : {}),
+    })),
+    ...(full.analysisQuality ? { analysisQuality: { ...full.analysisQuality } } : {}),
+  };
+}
+
+function projectReferenceFullUnit(
+  unit: ReferenceDeconstructionStoredUnit,
+): ReferenceDeconstructionUnitTransport {
+  return {
+    id: unit.id,
+    ordinal: unit.ordinal,
+    stageId: unit.stageId,
+    kind: unit.kind,
+    ...(unit.chapterId ? { chapterId: unit.chapterId } : {}),
+    ...(unit.chunkId ? { chunkId: unit.chunkId } : {}),
+    status: unit.status,
+    attemptCount: unit.attemptIds.length,
+    ...(unit.selectedAttemptId ? { selectedAttemptId: unit.selectedAttemptId } : {}),
   };
 }
 
@@ -1125,6 +2200,97 @@ export function assertReferenceSourceManifest(value: unknown): ReferenceSourceMa
   };
 }
 
+async function mutateFullControl(
+  input: MutateReferenceDeconstructionRunInput,
+  command: 'pause' | 'resume' | 'retry',
+  allowedStatuses: readonly ReferenceDeconstructionRunStatus[],
+  resultStatus: ReferenceDeconstructionRunStatus,
+  transform: (run: ReferenceDeconstructionRun) => ReferenceDeconstructionRun = (run) => run,
+  fingerprintExtra: Record<string, unknown> = {},
+): Promise<ReferenceDeconstructionMutationResult> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const requestFingerprint = fingerprintMutation({
+      command,
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+      ...fingerprintExtra,
+    });
+    const previousReceipt = run.mutationReceipts.find((candidate) =>
+      candidate.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (!run.full || !allowedStatuses.includes(run.status)) {
+      throw invalidTransition(run.status, resultStatus);
+    }
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      return persistNewStaleMutation(input, run, requestFingerprint, drift);
+    }
+    assertReceiptCapacity(run);
+    const transformed = transform(run);
+    const now = normalizeNow(input.now);
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus,
+    };
+    const next: ReferenceDeconstructionRun = {
+      ...transformed,
+      revision,
+      status: resultStatus,
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      activeReservation: undefined,
+      failure: undefined,
+      updatedAt: now,
+    };
+    await writeRunState(input.workspaceRoot, next);
+    await writeRunDiagnostics(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false };
+  });
+}
+
+async function persistNewStaleMutation(
+  input: MutateReferenceDeconstructionRunInput,
+  run: ReferenceDeconstructionRun,
+  requestFingerprint: string,
+  message: string,
+): Promise<ReferenceDeconstructionMutationResult> {
+  assertReceiptCapacity(run);
+  const receipt: ReferenceDeconstructionMutationReceipt = {
+    idempotencyKey: assertIdempotencyKey(input.idempotencyKey),
+    requestFingerprint,
+    resultingRunRevision: run.revision + 1,
+    resultStatus: 'stale',
+  };
+  const stale = await persistStaleRun(
+    input.workspaceRoot,
+    { ...run, mutationReceipts: [...run.mutationReceipts, receipt] },
+    normalizeNow(input.now),
+    message,
+    receipt.idempotencyKey,
+    true,
+  );
+  return { run: stale, receipt, replayed: false };
+}
+
+function assertReceiptCapacity(run: ReferenceDeconstructionRun): void {
+  if (run.mutationReceipts.length >= MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference mutation receipt limit reached.',
+    );
+  }
+}
+
 async function mutateWithReceipt(
   input: MutateReferenceDeconstructionRunInput,
   command: 'advance' | 'approve-full' | 'cancel',
@@ -1275,11 +2441,12 @@ async function persistStaleRun(
     evidenceRefs: [],
     stageId: 'quickPreview',
   };
+  const diagnostics = appendLifecycleDiagnostic(run.diagnostics, diagnostic);
   const next: ReferenceDeconstructionRun = {
     ...run,
     revision,
     status: 'stale',
-    diagnostics: appendLifecycleDiagnostic(run.diagnostics, diagnostic),
+    diagnostics,
     ...(run.preview
       ? {
           preview: {
@@ -1294,11 +2461,35 @@ async function persistStaleRun(
       revision,
       'stale',
     ),
+    ...(run.full
+      ? {
+          full: {
+            ...run.full,
+            units: run.full.units.map((unit) =>
+              run.activeReservation?.kind === 'fullUnit'
+                && unit.id === run.activeReservation.unitId
+                ? { ...unit, status: 'stale' as const }
+                : unit),
+            attempts: run.full.attempts.map((attempt) =>
+              run.activeReservation?.kind === 'fullUnit'
+                && attempt.id === run.activeReservation.attemptId
+                ? { ...attempt, status: 'stale' as const, completedAt: now }
+                : attempt),
+            analysisQuality: {
+              ...(run.full.analysisQuality ?? {
+                status: 'notEvaluated',
+                coveragePercent: 0,
+                outputHashes: [],
+              }),
+              blockingDiagnosticCount: diagnostics.filter((item) => item.blocking).length,
+            },
+          },
+        }
+      : {}),
     activeReservation: undefined,
-    fullApprovedAt: undefined,
+    failure: undefined,
     updatedAt: now,
   };
-  delete next.fullApprovedAt;
   await writeRunState(workspaceRoot, next);
   await writeRunDiagnostics(workspaceRoot, next);
   return next;
@@ -1331,6 +2522,53 @@ async function persistInterruptedRun(
           'interrupted',
         )
       : run.mutationReceipts,
+    activeReservation: undefined,
+    updatedAt: now,
+  };
+  await writeRunState(workspaceRoot, next);
+  await writeRunDiagnostics(workspaceRoot, next);
+  return next;
+}
+
+async function persistInterruptedFullRun(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  now: string,
+): Promise<ReferenceDeconstructionRun> {
+  if (!run.full || run.activeReservation?.kind !== 'fullUnit') {
+    throw reservationConflict();
+  }
+  const reservation = run.activeReservation;
+  const diagnostic = normalizeStoreDiagnostic({
+    id: `full-interrupted-${reservation.unitId}-${run.revision}`,
+    code: 'full.interrupted',
+    severity: 'warning',
+    blocking: false,
+    message: 'The full-deconstruction unit was interrupted and will not resume automatically.',
+    evidenceRefs: [],
+    stageId: requireStoredUnit(run.full, reservation.unitId).stageId,
+    unitId: reservation.unitId,
+    attemptId: reservation.attemptId,
+  });
+  const next: ReferenceDeconstructionRun = {
+    ...run,
+    status: 'interrupted',
+    full: {
+      ...run.full,
+      units: run.full.units.map((unit) => unit.id === reservation.unitId
+        ? { ...unit, status: 'interrupted' }
+        : unit),
+      attempts: run.full.attempts.map((attempt) => attempt.id === reservation.attemptId
+        ? { ...attempt, status: 'interrupted', completedAt: now }
+        : attempt),
+    },
+    diagnostics: appendLifecycleDiagnostic(run.diagnostics, diagnostic),
+    mutationReceipts: updateReceiptStatus(
+      run.mutationReceipts,
+      reservation.idempotencyKey,
+      run.revision,
+      'interrupted',
+    ),
     activeReservation: undefined,
     updatedAt: now,
   };
@@ -1372,13 +2610,508 @@ function appendLifecycleDiagnostic(
     : [...diagnostics.slice(0, MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS - 1), diagnostic];
 }
 
+function mergeRunDiagnostics(
+  current: readonly ReferenceDeconstructionDiagnostic[],
+  additions: readonly ReferenceDeconstructionDiagnostic[],
+): ReferenceDeconstructionDiagnostic[] {
+  const byId = new Map(current.map((diagnostic) => [diagnostic.id, diagnostic]));
+  for (const diagnostic of additions) byId.set(diagnostic.id, normalizeStoreDiagnostic(diagnostic));
+  const values = [...byId.values()];
+  if (values.length <= MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS) return values;
+  return [
+    ...values.slice(0, MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS - 1),
+    normalizeStoreDiagnostic({
+      id: 'quality-diagnostics-overflow',
+      code: 'quality.diagnostics.overflow',
+      severity: 'error',
+      blocking: true,
+      message: 'Reference analysis produced more diagnostics than can be reviewed safely.',
+      evidenceRefs: [],
+      stageId: 'qualityGate',
+    }),
+  ];
+}
+
+function requireStoredUnit(
+  full: ReferenceFullDeconstructionState,
+  unitId: string,
+): ReferenceDeconstructionStoredUnit {
+  const unit = full.units.find((candidate) => candidate.id === unitId);
+  if (!unit) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference full work unit is missing: ${unitId}.`,
+    );
+  }
+  return unit;
+}
+
+function requireAttempt(
+  full: ReferenceFullDeconstructionState,
+  attemptId: string,
+): ReferenceDeconstructionAttemptSummary {
+  const attempt = full.attempts.find((candidate) => candidate.id === attemptId);
+  if (!attempt) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference full attempt is missing: ${attemptId}.`,
+    );
+  }
+  return attempt;
+}
+
+function requireSelectedAttempt(
+  full: ReferenceFullDeconstructionState,
+  unitId: string,
+): ReferenceDeconstructionAttemptSummary {
+  const unit = requireStoredUnit(full, unitId);
+  if (!unit.selectedAttemptId) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference predecessor unit is not selected: ${unitId}.`,
+    );
+  }
+  const attempt = requireAttempt(full, unit.selectedAttemptId);
+  if (attempt.status !== 'completed' || !attempt.outputHash) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference predecessor attempt is incomplete: ${attempt.id}.`,
+    );
+  }
+  return attempt;
+}
+
+function requireAttemptOutputHash(
+  attempt: ReferenceDeconstructionAttemptSummary,
+): string {
+  if (!attempt.outputHash) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference attempt output hash is missing: ${attempt.id}.`,
+    );
+  }
+  return assertSha256(attempt.outputHash, 'attempt outputHash');
+}
+
+function assertFullReservation(
+  run: ReferenceDeconstructionRun,
+  reservationId: string,
+): ReferenceFullDeconstructionReservation {
+  if (
+    run.status !== 'fullRunning'
+    || !run.full
+    || run.activeReservation?.kind !== 'fullUnit'
+    || run.activeReservation.id !== reservationId
+  ) {
+    throw reservationConflict();
+  }
+  return run.activeReservation;
+}
+
+function assertFullOutputMatchesUnit(
+  output: ReferenceFullDeconstructionOutput,
+  unit: ReferenceDeconstructionStoredUnit,
+): void {
+  if (!isRecord(output)) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full output must be an object.',
+    );
+  }
+  if (unit.kind === 'analysisQuality') {
+    const report = output as ReferenceDeconstructionAnalysisQualityReport;
+    if (
+      report.planId !== undefined
+      && report.planId
+      && report.status !== undefined
+      && report.coverage !== undefined
+    ) return;
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis quality output is invalid.',
+    );
+  }
+  const candidate = output as ReferenceDeconstructionAnalysisOutput;
+  if (candidate.unitId !== unit.id) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full output does not match its reserved work unit.',
+    );
+  }
+  const matchesKind = unit.kind === 'chapterChunk'
+    ? 'unitSummary' in candidate
+    : unit.kind === 'aggregate'
+      ? 'findings' in candidate && !('unitSummary' in candidate) && !('dimensions' in candidate)
+      : unit.kind === 'style'
+        ? 'dimensions' in candidate
+        : false;
+  if (!matchesKind) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full output kind does not match its reserved work unit.',
+    );
+  }
+}
+
+interface StoredOutputValidationContext {
+  outputsByAttemptId: Map<string, ReferenceFullDeconstructionOutput>;
+  validatingAttemptIds: Set<string>;
+  source?: ReferencePreviewSource;
+}
+
+function createStoredOutputValidationContext(): StoredOutputValidationContext {
+  return {
+    outputsByAttemptId: new Map(),
+    validatingAttemptIds: new Set(),
+  };
+}
+
+async function parseStoredFullOutput(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+  value: unknown,
+  context: StoredOutputValidationContext,
+): Promise<ReferenceFullDeconstructionOutput> {
+  assertFullOutputMatchesUnit(value as ReferenceFullDeconstructionOutput, unit);
+  if (unit.kind === 'chapterChunk') {
+    if (!unit.pointerId || !unit.pointer) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference chapter work unit pointer is missing.',
+      );
+    }
+    let output: ReferenceChapterAnalysisResult;
+    try {
+      output = parseReferenceChapterAnalysisResult(value, {
+        runId: run.runId,
+        unit,
+        allowedPointers: { [unit.pointerId]: unit.pointer },
+      });
+    } catch (error) {
+      throw validationFrom(error, 'Stored reference chapter analysis is invalid.');
+    }
+    const source = await readValidationSource(workspaceRoot, run, context);
+    const sourceWindow = resolveReferenceChapterWorkUnitWindow(source.sourceText, unit);
+    assertNoCopyRisk([output], [sourceWindow], [unit]);
+    return output;
+  }
+  if (unit.kind === 'aggregate' || unit.kind === 'style') {
+    const predecessorOutputs = await Promise.all(unit.predecessorUnitIds.map(
+      (predecessorUnitId) => readReferenceAttemptOutputFromRun(
+        workspaceRoot,
+        run,
+        requireSelectedAttempt(run.full!, predecessorUnitId),
+        context,
+      ),
+    ));
+    const verifiedSourceFindings = selectBoundedVerifiedFindings(
+      predecessorOutputs.map((output) =>
+        'dimensions' in output ? [] : collectReferenceAnalysisFindings(output)),
+    );
+    const verifiedFindings = Object.fromEntries(
+      verifiedSourceFindings.map((finding) => [finding.id, finding]),
+    );
+    const coveredUnitIds = uniqueStrings(predecessorOutputs.flatMap((output) =>
+      output.coveredUnitIds));
+    const coveredChapterIds = uniqueStrings(predecessorOutputs.flatMap((output) =>
+      output.coveredChapterIds));
+    try {
+      if (unit.kind === 'aggregate') {
+        const output = parseReferenceAggregateAnalysisResult(value, {
+          runId: run.runId,
+          unit,
+          verifiedFindings,
+          coveredUnitIds,
+          coveredChapterIds,
+        });
+        const source = await readValidationSource(workspaceRoot, run, context);
+        const coveredUnitSet = new Set(output.coveredUnitIds);
+        const sourceUnits = run.full!.units.filter((candidate) =>
+          candidate.kind === 'chapterChunk' && coveredUnitSet.has(candidate.id));
+        const sourceWindows = sourceUnits.map((candidate) =>
+          resolveReferenceChapterWorkUnitWindow(source.sourceText, candidate));
+        assertNoCopyRisk([output], sourceWindows, [unit]);
+        return output;
+      }
+      return parseReferenceStyleProfileResult(value, {
+        runId: run.runId,
+        unit,
+        verifiedFindings,
+        coveredUnitIds,
+        coveredChapterIds,
+      });
+    } catch (error) {
+      throw validationFrom(error, `Stored reference ${unit.kind} analysis is invalid.`);
+    }
+  }
+  let report: ReferenceDeconstructionAnalysisQualityReport;
+  try {
+    report = parseReferenceDeconstructionAnalysisQualityReport(value);
+  } catch (error) {
+    throw validationFrom(error, 'Stored reference analysis quality report is invalid.');
+  }
+  assertQualityReportMatchesRun(report, run);
+  return report;
+}
+
+async function readValidationSource(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  context: StoredOutputValidationContext,
+): Promise<ReferencePreviewSource> {
+  if (!context.source) {
+    context.source = await readReferencePreviewSource(workspaceRoot, run.referenceId);
+  }
+  if (
+    context.source.sourceManifest.checksumSha256 !== run.sourceChecksumSha256
+    || context.source.sourceManifest.structureFingerprint !== run.structureFingerprint
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference source identity changed while validating attempt output.',
+    );
+  }
+  return context.source;
+}
+
+function assertNoCopyRisk(
+  outputs: readonly ReferenceDeconstructionAnalysisOutput[],
+  sourceWindows: readonly ReferenceChapterWorkUnitWindow[],
+  units: readonly ReferenceDeconstructionWorkUnit[],
+): void {
+  const diagnostic = evaluateReferenceAnalysisCopyRisk({
+    outputs,
+    sourceWindows,
+    units,
+  }).find((candidate) => candidate.blocking);
+  if (diagnostic) {
+    throw new ReferenceDeconstructionValidationError(diagnostic.message);
+  }
+}
+
+function assertQualityReportMatchesRun(
+  report: ReferenceDeconstructionAnalysisQualityReport,
+  run: ReferenceDeconstructionRun,
+): void {
+  if (!run.full) {
+    throw new ReferenceDeconstructionValidationError('Reference full state is missing.');
+  }
+  const requiredUnits = run.full.units.filter((unit) => unit.kind !== 'analysisQuality');
+  const selectedAttempts = requiredUnits.map((unit) =>
+    requireSelectedAttempt(run.full!, unit.id));
+  if (
+    report.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION
+    || report.runId !== run.runId
+    || report.planId !== run.full.plan.id
+    || report.referenceId !== run.referenceId
+    || report.sourceChecksumSha256 !== run.sourceChecksumSha256
+    || report.coverage.plannedUnitCount !== requiredUnits.length
+    || report.coverage.checkedUnitCount !== report.checkedUnitIds.length
+    || stableJson(report.checkedUnitIds) !== stableJson(requiredUnits.map((unit) => unit.id))
+    || stableJson(report.selectedAttemptIds)
+      !== stableJson(selectedAttempts.map((attempt) => attempt.id))
+    || stableJson(report.outputHashes)
+      !== stableJson(selectedAttempts.map(requireAttemptOutputHash))
+    || report.status === 'passed'
+      && (
+        report.coverage.percent !== 100
+        || report.diagnostics.some((diagnostic) => diagnostic.blocking)
+      )
+    || report.status === 'failed'
+      && !report.diagnostics.some((diagnostic) => diagnostic.blocking)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis quality report does not match selected attempt closure.',
+    );
+  }
+  report.diagnostics.forEach((diagnostic) => normalizeStoreDiagnostic(diagnostic));
+  assertIsoDate(report.evaluatedAt, 'quality evaluatedAt');
+}
+
+function collectDependentUnitIds(
+  full: ReferenceFullDeconstructionState,
+  rootUnitId: string,
+): Set<string> {
+  const selected = new Set([rootUnitId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const unit of full.units) {
+      if (!selected.has(unit.id) && unit.predecessorUnitIds.some((id) => selected.has(id))) {
+        selected.add(unit.id);
+        changed = true;
+      }
+    }
+  }
+  return selected;
+}
+
+async function readRollingContextFromAttempt(
+  workspaceRoot: string,
+  runId: string,
+  attempt: ReferenceDeconstructionAttemptSummary,
+): Promise<ReferenceRollingContext | undefined> {
+  const output = await readReferenceAttemptOutput(workspaceRoot, runId, attempt);
+  return 'rollingContext' in output ? output.rollingContext : undefined;
+}
+
+async function prepareReferenceFullExecution(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+): Promise<ReferenceFullDeconstructionExecution> {
+  const full = run.full!;
+  if (unit.kind === 'chapterChunk') {
+    const source = await readReferencePreviewSource(workspaceRoot, run.referenceId);
+    const sourceWindow = resolveReferenceChapterWorkUnitWindow(source.sourceText, unit);
+    const predecessor = unit.predecessorUnitIds.at(-1);
+    const rollingContext = predecessor
+      ? await readRollingContextFromAttempt(
+          workspaceRoot,
+          run.runId,
+          requireSelectedAttempt(full, predecessor),
+        )
+      : undefined;
+    return {
+      unit,
+      sourceWindows: [sourceWindow],
+      ...(rollingContext ? { rollingContext } : {}),
+    };
+  }
+  if (unit.kind === 'aggregate' || unit.kind === 'style') {
+    const outputs = await Promise.all(unit.predecessorUnitIds.map((predecessorId) =>
+      readReferenceAttemptOutput(
+        workspaceRoot,
+        run.runId,
+        requireSelectedAttempt(full, predecessorId),
+      )));
+    const verifiedSourceFindings = selectBoundedVerifiedFindings(outputs.map((output) =>
+      'dimensions' in output ? [] : collectReferenceAnalysisFindings(output)));
+    const coveredUnitIds = uniqueStrings(outputs.flatMap((output) =>
+      'coveredUnitIds' in output ? output.coveredUnitIds : []));
+    const coveredChapterIds = uniqueStrings(outputs.flatMap((output) =>
+      'coveredChapterIds' in output ? output.coveredChapterIds : []));
+    return {
+      unit,
+      verifiedSourceFindings,
+      coveredUnitIds,
+      coveredChapterIds,
+    };
+  }
+  return { unit };
+}
+
+function selectBoundedVerifiedFindings(
+  groups: readonly (readonly ReferenceDeconstructionFinding[])[],
+): ReferenceDeconstructionFinding[] {
+  const maximumFindings = 160;
+  const maximumCharacters = 72_000;
+  const selected: ReferenceDeconstructionFinding[] = [];
+  let characters = 0;
+  const append = (finding: ReferenceDeconstructionFinding | undefined): boolean => {
+    if (!finding || selected.some((candidate) => candidate.id === finding.id)) return true;
+    const size = stableJson(finding).length;
+    if (selected.length >= maximumFindings || characters + size > maximumCharacters) {
+      return false;
+    }
+    selected.push(finding);
+    characters += size;
+    return true;
+  };
+  for (const group of groups) {
+    if (!append(group[0])) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference reduction input cannot include one verified finding per predecessor.',
+      );
+    }
+  }
+  const maximumGroupLength = Math.max(0, ...groups.map((group) => group.length));
+  for (let index = 1; index < maximumGroupLength; index += 1) {
+    for (const group of groups) {
+      if (!append(group[index])) return selected;
+    }
+  }
+  return selected;
+}
+
+export async function evaluateReservedReferenceFullDeconstructionQuality(
+  workspaceRoot: string,
+  referenceId: string,
+  runId: string,
+  reservationId: string,
+  evaluatedAt?: string,
+): Promise<ReferenceDeconstructionAnalysisQualityReport> {
+  const run = await readReferenceDeconstructionRun(workspaceRoot, referenceId, runId);
+  const reservation = assertFullReservation(run, reservationId);
+  const qualityUnit = requireStoredUnit(run.full!, reservation.unitId);
+  if (qualityUnit.kind !== 'analysisQuality') {
+    throw new ReferenceDeconstructionValidationError(
+      'Reserved work unit is not the analysis quality gate.',
+    );
+  }
+  const requiredUnits = run.full!.units.filter((unit) => unit.kind !== 'analysisQuality');
+  const selectedAttempts = await Promise.all(requiredUnits.map(async (unit) => {
+    const attempt = requireSelectedAttempt(run.full!, unit.id);
+    return {
+      unitId: unit.id,
+      attemptId: attempt.id,
+      status: attempt.status,
+      inputFingerprint: attempt.inputFingerprint,
+      expectedInputFingerprint: await recomputeAttemptInputFingerprint(
+        workspaceRoot,
+        run,
+        unit,
+      ),
+      predecessorOutputHashes: [...attempt.predecessorOutputHashes],
+      outputHash: requireAttemptOutputHash(attempt),
+    } satisfies ReferenceDeconstructionQualitySelectedAttempt;
+  }));
+  const outputs = await Promise.all(requiredUnits.map((unit) =>
+    readReferenceAttemptOutput(
+      workspaceRoot,
+      run.runId,
+      requireSelectedAttempt(run.full!, unit.id),
+    )));
+  const source = await readReferencePreviewSource(workspaceRoot, referenceId);
+  const sourceWindows = requiredUnits
+    .filter((unit) => unit.kind === 'chapterChunk')
+    .map((unit) => resolveReferenceChapterWorkUnitWindow(source.sourceText, unit));
+  return evaluateReferenceDeconstructionAnalysisQuality({
+    runId,
+    plan: run.full!.plan,
+    selectedAttempts,
+    outputs,
+    sourceWindows,
+    evaluatedAt,
+  });
+}
+
+async function recomputeAttemptInputFingerprint(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+): Promise<string> {
+  const predecessorAttempts = unit.predecessorUnitIds.map((unitId) =>
+    requireSelectedAttempt(run.full!, unitId));
+  const rollingContext = unit.kind === 'chapterChunk' && predecessorAttempts.length
+    ? await readRollingContextFromAttempt(
+        workspaceRoot,
+        run.runId,
+        predecessorAttempts.at(-1)!,
+      )
+    : undefined;
+  return createReferenceDeconstructionStageInputFingerprint({
+    sourceChecksumSha256: run.sourceChecksumSha256,
+    structureFingerprint: run.structureFingerprint,
+    stageId: unit.stageId,
+    unitId: unit.id,
+    options: {
+      kind: unit.kind,
+      chapterId: unit.chapterId ?? null,
+      chunkId: unit.chunkId ?? null,
+    },
+    predecessorOutputHashes: predecessorAttempts.map(requireAttemptOutputHash),
+    ...(rollingContext ? { rollingContextHash: rollingContext.checksumSha256 } : {}),
+  });
+}
+
 function assertReservation(
   run: ReferenceDeconstructionRun,
   reservationId: string,
 ): ReferenceQuickPreviewReservation {
   if (
     run.status !== 'previewRunning'
-    || !run.activeReservation
+    || run.activeReservation?.kind !== 'preview'
     || run.activeReservation.id !== reservationId
   ) {
     throw reservationConflict();
@@ -1624,7 +3357,92 @@ async function readRunState(
   if (run.preview) {
     await assertPreviewMatchesRun(workspaceRoot, run.preview, run, true);
   }
+  if (run.full) {
+    const planPath = await resolveReferenceDeconstructionRunArtifactPath(
+      workspaceRoot,
+      run.runId,
+      'work-plan.yaml',
+      { requireExistingArtifact: true },
+    );
+    const planArtifact = await readYamlOrValidation(
+      planPath,
+      'Reference full work plan artifact is invalid.',
+    );
+    if (stableJson(planArtifact) !== stableJson(run.full.plan)) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference full work plan artifact does not match authoritative run state.',
+      );
+    }
+    await assertSelectedFullAttemptArtifacts(workspaceRoot, run);
+  }
   return run;
+}
+
+async function assertSelectedFullAttemptArtifacts(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+): Promise<void> {
+  const validationContext = createStoredOutputValidationContext();
+  for (const unit of run.full!.units) {
+    if (!unit.selectedAttemptId) continue;
+    const attempt = requireAttempt(run.full!, unit.selectedAttemptId);
+    const [findingsPath, receiptPath] = await Promise.all([
+      resolveReferenceDeconstructionAttemptArtifactPath(
+        workspaceRoot,
+        run.runId,
+        unit.stageId,
+        attempt.id,
+        'findings.yaml',
+        { requireExistingArtifact: true },
+      ),
+      resolveReferenceDeconstructionAttemptArtifactPath(
+        workspaceRoot,
+        run.runId,
+        unit.stageId,
+        attempt.id,
+        'receipt.yaml',
+        { requireExistingArtifact: true },
+      ),
+    ]);
+    const [output, receiptValue] = await Promise.all([
+      readYamlOrValidation(findingsPath, 'Reference selected attempt output is invalid.'),
+      readYamlOrValidation(receiptPath, 'Reference selected attempt receipt is invalid.'),
+    ]);
+    const receipt = requireRecord(receiptValue, 'selected attempt receipt');
+    assertOnlyKnownFields(receipt, [
+      'version',
+      'runId',
+      'unitId',
+      'attemptId',
+      'status',
+      'inputFingerprint',
+      'outputHash',
+      'completedAt',
+    ]);
+    if (
+      receipt.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION
+      || receipt.runId !== run.runId
+      || receipt.unitId !== unit.id
+      || receipt.attemptId !== attempt.id
+      || receipt.status !== 'completed'
+      || receipt.inputFingerprint !== attempt.inputFingerprint
+      || receipt.outputHash !== attempt.outputHash
+      || receipt.completedAt !== attempt.completedAt
+      || sha256(stableJson(output)) !== attempt.outputHash
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        `Reference selected attempt artifact is stale: ${attempt.id}.`,
+      );
+    }
+    const parsedOutput = await parseStoredFullOutput(
+      workspaceRoot,
+      run,
+      unit,
+      output,
+      validationContext,
+    );
+    validationContext.outputsByAttemptId.set(attempt.id, parsedOutput);
+  }
 }
 
 async function readRunStateArtifact(
@@ -1662,6 +3480,7 @@ function assertRunState(
     'preview',
     'diagnostics',
     'mutationReceipts',
+    'full',
     'activeReservation',
     'failure',
     'createdAt',
@@ -1727,6 +3546,9 @@ function assertRunState(
       : { preview: assertStoredPreview(record.preview, runId, referenceId) }),
     diagnostics,
     mutationReceipts,
+    ...(record.full === undefined
+      ? {}
+      : { full: assertStoredFullState(record.full, referenceId) }),
     ...(record.activeReservation === undefined
       ? {}
       : { activeReservation: assertStoredReservation(record.activeReservation) }),
@@ -1743,25 +3565,31 @@ function assertRunState(
       : { cancelledAt: assertIsoDate(record.cancelledAt, 'cancelledAt') }),
   };
   if (
-    run.status === 'previewRunning' && !run.activeReservation
-    || run.status !== 'previewRunning' && run.activeReservation
+    run.status === 'previewRunning'
+      && run.activeReservation?.kind !== 'preview'
+    || run.status !== 'previewRunning'
+      && run.activeReservation?.kind === 'preview'
+    || run.activeReservation?.kind === 'fullUnit'
+      && run.status !== 'fullRunning'
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference run reservation does not match status.',
     );
   }
   if (
-    run.status === 'fullApproved' && !run.fullApprovedAt
-    || run.status !== 'fullApproved' && run.fullApprovedAt
+    Boolean(run.full) !== Boolean(run.fullApprovedAt)
+    || run.full
+      && ['created', 'previewRunning', 'awaitingFullApproval'].includes(run.status)
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference run approval timestamp does not match status.',
     );
   }
   if (
-    (run.status === 'awaitingFullApproval' || run.status === 'fullApproved')
+    (run.status === 'awaitingFullApproval' || Boolean(run.full))
       && !run.preview
     || run.preview
+      && !run.full
       && ['created', 'previewRunning', 'interrupted', 'failed'].includes(run.status)
   ) {
     throw new ReferenceDeconstructionValidationError(
@@ -1776,6 +3604,7 @@ function assertRunState(
       'Reference run failure details do not match status.',
     );
   }
+  if (run.full) assertFullStateMatchesRun(run);
   if (
     run.status === 'cancelled' && !run.cancelledAt
     || run.status !== 'cancelled' && run.cancelledAt
@@ -1786,7 +3615,8 @@ function assertRunState(
   }
   if (
     run.preview
-    && stableJson(run.diagnostics) !== stableJson(run.preview.diagnostics)
+    && !run.preview.diagnostics.every((diagnostic) =>
+      run.diagnostics.some((candidate) => stableJson(candidate) === stableJson(diagnostic)))
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference run diagnostics do not match preview diagnostics.',
@@ -1819,6 +3649,71 @@ function assertRunState(
     );
   }
   return run;
+}
+
+function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
+  const full = run.full!;
+  if (
+    full.plan.referenceId !== run.referenceId
+    || full.plan.sourceChecksumSha256 !== run.sourceChecksumSha256
+    || full.plan.structureFingerprint !== run.structureFingerprint
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full state does not match the run source identity.',
+    );
+  }
+  if (
+    full.analysisQuality?.blockingDiagnosticCount
+      !== run.diagnostics.filter((diagnostic) => diagnostic.blocking).length
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis quality summary does not match run diagnostics.',
+    );
+  }
+  const runningUnits = full.units.filter((unit) => unit.status === 'running');
+  const runningAttempts = full.attempts.filter((attempt) => attempt.status === 'running');
+  if (run.activeReservation?.kind === 'fullUnit') {
+    if (
+      runningUnits.length !== 1
+      || runningAttempts.length !== 1
+      || runningUnits[0]?.id !== run.activeReservation.unitId
+      || runningAttempts[0]?.id !== run.activeReservation.attemptId
+      || runningAttempts[0]?.unitId !== runningUnits[0]?.id
+      || runningAttempts[0]?.inputFingerprint !== run.activeReservation.inputFingerprint
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference full reservation does not match its running unit and attempt.',
+      );
+    }
+  } else if (runningUnits.length || runningAttempts.length) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full state contains an unreserved running unit.',
+    );
+  }
+  if (
+    run.status === 'fullApproved'
+      && full.units.some((unit) => unit.status !== 'queued')
+    || run.status === 'reviewReady'
+      && (
+        full.units.some((unit) => unit.status !== 'completed')
+        || full.analysisQuality?.status !== 'passed'
+        || full.analysisQuality.coveragePercent !== 100
+        || full.analysisQuality.blockingDiagnosticCount !== 0
+        || run.diagnostics.some((diagnostic) => diagnostic.blocking)
+      )
+    || run.status === 'failed'
+      && !full.units.some((unit) => unit.status === 'failed' || (
+        unit.kind === 'analysisQuality'
+        && unit.status === 'completed'
+        && full.analysisQuality?.status === 'failed'
+      ))
+    || run.status === 'interrupted'
+      && !full.units.some((unit) => unit.status === 'interrupted')
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work state does not match its run status.',
+    );
+  }
 }
 
 function assertRunRequest(
@@ -2038,12 +3933,462 @@ function assertMutationReceipt(value: unknown): ReferenceDeconstructionMutationR
   };
 }
 
-function assertStoredReservation(value: unknown): ReferenceQuickPreviewReservation {
-  const record = requireRecord(value, 'active reservation');
-  assertOnlyKnownFields(record, ['id', 'idempotencyKey', 'startedAt']);
+function assertStoredFullState(
+  value: unknown,
+  referenceId: string,
+): ReferenceFullDeconstructionState {
+  const record = requireRecord(value, 'full deconstruction state');
+  assertOnlyKnownFields(record, ['plan', 'units', 'attempts', 'analysisQuality']);
+  const plan = assertStoredWorkPlan(record.plan, referenceId);
+  const units = requireArray(
+    record.units,
+    'full work units',
+    1,
+    plan.units.length,
+  ).map((item) => assertStoredWorkUnit(item));
+  if (
+    units.length !== plan.units.length
+    || units.some((unit, index) => stableJson(stripStoredUnit(unit))
+      !== stableJson(plan.units[index]))
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full units do not match their deterministic work plan.',
+    );
+  }
+  const attempts = requireArray(
+    record.attempts,
+    'full attempts',
+    0,
+    MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS,
+  ).map((item) => assertStoredAttempt(item));
+  if (new Set(attempts.map((attempt) => attempt.id)).size !== attempts.length) {
+    throw new ReferenceDeconstructionValidationError('Reference full attempt ids must be unique.');
+  }
+  const attemptById = new Map(attempts.map((attempt) => [attempt.id, attempt]));
+  for (const unit of units) {
+    const unitAttempts = attempts.filter((attempt) => attempt.unitId === unit.id);
+    if (
+      stableJson(unit.attemptIds) !== stableJson(unitAttempts.map((attempt) => attempt.id))
+      || unitAttempts.some((attempt, index) => attempt.attemptNumber !== index + 1)
+      || unit.selectedAttemptId
+        && (
+          !unit.attemptIds.includes(unit.selectedAttemptId)
+          || attemptById.get(unit.selectedAttemptId)?.status !== 'completed'
+          || !attemptById.get(unit.selectedAttemptId)?.outputHash
+        )
+      || unit.status === 'completed' && !unit.selectedAttemptId
+      || unit.status !== 'completed' && unit.selectedAttemptId
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        `Reference full unit attempt selection is invalid: ${unit.id}.`,
+      );
+    }
+  }
+  if (attempts.some((attempt) => !units.some((unit) => unit.id === attempt.unitId))) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full attempt points to an unknown work unit.',
+    );
+  }
+  if (record.analysisQuality === undefined) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full analysis quality summary is missing.',
+    );
+  }
+  const analysisQuality = assertStoredAnalysisQuality(record.analysisQuality);
   return {
+    plan,
+    units,
+    attempts,
+    analysisQuality,
+  };
+}
+
+function assertStoredWorkPlan(
+  value: unknown,
+  referenceId: string,
+): ReferenceDeconstructionWorkPlan {
+  const record = requireRecord(value, 'full work plan');
+  assertOnlyKnownFields(record, [
+    'version',
+    'id',
+    'referenceId',
+    'sourceChecksumSha256',
+    'structureFingerprint',
+    'chapterIds',
+    'units',
+    'aggregateRootUnitId',
+    'styleUnitId',
+    'analysisQualityUnitId',
+  ]);
+  if (record.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION) {
+    throw new ReferenceDeconstructionValidationError('Unsupported full work plan version.');
+  }
+  const parsedReferenceId = assertSafeIdentifier(record.referenceId, 'plan referenceId');
+  if (parsedReferenceId !== referenceId) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work plan identity does not match its run.',
+    );
+  }
+  const units = requireArray(record.units, 'planned units', 1, 2_048)
+    .map((item) => assertPlannedWorkUnit(item));
+  if (
+    new Set(units.map((unit) => unit.id)).size !== units.length
+    || units.some((unit, index) => unit.ordinal !== index + 1)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work plan units must be unique and contiguous.',
+    );
+  }
+  const unitIds = new Set(units.map((unit) => unit.id));
+  if (units.some((unit) => unit.predecessorUnitIds.some((id) => {
+    const predecessor = units.find((candidate) => candidate.id === id);
+    return !unitIds.has(id) || !predecessor || predecessor.ordinal >= unit.ordinal;
+  }))) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work plan predecessor closure is invalid.',
+    );
+  }
+  const chapterIds = identifierArray(record.chapterIds, 'plan chapterIds', 1, 100_000);
+  const aggregateRootUnitId = assertSafeIdentifier(
+    record.aggregateRootUnitId,
+    'aggregateRootUnitId',
+  );
+  const styleUnitId = assertSafeIdentifier(record.styleUnitId, 'styleUnitId');
+  const analysisQualityUnitId = assertSafeIdentifier(
+    record.analysisQualityUnitId,
+    'analysisQualityUnitId',
+  );
+  if (
+    units.find((unit) => unit.id === aggregateRootUnitId)?.kind !== 'aggregate'
+    || units.find((unit) => unit.id === styleUnitId)?.kind !== 'style'
+    || units.find((unit) => unit.id === analysisQualityUnitId)?.kind !== 'analysisQuality'
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work plan terminal units are invalid.',
+    );
+  }
+  return {
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+    id: assertSafeIdentifier(record.id, 'plan id'),
+    referenceId: parsedReferenceId,
+    sourceChecksumSha256: assertSha256(record.sourceChecksumSha256, 'plan sourceChecksumSha256'),
+    structureFingerprint: assertSha256(record.structureFingerprint, 'plan structureFingerprint'),
+    chapterIds,
+    units,
+    aggregateRootUnitId,
+    styleUnitId,
+    analysisQualityUnitId,
+  };
+}
+
+function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit {
+  const record = requireRecord(value, 'planned work unit');
+  assertOnlyKnownFields(record, [
+    'id',
+    'ordinal',
+    'stageId',
+    'kind',
+    'predecessorUnitIds',
+    'chapterId',
+    'chunkId',
+    'pointerId',
+    'pointer',
+    'isLastChunkInChapter',
+    'lineCharStart',
+    'lineCharEnd',
+    'aggregateLevel',
+  ]);
+  const kind = requireEnum(record.kind, [
+    'chapterChunk',
+    'aggregate',
+    'style',
+    'analysisQuality',
+  ] as const, 'work unit kind');
+  const stageId = requireEnum(record.stageId, [
+    'chapterAnalysis',
+    'aggregateAnalysis',
+    'styleProfile',
+    'qualityGate',
+  ] as const, 'work unit stageId');
+  const expectedStage = kind === 'chapterChunk'
+    ? 'chapterAnalysis'
+    : kind === 'aggregate'
+      ? 'aggregateAnalysis'
+      : kind === 'style'
+        ? 'styleProfile'
+        : 'qualityGate';
+  if (stageId !== expectedStage) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work unit kind and stage do not match.',
+    );
+  }
+  const base: ReferenceDeconstructionWorkUnit = {
+    id: assertSafeIdentifier(record.id, 'unit id'),
+    ordinal: safeInteger(record.ordinal, 'unit ordinal', 1, 2_048),
+    stageId,
+    kind,
+    predecessorUnitIds: identifierArray(
+      record.predecessorUnitIds,
+      'predecessorUnitIds',
+      0,
+      2_048,
+    ),
+  };
+  if (kind === 'chapterChunk') {
+    if (record.aggregateLevel !== undefined) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference chapter work unit contains aggregate metadata.',
+      );
+    }
+    if (typeof record.isLastChunkInChapter !== 'boolean') {
+      throw new ReferenceDeconstructionValidationError(
+        'Chapter work unit final-chunk marker is invalid.',
+      );
+    }
+    if (base.predecessorUnitIds.length > 1) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference chapter work unit has too many predecessors.',
+      );
+    }
+    const lineCharStart = record.lineCharStart === undefined
+      ? undefined
+      : safeInteger(record.lineCharStart, 'unit lineCharStart', 0);
+    const lineCharEnd = record.lineCharEnd === undefined
+      ? undefined
+      : safeInteger(record.lineCharEnd, 'unit lineCharEnd', 1);
+    if (
+      (lineCharStart === undefined) !== (lineCharEnd === undefined)
+      || lineCharStart !== undefined && lineCharEnd! <= lineCharStart
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Chapter work unit character slice is invalid.',
+      );
+    }
+    return {
+      ...base,
+      chapterId: assertSafeIdentifier(record.chapterId, 'unit chapterId'),
+      chunkId: assertSafeIdentifier(record.chunkId, 'unit chunkId'),
+      pointerId: assertSafeIdentifier(record.pointerId, 'unit pointerId'),
+      pointer: assertReferenceSourcePointer(record.pointer),
+      isLastChunkInChapter: record.isLastChunkInChapter,
+      ...(lineCharStart === undefined ? {} : { lineCharStart, lineCharEnd }),
+    };
+  }
+  if (kind === 'aggregate') {
+    if (
+      record.chapterId !== undefined
+      || record.chunkId !== undefined
+      || record.pointerId !== undefined
+      || record.pointer !== undefined
+      || record.isLastChunkInChapter !== undefined
+      || record.lineCharStart !== undefined
+      || record.lineCharEnd !== undefined
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference aggregate work unit contains unexpected source metadata.',
+      );
+    }
+    if (
+      base.predecessorUnitIds.length < 1
+      || base.predecessorUnitIds.length > 8
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference aggregate work unit predecessor fan-in is invalid.',
+      );
+    }
+    return {
+      ...base,
+      aggregateLevel: safeInteger(record.aggregateLevel, 'aggregateLevel', 1, 2_048),
+    };
+  }
+  if (
+    record.chapterId !== undefined
+    || record.chunkId !== undefined
+    || record.pointerId !== undefined
+    || record.pointer !== undefined
+    || record.isLastChunkInChapter !== undefined
+    || record.lineCharStart !== undefined
+    || record.lineCharEnd !== undefined
+    || record.aggregateLevel !== undefined
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference terminal work unit contains unexpected source metadata.',
+    );
+  }
+  if (base.predecessorUnitIds.length !== 1) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference terminal work unit must have one predecessor.',
+    );
+  }
+  return base;
+}
+
+function assertStoredWorkUnit(value: unknown): ReferenceDeconstructionStoredUnit {
+  const record = requireRecord(value, 'stored work unit');
+  const planned = assertPlannedWorkUnit(Object.fromEntries(
+    Object.entries(record).filter(([key]) => ![
+      'status',
+      'attemptIds',
+      'selectedAttemptId',
+    ].includes(key)),
+  ));
+  const allowed = new Set([
+    'id', 'ordinal', 'stageId', 'kind', 'predecessorUnitIds', 'chapterId', 'chunkId',
+    'pointerId', 'pointer', 'isLastChunkInChapter', 'lineCharStart', 'lineCharEnd',
+    'aggregateLevel', 'status',
+    'attemptIds', 'selectedAttemptId',
+  ]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) {
+    throw new ReferenceDeconstructionValidationError('Stored work unit has unknown fields.');
+  }
+  return {
+    ...planned,
+    status: requireEnum(record.status, [
+      'queued', 'running', 'completed', 'failed', 'interrupted', 'cancelled', 'stale',
+    ] as const, 'unit status'),
+    attemptIds: identifierArray(record.attemptIds, 'unit attemptIds', 0, 4_096),
+    ...(record.selectedAttemptId === undefined
+      ? {}
+      : { selectedAttemptId: assertSafeIdentifier(record.selectedAttemptId, 'selectedAttemptId') }),
+  };
+}
+
+function stripStoredUnit(unit: ReferenceDeconstructionStoredUnit): ReferenceDeconstructionWorkUnit {
+  const {
+    status: _status,
+    attemptIds: _attemptIds,
+    selectedAttemptId: _selectedAttemptId,
+    ...planned
+  } = unit;
+  return planned;
+}
+
+function assertStoredAttempt(value: unknown): ReferenceDeconstructionAttemptSummary {
+  const record = requireRecord(value, 'stored attempt');
+  assertOnlyKnownFields(record, [
+    'id',
+    'unitId',
+    'attemptNumber',
+    'status',
+    'inputFingerprint',
+    'predecessorOutputHashes',
+    'outputHash',
+    'startedAt',
+    'completedAt',
+    'failure',
+  ]);
+  const status = requireEnum(record.status, [
+    'running', 'completed', 'failed', 'interrupted', 'cancelled', 'stale',
+  ] as const, 'attempt status');
+  const outputHash = record.outputHash === undefined
+    ? undefined
+    : assertSha256(record.outputHash, 'attempt outputHash');
+  const completedAt = record.completedAt === undefined
+    ? undefined
+    : assertIsoDate(record.completedAt, 'attempt completedAt');
+  const failure = record.failure === undefined
+    ? undefined
+    : assertStoredFailure(record.failure);
+  if (
+    status === 'running' && (outputHash || completedAt || failure)
+    || status === 'completed' && (!outputHash || !completedAt || failure)
+    || status === 'failed' && (!completedAt || !failure || outputHash)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full attempt completion metadata does not match status.',
+    );
+  }
+  return {
+    id: assertSafeIdentifier(record.id, 'attempt id'),
+    unitId: assertSafeIdentifier(record.unitId, 'attempt unitId'),
+    attemptNumber: safeInteger(record.attemptNumber, 'attemptNumber', 1, 4_096),
+    status,
+    inputFingerprint: assertSha256(record.inputFingerprint, 'attempt inputFingerprint'),
+    predecessorOutputHashes: requireArray(
+      record.predecessorOutputHashes,
+      'predecessorOutputHashes',
+      0,
+      2_048,
+    ).map((hash) => assertSha256(hash, 'predecessorOutputHash')),
+    ...(outputHash ? { outputHash } : {}),
+    startedAt: assertIsoDate(record.startedAt, 'attempt startedAt'),
+    ...(completedAt ? { completedAt } : {}),
+    ...(failure ? { failure } : {}),
+  };
+}
+
+function assertStoredAnalysisQuality(
+  value: unknown,
+): ReferenceDeconstructionAnalysisQualitySummary {
+  const record = requireRecord(value, 'analysis quality summary');
+  assertOnlyKnownFields(record, [
+    'status', 'coveragePercent', 'blockingDiagnosticCount', 'outputHashes',
+  ]);
+  const outputHashes = requireArray(record.outputHashes, 'quality outputHashes', 0, 2_048)
+    .map((hash) => assertSha256(hash, 'quality outputHash'));
+  if (new Set(outputHashes).size !== outputHashes.length) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference quality output hashes must be unique.',
+    );
+  }
+  const status = requireEnum(
+    record.status,
+    ['notEvaluated', 'passed', 'failed'] as const,
+    'analysis quality status',
+  );
+  const coveragePercent = safeInteger(record.coveragePercent, 'coveragePercent', 0, 100);
+  const blockingDiagnosticCount = safeInteger(
+      record.blockingDiagnosticCount,
+      'blockingDiagnosticCount',
+      0,
+      MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
+    );
+  if (
+    status === 'passed'
+      && (coveragePercent !== 100 || blockingDiagnosticCount !== 0 || !outputHashes.length)
+    || status === 'failed' && blockingDiagnosticCount === 0
+    || status === 'notEvaluated' && (coveragePercent !== 0 || outputHashes.length)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis quality summary is internally inconsistent.',
+    );
+  }
+  return {
+    status,
+    coveragePercent,
+    blockingDiagnosticCount,
+    outputHashes,
+  };
+}
+
+function assertStoredReservation(value: unknown): ReferenceDeconstructionReservation {
+  const record = requireRecord(value, 'active reservation');
+  const kind = requireEnum(record.kind, ['preview', 'fullUnit'] as const, 'reservation kind');
+  if (kind === 'preview') {
+    assertOnlyKnownFields(record, ['kind', 'id', 'idempotencyKey', 'startedAt']);
+    return {
+      kind,
+      id: assertSafeIdentifier(record.id, 'reservation id'),
+      idempotencyKey: assertIdempotencyKey(record.idempotencyKey),
+      startedAt: assertIsoDate(record.startedAt, 'reservation startedAt'),
+    };
+  }
+  assertOnlyKnownFields(record, [
+    'kind',
+    'id',
+    'idempotencyKey',
+    'unitId',
+    'attemptId',
+    'inputFingerprint',
+    'startedAt',
+  ]);
+  return {
+    kind,
     id: assertSafeIdentifier(record.id, 'reservation id'),
     idempotencyKey: assertIdempotencyKey(record.idempotencyKey),
+    unitId: assertSafeIdentifier(record.unitId, 'reservation unitId'),
+    attemptId: assertSafeIdentifier(record.attemptId, 'reservation attemptId'),
+    inputFingerprint: assertSha256(record.inputFingerprint, 'reservation inputFingerprint'),
     startedAt: assertIsoDate(record.startedAt, 'reservation startedAt'),
   };
 }
@@ -2226,6 +4571,290 @@ export async function resolveReferenceDeconstructionRunArtifactPath(
     );
   }
   return path;
+}
+
+export async function resolveReferenceDeconstructionAttemptArtifactPath(
+  workspaceRoot: string,
+  runId: string,
+  stageId: ReferenceDeconstructionWorkUnit['stageId'],
+  attemptId: string,
+  file: 'input-manifest.yaml' | 'findings.yaml' | 'receipt.yaml',
+  options: ResolveReferenceDeconstructionRunArtifactOptions = {},
+): Promise<string> {
+  const safeRunId = assertSafeIdentifier(runId, 'runId');
+  const safeStageId = assertSafeIdentifier(stageId, 'stageId');
+  const safeAttemptId = assertSafeIdentifier(attemptId, 'attemptId');
+  const safeFile = assertSafeArtifactFileName(file);
+  const root = resolve(workspaceRoot);
+  const directory = await ensureSafeDirectoryChain(root, [
+    '.workspace',
+    'sessions',
+    safeRunId,
+    'reference-deconstruction',
+    'stages',
+    safeStageId,
+    'attempts',
+    safeAttemptId,
+  ], options.createDirectory === true);
+  const path = resolve(directory.path, safeFile);
+  assertContained(root, path, 'Reference attempt artifact path escapes workspace.');
+  if (directory.exists) {
+    let information: Awaited<ReturnType<typeof lstat>> | undefined;
+    try {
+      information = await lstat(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw validationFrom(error);
+    }
+    if (information) {
+      if (information.isSymbolicLink() || !information.isFile()) {
+        throw new ReferenceDeconstructionValidationError(
+          'Reference attempt artifact must be a regular non-symlink file.',
+        );
+      }
+      const realArtifact = await realpath(path).catch((error) => {
+        throw validationFrom(error, 'Reference attempt artifact is inaccessible.');
+      });
+      assertContained(
+        directory.realPath!,
+        realArtifact,
+        'Reference attempt artifact resolves outside its attempt directory.',
+      );
+    } else if (options.requireExistingArtifact) {
+      throw new ReferenceDeconstructionNotFoundError(
+        `Reference attempt artifact not found: ${safeFile}.`,
+      );
+    }
+  } else if (options.requireExistingArtifact) {
+    throw new ReferenceDeconstructionNotFoundError(
+      `Reference attempt artifact not found: ${safeFile}.`,
+    );
+  }
+  return path;
+}
+
+async function ensureReferenceAttemptInputManifest(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionWorkUnit,
+  attemptId: string,
+  inputFingerprint: string,
+  predecessorOutputHashes: readonly string[],
+  proposedStartedAt: string,
+): Promise<string> {
+  let existingPath: string | undefined;
+  try {
+    existingPath = await resolveReferenceDeconstructionAttemptArtifactPath(
+      workspaceRoot,
+      run.runId,
+      unit.stageId,
+      attemptId,
+      'input-manifest.yaml',
+      { requireExistingArtifact: true },
+    );
+  } catch (error) {
+    if (!(error instanceof ReferenceDeconstructionNotFoundError)) throw error;
+  }
+  if (existingPath) {
+    const value = await readYamlOrValidation(
+      existingPath,
+      'Reference orphan attempt input manifest is invalid.',
+    );
+    const record = requireRecord(value, 'attempt input manifest');
+    assertOnlyKnownFields(record, [
+      'version',
+      'runId',
+      'referenceId',
+      'unitId',
+      'attemptId',
+      'inputFingerprint',
+      'predecessorOutputHashes',
+      'sourceChecksumSha256',
+      'structureFingerprint',
+      'startedAt',
+    ]);
+    const storedPredecessorHashes = requireArray(
+      record.predecessorOutputHashes,
+      'attempt input predecessorOutputHashes',
+      0,
+      MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS,
+    ).map((hash) => assertSha256(hash, 'attempt input predecessorOutputHash'));
+    if (
+      record.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION
+      || record.runId !== run.runId
+      || record.referenceId !== run.referenceId
+      || record.unitId !== unit.id
+      || record.attemptId !== attemptId
+      || record.inputFingerprint !== inputFingerprint
+      || record.sourceChecksumSha256 !== run.sourceChecksumSha256
+      || record.structureFingerprint !== run.structureFingerprint
+      || stableJson(storedPredecessorHashes) !== stableJson(predecessorOutputHashes)
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference orphan attempt input manifest does not match the reserved work identity.',
+      );
+    }
+    return assertIsoDate(record.startedAt, 'attempt input startedAt');
+  }
+
+  await writeReferenceAttemptYaml(
+    workspaceRoot,
+    run.runId,
+    unit,
+    attemptId,
+    'input-manifest.yaml',
+    {
+      version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+      runId: run.runId,
+      referenceId: run.referenceId,
+      unitId: unit.id,
+      attemptId,
+      inputFingerprint,
+      predecessorOutputHashes: [...predecessorOutputHashes],
+      sourceChecksumSha256: run.sourceChecksumSha256,
+      structureFingerprint: run.structureFingerprint,
+      startedAt: proposedStartedAt,
+    },
+  );
+  return proposedStartedAt;
+}
+
+async function writeReferenceAttemptYaml(
+  workspaceRoot: string,
+  runId: string,
+  unit: ReferenceDeconstructionWorkUnit,
+  attemptId: string,
+  file: 'input-manifest.yaml' | 'findings.yaml' | 'receipt.yaml',
+  value: unknown,
+): Promise<void> {
+  const path = await resolveReferenceDeconstructionAttemptArtifactPath(
+    workspaceRoot,
+    runId,
+    unit.stageId,
+    attemptId,
+    file,
+    { createDirectory: true },
+  );
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  const serializedValue = stringify(value);
+  const serialized = serializedValue.endsWith('\n')
+    ? serializedValue
+    : `${serializedValue}\n`;
+  try {
+    await writeFile(temporary, serialized, {
+      encoding: 'utf-8',
+      flag: 'wx',
+    });
+    await resolveReferenceDeconstructionAttemptArtifactPath(
+      workspaceRoot,
+      runId,
+      unit.stageId,
+      attemptId,
+      file,
+    );
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const existingPath = await resolveReferenceDeconstructionAttemptArtifactPath(
+        workspaceRoot,
+        runId,
+        unit.stageId,
+        attemptId,
+        file,
+        { requireExistingArtifact: true },
+      );
+      const existing = await readFile(existingPath, 'utf-8');
+      if (existing !== serialized) {
+        throw new ReferenceDeconstructionValidationError(
+          `Reference attempt artifact is append-only and already differs: ${file}.`,
+        );
+      }
+    }
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+}
+
+async function readReferenceAttemptOutput(
+  workspaceRoot: string,
+  runId: string,
+  attempt: ReferenceDeconstructionAttemptSummary,
+): Promise<ReferenceDeconstructionAnalysisOutput> {
+  const run = await readRunStateArtifact(workspaceRoot, undefined, runId);
+  const output = await readReferenceAttemptOutputFromRun(
+    workspaceRoot,
+    run,
+    attempt,
+    createStoredOutputValidationContext(),
+  );
+  if ('planId' in output) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis-quality output cannot be used as a stage predecessor.',
+    );
+  }
+  return output;
+}
+
+async function readReferenceAttemptOutputFromRun(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  attempt: ReferenceDeconstructionAttemptSummary,
+  context: StoredOutputValidationContext,
+): Promise<ReferenceFullDeconstructionOutput> {
+  const cached = context.outputsByAttemptId.get(attempt.id);
+  if (cached) return cached;
+  if (!run.full) {
+    throw new ReferenceDeconstructionValidationError('Reference full run state is missing.');
+  }
+  const unit = requireStoredUnit(run.full, attempt.unitId);
+  if (
+    unit.selectedAttemptId !== attempt.id
+    || attempt.status !== 'completed'
+    || !attempt.outputHash
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference attempt is not the completed selection for unit ${unit.id}.`,
+    );
+  }
+  if (context.validatingAttemptIds.has(attempt.id)) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference attempt dependency cycle detected: ${attempt.id}.`,
+    );
+  }
+  context.validatingAttemptIds.add(attempt.id);
+  const path = await resolveReferenceDeconstructionAttemptArtifactPath(
+    workspaceRoot,
+    run.runId,
+    unit.stageId,
+    attempt.id,
+    'findings.yaml',
+    { requireExistingArtifact: true },
+  );
+  try {
+    const value = await readYamlOrValidation(path, 'Reference attempt output is missing.');
+    if (!isRecord(value) || value.unitId !== unit.id) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference attempt output identity is invalid.',
+      );
+    }
+    const actualHash = sha256(stableJson(value));
+    if (actualHash !== requireAttemptOutputHash(attempt)) {
+      throw new ReferenceDeconstructionValidationError(
+        `Reference attempt output hash is stale: ${attempt.id}.`,
+      );
+    }
+    const output = await parseStoredFullOutput(
+      workspaceRoot,
+      run,
+      unit,
+      value,
+      context,
+    );
+    context.outputsByAttemptId.set(attempt.id, output);
+    return output;
+  } finally {
+    context.validatingAttemptIds.delete(attempt.id);
+  }
 }
 
 async function ensureSafeDirectoryChain(
@@ -2535,6 +5164,10 @@ function stableJson(value: unknown): string {
       `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function normalizeNow(value?: string): string {

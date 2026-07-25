@@ -10,7 +10,8 @@ export const MAX_REFERENCE_QUICK_PREVIEW_CHARS = 48_000 as const;
 export const MAX_REFERENCE_QUICK_PREVIEW_CHUNK_CHARS = 12_000 as const;
 export const MAX_REFERENCE_QUICK_PREVIEW_WINDOWS = 24 as const;
 export const MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS = 128 as const;
-export const MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS = 256 as const;
+export const MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS = 4_096 as const;
+export const MAX_REFERENCE_DECONSTRUCTION_TRANSPORT_RECEIPTS = 64 as const;
 export const REFERENCE_QUICK_PREVIEW_EXACT_OVERLAP_CHARS = 80 as const;
 
 export const REFERENCE_DECONSTRUCTION_STAGE_IDS = [
@@ -40,6 +41,11 @@ export type ReferenceDeconstructionRunStatus =
   | 'previewRunning'
   | 'awaitingFullApproval'
   | 'fullApproved'
+  | 'fullRunning'
+  | 'paused'
+  | 'reviewReady'
+  | 'publishing'
+  | 'completed'
   | 'cancelled'
   | 'failed'
   | 'interrupted'
@@ -70,6 +76,8 @@ export interface ReferenceDeconstructionDiagnostic {
   stageId?: ReferenceDeconstructionStageId;
   chapterId?: string;
   pointerId?: string;
+  unitId?: string;
+  attemptId?: string;
 }
 
 export interface ReferenceDeconstructionDiagnostics {
@@ -1284,6 +1292,8 @@ function normalizeDiagnostic(value: unknown, index: number): ReferenceDeconstruc
     'stageId',
     'chapterId',
     'pointerId',
+    'unitId',
+    'attemptId',
   ]);
   return {
     id: requireSafeIdentifier(diagnostic.id, 'diagnostic id'),
@@ -1310,6 +1320,12 @@ function normalizeDiagnostic(value: unknown, index: number): ReferenceDeconstruc
     ...(diagnostic.pointerId === undefined
       ? {}
       : { pointerId: requireSafeIdentifier(diagnostic.pointerId, 'diagnostic pointerId') }),
+    ...(diagnostic.unitId === undefined
+      ? {}
+      : { unitId: requireSafeIdentifier(diagnostic.unitId, 'diagnostic unitId') }),
+    ...(diagnostic.attemptId === undefined
+      ? {}
+      : { attemptId: requireSafeIdentifier(diagnostic.attemptId, 'diagnostic attemptId') }),
   };
 }
 
