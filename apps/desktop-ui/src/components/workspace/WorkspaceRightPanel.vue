@@ -38,6 +38,7 @@ const emit = defineEmits<{
   rejectPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
+  reviewPendingActionId: [pendingActionId: string];
 }>();
 </script>
 
@@ -77,6 +78,9 @@ const emit = defineEmits<{
       :health="projectHealth"
     />
     <GitReviewTab v-else-if="activeTab === 'git'" />
-    <ReferenceImportTab v-else-if="activeTab === 'references'" />
+    <ReferenceImportTab
+      v-else-if="activeTab === 'references'"
+      @review-pending-action="emit('reviewPendingActionId', $event)"
+    />
   </section>
 </template>

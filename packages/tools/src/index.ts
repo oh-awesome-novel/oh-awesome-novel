@@ -54,10 +54,12 @@ export type {
 
 export {
   acceptPendingAction,
+  createPendingAction,
   createWriteIntentTools,
   listPendingActions,
   prepareWriteIntentPreview,
   promoteWriteIntentPreview,
+  readPendingAction,
   rejectPendingAction,
   validateWriteIntentPreview,
   WRITE_INTENT_PREVIEW_SCHEMA_VERSION,
@@ -65,12 +67,16 @@ export {
 export type {
   AcceptedPendingAction,
   AcceptPendingActionInput,
+  CreatePendingActionInput,
   CreateWriteIntentToolsOptions,
+  PendingActionOrigin,
   PreparedWriteIntentPreview,
   PrepareWriteIntentPreviewInput,
   PreviewableWriteIntentToolName,
   PromoteWriteIntentPreviewInput,
+  ReadPendingActionInput,
   RejectedPendingAction,
+  ReferenceDeconstructionPublishPendingActionOrigin,
   RejectPendingActionInput,
   StoredWriteIntentAction,
   ValidateWriteIntentPreviewInput,
@@ -89,6 +95,7 @@ export type {
   NarrativePatch,
   ObjectPatch,
   PreviewSemanticPatchesInput,
+  ReferenceArtifactPatch,
   SemanticPatch,
   ShadowWriteReference,
 } from './apply-engine';

@@ -5,6 +5,7 @@ import {
   type ReferenceContextSelection,
   type ReferenceDeconstructionFullRun,
   type ReferenceDeconstructionMutationReceipt,
+  type ReferenceDeconstructionPublishResult,
   type ReferenceDeconstructionRun,
   type ReferenceImportResult,
   type ReferenceWorkSummary,
@@ -172,6 +173,66 @@ describe('reference deconstruction client', () => {
     await expect(client.importReference(input)).rejects.toThrow('invalid payload');
   });
 
+  it('routes publish to a strict run-bound PendingAction receipt', async () => {
+    const valid = publishResult();
+    const wrongOrigin = publishResult();
+    wrongOrigin.pendingAction.origin = {
+      ...wrongOrigin.pendingAction.origin,
+      referenceId: 'reference-other',
+    };
+    const mismatchedFingerprint = publishResult();
+    mismatchedFingerprint.pendingAction.origin = {
+      ...mismatchedFingerprint.pendingAction.origin,
+      candidateFingerprint: 'd'.repeat(64),
+    };
+    const oversizedInventory = publishResult();
+    oversizedInventory.run.publication!.entryInventory[0] = {
+      ...oversizedInventory.run.publication!.entryInventory[0]!,
+      estimatedTokens: 2_049,
+    };
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [valid, wrongOrigin, mismatchedFingerprint, oversizedInventory];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return json(responses.shift());
+    }) as unknown as typeof fetch;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: fetcher,
+    });
+    const input = {
+      baseRunRevision: 7,
+      idempotencyKey: 'publish-1',
+    };
+
+    await expect(client.publishReferenceDeconstructionRun(
+      'reference-1',
+      'run-1',
+      input,
+    )).resolves.toEqual(valid);
+    await expect(client.publishReferenceDeconstructionRun(
+      'reference-1',
+      'run-1',
+      input,
+    )).rejects.toThrow('invalid payload');
+    await expect(client.publishReferenceDeconstructionRun(
+      'reference-1',
+      'run-1',
+      input,
+    )).rejects.toThrow('inconsistent payload');
+    await expect(client.publishReferenceDeconstructionRun(
+      'reference-1',
+      'run-1',
+      input,
+    )).rejects.toThrow('invalid payload');
+    expect(calls[0]).toMatchObject({
+      url:
+        'http://backend.test/api/workspace/references/reference-1/' +
+        'deconstruction-runs/run-1/publish',
+    });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual(input);
+  });
+
   it('requires an exact structure confidence in every reference summary', async () => {
     const client = createOanClient({
       backendBaseUrl: 'http://backend.test',
@@ -195,6 +256,59 @@ describe('reference deconstruction client', () => {
 
     await expect(client.listReferences()).rejects.toThrow('invalid payload');
     await expect(client.listReferences()).rejects.toThrow('invalid payload');
+    await expect(client.listReferences()).rejects.toThrow('invalid payload');
+    await expect(client.listReferences()).rejects.toThrow('invalid payload');
+  });
+
+  it('accepts stale invalid-index readiness and enforces distilled inventory bounds', async () => {
+    const staleBase = referenceSummary();
+    const staleInvalidIndex = referenceSummary({
+      progress: {
+        ...staleBase.progress,
+        status: 'stale',
+        contextEligible: false,
+      },
+      deconstructionStatus: 'stale',
+      contextEligible: false,
+      readinessReason: 'invalidContextIndex',
+    });
+    const published = publishedReferenceSummary();
+    const missingCategoryEntry = publishedReferenceSummary({
+      entryCount: 4,
+      categoryCounts: {
+        writingStyle: 0,
+        pacing: 1,
+        hooks: 1,
+        scene: 1,
+        character: 1,
+      },
+    });
+    const oversizedCategory = publishedReferenceSummary({
+      entryCount: 17,
+      categoryCounts: {
+        writingStyle: 13,
+        pacing: 1,
+        hooks: 1,
+        scene: 1,
+        character: 1,
+      },
+    });
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { references: [staleInvalidIndex] },
+        { references: [published] },
+        { references: [missingCategoryEntry] },
+        { references: [oversizedCategory] },
+      ]),
+    });
+
+    await expect(client.listReferences()).resolves.toEqual({
+      references: [staleInvalidIndex],
+    });
+    await expect(client.listReferences()).resolves.toEqual({
+      references: [published],
+    });
     await expect(client.listReferences()).rejects.toThrow('invalid payload');
     await expect(client.listReferences()).rejects.toThrow('invalid payload');
   });
@@ -381,18 +495,51 @@ describe('reference deconstruction client', () => {
       path: 'examples/references/reference-1/sources/original.txt',
       content: 'Source text must never pass the distilled context guard.',
     };
+    const oversizedEntry = contextSelection();
+    oversizedEntry.included[0] = {
+      ...oversizedEntry.included[0]!,
+      estimatedTokens: 2_049,
+    };
     const client = createOanClient({
       backendBaseUrl: 'http://backend.test',
       fetch: sequenceFetch([
         { selection: incomplete },
         { selection: overBudget },
         { selection: sourcePath },
+        { selection: oversizedEntry },
       ]),
     });
 
     await expect(client.selectReferenceContext()).rejects.toThrow('invalid payload');
     await expect(client.selectReferenceContext()).rejects.toThrow('invalid payload');
     await expect(client.selectReferenceContext()).rejects.toThrow('invalid payload');
+    await expect(client.selectReferenceContext()).rejects.toThrow('invalid payload');
+  });
+
+  it('accepts entry omissions caused by the max-reference cap', async () => {
+    const selection = contextSelection();
+    selection.included = [];
+    selection.usedTokens = 0;
+    selection.omitted = [{
+      scope: 'entry',
+      referenceId: 'reference-2',
+      referenceTitle: 'Reference Two',
+      entryId: 'entry-pacing-2',
+      entryTitle: 'Pressure-release pacing',
+      category: 'pacing',
+      reason: 'A higher-ranked reference exhausted the reference cap.',
+      budgetLayer: 'L2',
+      deconstructionStatus: 'completed',
+      contextEligible: false,
+      reasonCode: 'maxReferenceCountReached',
+      estimatedTokens: 120,
+    }];
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([{ selection }]),
+    });
+
+    await expect(client.selectReferenceContext()).resolves.toEqual({ selection });
   });
 
   it('rejects unsafe request identities before calling fetch', async () => {
@@ -406,6 +553,12 @@ describe('reference deconstruction client', () => {
     })).toThrow('Reference id is invalid');
     expect(() => client.selectReferenceContext({
       explicitReferenceIds: ['reference-1', 'reference-1'],
+    })).toThrow('request is invalid');
+    expect(() => client.selectReferenceContext({
+      maxReferences: 21,
+    })).toThrow('request is invalid');
+    expect(() => client.selectReferenceContext({
+      maxEntries: 51,
     })).toThrow('request is invalid');
     expect(() => client.createReferenceDeconstructionRun('reference-1', {
       mode: 'quickPreview',
@@ -474,23 +627,76 @@ function referenceSummary(
   };
 }
 
+function publishedReferenceSummary(
+  publishedContextOverrides: Partial<
+    NonNullable<ReferenceWorkSummary['publishedContext']>
+  > = {},
+): ReferenceWorkSummary {
+  const base = referenceSummary();
+  return referenceSummary({
+    progress: {
+      ...base.progress,
+      status: 'completed',
+      currentStage: null,
+      nextStage: null,
+      completedStages: [
+        'detectStructure',
+        'quickPreview',
+        'chapterAnalysis',
+        'aggregateAnalysis',
+        'styleProfile',
+        'distillForOan',
+        'qualityGate',
+      ],
+      stages: Object.fromEntries(
+        Object.keys(base.progress.stages).map((stage) => [stage, 'completed']),
+      ) as ReferenceWorkSummary['progress']['stages'],
+      resumable: false,
+      contextEligible: true,
+    },
+    deconstructionStatus: 'completed',
+    contextEligible: true,
+    readinessReason: 'ready',
+    publishedContext: {
+      runId: 'run-published-1',
+      fingerprint: 'f'.repeat(64),
+      entryCount: 5,
+      categoryCounts: {
+        writingStyle: 1,
+        pacing: 1,
+        hooks: 1,
+        scene: 1,
+        character: 1,
+      },
+      ...publishedContextOverrides,
+    },
+  });
+}
+
 function contextSelection(): ReferenceContextSelection {
   return {
     tokenBudget: 800,
+    maxReferences: 2,
+    maxEntries: 8,
+    usedTokens: 120,
     originalSourceRead: false,
     noCopyWarnings: ['Do not copy source prose.'],
+    differentiationWarnings: ['Transform the technique for the current novel.'],
     included: [{
-      id: 'reference-1',
-      title: 'Reference One',
-      path: 'examples/references/reference-1/context/reference-summary.md',
+      id: 'entry-pacing-1',
+      referenceId: 'reference-1',
+      referenceTitle: 'Reference One',
+      entryTitle: 'Escalating scene pressure',
+      category: 'pacing',
+      path: 'examples/references/reference-1/distilled/pacing.md',
+      tags: ['pressure', 'escalation'],
+      capabilityIds: ['novel.write_chapter'],
       reason: 'Eligible distilled reference.',
+      reasonCode: 'explicitReference',
       budgetLayer: 'L2',
       semanticBoundary: 'compressible',
       estimatedTokens: 120,
       content: 'Abstract technique notes only.',
-      deconstructionStatus: 'completed',
-      contextEligible: true,
-      reasonCode: 'ready',
     }],
     omitted: [],
   };
@@ -761,6 +967,13 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
         failedUnits: 0,
       },
       {
+        stageId: 'distillForOan',
+        status: 'notStarted',
+        plannedUnits: 1,
+        completedUnits: 0,
+        failedUnits: 0,
+      },
+      {
         stageId: 'qualityGate',
         status: 'notStarted',
         plannedUnits: 1,
@@ -769,7 +982,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
       },
     ],
     progress: {
-      plannedUnits: 5,
+      plannedUnits: 6,
       completedUnits: 0,
       failedUnits: 0,
       completedChapters: 0,
@@ -795,7 +1008,8 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
     }),
     completedUnit('aggregate-final', 3, 'aggregateAnalysis', 'aggregate'),
     completedUnit('style-final', 4, 'styleProfile', 'style'),
-    completedUnit('quality-final', 5, 'qualityGate', 'analysisQuality'),
+    completedUnit('distill-final', 5, 'distillForOan', 'distill'),
+    completedUnit('quality-final', 6, 'qualityGate', 'analysisQuality'),
   ];
   const attempts = units.map((unit, index) => ({
     id: unit.selectedAttemptId!,
@@ -872,6 +1086,13 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
           failedUnits: 0,
         },
         {
+          stageId: 'distillForOan',
+          status: 'completed',
+          plannedUnits: 1,
+          completedUnits: 1,
+          failedUnits: 0,
+        },
+        {
           stageId: 'qualityGate',
           status: 'completed',
           plannedUnits: 1,
@@ -880,8 +1101,8 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
         },
       ],
       progress: {
-        plannedUnits: 5,
-        completedUnits: 5,
+        plannedUnits: 6,
+        completedUnits: 6,
         failedUnits: 0,
         completedChapters: 2,
         totalChapters: 2,
@@ -903,8 +1124,13 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
 function completedUnit(
   id: string,
   ordinal: number,
-  stageId: 'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'qualityGate',
-  kind: 'chapterChunk' | 'aggregate' | 'style' | 'analysisQuality',
+  stageId:
+    | 'chapterAnalysis'
+    | 'aggregateAnalysis'
+    | 'styleProfile'
+    | 'distillForOan'
+    | 'qualityGate',
+  kind: 'chapterChunk' | 'aggregate' | 'style' | 'distill' | 'analysisQuality',
   location: { chapterId: string; chunkId: string } | undefined = undefined,
 ) {
   return {
@@ -916,6 +1142,98 @@ function completedUnit(
     status: 'completed' as const,
     attemptCount: 1,
     selectedAttemptId: `${id}-attempt-1`,
+  };
+}
+
+function publishResult(): ReferenceDeconstructionPublishResult {
+  const base = reviewReadyRun(7);
+  const pendingActionId = `pa_${'a'.repeat(64)}`;
+  const candidateFingerprint = 'b'.repeat(64);
+  const files = [
+    {
+      path: 'examples/references.yaml',
+      checksumSha256: '1'.repeat(64),
+      kind: 'index' as const,
+    },
+    {
+      path: 'examples/references/reference-1/deconstruction-manifest.yaml',
+      checksumSha256: '2'.repeat(64),
+      kind: 'manifest' as const,
+    },
+    {
+      path: 'examples/references/reference-1/diagnostics.yaml',
+      checksumSha256: '3'.repeat(64),
+      kind: 'diagnostics' as const,
+    },
+    {
+      path: 'examples/references/reference-1/progress.yaml',
+      checksumSha256: '4'.repeat(64),
+      kind: 'progress' as const,
+    },
+    {
+      path: 'examples/references/reference-1/distilled/writing-style.md',
+      checksumSha256: '5'.repeat(64),
+      kind: 'distilled' as const,
+    },
+    {
+      path: 'examples/references/reference-1/context/index.yaml',
+      checksumSha256: '6'.repeat(64),
+      kind: 'context' as const,
+    },
+  ];
+  const entryInventory = ([
+    'writingStyle',
+    'pacing',
+    'hooks',
+    'scene',
+    'character',
+  ] as const).map((category, index) => ({
+    id: `entry-${category}`,
+    category,
+    title: `${category} technique`,
+    estimatedTokens: 100 + index,
+  }));
+  const receipt: ReferenceDeconstructionMutationReceipt = {
+    idempotencyKey: 'publish-1',
+    requestFingerprint: 'c'.repeat(64),
+    resultingRunRevision: 8,
+    resultStatus: 'publishing',
+  };
+  const runValue: ReferenceDeconstructionRun = {
+    ...base,
+    runRevision: 8,
+    status: 'publishing',
+    mutationReceipts: [...base.mutationReceipts, receipt],
+    receiptCount: 9,
+    publication: {
+      candidateFingerprint,
+      pendingActionId,
+      files,
+      entryInventory,
+      preparedAt: '2026-07-22T00:09:00.000Z',
+    },
+    updatedAt: '2026-07-22T00:09:00.000Z',
+  };
+  return {
+    run: runValue,
+    receipt,
+    replayed: false,
+    pendingAction: {
+      id: pendingActionId,
+      title: 'Publish reference reference-1',
+      description: 'Publish reviewed deconstruction run run-1.',
+      touchedFiles: files.map((file) => file.path),
+      diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
+      createdAt: '2026-07-22T00:09:01.000Z',
+      status: 'pending',
+      origin: {
+        kind: 'referenceDeconstructionPublish',
+        referenceId: 'reference-1',
+        runId: 'run-1',
+        runRevision: 7,
+        candidateFingerprint,
+      },
+    },
   };
 }
 

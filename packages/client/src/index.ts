@@ -16,6 +16,7 @@ import {
   parseActiveReferenceDeconstructionRunReadResult,
   parseReferenceContextEnvelope,
   parseReferenceDeconstructionRunMutationResult,
+  parseReferenceDeconstructionPublishResult,
   parseReferenceDeconstructionRunReadResult,
   parseReferenceEnvelope,
   parseReferenceImportResult,
@@ -34,7 +35,10 @@ import type {
   CreateReferenceDeconstructionRunInput,
   MutateReferenceDeconstructionRunInput,
   NovelCopilotCapabilityId,
+  ReferenceDistilledCategory,
+  ReferenceDeconstructionPublishPendingActionOrigin,
   ReferenceDeconstructionRunMutationResult,
+  ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionRunReadResult,
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
@@ -104,6 +108,13 @@ export type {
   ReferenceDeconstructionDiagnostic,
   ReferenceDeconstructionDiagnosticSeverity,
   ReferenceDeconstructionMutationReceipt,
+  ReferenceDeconstructionPublication,
+  ReferenceDeconstructionPublicationEntry,
+  ReferenceDeconstructionPublicationFile,
+  ReferenceDeconstructionPublicationFileKind,
+  ReferenceDeconstructionPublishPendingAction,
+  ReferenceDeconstructionPublishPendingActionOrigin,
+  ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionFullProgress,
   ReferenceDeconstructionFullRun,
   ReferenceDeconstructionFullStageSummary,
@@ -122,6 +133,7 @@ export type {
   ReferenceQuickPreviewFinding,
   ReferenceQuickPreviewFindingKind,
   ReferenceSourcePointer,
+  ReferenceDistilledCategory,
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
 
@@ -332,7 +344,8 @@ export type ReferenceReadinessReason =
   | 'stale'
   | 'qualityFailed'
   | 'needsRebuild'
-  | 'missingContextSummary';
+  | 'missingContextSummary'
+  | 'invalidContextIndex';
 
 export type ReferenceContextOmissionReason =
   | 'disabled'
@@ -344,6 +357,10 @@ export type ReferenceContextOmissionReason =
   | 'needsRebuild'
   | 'missingContextSummary'
   | 'invalidContextPath'
+  | 'invalidContextIndex'
+  | 'capabilityMismatch'
+  | 'taskMismatch'
+  | 'maxEntryCountReached'
   | 'tokenBudgetExceeded';
 
 export interface ReferenceProgress {
@@ -382,6 +399,12 @@ export interface ReferenceWorkSummary {
   deconstructionStatus: ReferencePublishedDeconstructionStatus;
   contextEligible: boolean;
   readinessReason: ReferenceReadinessReason;
+  publishedContext?: {
+    runId: string;
+    fingerprint: string;
+    entryCount: number;
+    categoryCounts: Record<ReferenceDistilledCategory, number>;
+  };
 }
 
 export interface ReferenceSourceManifest {
@@ -417,29 +440,45 @@ export interface ReferenceImportResult {
 
 export interface ReferenceContextSelection {
   tokenBudget: number;
+  maxReferences: number;
+  maxEntries: number;
+  usedTokens: number;
   originalSourceRead: boolean;
   noCopyWarnings: string[];
+  differentiationWarnings: string[];
   included: Array<{
     id: string;
-    title: string;
+    referenceId: string;
+    referenceTitle: string;
+    entryTitle: string;
+    category: ReferenceDistilledCategory;
     path: string;
+    tags: string[];
+    capabilityIds: NovelCopilotCapabilityId[];
     reason: string;
+    reasonCode:
+      | 'explicitReference'
+      | 'capabilityMatch'
+      | 'taskMatch'
+      | 'fallback';
     budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
-    semanticBoundary: 'protected' | 'compressible' | 'excluded';
+    semanticBoundary: 'compressible';
     estimatedTokens: number;
     content: string;
-    deconstructionStatus: 'completed';
-    contextEligible: true;
-    reasonCode: 'ready';
   }>;
   omitted: Array<{
-    id: string;
-    title: string;
+    scope: 'reference' | 'entry';
+    referenceId: string;
+    referenceTitle: string;
+    entryId?: string;
+    entryTitle?: string;
+    category?: ReferenceDistilledCategory;
     reason: string;
     budgetLayer: 'L0' | 'L1' | 'L2' | 'L3';
     deconstructionStatus: ReferencePublishedDeconstructionStatus;
     contextEligible: false;
     reasonCode: ReferenceContextOmissionReason;
+    estimatedTokens?: number;
   }>;
 }
 
@@ -1590,6 +1629,7 @@ export interface PendingAction {
   diff: string;
   createdAt: string;
   status: 'pending';
+  origin?: ReferenceDeconstructionPublishPendingActionOrigin;
   shadowWrites?: Array<{
     targetFile: string;
     shadowFile: string;
@@ -1634,12 +1674,14 @@ export interface AcceptedPendingAction {
   gitCommit: GitCommitResult;
   dirtyStatus: string;
   refresh?: WorkspaceDecisionRefresh;
+  referencePublish?: ReferenceDeconstructionRunMutationResult;
 }
 
 export interface RejectedPendingAction {
   id: string;
   status: 'rejected';
   refresh?: WorkspaceDecisionRefresh;
+  referencePublish?: ReferenceDeconstructionRunMutationResult;
 }
 
 export interface OanClient extends PlayRehearsalClientMethods {
@@ -1695,8 +1737,14 @@ export interface OanClient extends PlayRehearsalClientMethods {
   selectReferenceContext(input?: {
     tokenBudget?: number;
     maxReferences?: number;
+    maxEntries?: number;
     capability?: NovelCopilotCapabilityId;
     goal?: string;
+    sceneType?: string;
+    pacingIntent?: string;
+    hookIntent?: string;
+    styleIntent?: string;
+    characterIntent?: string;
     explicitReferenceIds?: string[];
   }): Promise<{ selection: ReferenceContextSelection }>;
   createReferenceDeconstructionRun(
@@ -1741,6 +1789,11 @@ export interface OanClient extends PlayRehearsalClientMethods {
     runId: string,
     input: MutateReferenceDeconstructionRunInput,
   ): Promise<ReferenceDeconstructionRunMutationResult>;
+  publishReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: MutateReferenceDeconstructionRunInput,
+  ): Promise<ReferenceDeconstructionPublishResult>;
   getGitStatus(): Promise<GitWorkspaceStatus>;
   getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
   getGitCommit(hash: string): Promise<GitCommitDetail>;
@@ -2204,6 +2257,21 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         referenceId,
         input.idempotencyKey,
         runId,
+      ));
+    },
+    publishReferenceDeconstructionRun: (referenceIdValue, runIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const runId = assertReferenceWireId(runIdValue, 'Reference deconstruction run id');
+      assertMutateReferenceDeconstructionRunInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/deconstruction-runs/${encodeURIComponent(runId)}/publish`,
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceDeconstructionPublishResult(
+        value,
+        referenceId,
+        runId,
+        input,
       ));
     },
     getGitStatus: () => requestJson<GitWorkspaceStatus>('/api/git/status'),

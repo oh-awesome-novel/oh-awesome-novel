@@ -5,6 +5,10 @@ import type {
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
 } from '@oh-awesome-novel/client';
+import type {
+  ReferenceDeconstructionPublicationView,
+  ReferencePublishPendingActionView,
+} from '../../../../apps/desktop-ui/src/composables/useReferenceDeconstruction';
 
 export function referenceFixture(
   patch: Partial<ReferenceWorkSummary> = {},
@@ -51,21 +55,210 @@ export function referenceFixture(
   };
 }
 
+export function publishedReferenceFixture(): ReferenceWorkSummary {
+  const reference = referenceFixture({
+    distilledPaths: [
+      'examples/references/reference-1/distilled/writing-style.md',
+      'examples/references/reference-1/distilled/pacing.md',
+      'examples/references/reference-1/distilled/hooks.md',
+      'examples/references/reference-1/distilled/scene-techniques.md',
+      'examples/references/reference-1/distilled/character-techniques.md',
+    ],
+    deconstructionStatus: 'completed',
+    contextEligible: true,
+    readinessReason: 'ready',
+  });
+  return {
+    ...reference,
+    progress: {
+      ...reference.progress,
+      status: 'completed',
+      currentStage: null,
+      nextStage: null,
+      completedStages: [
+        'detectStructure',
+        'quickPreview',
+        'chapterAnalysis',
+        'aggregateAnalysis',
+        'styleProfile',
+        'distillForOan',
+        'qualityGate',
+      ],
+      stages: {
+        detectStructure: 'completed',
+        quickPreview: 'completed',
+        chapterAnalysis: 'completed',
+        aggregateAnalysis: 'completed',
+        styleProfile: 'completed',
+        distillForOan: 'completed',
+        qualityGate: 'completed',
+      },
+      contextEligible: true,
+    },
+    publishedContext: {
+      runId: 'run-1',
+      fingerprint: 'e'.repeat(64),
+      entryCount: 5,
+      categoryCounts: {
+        writingStyle: 1,
+        pacing: 1,
+        hooks: 1,
+        scene: 1,
+        character: 1,
+      },
+    },
+  } as ReferenceWorkSummary;
+}
+
 export function referenceContextFixture(): ReferenceContextSelection {
   return {
     tokenBudget: 1500,
+    maxReferences: 3,
+    maxEntries: 8,
+    usedTokens: 0,
     originalSourceRead: false,
     noCopyWarnings: ['Use technique abstractions only; never copy source prose.'],
+    differentiationWarnings: ['Change canon-specific causes, roles, and imagery.'],
     included: [],
     omitted: [{
-      id: 'reference-1',
-      title: 'Reference One',
+      scope: 'reference',
+      referenceId: 'reference-1',
+      referenceTitle: 'Reference One',
       reason: 'Deep deconstruction has not been published.',
       budgetLayer: 'L2',
       deconstructionStatus: 'notAnalyzed',
       contextEligible: false,
       reasonCode: 'notAnalyzed',
     }],
+  };
+}
+
+export function entryReferenceContextFixture(): ReferenceContextSelection {
+  return {
+    tokenBudget: 240,
+    maxReferences: 2,
+    maxEntries: 4,
+    usedTokens: 142,
+    originalSourceRead: false,
+    noCopyWarnings: [
+      'Use technique abstractions only; never copy source prose.',
+      'Change canon-specific causes, roles, and imagery.',
+    ],
+    differentiationWarnings: [
+      'Change the setting, causality, role assignment, and image system.',
+    ],
+    included: [{
+      id: 'hooks-1',
+      referenceId: 'reference-1',
+      referenceTitle: 'Reference One',
+      entryTitle: 'Consequence-first hook',
+      category: 'hooks',
+      path: 'examples/references/reference-1/distilled/hooks.md',
+      tags: ['opening', 'consequence'],
+      capabilityIds: ['novel.write_chapter'],
+      reason: 'Hook intent and capability matched.',
+      reasonCode: 'capabilityMatch',
+      estimatedTokens: 68,
+      content: 'Frame the hook around a consequence that demands a choice.',
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+    }, {
+      id: 'scene-1',
+      referenceId: 'reference-1',
+      referenceTitle: 'Reference One',
+      entryTitle: 'Scene value turn',
+      category: 'scene',
+      path: 'examples/references/reference-1/distilled/scene-techniques.md',
+      tags: ['scene', 'turn'],
+      capabilityIds: ['novel.write_chapter'],
+      reason: 'Scene goal tokens matched.',
+      reasonCode: 'taskMatch',
+      estimatedTokens: 74,
+      content: 'Give the scene a visible value change caused by a character choice.',
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+    }],
+    omitted: [{
+      scope: 'entry',
+      referenceId: 'reference-1',
+      referenceTitle: 'Reference One',
+      entryId: 'pacing-1',
+      entryTitle: 'Pressure-release pacing',
+      category: 'pacing',
+      reason: 'Hard token budget would be exceeded.',
+      reasonCode: 'tokenBudgetExceeded',
+      estimatedTokens: 74,
+      budgetLayer: 'L2',
+      deconstructionStatus: 'completed',
+      contextEligible: false,
+    }, {
+      scope: 'reference',
+      referenceId: 'reference-2',
+      referenceTitle: 'Disabled Reference',
+      reason: 'Reference preference is disabled.',
+      reasonCode: 'disabled',
+      budgetLayer: 'L3',
+      deconstructionStatus: 'completed',
+      contextEligible: false,
+    }],
+  };
+}
+
+export function referencePublicationFixture(
+  patch: Partial<ReferenceDeconstructionPublicationView> = {},
+): ReferenceDeconstructionPublicationView {
+  return {
+    candidateFingerprint: 'f'.repeat(64),
+    files: [
+      {
+        path: 'examples/references.yaml',
+        checksumSha256: '1'.repeat(64),
+        kind: 'index',
+      },
+      {
+        path: 'examples/references/reference-1/deconstruction-manifest.yaml',
+        checksumSha256: '2'.repeat(64),
+        kind: 'manifest',
+      },
+      {
+        path: 'examples/references/reference-1/distilled/hooks.md',
+        checksumSha256: '3'.repeat(64),
+        kind: 'distilled',
+      },
+      {
+        path: 'examples/references/reference-1/context/index.yaml',
+        checksumSha256: '4'.repeat(64),
+        kind: 'context',
+      },
+    ],
+    entryInventory: [
+      distilledEntry('writing-style-1', 'writingStyle', 'Controlled sentence contrast', 82),
+      distilledEntry('pacing-1', 'pacing', 'Pressure-release pacing', 74),
+      distilledEntry('hooks-1', 'hooks', 'Consequence-first hook', 68),
+      distilledEntry('scene-1', 'scene', 'Scene value turn', 76),
+      distilledEntry('character-1', 'character', 'Choice-led characterization', 80),
+    ],
+    preparedAt: '2026-07-22T00:08:30.000Z',
+    ...patch,
+  };
+}
+
+export function referencePublishPendingActionFixture(): ReferencePublishPendingActionView {
+  return {
+    id: 'pending-reference-publish-1',
+    title: 'Publish Reference One deconstruction',
+    description: 'Publish the accepted deep-deconstruction candidate.',
+    touchedFiles: referencePublicationFixture().files.map((file) => file.path),
+    diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
+    createdAt: '2026-07-22T00:09:00.000Z',
+    status: 'pending',
+    origin: {
+      kind: 'referenceDeconstructionPublish',
+      referenceId: 'reference-1',
+      runId: 'run-1',
+      runRevision: 8,
+      candidateFingerprint: 'f'.repeat(64),
+    },
   };
 }
 
@@ -364,7 +557,8 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
     }),
     nonChapterUnit('aggregate-root', 2, 'aggregateAnalysis', 'aggregate'),
     nonChapterUnit('style-profile', 3, 'styleProfile', 'style'),
-    nonChapterUnit('analysis-quality', 4, 'qualityGate', 'analysisQuality'),
+    nonChapterUnit('distill-for-oan', 4, 'distillForOan', 'distill'),
+    nonChapterUnit('analysis-quality', 5, 'qualityGate', 'analysisQuality'),
   ];
   const attempts = units.map((unit, index) => ({
     id: unit.selectedAttemptId!,
@@ -381,22 +575,23 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
       `full-advance-${index + 1}`,
       index + 3,
       index === units.length - 1 ? 'reviewReady' : 'fullRunning',
-      ['8', '9', 'a', 'b', 'c'][index]!,
+      ['8', '9', 'a', 'b', 'c', 'd'][index]!,
     ));
   return {
     ...approved,
     status: 'reviewReady',
-    runRevision: 7,
+    runRevision: 8,
     mutationReceipts: [...approved.mutationReceipts, ...fullReceipts],
-    receiptCount: 8,
+    receiptCount: 9,
     full: {
       stages: [
         stage('chapterAnalysis', 'completed', 2, 2),
         stage('aggregateAnalysis', 'completed', 1, 1),
         stage('styleProfile', 'completed', 1, 1),
+        stage('distillForOan', 'completed', 1, 1),
         stage('qualityGate', 'completed', 1, 1),
       ],
-      progress: progress(5, 0, 2),
+      progress: progress(6, 0, 2),
       recentUnits: units,
       recentAttempts: attempts,
       analysisQuality: {
@@ -408,6 +603,31 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
     },
     updatedAt: '2026-07-22T00:08:30.000Z',
   };
+}
+
+export function publishingReferenceRun(
+  publishKey = 'publish-key',
+): ReferenceDeconstructionRun {
+  const reviewReady = reviewReadyReferenceRun();
+  return {
+    ...reviewReady,
+    status: 'publishing',
+    runRevision: reviewReady.runRevision + 1,
+    mutationReceipts: [
+      ...reviewReady.mutationReceipts,
+      receipt(
+        publishKey,
+        reviewReady.runRevision + 1,
+        'publishing',
+        'e',
+      ),
+    ],
+    receiptCount: reviewReady.receiptCount + 1,
+    publication: referencePublicationFixture({
+      pendingActionId: 'pending-reference-publish-1',
+    }),
+    updatedAt: '2026-07-22T00:09:00.000Z',
+  } as ReferenceDeconstructionRun;
 }
 
 export function mutationResult(
@@ -552,4 +772,13 @@ function receipt(
     resultingRunRevision,
     resultStatus,
   };
+}
+
+function distilledEntry(
+  id: string,
+  category: ReferenceDeconstructionPublicationView['entryInventory'][number]['category'],
+  title: string,
+  estimatedTokens: number,
+): ReferenceDeconstructionPublicationView['entryInventory'][number] {
+  return { id, category, title, estimatedTokens };
 }

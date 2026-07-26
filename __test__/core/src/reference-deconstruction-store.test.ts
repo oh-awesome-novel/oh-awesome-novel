@@ -19,6 +19,7 @@ import {
   approveReferenceFullDeconstruction,
   cancelReferenceDeconstructionRun,
   completeReferenceQuickPreview,
+  createReferenceContextIndex,
   createReferenceDeconstructionRun,
   createReferenceEvidencePointerMap,
   createReferenceProgressProjection,
@@ -26,6 +27,8 @@ import {
   importReferenceWork,
   inspectReferenceWorkReadiness,
   listReferenceWorks,
+  formatReferenceDistilledCategoryMarkdown,
+  normalizeReferenceDistillationModelOutput,
   normalizeReferenceQuickPreviewModelOutput,
   projectReferenceDeconstructionRunForTransport,
   readReferenceDeconstructionRun,
@@ -38,6 +41,7 @@ import {
   setReferenceEnabled,
 } from '@oh-awesome-novel/core';
 import type {
+  ReferenceDeconstructionFinding,
   ReferenceDeconstructionManifest,
   ReferenceQuickPreviewSelection,
 } from '@oh-awesome-novel/core';
@@ -691,6 +695,73 @@ describe('reference readiness gate', () => {
     await mkdir(join(bundleRoot, 'deconstruction'));
     await writeFile(join(bundleRoot, 'deconstruction', 'aggregate.yaml'), aggregate, 'utf-8');
     const doNotCopy = await readFile(join(bundleRoot, 'distilled', 'do-not-copy.md'), 'utf-8');
+    const sourceFinding: ReferenceDeconstructionFinding = {
+      id: 'verified-finding-001',
+      kind: 'pacing',
+      observation: 'A bounded observation.',
+      technique: 'Change narrative pressure through original consequences.',
+      confidence: 'high',
+      evidenceRefs: [],
+      sourceFindingRefs: [],
+      generalInference: false,
+    };
+    const distillation = normalizeReferenceDistillationModelOutput({
+      entries: [
+        readinessDistillationEntry('writingStyle', sourceFinding.id),
+        readinessDistillationEntry('pacing', sourceFinding.id),
+        readinessDistillationEntry('hooks', sourceFinding.id),
+        readinessDistillationEntry('scene', sourceFinding.id),
+        readinessDistillationEntry('character', sourceFinding.id),
+      ],
+      doNotCopyRules: ['Do not copy source expression or story-specific facts.'],
+      differentiationWarnings: ['Change motive, setting, causality, and consequences.'],
+      uncertainties: [],
+    }, {
+      runId: 'published-run-001',
+      unit: {
+        id: 'distill-readiness-fixture',
+        ordinal: 1,
+        stageId: 'distillForOan',
+        kind: 'distill',
+        predecessorUnitIds: ['aggregate-fixture', 'style-fixture'],
+      },
+      verifiedFindings: { [sourceFinding.id]: sourceFinding },
+      coveredUnitIds: ['chapter-fixture'],
+      coveredChapterIds: ['0001'],
+    });
+    const contextIndex = createReferenceContextIndex({
+      referenceId: fixture.referenceId,
+      publishedRunId: 'published-run-001',
+      sourceChecksumSha256: fixture.selection.sourceChecksumSha256,
+      structureFingerprint: fixture.selection.structureFingerprint,
+      distillation,
+    });
+    const contextIndexContent = stringify(contextIndex);
+    await writeFile(
+      join(bundleRoot, 'context', 'index.yaml'),
+      contextIndexContent,
+      'utf-8',
+    );
+    const distilledOutputs = [];
+    for (const category of [
+      'writingStyle',
+      'pacing',
+      'hooks',
+      'scene',
+      'character',
+    ] as const) {
+      const path = contextIndex.entries.find((entry) => entry.category === category)!.path;
+      const content = formatReferenceDistilledCategoryMarkdown(
+        category,
+        distillation.entries,
+      );
+      await writeFile(join(bundleRoot, path), content, 'utf-8');
+      distilledOutputs.push({
+        kind: 'distilled' as const,
+        path,
+        checksumSha256: sha256(content),
+      });
+    }
     manifest.status = 'completed';
     manifest.qualityStatus = 'passed';
     manifest.publishedRunId = 'published-run-001';
@@ -707,10 +778,16 @@ describe('reference readiness gate', () => {
         path: 'distilled/do-not-copy.md',
         checksumSha256: sha256(doNotCopy),
       },
+      ...distilledOutputs,
       {
         kind: 'context',
         path: 'context/reference-summary.md',
         checksumSha256: sha256(summary),
+      },
+      {
+        kind: 'context',
+        path: 'context/index.yaml',
+        checksumSha256: sha256(contextIndexContent),
       },
     ];
     await writeFile(manifestPath, stringify(manifest), 'utf-8');
@@ -735,7 +812,7 @@ describe('reference readiness gate', () => {
     });
     expect(tooSmall.included).toEqual([]);
     expect(tooSmall.omitted).toContainEqual(expect.objectContaining({
-      id: fixture.referenceId,
+      referenceId: fixture.referenceId,
       reasonCode: 'tokenBudgetExceeded',
       contextEligible: false,
     }));
@@ -746,11 +823,15 @@ describe('reference readiness gate', () => {
       explicitReferenceIds: [fixture.referenceId],
     });
     expect(selected.included).toContainEqual(expect.objectContaining({
-      id: fixture.referenceId,
-      deconstructionStatus: 'completed',
-      contextEligible: true,
-      reasonCode: 'ready',
+      referenceId: fixture.referenceId,
+      reasonCode: 'fallback',
+      semanticBoundary: 'compressible',
     }));
+    expect(selected.included).toHaveLength(1);
+    expect(selected.omitted.filter((entry) =>
+      entry.scope === 'entry'
+      && entry.referenceId === fixture.referenceId
+      && entry.reasonCode === 'taskMismatch')).toHaveLength(4);
 
     const disabled = await setReferenceEnabled(
       fixture.workspaceRoot,
@@ -791,8 +872,9 @@ describe('reference readiness gate', () => {
     });
     expect(selection.included).toEqual([]);
     expect(selection.omitted).toContainEqual(expect.objectContaining({
-      reasonCode: 'stale',
+      reasonCode: 'notAnalyzed',
     }));
+    expect(selection.originalSourceRead).toBe(false);
   });
 
   it('omits a forged completed manifest whose frozen pipeline is incomplete', async () => {
@@ -836,7 +918,7 @@ describe('reference readiness gate', () => {
     });
     expect(selection.included).toEqual([]);
     expect(selection.omitted).toContainEqual(expect.objectContaining({
-      id: fixture.referenceId,
+      referenceId: fixture.referenceId,
       reasonCode: 'needsRebuild',
     }));
   });
@@ -976,6 +1058,24 @@ function createPreview(
     allowedPointers: createReferenceEvidencePointerMap(selection),
     sourceWindows: selection.windows,
   });
+}
+
+function readinessDistillationEntry(
+  category: 'writingStyle' | 'pacing' | 'hooks' | 'scene' | 'character',
+  sourceFindingRef: string,
+) {
+  return {
+    category,
+    title: `${category} fixture`,
+    technique: `Apply an original ${category} constraint without source expression.`,
+    whenUseful: ['Use when this task needs the matching narrative function.'],
+    constraints: ['Change all story-specific facts and causal details.'],
+    differentiationPrompts: ['Which original premise produces a different result?'],
+    sourceFindingRefs: [sourceFindingRef],
+    confidence: 'high' as const,
+    tags: [category],
+    capabilityIds: ['novel.write_chapter' as const],
+  };
 }
 
 function sha256(value: string): string {

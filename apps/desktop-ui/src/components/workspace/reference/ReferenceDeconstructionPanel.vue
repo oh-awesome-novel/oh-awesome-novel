@@ -3,7 +3,12 @@ import { computed, shallowRef, watch } from 'vue';
 
 import ReferenceDiagnostics from './ReferenceDiagnostics.vue';
 import ReferenceFullDeconstructionProgress from './ReferenceFullDeconstructionProgress.vue';
+import ReferencePublishReview from './ReferencePublishReview.vue';
+import ReferencePublishedContextSummary from './ReferencePublishedContextSummary.vue';
 import ReferenceQuickPreview from './ReferenceQuickPreview.vue';
+import type {
+  ReferenceDeconstructionPublicationView,
+} from '../../../composables/useReferenceDeconstruction';
 import type {
   ReferenceDeconstructionRun,
   ReferenceDeconstructionRunStatus,
@@ -21,6 +26,7 @@ const props = defineProps<{
   pausing: boolean;
   resuming: boolean;
   retrying: boolean;
+  publishing: boolean;
   reconciling: boolean;
   indeterminate: boolean;
   error: string;
@@ -32,7 +38,9 @@ const props = defineProps<{
   canRetry: boolean;
   canCancel: boolean;
   canApprove: boolean;
+  canPublish: boolean;
   needsReconcile: boolean;
+  publication?: ReferenceDeconstructionPublicationView;
 }>();
 
 const emit = defineEmits<{
@@ -45,6 +53,8 @@ const emit = defineEmits<{
   pauseFull: [];
   resumeFull: [];
   retryFailedUnit: [unitId: string];
+  publish: [];
+  reviewPendingAction: [pendingActionId: string];
 }>();
 
 const runStatusLabels: Record<ReferenceDeconstructionRunStatus, string> = {
@@ -68,6 +78,7 @@ const confirmingLowConfidenceRange = shallowRef(false);
 const blockingDiagnosticCount = computed(() =>
   props.run?.diagnostics.filter((diagnostic) => diagnostic.blocking).length ?? 0,
 );
+const publishedContext = computed(() => props.reference?.publishedContext);
 const detectedPreviewChapterCount = computed(() =>
   Math.min(props.reference?.chapterCount ?? 0, 3),
 );
@@ -82,6 +93,7 @@ const statusLabel = computed(() => {
   if (props.pausing) return 'Pausing full analysis';
   if (props.resuming) return 'Resuming full analysis';
   if (props.retrying) return 'Requeuing failed unit';
+  if (props.publishing) return 'Creating publish PendingAction';
   if (!props.run) return props.reference?.deconstructionStatus ?? 'Not selected';
   return runStatusLabels[props.run.status];
 });
@@ -134,6 +146,12 @@ function requestFullApproval(): void {
         <strong>{{ reference.contextEligible ? 'Eligible' : 'Not eligible' }}</strong>
         <small>{{ reference.readinessReason }}</small>
       </div>
+      <ReferencePublishedContextSummary
+        v-if="publishedContext"
+        :context="publishedContext"
+        :enabled="reference.enabled"
+        :context-eligible="reference.contextEligible"
+      />
 
       <p v-if="hasLowBoundaryConfidence" class="reference-range-warning">
         Boundary confidence low. The default preview uses the detected first
@@ -212,6 +230,39 @@ function requestFullApproval(): void {
       <ReferenceDiagnostics
         v-if="run"
         :diagnostics="run.diagnostics"
+      />
+      <section
+        v-if="run?.status === 'reviewReady' && !publication"
+        class="reference-full-gate"
+        aria-label="Reference publish preparation"
+      >
+        <strong>Analysis ready to publish</strong>
+        <p>
+          Prepare the deterministic multi-file candidate and open one global PendingAction.
+          The published reference bundle remains unchanged until that action is accepted.
+        </p>
+        <button
+          class="primary-button tight-button"
+          type="button"
+          :disabled="!canPublish"
+          @click="emit('publish')"
+        >
+          {{ publishing ? 'Creating PendingAction…' : 'Create publish PendingAction' }}
+        </button>
+      </section>
+      <ReferencePublishReview
+        v-if="run && publication"
+        :publication="publication"
+        :status="run.status"
+        :source-checksum-sha256="run.sourceChecksumSha256"
+        :pipeline-version="run.pipelineVersion"
+        :capability-version="run.capabilityVersion"
+        :coverage-percent="run.full?.analysisQuality?.coveragePercent ?? 0"
+        :diagnostics="run.diagnostics"
+        :publishing="publishing"
+        :can-publish="canPublish"
+        @publish="emit('publish')"
+        @review-pending-action="emit('reviewPendingAction', $event)"
       />
 
       <section

@@ -7,9 +7,15 @@ import {
 import type {
   ReferenceDeconstructionFullRun,
   ReferenceDeconstructionMutationReceipt,
+  ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
 } from '@oh-awesome-novel/client';
+import {
+  publishingReferenceRun,
+  referencePublishPendingActionFixture,
+  reviewReadyReferenceRun,
+} from './support/referenceDeconstructionFixture';
 
 describe('useReferenceDeconstruction', () => {
   it('creates a run, then advances exactly one bounded preview unit', async () => {
@@ -539,6 +545,138 @@ describe('useReferenceDeconstruction', () => {
     expect(approve).not.toHaveBeenCalled();
   });
 
+  it('creates one publish PendingAction from a quality-passed review candidate', async () => {
+    const reviewReady = reviewReadyReferenceRun();
+    const publish = vi.fn(async (
+      _referenceId: string,
+      _runId: string,
+      input: { baseRunRevision: number; idempotencyKey: string },
+    ) => {
+      const run = publishingReferenceRun(input.idempotencyKey);
+      return {
+        run,
+        receipt: run.mutationReceipts.at(-1)!,
+        replayed: false,
+        pendingAction: referencePublishPendingActionFixture(),
+      };
+    });
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: reviewReady }),
+        publish,
+      }),
+      createIdempotencyKey: () => 'publish-key',
+    });
+
+    await flow.selectReference(reference());
+    expect(flow.canPublish.value).toBe(true);
+    expect(flow.publication.value).toBeUndefined();
+
+    await flow.publish();
+
+    expect(publish).toHaveBeenCalledWith('reference-1', 'run-1', {
+      baseRunRevision: reviewReady.runRevision,
+      idempotencyKey: 'publish-key',
+    });
+    expect(flow.run.value?.status).toBe('publishing');
+    expect(flow.publication.value?.pendingActionId).toBe('pending-reference-publish-1');
+    expect(flow.publishPendingAction.value?.id).toBe('pending-reference-publish-1');
+    expect(flow.canPublish.value).toBe(false);
+    expect(flow.indeterminate.value).toBe(false);
+  });
+
+  it('does not expose cancellation while the publish mutation is in flight', async () => {
+    const pending = deferred<ReferenceDeconstructionPublishResult>();
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: reviewReadyReferenceRun() }),
+        publish: async () => pending.promise,
+      }),
+      createIdempotencyKey: () => 'publish-key',
+    });
+
+    await flow.selectReference(reference());
+    const publish = flow.publish();
+
+    expect(flow.publishing.value).toBe(true);
+    expect(flow.canCancel.value).toBe(false);
+
+    const run = publishingReferenceRun('publish-key');
+    pending.resolve({
+      run,
+      receipt: run.mutationReceipts.at(-1)!,
+      replayed: false,
+      pendingAction: referencePublishPendingActionFixture(),
+    });
+    await publish;
+  });
+
+  it('GET-proves a lost publish response without creating a duplicate PendingAction', async () => {
+    const reviewReady = reviewReadyReferenceRun();
+    const published = publishingReferenceRun('publish-key');
+    const publish = vi.fn(async () => {
+      throw new Error('connection dropped');
+    });
+    const get = vi.fn(async () => ({ run: published }));
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: reviewReady }),
+        get,
+        publish,
+      }),
+      createIdempotencyKey: () => 'publish-key',
+    });
+
+    await flow.selectReference(reference());
+    await flow.publish();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith('reference-1', 'run-1');
+    expect(flow.run.value?.status).toBe('publishing');
+    expect(flow.publication.value?.pendingActionId).toBe('pending-reference-publish-1');
+    expect(flow.indeterminate.value).toBe(false);
+    expect(flow.error.value).toBe('');
+  });
+
+  it('replays an unproven publish with the original idempotency key after reconcile', async () => {
+    const reviewReady = reviewReadyReferenceRun();
+    let publishAttempt = 0;
+    const publish = vi.fn(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => {
+      publishAttempt += 1;
+      if (publishAttempt === 1) throw new Error('connection dropped');
+      const run = publishingReferenceRun(input.idempotencyKey);
+      return {
+        run,
+        receipt: run.mutationReceipts.at(-1)!,
+        replayed: true,
+        pendingAction: referencePublishPendingActionFixture(),
+      };
+    });
+    const flow = useReferenceDeconstruction({
+      client: client({
+        active: async () => ({ run: reviewReady }),
+        get: async () => ({ run: reviewReady }),
+        publish,
+      }),
+      createIdempotencyKey: () => 'publish-key',
+    });
+
+    await flow.selectReference(reference());
+    await flow.publish();
+    expect(flow.indeterminate.value).toBe(true);
+
+    await flow.reconcile();
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish.mock.calls[0]?.[2]).toEqual(publish.mock.calls[1]?.[2]);
+    expect(flow.run.value?.status).toBe('publishing');
+    expect(flow.indeterminate.value).toBe(false);
+  });
+
   it('aborts the local request on dispose without claiming a server cancellation', async () => {
     const cancel = vi.fn();
     let signal: AbortSignal | undefined;
@@ -583,6 +721,7 @@ function client(overrides: {
   retry?: ReferenceDeconstructionClient['retryReferenceDeconstructionRun'];
   cancel?: ReferenceDeconstructionClient['cancelReferenceDeconstructionRun'];
   approve?: ReferenceDeconstructionClient['approveFullReferenceDeconstructionRun'];
+  publish?: ReferenceDeconstructionClient['publishReferenceDeconstructionRun'];
 } = {}): ReferenceDeconstructionClient {
   return {
     createReferenceDeconstructionRun: overrides.create ?? (async () =>
@@ -601,6 +740,15 @@ function client(overrides: {
       mutation(cancelledRun(), 'cancel-key')),
     approveFullReferenceDeconstructionRun: overrides.approve ?? (async () =>
       mutation(approvedRun(), 'approve-key')),
+    publishReferenceDeconstructionRun: overrides.publish ?? (async () => {
+      const run = publishingReferenceRun('publish-key');
+      return {
+        run,
+        receipt: run.mutationReceipts.at(-1)!,
+        replayed: false,
+        pendingAction: referencePublishPendingActionFixture(),
+      };
+    }),
   };
 }
 

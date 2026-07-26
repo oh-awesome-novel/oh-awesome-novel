@@ -24,6 +24,7 @@ export type ReferenceDeconstructionWorkUnitKind =
   | 'chapterChunk'
   | 'aggregate'
   | 'style'
+  | 'distill'
   | 'analysisQuality';
 
 export interface ReferenceDeconstructionWorkUnit {
@@ -31,7 +32,11 @@ export interface ReferenceDeconstructionWorkUnit {
   ordinal: number;
   stageId: Extract<
     ReferenceDeconstructionStageId,
-    'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'qualityGate'
+    | 'chapterAnalysis'
+    | 'aggregateAnalysis'
+    | 'styleProfile'
+    | 'distillForOan'
+    | 'qualityGate'
   >;
   kind: ReferenceDeconstructionWorkUnitKind;
   predecessorUnitIds: string[];
@@ -55,6 +60,7 @@ export interface ReferenceDeconstructionWorkPlan {
   units: ReferenceDeconstructionWorkUnit[];
   aggregateRootUnitId: string;
   styleUnitId: string;
+  distillUnitId: string;
   analysisQualityUnitId: string;
 }
 
@@ -422,16 +428,29 @@ export function createReferenceDeconstructionWorkPlan(
     predecessorUnitIds: [aggregateRootUnitId],
   });
   ordinal += 1;
+  const distillUnitId = stableId('unit-distill', [
+    referenceId,
+    aggregateRootUnitId,
+    styleUnitId,
+  ]);
+  units.push({
+    id: distillUnitId,
+    ordinal,
+    stageId: 'distillForOan',
+    kind: 'distill',
+    predecessorUnitIds: [aggregateRootUnitId, styleUnitId],
+  });
+  ordinal += 1;
   const analysisQualityUnitId = stableId('unit-analysis-quality', [
     referenceId,
-    styleUnitId,
+    distillUnitId,
   ]);
   units.push({
     id: analysisQualityUnitId,
     ordinal,
     stageId: 'qualityGate',
     kind: 'analysisQuality',
-    predecessorUnitIds: [styleUnitId],
+    predecessorUnitIds: [distillUnitId],
   });
 
   if (units.length > MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS) {
@@ -457,6 +476,7 @@ export function createReferenceDeconstructionWorkPlan(
     units,
     aggregateRootUnitId,
     styleUnitId,
+    distillUnitId,
     analysisQualityUnitId,
   };
 }

@@ -118,6 +118,84 @@ describe('SemanticPatch Apply Engine preview', () => {
       .toContain('她握紧伞柄。');
   });
 
+  it('previews a reference-scoped multi-file publication without changing canonical files', async () => {
+    const workspaceRoot = await createWorkspace();
+    await writeFileTree(workspaceRoot, {
+      'examples/references.yaml': 'version: 1\nreferences: []\n',
+      'examples/references/reference-1/deconstruction-manifest.yaml':
+        'version: 1\nstatus: notAnalyzed\n',
+    });
+
+    const result = await previewSemanticPatches({
+      workspaceRoot,
+      patches: [
+        {
+          kind: 'referenceArtifact',
+          referenceId: 'reference-1',
+          file: 'references.yaml',
+          operation: 'replaceFile',
+          value: 'version: 1\nreferences:\n  - id: reference-1\n',
+        },
+        {
+          kind: 'referenceArtifact',
+          referenceId: 'reference-1',
+          file: 'context/index.yaml',
+          operation: 'replaceFile',
+          value: 'version: 1\nentries: []\n',
+        },
+        {
+          kind: 'referenceArtifact',
+          referenceId: 'reference-1',
+          file: 'deconstruction-manifest.yaml',
+          operation: 'replaceFile',
+          value: 'version: 1\nstatus: completed\n',
+        },
+      ],
+    });
+
+    expect(result.touchedFiles).toEqual([
+      'examples/references.yaml',
+      'examples/references/reference-1/context/index.yaml',
+      'examples/references/reference-1/deconstruction-manifest.yaml',
+    ]);
+    expect(result.diff).toContain('b/examples/references.yaml');
+    expect(result.diff).toContain(
+      'b/examples/references/reference-1/context/index.yaml',
+    );
+    await expect(
+      readFile(join(workspaceRoot, 'examples/references.yaml'), 'utf-8'),
+    ).resolves.toBe('version: 1\nreferences: []\n');
+    await expect(
+      readFile(
+        join(
+          workspaceRoot,
+          'examples/references/reference-1/deconstruction-manifest.yaml',
+        ),
+        'utf-8',
+      ),
+    ).resolves.toContain('notAnalyzed');
+  });
+
+  it.each([
+    'metadata.yaml',
+    'sources/original.txt',
+    'context/source.txt',
+    '../reference-2/context/index.yaml',
+    'unrelated.md',
+  ])('rejects non-publication reference artifact target %s', async (file) => {
+    const workspaceRoot = await createWorkspace();
+    await expect(previewSemanticPatches({
+      workspaceRoot,
+      patches: [{
+        kind: 'referenceArtifact',
+        referenceId: 'reference-1',
+        file,
+        operation: 'replaceFile',
+        value: 'blocked\n',
+      }],
+    })).rejects.toThrow(/not publishable|Invalid workspace relative path/);
+  });
+
   it('rejects patch targets that point at hidden workspace paths', async () => {
     const workspaceRoot = await createWorkspace();
 

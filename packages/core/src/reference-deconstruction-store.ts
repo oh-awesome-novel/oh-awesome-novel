@@ -56,6 +56,9 @@ import type {
   ReferenceSourceManifest,
 } from './reference-work.js';
 import {
+  assertReferencesIndexValue,
+} from './reference-work.js';
+import {
   MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS,
   collectReferenceAnalysisFindings,
   createReferenceDeconstructionStageInputFingerprint,
@@ -76,6 +79,18 @@ import type {
   ReferenceStyleProfileResult,
 } from './reference-deconstruction-full.js';
 import {
+  assertReferenceContextIndex,
+  collectReferenceDistillationFindings,
+  createReferenceContextIndex,
+  formatReferenceDistilledCategoryMarkdown,
+  parseReferenceDistillationResult,
+} from './reference-deconstruction-distill.js';
+import type {
+  ReferenceContextIndex,
+  ReferenceDistillationResult,
+  ReferenceDistilledCategory,
+} from './reference-deconstruction-distill.js';
+import {
   evaluateReferenceAnalysisCopyRisk,
   evaluateReferenceDeconstructionAnalysisQuality,
   parseReferenceDeconstructionAnalysisQualityReport,
@@ -85,6 +100,16 @@ import type {
   ReferenceDeconstructionAnalysisQualityReport,
   ReferenceDeconstructionQualitySelectedAttempt,
 } from './reference-deconstruction-quality.js';
+import {
+  assertReferenceDeconstructionPublicationCandidate,
+  candidateTargetPath,
+  createReferenceDeconstructionPublicationCandidate,
+} from './reference-deconstruction-publication.js';
+import type {
+  ReferenceDeconstructionPublicationCandidate,
+  ReferenceDeconstructionPublicationCandidateFile,
+  ReferenceDeconstructionPublicationEntryInventoryItem,
+} from './reference-deconstruction-publication.js';
 
 export type ReferenceReadinessReason =
   | 'ready'
@@ -93,7 +118,8 @@ export type ReferenceReadinessReason =
   | 'stale'
   | 'qualityFailed'
   | 'needsRebuild'
-  | 'missingContextSummary';
+  | 'missingContextSummary'
+  | 'invalidContextIndex';
 
 export interface ReferenceReadinessInspection {
   status: ReferencePublishedDeconstructionStatus;
@@ -102,6 +128,14 @@ export interface ReferenceReadinessInspection {
   diagnostics: ReferenceDeconstructionDiagnostic[];
   summaryPath?: string;
   summaryContent?: string;
+  contextIndexPath?: string;
+  contextIndex?: ReferenceContextIndex;
+  publishedContext?: {
+    runId: string;
+    fingerprint: string;
+    entryCount: number;
+    categoryCounts: Record<ReferenceDistilledCategory, number>;
+  };
   metadata?: ReferenceMetadata;
   sourceManifest?: ReferenceSourceManifest;
   deconstructionManifest?: ReferenceDeconstructionManifest;
@@ -245,6 +279,14 @@ export interface ReferenceFullDeconstructionState {
   analysisQuality?: ReferenceDeconstructionAnalysisQualitySummary;
 }
 
+export interface ReferenceDeconstructionPublicationState {
+  candidateFingerprint: string;
+  pendingActionId: string;
+  files: Array<Omit<ReferenceDeconstructionPublicationCandidateFile, 'content'>>;
+  entryInventory: ReferenceDeconstructionPublicationEntryInventoryItem[];
+  preparedAt: string;
+}
+
 export interface ReferenceFullDeconstructionReservation {
   kind: 'fullUnit';
   id: string;
@@ -263,6 +305,7 @@ export type ReferenceFullDeconstructionOutput =
   | ReferenceChapterAnalysisResult
   | ReferenceAggregateAnalysisResult
   | ReferenceStyleProfileResult
+  | ReferenceDistillationResult
   | ReferenceDeconstructionAnalysisQualityReport;
 
 export interface ReferenceFullDeconstructionExecution {
@@ -301,6 +344,7 @@ export interface ReferenceDeconstructionRun {
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   full?: ReferenceFullDeconstructionState;
+  publication?: ReferenceDeconstructionPublicationState;
   activeReservation?: ReferenceDeconstructionReservation;
   failure?: ReferenceDeconstructionRunFailure;
   createdAt: string;
@@ -326,6 +370,7 @@ export interface ReferenceDeconstructionRunTransport {
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   receiptCount: number;
   full?: ReferenceFullDeconstructionTransport;
+  publication?: ReferenceDeconstructionPublicationState;
   createdAt: string;
   updatedAt: string;
   fullApprovedAt?: string;
@@ -334,7 +379,11 @@ export interface ReferenceDeconstructionRunTransport {
 export interface ReferenceFullDeconstructionStageSummary {
   stageId: Extract<
     ReferenceDeconstructionStageId,
-    'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'qualityGate'
+    | 'chapterAnalysis'
+    | 'aggregateAnalysis'
+    | 'styleProfile'
+    | 'distillForOan'
+    | 'qualityGate'
   >;
   status: 'notStarted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale';
   plannedUnits: number;
@@ -488,6 +537,36 @@ export interface InterruptReferenceFullDeconstructionUnitInput {
 export interface RetryReferenceDeconstructionUnitInput
   extends MutateReferenceDeconstructionRunInput {
   unitId: string;
+}
+
+export interface BeginReferenceDeconstructionPublishInput
+  extends MutateReferenceDeconstructionRunInput {
+  candidateFingerprint: string;
+  pendingActionId: string;
+}
+
+export interface AssertReferenceDeconstructionPublishCurrentInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  candidateFingerprint: string;
+  pendingActionId: string;
+}
+
+export interface CompleteReferenceDeconstructionPublishInput
+  extends BeginReferenceDeconstructionPublishInput {}
+
+export interface RejectReferenceDeconstructionPublishInput
+  extends MutateReferenceDeconstructionRunInput {
+  pendingActionId: string;
+}
+
+export interface ReconcileReferenceDeconstructionPublishInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  pendingActionStatus: 'pending' | 'accepted' | 'rejected';
+  now?: string;
 }
 
 const ACTIVE_RUN_STATUSES: readonly ReferenceDeconstructionRunStatus[] = [
@@ -679,6 +758,10 @@ export async function readReferenceDeconstructionRun(
       runId,
       options.now,
     );
+  }
+  const projected = await readRunStateArtifact(workspaceRoot, referenceId, runId);
+  if (projected.status === 'publishing' || projected.status === 'completed') {
+    return projected;
   }
   return readRunState(workspaceRoot, referenceId, runId);
 }
@@ -1711,6 +1794,15 @@ export function projectReferenceDeconstructionRunForTransport(
     ),
     receiptCount: run.mutationReceipts.length,
     ...(run.full ? { full: projectReferenceFullDeconstruction(run.full) } : {}),
+    ...(run.publication
+      ? {
+          publication: {
+            ...run.publication,
+            files: run.publication.files.map((file) => ({ ...file })),
+            entryInventory: run.publication.entryInventory.map((entry) => ({ ...entry })),
+          },
+        }
+      : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     ...(run.fullApprovedAt ? { fullApprovedAt: run.fullApprovedAt } : {}),
@@ -1724,6 +1816,7 @@ function projectReferenceFullDeconstruction(
     'chapterAnalysis',
     'aggregateAnalysis',
     'styleProfile',
+    'distillForOan',
     'qualityGate',
   ];
   const stages = stageIds.map((stageId): ReferenceFullDeconstructionStageSummary => {
@@ -1817,6 +1910,38 @@ export async function readReferencePreviewSource(
   workspaceRoot: string,
   referenceId: string,
 ): Promise<ReferencePreviewSource> {
+  const identity = await readReferenceBundleIdentity(workspaceRoot, referenceId);
+  const {
+    safeReferenceId,
+    bundleRoot,
+    metadata,
+    sourceManifest,
+    deconstructionManifest,
+  } = identity;
+  const sourcePath = await resolveContainedExistingPath(
+    bundleRoot,
+    join('sources', sourceManifest.originalFile),
+  );
+  const sourceText = await readFile(sourcePath, 'utf-8');
+  const actualChecksum = sha256(sourceText);
+  if (metadata.checksumSha256 !== actualChecksum) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference source checksum is stale.',
+    );
+  }
+  return { metadata, sourceManifest, deconstructionManifest, sourceText };
+}
+
+async function readReferenceBundleIdentity(
+  workspaceRoot: string,
+  referenceId: string,
+): Promise<{
+  safeReferenceId: string;
+  bundleRoot: string;
+  metadata: ReferenceMetadata;
+  sourceManifest: ReferenceSourceManifest;
+  deconstructionManifest: ReferenceDeconstructionManifest;
+}> {
   const safeReferenceId = assertSafeIdentifier(referenceId, 'referenceId');
   const bundleRoot = resolveReferenceBundleRoot(workspaceRoot, safeReferenceId);
   await assertRealBundleInsideWorkspace(workspaceRoot, bundleRoot);
@@ -1853,43 +1978,115 @@ export async function readReferencePreviewSource(
       'Reference bundle identities do not match.',
     );
   }
-  const sourcePath = await resolveContainedExistingPath(
-    bundleRoot,
-    join('sources', sourceManifest.originalFile),
-  );
-  const sourceText = await readFile(sourcePath, 'utf-8');
-  const actualChecksum = sha256(sourceText);
-  const actualStructureFingerprint = createReferenceStructureFingerprint(
+  const expectedStructureFingerprint = createReferenceStructureFingerprint(
     sourceManifest.detectedStructure,
   );
   if (
-    metadata.checksumSha256 !== actualChecksum
-    || sourceManifest.checksumSha256 !== actualChecksum
-    || deconstructionManifest.sourceChecksumSha256 !== actualChecksum
+    metadata.checksumSha256 !== sourceManifest.checksumSha256
+    || deconstructionManifest.sourceChecksumSha256 !== sourceManifest.checksumSha256
   ) {
     throw new ReferenceDeconstructionValidationError(
-      'Reference source checksum is stale.',
+      'Reference source checksum identity is stale.',
     );
   }
   if (
-    sourceManifest.structureFingerprint !== actualStructureFingerprint
-    || deconstructionManifest.structureFingerprint !== actualStructureFingerprint
+    sourceManifest.structureFingerprint !== expectedStructureFingerprint
+    || deconstructionManifest.structureFingerprint !== expectedStructureFingerprint
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference structure fingerprint is stale.',
     );
   }
-  return { metadata, sourceManifest, deconstructionManifest, sourceText };
+  return {
+    safeReferenceId,
+    bundleRoot,
+    metadata,
+    sourceManifest,
+    deconstructionManifest,
+  };
+}
+
+async function readPublishedReferenceBundleIdentity(
+  workspaceRoot: string,
+  referenceId: string,
+): Promise<{
+  safeReferenceId: string;
+  bundleRoot: string;
+  metadata: ReferenceMetadata;
+  sourceManifest?: ReferenceSourceManifest;
+  deconstructionManifest: ReferenceDeconstructionManifest;
+}> {
+  const safeReferenceId = assertSafeIdentifier(referenceId, 'referenceId');
+  const bundleRoot = resolveReferenceBundleRoot(workspaceRoot, safeReferenceId);
+  await assertRealBundleInsideWorkspace(workspaceRoot, bundleRoot);
+  const [metadataPath, deconstructionPath] = await Promise.all([
+    resolveContainedExistingPath(bundleRoot, 'metadata.yaml'),
+    resolveContainedExistingPath(bundleRoot, 'deconstruction-manifest.yaml'),
+  ]);
+  const [metadataValue, deconstructionValue] = await Promise.all([
+    readYamlOrValidation(metadataPath, 'Reference metadata is missing.'),
+    readYamlOrValidation(
+      deconstructionPath,
+      'Reference deconstruction manifest is missing.',
+    ),
+  ]);
+  const metadata = assertReferenceMetadata(metadataValue);
+  const deconstructionManifest = assertReferenceDeconstructionManifest(
+    deconstructionValue,
+  );
+  if (
+    metadata.id !== safeReferenceId
+    || deconstructionManifest.referenceId !== safeReferenceId
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference published bundle identities do not match.',
+    );
+  }
+  if (metadata.checksumSha256 !== deconstructionManifest.sourceChecksumSha256) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference published source checksum identity is stale.',
+    );
+  }
+  return {
+    safeReferenceId,
+    bundleRoot,
+    metadata,
+    deconstructionManifest,
+  };
 }
 
 export async function inspectReferenceWorkReadiness(
   workspaceRoot: string,
   referenceId: string,
 ): Promise<ReferenceReadinessInspection> {
+  return inspectReferenceWorkReadinessInternal(workspaceRoot, referenceId, true);
+}
+
+export async function inspectPublishedReferenceWorkReadiness(
+  workspaceRoot: string,
+  referenceId: string,
+): Promise<ReferenceReadinessInspection> {
+  return inspectReferenceWorkReadinessInternal(workspaceRoot, referenceId, false);
+}
+
+async function inspectReferenceWorkReadinessInternal(
+  workspaceRoot: string,
+  referenceId: string,
+  verifyOriginalSource: boolean,
+): Promise<ReferenceReadinessInspection> {
   const safeReferenceId = assertSafeIdentifier(referenceId, 'referenceId');
-  let source: ReferencePreviewSource;
+  let source: Awaited<ReturnType<typeof readPublishedReferenceBundleIdentity>>;
   try {
-    source = await readReferencePreviewSource(workspaceRoot, safeReferenceId);
+    source = verifyOriginalSource
+      ? {
+          ...(await readReferencePreviewSource(workspaceRoot, safeReferenceId)),
+          safeReferenceId,
+          bundleRoot: resolveReferenceBundleRoot(workspaceRoot, safeReferenceId),
+        }
+      : await readPublishedReferenceBundleIdentity(
+          workspaceRoot,
+          safeReferenceId,
+        );
   } catch (error) {
     const stale = error instanceof ReferenceDeconstructionValidationError
       && /checksum|fingerprint/u.test(error.message);
@@ -1920,7 +2117,8 @@ export async function inspectReferenceWorkReadiness(
     );
     if (
       persistedDiagnostics.referenceId !== safeReferenceId
-      || persistedDiagnostics.sourceChecksumSha256 !== sourceManifest.checksumSha256
+      || persistedDiagnostics.sourceChecksumSha256
+        !== deconstructionManifest.sourceChecksumSha256
       || progress.referenceId !== safeReferenceId
       || stableJson(progress) !== stableJson(expectedProgress)
       || REFERENCE_DECONSTRUCTION_STAGE_IDS.some((stageId) =>
@@ -1938,26 +2136,16 @@ export async function inspectReferenceWorkReadiness(
     });
   }
 
-  if (!metadata.enabled) {
-    return {
-      status: deconstructionManifest.status,
-      contextEligible: false,
-      reason: 'disabled',
-      diagnostics: persistedDiagnostics.items,
-      metadata,
-      sourceManifest,
-      deconstructionManifest,
-      progress,
-    };
-  }
   if (deconstructionManifest.status !== 'completed') {
-    const reason: ReferenceReadinessReason = deconstructionManifest.status === 'qualityFailed'
-      ? 'qualityFailed'
-      : deconstructionManifest.status === 'stale'
-        ? 'stale'
-        : deconstructionManifest.status === 'needsRebuild'
-          ? 'needsRebuild'
-          : 'notAnalyzed';
+    const reason: ReferenceReadinessReason = !metadata.enabled
+      ? 'disabled'
+      : deconstructionManifest.status === 'qualityFailed'
+        ? 'qualityFailed'
+        : deconstructionManifest.status === 'stale'
+          ? 'stale'
+          : deconstructionManifest.status === 'needsRebuild'
+            ? 'needsRebuild'
+            : 'notAnalyzed';
     return {
       status: deconstructionManifest.status,
       contextEligible: false,
@@ -1996,11 +2184,13 @@ export async function inspectReferenceWorkReadiness(
 
   const summaryOutput = deconstructionManifest.outputs.find((output) =>
     output.kind === 'context' && output.path === 'context/reference-summary.md');
-  if (!summaryOutput) {
+  const contextIndexOutput = deconstructionManifest.outputs.find((output) =>
+    output.kind === 'context' && output.path === 'context/index.yaml');
+  if (!summaryOutput || !contextIndexOutput) {
     return {
       status: 'needsRebuild',
       contextEligible: false,
-      reason: 'missingContextSummary',
+      reason: summaryOutput ? 'invalidContextIndex' : 'missingContextSummary',
       diagnostics: persistedDiagnostics.items,
       metadata,
       sourceManifest,
@@ -2009,7 +2199,17 @@ export async function inspectReferenceWorkReadiness(
     };
   }
   try {
-    const verifiedOutputs = await Promise.all(deconstructionManifest.outputs.map(async (output) => {
+    if (
+      new Set(deconstructionManifest.outputs.map((output) => output.path)).size
+        !== deconstructionManifest.outputs.length
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference published output paths must be unique.',
+      );
+    }
+    const readVerifiedOutput = async (
+      output: ReferenceDeconstructionManifest['outputs'][number],
+    ) => {
       const absolutePath = await resolveContainedExistingPath(bundleRoot, output.path);
       const content = await readFile(absolutePath, 'utf-8');
       if (sha256(content) !== output.checksumSha256) {
@@ -2018,27 +2218,91 @@ export async function inspectReferenceWorkReadiness(
         );
       }
       return [output.path, content] as const;
-    }));
-    const summaryContent = new Map(verifiedOutputs).get(summaryOutput.path);
-    if (summaryContent === undefined) {
+    };
+    const contextOutputs = await Promise.all([
+      readVerifiedOutput(summaryOutput),
+      readVerifiedOutput(contextIndexOutput),
+    ]);
+    const contextOutputMap = new Map(contextOutputs);
+    const contextIndexContent = contextOutputMap.get(contextIndexOutput.path);
+    if (contextIndexContent === undefined) {
       throw new ReferenceDeconstructionValidationError(
-        'Reference context summary was not verified.',
+        'Reference context index was not verified.',
       );
     }
+    const contextIndex = assertReferenceContextIndex(
+      parse(contextIndexContent) as unknown,
+      {
+        referenceId: safeReferenceId,
+        publishedRunId: deconstructionManifest.publishedRunId,
+        sourceChecksumSha256: deconstructionManifest.sourceChecksumSha256,
+        structureFingerprint: deconstructionManifest.structureFingerprint,
+      },
+    );
+    const distilledOutputs = [...new Set(
+      contextIndex.entries.map((entry) => entry.path),
+    )].map((path) => {
+      const matches = deconstructionManifest.outputs.filter((output) =>
+        output.kind === 'distilled' && output.path === path);
+      if (matches.length !== 1) {
+        throw new ReferenceDeconstructionValidationError(
+          `Reference context entry path is not a unique distilled output: ${path}.`,
+        );
+      }
+      return matches[0]!;
+    });
+    const outputsToVerify = verifyOriginalSource
+      ? deconstructionManifest.outputs
+      : distilledOutputs;
+    const verifiedOutputs = verifyOriginalSource
+      ? await Promise.all(outputsToVerify.map(readVerifiedOutput))
+      : [
+          ...contextOutputs,
+          ...await Promise.all(outputsToVerify.map(readVerifiedOutput)),
+        ];
+    const verifiedOutputMap = new Map(verifiedOutputs);
+    const summaryContent = verifiedOutputMap.get(summaryOutput.path);
+    if (summaryContent === undefined) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference context outputs were not verified.',
+      );
+    }
+    for (const entry of contextIndex.entries) {
+      if (!verifiedOutputMap.has(entry.path)) {
+        throw new ReferenceDeconstructionValidationError(
+          `Reference context entry path is not a verified distilled output: ${entry.path}.`,
+        );
+      }
+    }
+    const categoryCounts = Object.fromEntries(
+      (['writingStyle', 'pacing', 'hooks', 'scene', 'character'] as const)
+        .map((category) => [
+          category,
+          contextIndex.entries.filter((entry) => entry.category === category).length,
+        ]),
+    ) as Record<ReferenceDistilledCategory, number>;
     return {
       status: 'completed',
-      contextEligible: true,
-      reason: 'ready',
+      contextEligible: metadata.enabled,
+      reason: metadata.enabled ? 'ready' : 'disabled',
       diagnostics: persistedDiagnostics.items,
       summaryPath: `examples/references/${safeReferenceId}/${summaryOutput.path}`,
       summaryContent,
+      contextIndexPath: `examples/references/${safeReferenceId}/${contextIndexOutput.path}`,
+      contextIndex,
+      publishedContext: {
+        runId: contextIndex.publishedRunId,
+        fingerprint: sha256(contextIndexContent),
+        entryCount: contextIndex.entries.length,
+        categoryCounts,
+      },
       metadata,
       sourceManifest,
       deconstructionManifest,
       progress,
     };
   } catch (error) {
-    return failedReadiness('stale', 'missingContextSummary', error, {
+    return failedReadiness('stale', 'invalidContextIndex', error, {
       metadata,
       sourceManifest,
       deconstructionManifest,
@@ -2736,6 +3000,8 @@ function assertFullOutputMatchesUnit(
       ? 'findings' in candidate && !('unitSummary' in candidate) && !('dimensions' in candidate)
       : unit.kind === 'style'
         ? 'dimensions' in candidate
+        : unit.kind === 'distill'
+          ? 'entries' in candidate
         : false;
   if (!matchesKind) {
     throw new ReferenceDeconstructionValidationError(
@@ -2786,19 +3052,37 @@ async function parseStoredFullOutput(
     assertNoCopyRisk([output], [sourceWindow], [unit]);
     return output;
   }
-  if (unit.kind === 'aggregate' || unit.kind === 'style') {
-    const predecessorOutputs = await Promise.all(unit.predecessorUnitIds.map(
-      (predecessorUnitId) => readReferenceAttemptOutputFromRun(
+  if (
+    unit.kind === 'aggregate'
+    || unit.kind === 'style'
+    || unit.kind === 'distill'
+  ) {
+    const predecessorOutputs: ReferenceFullDeconstructionOutput[] = [];
+    for (const predecessorUnitId of unit.predecessorUnitIds) {
+      predecessorOutputs.push(await readReferenceAttemptOutputFromRun(
         workspaceRoot,
         run,
         requireSelectedAttempt(run.full!, predecessorUnitId),
         context,
-      ),
-    ));
-    const verifiedSourceFindings = selectBoundedVerifiedFindings(
-      predecessorOutputs.map((output) =>
-        'dimensions' in output ? [] : collectReferenceAnalysisFindings(output)),
+      ));
+    }
+    const aggregateOutput = predecessorOutputs.find(
+      (output): output is ReferenceAggregateAnalysisResult =>
+        'findings' in output && !('unitSummary' in output),
     );
+    const styleOutput = predecessorOutputs.find(
+      (output): output is ReferenceStyleProfileResult => 'dimensions' in output,
+    );
+    const verifiedSourceFindings = unit.kind === 'distill'
+      && aggregateOutput
+      && styleOutput
+      ? collectReferenceDistillationFindings(aggregateOutput.findings, styleOutput)
+      : selectBoundedVerifiedFindings(
+          predecessorOutputs.map((output) =>
+            'dimensions' in output || 'entries' in output
+              ? []
+              : collectReferenceAnalysisFindings(output)),
+        );
     const verifiedFindings = Object.fromEntries(
       verifiedSourceFindings.map((finding) => [finding.id, finding]),
     );
@@ -2821,6 +3105,27 @@ async function parseStoredFullOutput(
           candidate.kind === 'chapterChunk' && coveredUnitSet.has(candidate.id));
         const sourceWindows = sourceUnits.map((candidate) =>
           resolveReferenceChapterWorkUnitWindow(source.sourceText, candidate));
+        assertNoCopyRisk([output], sourceWindows, [unit]);
+        return output;
+      }
+      if (unit.kind === 'distill') {
+        if (!aggregateOutput || !styleOutput) {
+          throw new ReferenceDeconstructionValidationError(
+            'Reference distillation predecessors are invalid.',
+          );
+        }
+        const output = parseReferenceDistillationResult(value, {
+          runId: run.runId,
+          unit,
+          verifiedFindings,
+          coveredUnitIds: aggregateOutput.coveredUnitIds,
+          coveredChapterIds: aggregateOutput.coveredChapterIds,
+        });
+        const source = await readValidationSource(workspaceRoot, run, context);
+        const sourceWindows = run.full!.units
+          .filter((candidate) => candidate.kind === 'chapterChunk')
+          .map((candidate) =>
+            resolveReferenceChapterWorkUnitWindow(source.sourceText, candidate));
         assertNoCopyRisk([output], sourceWindows, [unit]);
         return output;
       }
@@ -2968,15 +3273,32 @@ async function prepareReferenceFullExecution(
       ...(rollingContext ? { rollingContext } : {}),
     };
   }
-  if (unit.kind === 'aggregate' || unit.kind === 'style') {
+  if (
+    unit.kind === 'aggregate'
+    || unit.kind === 'style'
+    || unit.kind === 'distill'
+  ) {
     const outputs = await Promise.all(unit.predecessorUnitIds.map((predecessorId) =>
       readReferenceAttemptOutput(
         workspaceRoot,
         run.runId,
         requireSelectedAttempt(full, predecessorId),
       )));
-    const verifiedSourceFindings = selectBoundedVerifiedFindings(outputs.map((output) =>
-      'dimensions' in output ? [] : collectReferenceAnalysisFindings(output)));
+    const aggregateOutput = outputs.find(
+      (output): output is ReferenceAggregateAnalysisResult =>
+        'findings' in output && !('unitSummary' in output),
+    );
+    const styleOutput = outputs.find(
+      (output): output is ReferenceStyleProfileResult => 'dimensions' in output,
+    );
+    const verifiedSourceFindings = unit.kind === 'distill'
+      && aggregateOutput
+      && styleOutput
+      ? collectReferenceDistillationFindings(aggregateOutput.findings, styleOutput)
+      : selectBoundedVerifiedFindings(outputs.map((output) =>
+          'dimensions' in output || 'entries' in output
+            ? []
+            : collectReferenceAnalysisFindings(output)));
     const coveredUnitIds = uniqueStrings(outputs.flatMap((output) =>
       'coveredUnitIds' in output ? output.coveredUnitIds : []));
     const coveredChapterIds = uniqueStrings(outputs.flatMap((output) =>
@@ -3074,6 +3396,1158 @@ export async function evaluateReservedReferenceFullDeconstructionQuality(
     sourceWindows,
     evaluatedAt,
   });
+}
+
+export async function prepareReferenceDeconstructionPublicationCandidate(
+  input: {
+    workspaceRoot: string;
+    referenceId: string;
+    runId: string;
+    now?: string;
+  },
+): Promise<ReferenceDeconstructionPublicationCandidate> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    if (!['reviewReady', 'publishing', 'completed'].includes(run.status)) {
+      throw invalidTransition(run.status, 'publishing');
+    }
+    const existing = await readPublicationCandidate(input.workspaceRoot, run.runId);
+    if (existing) {
+      if (run.status !== 'reviewReady' || existing.runRevision === run.revision) {
+        assertPublicationCandidateMatchesRun(existing, run);
+        return existing;
+      }
+    }
+    if (run.status !== 'reviewReady') {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference publication candidate is missing for an active publication.',
+      );
+    }
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      throw new ReferenceDeconstructionValidationError(drift);
+    }
+    assertReviewReadyForPublication(run);
+    const candidate = await buildPublicationCandidate(
+      input.workspaceRoot,
+      run,
+      normalizeNow(input.now),
+    );
+    await writePublicationCandidate(input.workspaceRoot, candidate);
+    return candidate;
+  });
+}
+
+export async function beginReferenceDeconstructionPublish(
+  input: BeginReferenceDeconstructionPublishInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const candidateFingerprint = assertSha256(
+      input.candidateFingerprint,
+      'candidateFingerprint',
+    );
+    const pendingActionId = assertSafeIdentifier(input.pendingActionId, 'pendingActionId');
+    const requestFingerprint = fingerprintMutation({
+      command: 'begin-publish',
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+      candidateFingerprint,
+      pendingActionId,
+    });
+    const previousReceipt = run.mutationReceipts.find((receipt) =>
+      receipt.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (run.status !== 'reviewReady' || run.publication) {
+      throw invalidTransition(run.status, 'publishing');
+    }
+    const candidate = await requirePublicationCandidate(
+      input.workspaceRoot,
+      run,
+      candidateFingerprint,
+    );
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) {
+      return persistNewStaleMutation(input, run, requestFingerprint, drift);
+    }
+    assertReceiptCapacity(run);
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus: 'publishing',
+    };
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      revision,
+      status: 'publishing',
+      publication: {
+        candidateFingerprint,
+        pendingActionId,
+        files: candidate.files.map(({ content: _content, ...file }) => file),
+        entryInventory: candidate.entryInventory.map((entry) => ({ ...entry })),
+        preparedAt: candidate.preparedAt,
+      },
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      updatedAt: normalizeNow(input.now),
+    };
+    await writeRunState(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false };
+  });
+}
+
+export async function assertReferenceDeconstructionPublishCurrent(
+  input: AssertReferenceDeconstructionPublishCurrentInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    if (
+      run.status !== 'publishing'
+      || !run.publication
+      || run.publication.pendingActionId !== input.pendingActionId
+      || run.publication.candidateFingerprint !== input.candidateFingerprint
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference publication is not the current pending action.',
+      );
+    }
+    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+    if (drift) throw new ReferenceDeconstructionValidationError(drift);
+    await requirePublicationCandidate(
+      input.workspaceRoot,
+      run,
+      input.candidateFingerprint,
+    );
+    return run;
+  });
+}
+
+export async function completeReferenceDeconstructionPublish(
+  input: CompleteReferenceDeconstructionPublishInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunStateArtifact(
+      input.workspaceRoot,
+      input.referenceId,
+      input.runId,
+    );
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const candidateFingerprint = assertSha256(
+      input.candidateFingerprint,
+      'candidateFingerprint',
+    );
+    const pendingActionId = assertSafeIdentifier(input.pendingActionId, 'pendingActionId');
+    const requestFingerprint = fingerprintMutation({
+      command: 'complete-publish',
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+      candidateFingerprint,
+      pendingActionId,
+    });
+    const previousReceipt = run.mutationReceipts.find((receipt) =>
+      receipt.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (
+      run.status !== 'publishing'
+      || !run.publication
+      || run.publication.pendingActionId !== pendingActionId
+      || run.publication.candidateFingerprint !== candidateFingerprint
+    ) {
+      throw invalidTransition(run.status, 'completed');
+    }
+    await assertPublicationStateMaterialized(input.workspaceRoot, run);
+    const readiness = await inspectPublishedReferenceWorkReadiness(
+      input.workspaceRoot,
+      run.referenceId,
+    );
+    if (
+      readiness.status !== 'completed'
+      || readiness.deconstructionManifest?.status !== 'completed'
+      || readiness.deconstructionManifest.qualityStatus !== 'passed'
+      || readiness.deconstructionManifest.publishedRunId !== run.runId
+      || readiness.publishedContext?.runId !== run.runId
+      || (!readiness.contextEligible && readiness.reason !== 'disabled')
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Accepted reference publication is not current or valid.',
+      );
+    }
+    assertReceiptCapacity(run);
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus: 'completed',
+    };
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      revision,
+      status: 'completed',
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      updatedAt: normalizeNow(input.now),
+    };
+    await writeRunState(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false };
+  });
+}
+
+export async function rejectReferenceDeconstructionPublish(
+  input: RejectReferenceDeconstructionPublishInput,
+): Promise<ReferenceDeconstructionMutationResult> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunStateArtifact(
+      input.workspaceRoot,
+      input.referenceId,
+      input.runId,
+    );
+    const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
+    const pendingActionId = assertSafeIdentifier(input.pendingActionId, 'pendingActionId');
+    const requestFingerprint = fingerprintMutation({
+      command: 'reject-publish',
+      referenceId: run.referenceId,
+      runId: run.runId,
+      baseRunRevision: input.baseRunRevision,
+      pendingActionId,
+    });
+    const previousReceipt = run.mutationReceipts.find((receipt) =>
+      receipt.idempotencyKey === idempotencyKey);
+    if (previousReceipt) {
+      if (previousReceipt.requestFingerprint !== requestFingerprint) {
+        throw idempotencyConflict(idempotencyKey);
+      }
+      return { run, receipt: previousReceipt, replayed: true };
+    }
+    assertRevision(run, input.baseRunRevision);
+    if (
+      run.status !== 'publishing'
+      || run.publication?.pendingActionId !== pendingActionId
+    ) {
+      throw invalidTransition(run.status, 'reviewReady');
+    }
+    assertReceiptCapacity(run);
+    const revision = run.revision + 1;
+    const receipt: ReferenceDeconstructionMutationReceipt = {
+      idempotencyKey,
+      requestFingerprint,
+      resultingRunRevision: revision,
+      resultStatus: 'reviewReady',
+    };
+    const next: ReferenceDeconstructionRun = {
+      ...run,
+      revision,
+      status: 'reviewReady',
+      publication: undefined,
+      mutationReceipts: [...run.mutationReceipts, receipt],
+      updatedAt: normalizeNow(input.now),
+    };
+    await writeRunState(input.workspaceRoot, next);
+    return { run: next, receipt, replayed: false };
+  });
+}
+
+export async function reconcileReferenceDeconstructionPublish(
+  input: ReconcileReferenceDeconstructionPublishInput,
+): Promise<ReferenceDeconstructionRun> {
+  const run = input.pendingActionStatus === 'accepted'
+    ? await readRunStateArtifact(
+        input.workspaceRoot,
+        input.referenceId,
+        input.runId,
+      )
+    : await readReferenceDeconstructionRun(
+        input.workspaceRoot,
+        input.referenceId,
+        input.runId,
+      );
+  if (run.status === 'completed' || run.status === 'reviewReady') return run;
+  if (run.status !== 'publishing' || !run.publication) {
+    throw invalidTransition(run.status, 'publishing');
+  }
+  if (input.pendingActionStatus === 'pending') {
+    return assertReferenceDeconstructionPublishCurrent({
+      workspaceRoot: input.workspaceRoot,
+      referenceId: input.referenceId,
+      runId: input.runId,
+      candidateFingerprint: run.publication.candidateFingerprint,
+      pendingActionId: run.publication.pendingActionId,
+    });
+  }
+  const mutation = input.pendingActionStatus === 'accepted'
+    ? await completeReferenceDeconstructionPublish({
+        workspaceRoot: input.workspaceRoot,
+        referenceId: input.referenceId,
+        runId: input.runId,
+        baseRunRevision: run.revision,
+        idempotencyKey: `publish-reconcile-accepted-${run.publication.pendingActionId}`,
+        candidateFingerprint: run.publication.candidateFingerprint,
+        pendingActionId: run.publication.pendingActionId,
+        now: input.now,
+      })
+    : await rejectReferenceDeconstructionPublish({
+        workspaceRoot: input.workspaceRoot,
+        referenceId: input.referenceId,
+        runId: input.runId,
+        baseRunRevision: run.revision,
+        idempotencyKey: `publish-reconcile-rejected-${run.publication.pendingActionId}`,
+        pendingActionId: run.publication.pendingActionId,
+        now: input.now,
+      });
+  return mutation.run;
+}
+
+async function buildPublicationCandidate(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  preparedAt: string,
+): Promise<ReferenceDeconstructionPublicationCandidate> {
+  assertReviewReadyForPublication(run);
+  const full = run.full!;
+  const selectedOutputs = new Map<string, ReferenceFullDeconstructionOutput>();
+  for (const unit of full.units) {
+    const attempt = requireSelectedAttempt(full, unit.id);
+    selectedOutputs.set(
+      unit.id,
+      await readReferenceAttemptOutputFromRun(
+        workspaceRoot,
+        run,
+        attempt,
+        createStoredOutputValidationContext(),
+      ),
+    );
+  }
+  const aggregate = selectedOutputs.get(full.plan.aggregateRootUnitId);
+  const style = selectedOutputs.get(full.plan.styleUnitId);
+  const distillation = selectedOutputs.get(full.plan.distillUnitId);
+  const quality = selectedOutputs.get(full.plan.analysisQualityUnitId);
+  if (
+    !aggregate
+    || !('findings' in aggregate)
+    || 'unitSummary' in aggregate
+    || !style
+    || !('dimensions' in style)
+    || !distillation
+    || !('entries' in distillation)
+    || !quality
+    || !('planId' in quality)
+    || quality.status !== 'passed'
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication terminal outputs are invalid.',
+    );
+  }
+  const contextIndex = createReferenceContextIndex({
+    referenceId: run.referenceId,
+    publishedRunId: run.runId,
+    sourceChecksumSha256: run.sourceChecksumSha256,
+    structureFingerprint: run.structureFingerprint,
+    distillation,
+  });
+  const bundlePrefix = `examples/references/${run.referenceId}`;
+  const outputFiles: Array<{
+    path: string;
+    content: string;
+    kind: ReferenceDeconstructionPublicationCandidateFile['kind'];
+    outputKind: 'deconstruction' | 'distilled' | 'context';
+  }> = [];
+  const pushOutput = (
+    relativePath: string,
+    content: string,
+    kind: ReferenceDeconstructionPublicationCandidateFile['kind'],
+    outputKind: 'deconstruction' | 'distilled' | 'context',
+  ) => {
+    outputFiles.push({
+      path: `${bundlePrefix}/${relativePath}`,
+      content,
+      kind,
+      outputKind,
+    });
+  };
+
+  pushOutput(
+    'deconstruction/quick-preview.md',
+    formatReferenceQuickPreviewMarkdown(run.preview!),
+    'deconstruction',
+    'deconstruction',
+  );
+  for (const chapterId of full.plan.chapterIds) {
+    const chapterOutputs = full.units
+      .filter((unit) => unit.kind === 'chapterChunk' && unit.chapterId === chapterId)
+      .map((unit) => selectedOutputs.get(unit.id))
+      .filter((output): output is ReferenceChapterAnalysisResult =>
+        Boolean(output && 'unitSummary' in output));
+    pushOutput(
+      `deconstruction/chapters/${chapterId}-summary.md`,
+      formatPublishedChapterAnalysis(chapterId, chapterOutputs),
+      'deconstruction',
+      'deconstruction',
+    );
+  }
+  const aggregateFiles: Array<{
+    path: string;
+    title: string;
+    kinds: ReferenceDeconstructionFinding['kind'][];
+  }> = [
+    { path: 'plotlines.md', title: 'Plotlines', kinds: ['plotline', 'pacing', 'hook'] },
+    { path: 'characters.md', title: 'Character Techniques', kinds: ['characterTechnique'] },
+    {
+      path: 'relationships.md',
+      title: 'Relationship Techniques',
+      kinds: ['relationshipTechnique'],
+    },
+    {
+      path: 'worldbuilding.md',
+      title: 'Worldbuilding Techniques',
+      kinds: ['worldbuildingTechnique'],
+    },
+    {
+      path: 'timeline.md',
+      title: 'Timeline Observations',
+      kinds: ['timelineObservation'],
+    },
+    { path: 'tropes.md', title: 'Trope Observations', kinds: ['trope', 'sceneTechnique'] },
+  ];
+  aggregateFiles.forEach((file) => pushOutput(
+    `deconstruction/${file.path}`,
+    formatPublishedFindings(file.title, aggregate.findings.filter((finding) =>
+      file.kinds.includes(finding.kind))),
+    'deconstruction',
+    'deconstruction',
+  ));
+  pushOutput(
+    'deconstruction/style-profile.md',
+    formatPublishedStyleProfile(style),
+    'deconstruction',
+    'deconstruction',
+  );
+
+  const categoryFiles: Array<{
+    category: ReferenceDistilledCategory;
+    path: string;
+  }> = [
+    { category: 'writingStyle', path: 'distilled/writing-style.md' },
+    { category: 'pacing', path: 'distilled/pacing.md' },
+    { category: 'hooks', path: 'distilled/hooks.md' },
+    { category: 'scene', path: 'distilled/scene-techniques.md' },
+    { category: 'character', path: 'distilled/character-techniques.md' },
+  ];
+  categoryFiles.forEach(({ category, path }) => pushOutput(
+    path,
+    formatReferenceDistilledCategoryMarkdown(category, distillation.entries),
+    'distilled',
+    'distilled',
+  ));
+  pushOutput(
+    'distilled/do-not-copy.md',
+    formatPublishedDoNotCopy(distillation),
+    'distilled',
+    'distilled',
+  );
+  const contextIndexContent = stringify(contextIndex);
+  pushOutput(
+    'context/index.yaml',
+    contextIndexContent,
+    'context',
+    'context',
+  );
+  pushOutput(
+    'context/reference-summary.md',
+    formatPublishedReferenceSummary(run, distillation),
+    'context',
+    'context',
+  );
+
+  const outputs = outputFiles.map((file) => ({
+    kind: file.outputKind,
+    path: file.path.slice(bundlePrefix.length + 1),
+    checksumSha256: sha256(ensureTrailingNewline(file.content)),
+  }));
+  const previous = (await readReferencePreviewSource(workspaceRoot, run.referenceId))
+    .deconstructionManifest;
+  const manifest = assertReferenceDeconstructionManifest({
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+    referenceId: run.referenceId,
+    revision: previous.revision + 1,
+    sourceChecksumSha256: run.sourceChecksumSha256,
+    structureFingerprint: run.structureFingerprint,
+    pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
+    capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
+    status: 'completed',
+    qualityStatus: 'passed',
+    publishedRunId: run.runId,
+    publishedAt: preparedAt,
+    stages: createPublishedManifestStages(run),
+    outputs,
+  });
+  const diagnostics = assertReferenceDeconstructionDiagnostics({
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+    referenceId: run.referenceId,
+    sourceChecksumSha256: run.sourceChecksumSha256,
+    generatedAt: preparedAt,
+    items: run.diagnostics,
+  });
+  const progress = createReferenceProgressProjection(manifest, preparedAt);
+  const referencesIndex = await createPublishedReferencesIndex(
+    workspaceRoot,
+    run,
+    progress,
+    contextIndex,
+    sha256(ensureTrailingNewline(contextIndexContent)),
+  );
+  const files = [
+    ...outputFiles.map(({ outputKind: _outputKind, ...file }) => file),
+    {
+      path: `${bundlePrefix}/deconstruction-manifest.yaml`,
+      content: stringify(manifest),
+      kind: 'manifest' as const,
+    },
+    {
+      path: `${bundlePrefix}/diagnostics.yaml`,
+      content: stringify(diagnostics),
+      kind: 'diagnostics' as const,
+    },
+    {
+      path: `${bundlePrefix}/progress.yaml`,
+      content: stringify(progress),
+      kind: 'progress' as const,
+    },
+    {
+      path: 'examples/references.yaml',
+      content: stringify(referencesIndex),
+      kind: 'index' as const,
+    },
+  ];
+  return createReferenceDeconstructionPublicationCandidate({
+    referenceId: run.referenceId,
+    runId: run.runId,
+    runRevision: run.revision,
+    files,
+    entries: distillation.entries,
+    preparedAt,
+  });
+}
+
+function createPublishedManifestStages(
+  run: ReferenceDeconstructionRun,
+): ReferenceDeconstructionManifest['stages'] {
+  const full = run.full!;
+  const stageAttempts = (stageId: ReferenceDeconstructionStageId) => full.units
+    .filter((unit) => unit.stageId === stageId)
+    .map((unit) => requireSelectedAttempt(full, unit.id));
+  const stage = (
+    stageId: ReferenceDeconstructionStageId,
+  ): ReferenceDeconstructionManifest['stages'][ReferenceDeconstructionStageId] => {
+    if (stageId === 'detectStructure') {
+      return { status: 'completed', outputHashes: [run.structureFingerprint] };
+    }
+    if (stageId === 'quickPreview') {
+      return {
+        status: 'completed',
+        outputHashes: [sha256(stableJson(run.preview))],
+      };
+    }
+    const attempts = stageAttempts(stageId);
+    return {
+      status: 'completed',
+      ...(attempts.at(-1)
+        ? {
+            selectedAttemptId: attempts.at(-1)!.id,
+            inputFingerprint: attempts.at(-1)!.inputFingerprint,
+          }
+        : {}),
+      ...(stageId === 'chapterAnalysis'
+        ? { completedChapterIds: [...full.plan.chapterIds] }
+        : {}),
+      outputHashes: attempts.map(requireAttemptOutputHash),
+    };
+  };
+  return Object.fromEntries(
+    REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [stageId, stage(stageId)]),
+  ) as ReferenceDeconstructionManifest['stages'];
+}
+
+async function createPublishedReferencesIndex(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  progress: import('./reference-deconstruction.js').ReferenceProgress,
+  contextIndex: ReferenceContextIndex,
+  contextFingerprint: string,
+): Promise<unknown> {
+  const indexPath = join(resolve(workspaceRoot), 'examples', 'references.yaml');
+  let value: unknown;
+  try {
+    value = parse(await readFile(indexPath, 'utf-8')) as unknown;
+  } catch (error) {
+    throw validationFrom(error, 'Reference project index is missing.');
+  }
+  let projectIndex: ReturnType<typeof assertReferencesIndexValue>;
+  try {
+    projectIndex = assertReferencesIndexValue(value, { requireCanonical: true });
+  } catch (error) {
+    throw validationFrom(error, 'Reference project index is invalid.');
+  }
+  let matched = false;
+  const references = projectIndex.references.map((entry) => {
+    if (entry.id !== run.referenceId) return entry;
+    matched = true;
+    return {
+      ...entry,
+      summaryPath: `examples/references/${run.referenceId}/context/reference-summary.md`,
+      distilledPaths: [
+        'writing-style.md',
+        'pacing.md',
+        'hooks.md',
+        'scene-techniques.md',
+        'character-techniques.md',
+        'do-not-copy.md',
+      ].map((file) => `examples/references/${run.referenceId}/distilled/${file}`),
+      deconstructionStatus: 'completed',
+      contextEligible: entry.enabled !== false,
+      readinessReason: entry.enabled === false ? 'disabled' : 'ready',
+      progress: {
+        ...progress,
+        contextEligible: entry.enabled !== false,
+      },
+      publishedContext: {
+        runId: run.runId,
+        fingerprint: contextFingerprint,
+        entryCount: contextIndex.entries.length,
+        categoryCounts: Object.fromEntries(
+          (['writingStyle', 'pacing', 'hooks', 'scene', 'character'] as const)
+            .map((category) => [
+              category,
+              contextIndex.entries.filter((item) => item.category === category).length,
+            ]),
+        ),
+      },
+    };
+  });
+  if (!matched) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference project index does not contain the current reference.',
+    );
+  }
+  return { version: 1, references };
+}
+
+function formatPublishedChapterAnalysis(
+  chapterId: string,
+  outputs: readonly ReferenceChapterAnalysisResult[],
+): string {
+  if (!outputs.length) {
+    throw new ReferenceDeconstructionValidationError(
+      `Reference chapter ${chapterId} has no selected outputs.`,
+    );
+  }
+  const summary = outputs.at(-1)?.chapterSummary;
+  const findings = outputs.flatMap((output) => output.findings);
+  return [
+    `# Chapter ${chapterId} Analysis`,
+    '',
+    '## Summary',
+    '',
+    summary?.observation ?? outputs.at(-1)!.unitSummary.observation,
+    '',
+    '## Transferable Findings',
+    '',
+    ...formatFindingList(findings),
+    '',
+  ].join('\n');
+}
+
+function formatPublishedFindings(
+  title: string,
+  findings: readonly ReferenceDeconstructionFinding[],
+): string {
+  return [
+    `# ${title}`,
+    '',
+    ...(findings.length ? formatFindingList(findings) : ['- No verified finding in this category.']),
+    '',
+  ].join('\n');
+}
+
+function formatFindingList(
+  findings: readonly ReferenceDeconstructionFinding[],
+): string[] {
+  return findings.flatMap((finding) => [
+    `## ${finding.kind}: ${finding.id}`,
+    '',
+    finding.observation,
+    '',
+    `Technique: ${finding.technique}`,
+    `Confidence: ${finding.confidence}`,
+    ...(finding.whenUseful ? [`When useful: ${finding.whenUseful}`] : []),
+    ...(finding.avoid ? [`Avoid: ${finding.avoid}`] : []),
+    `Evidence refs: ${finding.evidenceRefs.join(', ') || 'general inference'}`,
+    ...(finding.uncertainty ? [`Uncertainty: ${finding.uncertainty}`] : []),
+    '',
+  ]);
+}
+
+function formatPublishedStyleProfile(style: ReferenceStyleProfileResult): string {
+  return [
+    '# Style Profile',
+    '',
+    style.summary,
+    '',
+    ...style.dimensions.flatMap((dimension) => [
+      `## ${dimension.dimension}`,
+      '',
+      dimension.observation,
+      '',
+      `Technique: ${dimension.technique}`,
+      `Confidence: ${dimension.confidence}`,
+      ...(dimension.avoid ? [`Avoid: ${dimension.avoid}`] : []),
+      '',
+    ]),
+    '## Transferable Principles',
+    '',
+    ...style.transferablePrinciples.map((item) => `- ${item}`),
+    '',
+    '## Non-Imitation Boundaries',
+    '',
+    ...style.nonImitationBoundaries.map((item) => `- ${item}`),
+    '',
+  ].join('\n');
+}
+
+function formatPublishedDoNotCopy(
+  distillation: ReferenceDistillationResult,
+): string {
+  return [
+    '# Do Not Copy',
+    '',
+    '## Protected Rules',
+    '',
+    ...distillation.doNotCopyRules.map((rule) => `- ${rule}`),
+    '',
+    '## Differentiation Warnings',
+    '',
+    ...distillation.differentiationWarnings.map((warning) => `- ${warning}`),
+    '',
+  ].join('\n');
+}
+
+function formatPublishedReferenceSummary(
+  run: ReferenceDeconstructionRun,
+  distillation: ReferenceDistillationResult,
+): string {
+  const maximumEntries = 12;
+  return [
+    '# Distilled Reference Summary',
+    '',
+    `Published run: ${run.runId}`,
+    `Source checksum: ${run.sourceChecksumSha256}`,
+    'Context eligible: yes after accepted publication',
+    'Original source read by writing selector: no',
+    '',
+    '## Entry Inventory',
+    '',
+    ...distillation.entries.slice(0, maximumEntries).map((entry) =>
+      `- ${entry.id} [${entry.category}]: ${entry.title}`),
+    ...(distillation.entries.length > maximumEntries
+      ? [`- ${distillation.entries.length - maximumEntries} additional entries are indexed.`]
+      : []),
+    '',
+    '## Protected Boundary',
+    '',
+    ...distillation.doNotCopyRules.slice(0, 8).map((rule) => `- ${rule}`),
+    '',
+  ].join('\n');
+}
+
+function assertReviewReadyForPublication(run: ReferenceDeconstructionRun): void {
+  if (
+    run.status !== 'reviewReady'
+    || !run.full
+    || run.full.units.some((unit) => unit.status !== 'completed')
+    || run.full.analysisQuality?.status !== 'passed'
+    || run.full.analysisQuality.coveragePercent !== 100
+    || run.diagnostics.some((diagnostic) => diagnostic.blocking)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference run is not ready for publication.',
+    );
+  }
+}
+
+async function readPublicationCandidate(
+  workspaceRoot: string,
+  runId: string,
+): Promise<ReferenceDeconstructionPublicationCandidate | undefined> {
+  const path = await resolveReferenceDeconstructionRunArtifactPath(
+    workspaceRoot,
+    runId,
+    'publication-candidate.yaml',
+  );
+  try {
+    return assertReferenceDeconstructionPublicationCandidate(
+      parse(await readFile(path, 'utf-8')) as unknown,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw validationFrom(error, 'Reference publication candidate is invalid.');
+  }
+}
+
+async function requirePublicationCandidate(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  fingerprint: string,
+): Promise<ReferenceDeconstructionPublicationCandidate> {
+  const candidate = await readPublicationCandidate(workspaceRoot, run.runId);
+  if (!candidate || candidate.candidateFingerprint !== fingerprint) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication candidate fingerprint is stale.',
+    );
+  }
+  assertPublicationCandidateMatchesRun(candidate, run);
+  await assertPublicationCandidateArtifacts(workspaceRoot, candidate);
+  return candidate;
+}
+
+function assertPublicationCandidateMatchesRun(
+  candidate: ReferenceDeconstructionPublicationCandidate,
+  run: ReferenceDeconstructionRun,
+): void {
+  const expectedCandidateRevision = run.status === 'reviewReady'
+    ? run.revision
+    : run.status === 'publishing'
+      ? run.revision - 1
+      : run.status === 'completed'
+        ? run.revision - 2
+        : -1;
+  if (
+    candidate.referenceId !== run.referenceId
+    || candidate.runId !== run.runId
+    || candidate.runRevision !== expectedCandidateRevision
+    || run.publication
+      && run.publication.candidateFingerprint !== candidate.candidateFingerprint
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication candidate does not match its run.',
+    );
+  }
+}
+
+async function writePublicationCandidate(
+  workspaceRoot: string,
+  candidate: ReferenceDeconstructionPublicationCandidate,
+): Promise<void> {
+  for (const file of candidate.files) {
+    const path = await resolvePublicationCandidateFile(
+      workspaceRoot,
+      candidate.runId,
+      file.path,
+      true,
+    );
+    await writeTextAtomic(path, file.content);
+  }
+  await writeRunYamlAtomic(
+    workspaceRoot,
+    candidate.runId,
+    'publication-candidate.yaml',
+    candidate,
+  );
+}
+
+async function assertPublicationCandidateArtifacts(
+  workspaceRoot: string,
+  candidate: ReferenceDeconstructionPublicationCandidate,
+): Promise<void> {
+  for (const file of candidate.files) {
+    const path = await resolvePublicationCandidateFile(
+      workspaceRoot,
+      candidate.runId,
+      file.path,
+      false,
+    );
+    const content = await readFile(path, 'utf-8');
+    if (content !== file.content || sha256(content) !== file.checksumSha256) {
+      throw new ReferenceDeconstructionValidationError(
+        `Reference publication candidate artifact is stale: ${file.path}.`,
+      );
+    }
+  }
+}
+
+async function assertPublicationStateMaterialized(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+): Promise<void> {
+  if (run.status !== 'publishing' || !run.publication) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication state is not materialized.',
+    );
+  }
+  const publication = run.publication;
+  const expectedFingerprint = sha256(stableJson({
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+    referenceId: run.referenceId,
+    runId: run.runId,
+    runRevision: run.revision - 1,
+    files: publication.files,
+    entryInventory: publication.entryInventory,
+  }));
+  if (expectedFingerprint !== publication.candidateFingerprint) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication state fingerprint is stale.',
+    );
+  }
+  const realWorkspaceRoot = await realpath(resolve(workspaceRoot));
+  const materialized = new Map<string, string>();
+  for (const file of publication.files) {
+    const safePath = candidateTargetPath(
+      file.path,
+      run.referenceId,
+    );
+    if (file.kind !== publicationFileKindForPath(safePath, run.referenceId)) {
+      throw new ReferenceDeconstructionValidationError(
+        `Accepted reference publication kind is invalid: ${file.path}.`,
+      );
+    }
+    const target = resolve(realWorkspaceRoot, safePath);
+    const realTarget = await realpath(target).catch(() => undefined);
+    if (!realTarget) {
+      throw new ReferenceDeconstructionValidationError(
+        `Accepted reference publication is missing ${file.path}.`,
+      );
+    }
+    assertContained(
+      realWorkspaceRoot,
+      realTarget,
+      'Accepted reference publication escaped the workspace.',
+    );
+    const content = await readFile(realTarget, 'utf-8');
+    // The project index is a shared registry. A later reference import or
+    // publication may legitimately add another entry after this PendingAction
+    // was accepted but before this run reconciles to completed. Its current
+    // reference projection is validated semantically below; every
+    // reference-scoped target remains byte-for-byte bound to the accepted
+    // candidate.
+    if (
+      safePath !== 'examples/references.yaml'
+      && sha256(content) !== file.checksumSha256
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        `Accepted reference publication is stale: ${file.path}.`,
+      );
+    }
+    materialized.set(file.path, content);
+  }
+
+  const bundlePrefix = `examples/references/${run.referenceId}`;
+  const manifestPath = `${bundlePrefix}/deconstruction-manifest.yaml`;
+  const indexPath = 'examples/references.yaml';
+  const manifestContent = materialized.get(manifestPath);
+  const indexContent = materialized.get(indexPath);
+  if (!manifestContent || !indexContent) {
+    throw new ReferenceDeconstructionValidationError(
+      'Accepted reference publication is missing its manifest or project index.',
+    );
+  }
+  const manifest = assertReferenceDeconstructionManifest(
+    parse(manifestContent) as unknown,
+  );
+  if (
+    manifest.referenceId !== run.referenceId
+    || manifest.status !== 'completed'
+    || manifest.qualityStatus !== 'passed'
+    || manifest.publishedRunId !== run.runId
+    || manifest.sourceChecksumSha256 !== run.sourceChecksumSha256
+    || manifest.structureFingerprint !== run.structureFingerprint
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Accepted reference publication manifest does not match its run.',
+    );
+  }
+  const requiredControlFile = (
+    path: string,
+    kind: ReferenceDeconstructionPublicationCandidateFile['kind'],
+  ) => {
+    const file = publication.files.find((item) => item.path === path);
+    if (!file || file.kind !== kind) {
+      throw new ReferenceDeconstructionValidationError(
+        `Accepted reference publication is missing ${path}.`,
+      );
+    }
+    return { checksumSha256: file.checksumSha256, kind };
+  };
+  const expectedPaths = new Map<string, {
+    checksumSha256: string;
+    kind: ReferenceDeconstructionPublicationCandidateFile['kind'];
+  }>([
+    [indexPath, requiredControlFile(indexPath, 'index')],
+    [manifestPath, requiredControlFile(manifestPath, 'manifest')],
+    [`${bundlePrefix}/diagnostics.yaml`, requiredControlFile(
+      `${bundlePrefix}/diagnostics.yaml`,
+      'diagnostics',
+    )],
+    [`${bundlePrefix}/progress.yaml`, requiredControlFile(
+      `${bundlePrefix}/progress.yaml`,
+      'progress',
+    )],
+    ...manifest.outputs.map((output) => [
+      `${bundlePrefix}/${output.path}`,
+      {
+        checksumSha256: output.checksumSha256,
+        kind: output.kind,
+      },
+    ] as const),
+  ]);
+  if (
+    expectedPaths.size !== publication.files.length
+    || publication.files.some((file) => {
+      const expected = expectedPaths.get(file.path);
+      return !expected
+        || expected.checksumSha256 !== file.checksumSha256
+        || expected.kind !== file.kind;
+    })
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Accepted reference publication file closure is invalid.',
+    );
+  }
+
+  let referencesIndex: ReturnType<typeof assertReferencesIndexValue>;
+  try {
+    referencesIndex = assertReferencesIndexValue(
+      parse(indexContent) as unknown,
+      { requireCanonical: true },
+    );
+  } catch (error) {
+    throw validationFrom(error, 'Accepted reference project index is invalid.');
+  }
+  const publishedReference = referencesIndex.references.find((reference) =>
+    reference.id === run.referenceId);
+  const contextIndexPath = `${bundlePrefix}/context/index.yaml`;
+  const contextIndexContent = materialized.get(contextIndexPath);
+  if (
+    !publishedReference
+    || publishedReference.deconstructionStatus !== 'completed'
+    || publishedReference.publishedContext?.runId !== run.runId
+    || !contextIndexContent
+    || publishedReference.publishedContext.fingerprint
+      !== sha256(contextIndexContent)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Accepted reference project index does not match the published context.',
+    );
+  }
+  const contextIndex = assertReferenceContextIndex(
+    parse(contextIndexContent) as unknown,
+    {
+      referenceId: run.referenceId,
+      publishedRunId: run.runId,
+      sourceChecksumSha256: run.sourceChecksumSha256,
+      structureFingerprint: run.structureFingerprint,
+    },
+  );
+  if (
+    contextIndex.entries.length !== publication.entryInventory.length
+    || contextIndex.entries.some((entry) => {
+      const inventory = publication.entryInventory.find((item) =>
+        item.id === entry.id);
+      return !inventory
+        || inventory.category !== entry.category
+        || inventory.title !== entry.title
+        || inventory.estimatedTokens !== entry.estimatedTokens;
+    })
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Accepted reference publication inventory is stale.',
+    );
+  }
+}
+
+function publicationFileKindForPath(
+  path: string,
+  referenceId: string,
+): ReferenceDeconstructionPublicationCandidateFile['kind'] {
+  if (path === 'examples/references.yaml') return 'index';
+  const relativePath = path.slice(`examples/references/${referenceId}/`.length);
+  if (relativePath === 'deconstruction-manifest.yaml') return 'manifest';
+  if (relativePath === 'diagnostics.yaml') return 'diagnostics';
+  if (relativePath === 'progress.yaml') return 'progress';
+  if (relativePath.startsWith('deconstruction/')) return 'deconstruction';
+  if (relativePath.startsWith('distilled/')) return 'distilled';
+  if (relativePath.startsWith('context/')) return 'context';
+  throw new ReferenceDeconstructionValidationError(
+    `Accepted reference publication path is invalid: ${path}.`,
+  );
+}
+
+async function resolvePublicationCandidateFile(
+  workspaceRoot: string,
+  runId: string,
+  targetPath: string,
+  create: boolean,
+): Promise<string> {
+  const pathSegments = targetPath.split('/');
+  const safeTarget = candidateTargetPath(
+    targetPath,
+    targetPath === 'examples/references.yaml'
+      ? 'unused'
+      : pathSegments[2],
+  );
+  const segments = safeTarget.split('/');
+  const file = segments.pop()!;
+  const directory = await ensureSafeDirectoryChain(workspaceRoot, [
+    '.workspace',
+    'sessions',
+    assertSafeIdentifier(runId, 'runId'),
+    'reference-deconstruction',
+    'candidate',
+    ...segments,
+  ], create);
+  if (!directory.exists) {
+    throw new ReferenceDeconstructionNotFoundError(
+      `Reference publication candidate path is missing: ${targetPath}.`,
+    );
+  }
+  const path = join(directory.path, file);
+  try {
+    const information = await lstat(path);
+    if (information.isSymbolicLink() || !information.isFile()) {
+      throw new ReferenceDeconstructionValidationError(
+        'Reference publication candidate artifact must be a regular file.',
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !create) throw error;
+  }
+  return path;
+}
+
+async function writeTextAtomic(path: string, content: string): Promise<void> {
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  try {
+    await writeFile(temporary, content, { encoding: 'utf-8', flag: 'wx' });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+}
+
+function ensureTrailingNewline(value: string): string {
+  return value.endsWith('\n') ? value : `${value}\n`;
 }
 
 async function recomputeAttemptInputFingerprint(
@@ -3338,7 +4812,19 @@ async function listReferenceDeconstructionRunsUnlocked(
     if (!entry.isDirectory()) continue;
     let run: ReferenceDeconstructionRun;
     try {
-      run = await readRunState(workspaceRoot, undefined, entry.name);
+      const projected = await readRunStateArtifact(
+        workspaceRoot,
+        undefined,
+        entry.name,
+      );
+      if (
+        projected.status === 'publishing'
+        || projected.status === 'completed'
+      ) {
+        run = projected;
+      } else {
+        run = await readRunState(workspaceRoot, undefined, entry.name);
+      }
     } catch (error) {
       if (error instanceof ReferenceDeconstructionNotFoundError) continue;
       throw error;
@@ -3481,6 +4967,7 @@ function assertRunState(
     'diagnostics',
     'mutationReceipts',
     'full',
+    'publication',
     'activeReservation',
     'failure',
     'createdAt',
@@ -3549,6 +5036,9 @@ function assertRunState(
     ...(record.full === undefined
       ? {}
       : { full: assertStoredFullState(record.full, referenceId) }),
+    ...(record.publication === undefined
+      ? {}
+      : { publication: assertStoredPublication(record.publication) }),
     ...(record.activeReservation === undefined
       ? {}
       : { activeReservation: assertStoredReservation(record.activeReservation) }),
@@ -3605,6 +5095,14 @@ function assertRunState(
     );
   }
   if (run.full) assertFullStateMatchesRun(run);
+  if (
+    (run.status === 'publishing' || run.status === 'completed')
+      !== Boolean(run.publication)
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication state does not match run status.',
+    );
+  }
   if (
     run.status === 'cancelled' && !run.cancelledAt
     || run.status !== 'cancelled' && run.cancelledAt
@@ -4018,6 +5516,7 @@ function assertStoredWorkPlan(
     'units',
     'aggregateRootUnitId',
     'styleUnitId',
+    'distillUnitId',
     'analysisQualityUnitId',
   ]);
   if (record.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION) {
@@ -4054,6 +5553,7 @@ function assertStoredWorkPlan(
     'aggregateRootUnitId',
   );
   const styleUnitId = assertSafeIdentifier(record.styleUnitId, 'styleUnitId');
+  const distillUnitId = assertSafeIdentifier(record.distillUnitId, 'distillUnitId');
   const analysisQualityUnitId = assertSafeIdentifier(
     record.analysisQualityUnitId,
     'analysisQualityUnitId',
@@ -4061,6 +5561,7 @@ function assertStoredWorkPlan(
   if (
     units.find((unit) => unit.id === aggregateRootUnitId)?.kind !== 'aggregate'
     || units.find((unit) => unit.id === styleUnitId)?.kind !== 'style'
+    || units.find((unit) => unit.id === distillUnitId)?.kind !== 'distill'
     || units.find((unit) => unit.id === analysisQualityUnitId)?.kind !== 'analysisQuality'
   ) {
     throw new ReferenceDeconstructionValidationError(
@@ -4077,6 +5578,7 @@ function assertStoredWorkPlan(
     units,
     aggregateRootUnitId,
     styleUnitId,
+    distillUnitId,
     analysisQualityUnitId,
   };
 }
@@ -4102,12 +5604,14 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
     'chapterChunk',
     'aggregate',
     'style',
+    'distill',
     'analysisQuality',
   ] as const, 'work unit kind');
   const stageId = requireEnum(record.stageId, [
     'chapterAnalysis',
     'aggregateAnalysis',
     'styleProfile',
+    'distillForOan',
     'qualityGate',
   ] as const, 'work unit stageId');
   const expectedStage = kind === 'chapterChunk'
@@ -4116,7 +5620,9 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
       ? 'aggregateAnalysis'
       : kind === 'style'
         ? 'styleProfile'
-        : 'qualityGate';
+        : kind === 'distill'
+          ? 'distillForOan'
+          : 'qualityGate';
   if (stageId !== expectedStage) {
     throw new ReferenceDeconstructionValidationError(
       'Reference full work unit kind and stage do not match.',
@@ -4215,9 +5721,10 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
       'Reference terminal work unit contains unexpected source metadata.',
     );
   }
-  if (base.predecessorUnitIds.length !== 1) {
+  const expectedTerminalPredecessors = kind === 'distill' ? 2 : 1;
+  if (base.predecessorUnitIds.length !== expectedTerminalPredecessors) {
     throw new ReferenceDeconstructionValidationError(
-      'Reference terminal work unit must have one predecessor.',
+      'Reference terminal work unit has an invalid predecessor count.',
     );
   }
   return base;
@@ -4358,6 +5865,87 @@ function assertStoredAnalysisQuality(
     coveragePercent,
     blockingDiagnosticCount,
     outputHashes,
+  };
+}
+
+function assertStoredPublication(
+  value: unknown,
+): ReferenceDeconstructionPublicationState {
+  const record = requireRecord(value, 'publication state');
+  assertOnlyKnownFields(record, [
+    'candidateFingerprint',
+    'pendingActionId',
+    'files',
+    'entryInventory',
+    'preparedAt',
+  ]);
+  const files = requireArray(record.files, 'publication files', 1, 10_000)
+    .map((value): ReferenceDeconstructionPublicationState['files'][number] => {
+      const file = requireRecord(value, 'publication file');
+      assertOnlyKnownFields(file, ['path', 'checksumSha256', 'kind']);
+      const kind = requireEnum(file.kind, [
+        'index',
+        'manifest',
+        'diagnostics',
+        'progress',
+        'deconstruction',
+        'distilled',
+        'context',
+      ] as const, 'publication file kind');
+      return {
+        path: boundedText(file.path, 'publication file path', 1_000),
+        checksumSha256: assertSha256(
+          file.checksumSha256,
+          'publication file checksumSha256',
+        ),
+        kind,
+      };
+    });
+  if (new Set(files.map((file) => file.path)).size !== files.length) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication file paths must be unique.',
+    );
+  }
+  const entryInventory = requireArray(
+    record.entryInventory,
+    'publication entry inventory',
+    1,
+    50,
+  ).map((value): ReferenceDeconstructionPublicationEntryInventoryItem => {
+    const entry = requireRecord(value, 'publication entry inventory item');
+    assertOnlyKnownFields(entry, ['id', 'category', 'title', 'estimatedTokens']);
+    return {
+      id: assertSafeIdentifier(entry.id, 'publication entry id'),
+      category: requireEnum(entry.category, [
+        'writingStyle',
+        'pacing',
+        'hooks',
+        'scene',
+        'character',
+      ] as const, 'publication entry category'),
+      title: boundedText(entry.title, 'publication entry title', 240),
+      estimatedTokens: safeInteger(
+        entry.estimatedTokens,
+        'publication entry estimatedTokens',
+        1,
+        2_048,
+      ),
+    };
+  });
+  if (new Set(entryInventory.map((entry) => entry.id)).size !== entryInventory.length) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication entry ids must be unique.',
+    );
+  }
+  return {
+    candidateFingerprint: assertSha256(
+      record.candidateFingerprint,
+      'candidateFingerprint',
+    ),
+    pendingActionId: assertSafeIdentifier(record.pendingActionId, 'pendingActionId'),
+    files,
+    entryInventory,
+    preparedAt: assertIsoDate(record.preparedAt, 'publication preparedAt'),
   };
 }
 
@@ -4832,7 +6420,14 @@ async function readReferenceAttemptOutputFromRun(
   );
   try {
     const value = await readYamlOrValidation(path, 'Reference attempt output is missing.');
-    if (!isRecord(value) || value.unitId !== unit.id) {
+    if (
+      !isRecord(value)
+      || (
+        unit.kind === 'analysisQuality'
+          ? value.runId !== run.runId || value.planId !== run.full.plan.id
+          : value.unitId !== unit.id
+      )
+    ) {
       throw new ReferenceDeconstructionValidationError(
         'Reference attempt output identity is invalid.',
       );

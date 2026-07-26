@@ -8,6 +8,10 @@ import type {
   PlayTranscriptTurn,
   PlayTurnAttempt,
   PlayWorldEvent,
+  ReferenceContextSelection,
+  ReferenceDeconstructionPublishResult,
+  ReferenceDeconstructionRun,
+  ReferenceWorkSummary,
 } from '@oh-awesome-novel/client';
 
 interface RendererSmokeCall {
@@ -64,8 +68,86 @@ const journeySummary: PlaySessionSummary = {
 const summaries = [journeySummary, rehearsalSummary];
 
 let activeAttempt = createDraftAttempt();
+let activeReferenceRun = referenceReviewReadyRun();
 
 const methods = {
+  async listReferences() {
+    record('listReferences', []);
+    return { references: [publishedReferenceSummary()] };
+  },
+
+  async selectReferenceContext(input: unknown) {
+    record('selectReferenceContext', [input]);
+    return { selection: referenceContextSelection() };
+  },
+
+  async getActiveReferenceDeconstructionRun(referenceId: string) {
+    record('getActiveReferenceDeconstructionRun', [referenceId]);
+    return {
+      run: referenceId === 'reference-renderer'
+        ? structuredClone(activeReferenceRun)
+        : null,
+    };
+  },
+
+  async publishReferenceDeconstructionRun(
+    referenceId: string,
+    runId: string,
+    input: { baseRunRevision: number; idempotencyKey: string },
+  ): Promise<ReferenceDeconstructionPublishResult> {
+    record('publishReferenceDeconstructionRun', [referenceId, runId, input]);
+    if (
+      referenceId !== 'reference-renderer' ||
+      runId !== activeReferenceRun.id ||
+      input.baseRunRevision !== activeReferenceRun.runRevision
+    ) {
+      throw Object.assign(new Error('Unexpected reference publish request'), { status: 409 });
+    }
+    const pendingActionId = 'pending-reference-renderer';
+    const publication = referencePublicationCandidate();
+    activeReferenceRun = {
+      ...activeReferenceRun,
+      status: 'publishing',
+      runRevision: activeReferenceRun.runRevision + 1,
+      mutationReceipts: [
+        ...activeReferenceRun.mutationReceipts,
+        {
+          idempotencyKey: input.idempotencyKey,
+          requestFingerprint: '9'.repeat(64),
+          resultingRunRevision: activeReferenceRun.runRevision + 1,
+          resultStatus: 'publishing',
+        },
+      ],
+      receiptCount: activeReferenceRun.receiptCount + 1,
+      publication: {
+        ...publication,
+        pendingActionId,
+      },
+      updatedAt: '2026-07-26T08:00:00.000Z',
+    };
+    return {
+      run: structuredClone(activeReferenceRun),
+      receipt: structuredClone(activeReferenceRun.mutationReceipts.at(-1)!),
+      replayed: false,
+      pendingAction: {
+        id: pendingActionId,
+        title: 'Publish renderer reference candidate',
+        description: 'Publish the complete reviewed candidate.',
+        touchedFiles: activeReferenceRun.publication!.files.map((file) => file.path),
+        diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
+        createdAt: '2026-07-26T08:00:00.000Z',
+        status: 'pending',
+        origin: {
+          kind: 'referenceDeconstructionPublish',
+          referenceId,
+          runId,
+          runRevision: activeReferenceRun.runRevision,
+          candidateFingerprint: activeReferenceRun.publication!.candidateFingerprint,
+        },
+      },
+    };
+  },
+
   async listPlaySessionSummaries() {
     record('listPlaySessionSummaries', []);
     return { summaries: structuredClone(summaries) };
@@ -275,6 +357,243 @@ function record(method: string, args: unknown[]): void {
     method,
     args: structuredClone(args),
   });
+}
+
+function publishedReferenceSummary(): ReferenceWorkSummary {
+  return {
+    id: 'reference-renderer',
+    title: 'Renderer Reference',
+    sourceType: 'novel',
+    rights: 'owned',
+    allowedUsage: ['analysisOnly', 'noDirectQuotation'],
+    enabled: true,
+    importedAt: '2026-07-26T00:00:00.000Z',
+    checksumSha256: 'a'.repeat(64),
+    bundlePath: 'examples/references/reference-renderer',
+    summaryPath: 'examples/references/reference-renderer/context/reference-summary.md',
+    distilledPaths: [
+      'examples/references/reference-renderer/distilled/writing-style.md',
+      'examples/references/reference-renderer/distilled/pacing.md',
+      'examples/references/reference-renderer/distilled/hooks.md',
+      'examples/references/reference-renderer/distilled/scene-techniques.md',
+      'examples/references/reference-renderer/distilled/character-techniques.md',
+    ],
+    chapterCount: 1,
+    structureConfidence: 'high',
+    progress: {
+      version: 1,
+      referenceId: 'reference-renderer',
+      status: 'completed',
+      currentStage: null,
+      nextStage: null,
+      completedStages: [
+        'detectStructure',
+        'quickPreview',
+        'chapterAnalysis',
+        'aggregateAnalysis',
+        'styleProfile',
+        'distillForOan',
+        'qualityGate',
+      ],
+      failedStages: [],
+      stages: {
+        detectStructure: 'completed',
+        quickPreview: 'completed',
+        chapterAnalysis: 'completed',
+        aggregateAnalysis: 'completed',
+        styleProfile: 'completed',
+        distillForOan: 'completed',
+        qualityGate: 'completed',
+      },
+      resumable: false,
+      contextEligible: true,
+      updatedAt: '2026-07-26T07:59:00.000Z',
+    },
+    deconstructionStatus: 'completed',
+    contextEligible: true,
+    readinessReason: 'ready',
+    publishedContext: {
+      runId: 'run-published-renderer',
+      fingerprint: 'b'.repeat(64),
+      entryCount: 5,
+      categoryCounts: {
+        writingStyle: 1,
+        pacing: 1,
+        hooks: 1,
+        scene: 1,
+        character: 1,
+      },
+    },
+  };
+}
+
+function referenceContextSelection(): ReferenceContextSelection {
+  return {
+    tokenBudget: 240,
+    maxReferences: 2,
+    maxEntries: 4,
+    usedTokens: 68,
+    originalSourceRead: false,
+    noCopyWarnings: ['Never copy source prose, names, dialogue, or scene arrangement.'],
+    differentiationWarnings: ['Change canon-specific causes, roles, setting, and imagery.'],
+    included: [{
+      id: 'hooks-renderer',
+      referenceId: 'reference-renderer',
+      referenceTitle: 'Renderer Reference',
+      entryTitle: 'Consequence-first hook',
+      category: 'hooks',
+      path: 'examples/references/reference-renderer/distilled/hooks.md',
+      tags: ['opening', 'consequence'],
+      capabilityIds: ['novel.write_chapter'],
+      reason: 'Writing capability and hook intent matched.',
+      reasonCode: 'capabilityMatch',
+      budgetLayer: 'L2',
+      semanticBoundary: 'compressible',
+      estimatedTokens: 68,
+      content: 'Begin from a consequence that forces a character choice.',
+    }],
+    omitted: [{
+      scope: 'entry',
+      referenceId: 'reference-renderer',
+      referenceTitle: 'Renderer Reference',
+      entryId: 'pacing-renderer',
+      entryTitle: 'Pressure-release pacing',
+      category: 'pacing',
+      reason: 'The hard entry budget reserved space for a stronger hook match.',
+      budgetLayer: 'L2',
+      deconstructionStatus: 'completed',
+      contextEligible: false,
+      reasonCode: 'maxEntryCountReached',
+      estimatedTokens: 72,
+    }],
+  };
+}
+
+function referenceReviewReadyRun(): ReferenceDeconstructionRun {
+  return {
+    schemaVersion: 1,
+    id: 'run-reference-renderer',
+    referenceId: 'reference-renderer',
+    runRevision: 7,
+    status: 'reviewReady',
+    sourceChecksumSha256: 'a'.repeat(64),
+    structureFingerprint: 'c'.repeat(64),
+    pipelineVersion: 1,
+    capabilityVersion: 'novel.deconstruct_reference@1',
+    selectedChapterIds: ['0001'],
+    evidence: [],
+    diagnostics: [{
+      id: 'candidate-copy-check',
+      severity: 'info',
+      code: 'quality.copy-risk-clear',
+      message: 'No blocking long exact overlap was found.',
+      blocking: false,
+      evidenceRefs: [],
+      stageId: 'qualityGate',
+    }],
+    mutationReceipts: [{
+      idempotencyKey: 'review-ready-renderer',
+      requestFingerprint: 'd'.repeat(64),
+      resultingRunRevision: 7,
+      resultStatus: 'reviewReady',
+    }],
+    receiptCount: 1,
+    full: {
+      stages: [
+        completedReferenceStage('chapterAnalysis'),
+        completedReferenceStage('aggregateAnalysis'),
+        completedReferenceStage('styleProfile'),
+        completedReferenceStage('distillForOan'),
+        completedReferenceStage('qualityGate'),
+      ],
+      progress: {
+        plannedUnits: 5,
+        completedUnits: 5,
+        failedUnits: 0,
+        completedChapters: 1,
+        totalChapters: 1,
+        percent: 100,
+      },
+      recentUnits: [],
+      recentAttempts: [],
+      analysisQuality: {
+        status: 'passed',
+        coveragePercent: 100,
+        blockingDiagnosticCount: 0,
+        outputHashes: ['e'.repeat(64)],
+      },
+    },
+    createdAt: '2026-07-26T07:50:00.000Z',
+    updatedAt: '2026-07-26T07:59:30.000Z',
+    fullApprovedAt: '2026-07-26T07:51:00.000Z',
+  };
+}
+
+function referencePublicationCandidate(): NonNullable<
+  ReferenceDeconstructionRun['publication']
+> {
+  return {
+    candidateFingerprint: 'f'.repeat(64),
+    files: [
+      publicationFile('examples/references.yaml', '1', 'index'),
+      publicationFile(
+        'examples/references/reference-renderer/deconstruction-manifest.yaml',
+        '2',
+        'manifest',
+      ),
+      publicationFile(
+        'examples/references/reference-renderer/distilled/hooks.md',
+        '3',
+        'distilled',
+      ),
+      publicationFile(
+        'examples/references/reference-renderer/context/index.yaml',
+        '4',
+        'context',
+      ),
+    ],
+    entryInventory: [
+      publicationEntry('writing-style-renderer', 'writingStyle', 'Sentence contrast', 70),
+      publicationEntry('pacing-renderer', 'pacing', 'Pressure-release pacing', 72),
+      publicationEntry('hooks-renderer', 'hooks', 'Consequence-first hook', 68),
+      publicationEntry('scene-renderer', 'scene', 'Scene value turn', 74),
+      publicationEntry('character-renderer', 'character', 'Choice-led character', 76),
+    ],
+    preparedAt: '2026-07-26T07:59:30.000Z',
+  };
+}
+
+function completedReferenceStage(
+  stageId: ReferenceDeconstructionRun['full'] extends infer _Full
+    ? 'chapterAnalysis' | 'aggregateAnalysis' | 'styleProfile' | 'distillForOan' | 'qualityGate'
+    : never,
+) {
+  return {
+    stageId,
+    status: 'completed' as const,
+    plannedUnits: 1,
+    completedUnits: 1,
+    failedUnits: 0,
+  };
+}
+
+function publicationFile(
+  path: string,
+  hashSeed: string,
+  kind: NonNullable<ReferenceDeconstructionRun['publication']>['files'][number]['kind'],
+) {
+  return { path, checksumSha256: hashSeed.repeat(64), kind };
+}
+
+function publicationEntry(
+  id: string,
+  category: NonNullable<
+    ReferenceDeconstructionRun['publication']
+  >['entryInventory'][number]['category'],
+  title: string,
+  estimatedTokens: number,
+) {
+  return { id, category, title, estimatedTokens };
 }
 
 function latestJourneyDetail(): PlaySessionSelectedDetail {

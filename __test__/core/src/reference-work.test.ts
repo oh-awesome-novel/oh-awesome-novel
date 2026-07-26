@@ -8,7 +8,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -118,14 +118,15 @@ describe('reference work import', () => {
     expect(selection.originalSourceRead).toBe(false);
     expect(selection.noCopyWarnings.join('\n')).toContain('do not copy');
     expect(selection.omitted).toContainEqual(expect.objectContaining({
-      id: first.reference.id,
+      referenceId: first.reference.id,
       reasonCode: 'notAnalyzed',
       deconstructionStatus: 'notAnalyzed',
       contextEligible: false,
     }));
     expect(selection.omitted).toContainEqual({
-      id: second.reference.id,
-      title: 'Disabled Reference',
+      scope: 'reference',
+      referenceId: second.reference.id,
+      referenceTitle: 'Disabled Reference',
       reason: 'disabled',
       budgetLayer: 'L3',
       deconstructionStatus: 'notAnalyzed',
@@ -169,6 +170,65 @@ describe('reference work import', () => {
       enabled: false,
       sourcePath,
     });
+  });
+
+  it('does not retain stale published context when readiness is no longer completed', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
+    const imported = await importReferenceWork({
+      workspaceRoot,
+      title: 'Stale Published Context',
+      sourceText: 'Chapter 1\nA bounded sample.',
+    });
+    const indexPath = join(workspaceRoot, 'examples', 'references.yaml');
+    const injectPublishedContext = async () => {
+      const index = parse(await readFile(indexPath, 'utf-8')) as {
+        references: Array<Record<string, unknown>>;
+      };
+      Object.assign(index.references[0]!, {
+        deconstructionStatus: 'completed',
+        publishedContext: {
+          runId: 'old-published-run',
+          fingerprint: 'a'.repeat(64),
+          entryCount: 5,
+          categoryCounts: {
+            writingStyle: 1,
+            pacing: 1,
+            hooks: 1,
+            scene: 1,
+            character: 1,
+          },
+        },
+      });
+      await writeFile(indexPath, stringify(index), 'utf-8');
+    };
+
+    await injectPublishedContext();
+    const disabled = await setReferenceEnabled(
+      workspaceRoot,
+      imported.reference.id,
+      false,
+    );
+    expect(disabled.deconstructionStatus).toBe('notAnalyzed');
+    expect(disabled).not.toHaveProperty('publishedContext');
+    const persisted = parse(await readFile(indexPath, 'utf-8')) as {
+      references: Array<Record<string, unknown>>;
+    };
+    expect(persisted.references[0]).not.toHaveProperty('publishedContext');
+
+    await injectPublishedContext();
+    const metadataPath = join(
+      workspaceRoot,
+      imported.reference.bundlePath,
+      'metadata.yaml',
+    );
+    const metadata = parse(await readFile(metadataPath, 'utf-8')) as {
+      checksumSha256: string;
+    };
+    metadata.checksumSha256 = 'f'.repeat(64);
+    await writeFile(metadataPath, stringify(metadata), 'utf-8');
+    const listed = await listReferenceWorks(workspaceRoot);
+    expect(listed[0]?.deconstructionStatus).toBe('stale');
+    expect(listed[0]).not.toHaveProperty('publishedContext');
   });
 
   it('does not reuse orphan bundles or write through a references parent symlink', async () => {

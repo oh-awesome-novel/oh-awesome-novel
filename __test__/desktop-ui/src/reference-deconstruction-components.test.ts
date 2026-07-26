@@ -5,19 +5,25 @@ import { describe, expect, it } from 'vitest';
 
 import ReferenceDeconstructionPanel from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceDeconstructionPanel.vue';
 import ReferenceList from '../../../apps/desktop-ui/src/components/workspace/ReferenceList.vue';
+import ReferenceContextSelectionPanel from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceContextSelectionPanel.vue';
 import ReferenceDiagnostics from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceDiagnostics.vue';
 import ReferenceFullDeconstructionProgress from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceFullDeconstructionProgress.vue';
+import ReferencePublishReview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferencePublishReview.vue';
 import ReferenceQuickPreview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceQuickPreview.vue';
 import {
   approvedReferenceRun,
+  entryReferenceContextFixture,
   failedFullReferenceRun,
   previewReferenceRun,
+  publishedReferenceFixture,
+  publishingReferenceRun,
   referenceFixture,
+  referencePublicationFixture,
   reviewReadyReferenceRun,
   runningFullReferenceRun,
 } from './support/referenceDeconstructionFixture';
 
-describe('Reference D0-D3 components', () => {
+describe('Reference D0-D5 components', () => {
   it('keeps enabled preference, analysis status and context eligibility visibly separate', async () => {
     const reference = referenceFixture();
     const wrapper = mount(ReferenceList, {
@@ -206,11 +212,80 @@ describe('Reference D0-D3 components', () => {
 
   it('shows review-ready as analysis-complete but not published', () => {
     const run = reviewReadyReferenceRun();
-    const wrapper = mountPanel({ run });
+    const wrapper = mountPanel({
+      run,
+      canPublish: true,
+    });
 
     expect(wrapper.text()).toContain('Analysis ready for review');
     expect(wrapper.text()).toContain('Analysis quality: passed');
     expect(wrapper.text()).toContain('the reference bundle has not been published');
+    expect(wrapper.text()).toContain('Analysis ready to publish');
+    expect(wrapper.text()).toContain('Create publish PendingAction');
+  });
+
+  it('reviews the complete publishing candidate and hands approval to the global PendingAction', async () => {
+    const run = publishingReferenceRun();
+    const publication = run.publication!;
+    const wrapper = mount(ReferencePublishReview, {
+      props: {
+        publication,
+        status: run.status,
+        sourceChecksumSha256: run.sourceChecksumSha256,
+        pipelineVersion: run.pipelineVersion,
+        capabilityVersion: run.capabilityVersion,
+        coveragePercent: 100,
+        diagnostics: run.diagnostics,
+        publishing: false,
+        canPublish: false,
+      },
+    });
+
+    expect(wrapper.text()).toContain('examples/references/reference-1/context/index.yaml');
+    expect(wrapper.text()).toContain('writingStyle 1');
+    expect(wrapper.text()).toContain('Consequence-first hook');
+    expect(wrapper.text()).toContain(publication.candidateFingerprint);
+    expect(wrapper.text()).not.toContain('chunk-0001-0001');
+
+    await button(wrapper, 'Review PendingAction').trigger('click');
+    expect(wrapper.emitted('reviewPendingAction')).toEqual([
+      ['pending-reference-publish-1'],
+    ]);
+    expect(wrapper.text()).toContain('Awaiting an explicit global approval decision');
+  });
+
+  it('explains entry-level inclusion, omission, budget, and the distilled-only boundary', () => {
+    const wrapper = mount(ReferenceContextSelectionPanel, {
+      props: {
+        selection: entryReferenceContextFixture(),
+      },
+    });
+
+    expect(wrapper.text()).toContain('distilled only');
+    expect(wrapper.text()).toContain('142 / 240 tokens');
+    expect(wrapper.text()).toContain('4 entry cap');
+    expect(wrapper.text()).toContain('Differentiation');
+    expect(wrapper.text()).toContain('Reference One · Consequence-first hook');
+    expect(wrapper.text()).toContain('hooks · 68 tokens');
+    expect(wrapper.text()).toContain('capabilityMatch: Hook intent and capability matched.');
+    expect(wrapper.text()).toContain('Tags opening, consequence');
+    expect(wrapper.text()).toContain('pacing-1');
+    expect(wrapper.text()).toMatch(/entry\s+· pacing/u);
+    expect(wrapper.text()).toContain('tokenBudgetExceeded');
+    expect(wrapper.text()).toContain('reference');
+    expect(wrapper.text()).not.toContain('unexpected source read');
+  });
+
+  it('shows the current published inventory after reopening without an active run', () => {
+    const wrapper = mountPanel({
+      reference: publishedReferenceFixture(),
+    });
+
+    expect(wrapper.text()).toContain('Published Selector Entries');
+    expect(wrapper.text()).toContain('5 current distilled entries');
+    expect(wrapper.text()).toContain('writingStyle 1');
+    expect(wrapper.text()).toContain('Context eligible');
+    expect(wrapper.text()).toContain('e'.repeat(64));
   });
 
   it('filters diagnostics by severity, stage, and chapter while retaining blocking context', async () => {
@@ -264,6 +339,7 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       pausing: false,
       resuming: false,
       retrying: false,
+      publishing: false,
       reconciling: false,
       indeterminate: false,
       error: '',
@@ -275,6 +351,7 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       canRetry: false,
       canCancel: false,
       canApprove: false,
+      canPublish: false,
       needsReconcile: false,
       ...overrides,
     },

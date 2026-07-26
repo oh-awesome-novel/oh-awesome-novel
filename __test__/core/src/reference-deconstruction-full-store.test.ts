@@ -1,13 +1,15 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import {
   approveReferenceFullDeconstruction,
+  beginReferenceDeconstructionPublish,
   cancelReferenceDeconstructionRun,
   completeReferenceFullDeconstructionUnit,
+  completeReferenceDeconstructionPublish,
   completeReferenceQuickPreview,
   createReferenceAnalysisOutputHash,
   createReferenceDeconstructionStageInputFingerprint,
@@ -16,23 +18,32 @@ import {
   createReferenceQuickPreviewSelection,
   evaluateReservedReferenceFullDeconstructionQuality,
   importReferenceWork,
+  listReferenceWorks,
+  listReferenceDeconstructionRuns,
   normalizeReferenceAggregateAnalysisModelOutput,
   normalizeReferenceChapterAnalysisModelOutput,
+  normalizeReferenceDistillationModelOutput,
   normalizeReferenceQuickPreviewModelOutput,
   normalizeReferenceStyleProfileModelOutput,
   pauseReferenceDeconstructionRun,
+  prepareReferenceDeconstructionPublicationCandidate,
   projectReferenceDeconstructionRunForTransport,
   readReferenceDeconstructionRun,
   readReferencePreviewSource,
+  reconcileReferenceDeconstructionPublish,
   reconcileReferenceDeconstructionRun,
+  rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
   reserveReferenceQuickPreview,
   resolveReferenceDeconstructionAttemptArtifactPath,
   resumeReferenceDeconstructionRun,
   retryReferenceDeconstructionUnit,
+  selectReferenceContext,
+  setReferenceEnabled,
 } from '@oh-awesome-novel/core';
 import type {
   ReferenceDeconstructionFinding,
+  ReferenceDeconstructionPublicationCandidate,
   ReferenceDeconstructionRun,
   ReferenceFullDeconstructionExecution,
 } from '@oh-awesome-novel/core';
@@ -426,6 +437,424 @@ describe('reference full deconstruction store', () => {
     expect(completed.full?.units[0]?.status).toBe('completed');
   });
 
+  it('prepares a strict publication candidate from the completed quality DAG', async () => {
+    const fixture = await createApprovedRun();
+    const run = await reachReviewReady(fixture);
+
+    const candidate = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      now: '2026-07-23T02:00:00.000Z',
+    });
+
+    expect(candidate).toMatchObject({
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      runRevision: run.revision,
+    });
+    expect(candidate.files).toContainEqual(expect.objectContaining({
+      path: 'examples/references.yaml',
+      kind: 'index',
+    }));
+    expect(candidate.entryInventory).toHaveLength(5);
+  });
+
+  it('rejects a non-canonical project index before preparing publication', async () => {
+    const fixture = await createApprovedRun();
+    const run = await reachReviewReady(fixture);
+    const indexPath = join(fixture.workspaceRoot, 'examples', 'references.yaml');
+    const index = parse(await readFile(indexPath, 'utf-8')) as {
+      version: number;
+      references: Array<Record<string, unknown>>;
+    };
+    index.references[0]!.futureField = 'must not survive publication';
+    await writeFile(indexPath, stringify(index), 'utf-8');
+
+    await expect(prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+    })).rejects.toThrow('project index');
+  });
+
+  it('rebuilds publication candidates after repeated rejection and cannot reuse an old action', async () => {
+    const fixture = await createApprovedRun();
+    let run = await reachReviewReady(fixture);
+    const first = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      now: '2026-07-23T03:00:00.000Z',
+    });
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-begin-first',
+      candidateFingerprint: first.candidateFingerprint,
+      pendingActionId: 'pending-publish-first',
+    })).run;
+    run = (await rejectReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-reject-first',
+      pendingActionId: 'pending-publish-first',
+    })).run;
+
+    const second = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      now: '2026-07-23T03:01:00.000Z',
+    });
+    expect(second.runRevision).toBe(run.revision);
+    expect(second.candidateFingerprint).not.toBe(first.candidateFingerprint);
+    await expect(beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-reuse-old',
+      candidateFingerprint: first.candidateFingerprint,
+      pendingActionId: 'pending-publish-first',
+    })).rejects.toThrow('fingerprint');
+
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-begin-second',
+      candidateFingerprint: second.candidateFingerprint,
+      pendingActionId: 'pending-publish-second',
+    })).run;
+    run = (await rejectReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-reject-second',
+      pendingActionId: 'pending-publish-second',
+    })).run;
+
+    const third = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      now: '2026-07-23T03:02:00.000Z',
+    });
+    expect(third.runRevision).toBe(run.revision);
+    expect(third.candidateFingerprint).not.toBe(second.candidateFingerprint);
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-begin-third',
+      candidateFingerprint: third.candidateFingerprint,
+      pendingActionId: 'pending-publish-third',
+    })).run;
+    await materializeCandidate(fixture.workspaceRoot, third);
+    run = (await completeReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-complete-third',
+      candidateFingerprint: third.candidateFingerprint,
+      pendingActionId: 'pending-publish-third',
+    })).run;
+
+    expect(run.status).toBe('completed');
+  });
+
+  it('reconciles an accepted materialization without candidate, attempt, or source artifacts', async () => {
+    const fixture = await createApprovedRun();
+    let run = await reachReviewReady(fixture);
+    const candidate = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+    });
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-crash-reconcile-begin',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: 'pending-publish-crash-reconcile',
+    })).run;
+    await materializeCandidate(fixture.workspaceRoot, candidate);
+
+    const runArtifactRoot = join(
+      fixture.workspaceRoot,
+      '.workspace',
+      'sessions',
+      run.runId,
+      'reference-deconstruction',
+    );
+    await rename(
+      join(runArtifactRoot, 'publication-candidate.yaml'),
+      join(runArtifactRoot, 'publication-candidate.yaml.unavailable'),
+    );
+    await rename(
+      join(runArtifactRoot, 'stages'),
+      join(runArtifactRoot, 'stages.unavailable'),
+    );
+    const sourcesRoot = join(
+      fixture.workspaceRoot,
+      'examples',
+      'references',
+      fixture.referenceId,
+      'sources',
+    );
+    await rename(sourcesRoot, `${sourcesRoot}.unavailable`);
+    await expect(readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      run.runId,
+    )).resolves.toMatchObject({
+      status: 'publishing',
+      publication: {
+        pendingActionId: 'pending-publish-crash-reconcile',
+      },
+    });
+    await expect(listReferenceDeconstructionRuns(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+    )).resolves.toContainEqual(expect.objectContaining({
+      runId: run.runId,
+      status: 'publishing',
+    }));
+    await expect(reconcileReferenceDeconstructionPublish({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      pendingActionStatus: 'pending',
+    })).rejects.toThrow();
+
+    const summaryFile = candidate.files.find((file) =>
+      file.path.endsWith('/context/reference-summary.md'))!;
+    const summaryPath = join(fixture.workspaceRoot, summaryFile.path);
+    await writeFile(summaryPath, `${summaryFile.content}tampered\n`, 'utf-8');
+    await expect(reconcileReferenceDeconstructionPublish({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      pendingActionStatus: 'accepted',
+    })).rejects.toThrow('stale');
+
+    await writeFile(summaryPath, summaryFile.content, 'utf-8');
+    const second = await importReferenceWork({
+      workspaceRoot: fixture.workspaceRoot,
+      title: 'Later Reference',
+      sourceText: 'Chapter 1\nA later reference legitimately updates the shared index.',
+      rights: 'owned',
+    });
+    expect(second.reference.id).not.toBe(fixture.referenceId);
+
+    const sharedIndexPath = join(
+      fixture.workspaceRoot,
+      'examples',
+      'references.yaml',
+    );
+    const sharedIndexBytes = await readFile(sharedIndexPath, 'utf-8');
+    const sharedIndex = parse(sharedIndexBytes) as {
+      references: Array<{
+        id: string;
+        publishedContext?: { runId: string };
+      }>;
+    };
+    const currentProjection = sharedIndex.references.find((reference) =>
+      reference.id === fixture.referenceId)!;
+    currentProjection.publishedContext!.runId = 'forged-shared-index-run';
+    await writeFile(sharedIndexPath, stringify(sharedIndex), 'utf-8');
+    await expect(reconcileReferenceDeconstructionPublish({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      pendingActionStatus: 'accepted',
+    })).rejects.toThrow('project index');
+    await writeFile(sharedIndexPath, sharedIndexBytes, 'utf-8');
+
+    run = await reconcileReferenceDeconstructionPublish({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      pendingActionStatus: 'accepted',
+    });
+    expect(run.status).toBe('completed');
+    await expect(readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      run.runId,
+    )).resolves.toMatchObject({
+      runId: run.runId,
+      status: 'completed',
+    });
+    await expect(listReferenceDeconstructionRuns(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+    )).resolves.toContainEqual(expect.objectContaining({
+      runId: run.runId,
+      status: 'completed',
+    }));
+    await expect(readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      run.runId,
+    )).resolves.toMatchObject({
+      runId: run.runId,
+      status: 'completed',
+    });
+    await expect(listReferenceDeconstructionRuns(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+    )).resolves.toContainEqual(expect.objectContaining({
+      runId: run.runId,
+      status: 'completed',
+    }));
+
+    const currentSelection = await selectReferenceContext({
+      workspaceRoot: fixture.workspaceRoot,
+      explicitReferenceIds: [fixture.referenceId],
+      maxEntries: 1,
+    });
+    expect(currentSelection.included).toContainEqual(expect.objectContaining({
+      referenceId: fixture.referenceId,
+    }));
+
+    const distilledFile = candidate.files.find((file) =>
+      file.kind === 'distilled' && file.path !==
+        `examples/references/${fixture.referenceId}/distilled/do-not-copy.md`)!;
+    await writeFile(
+      join(fixture.workspaceRoot, distilledFile.path),
+      `${distilledFile.content}tampered\n`,
+      'utf-8',
+    );
+    await expect(readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      run.runId,
+    )).resolves.toMatchObject({
+      runId: run.runId,
+      status: 'completed',
+    });
+    const staleSelection = await selectReferenceContext({
+      workspaceRoot: fixture.workspaceRoot,
+      explicitReferenceIds: [fixture.referenceId],
+    });
+    expect(staleSelection.included).toEqual([]);
+    expect(staleSelection.omitted).toContainEqual(expect.objectContaining({
+      referenceId: fixture.referenceId,
+      reasonCode: 'invalidContextIndex',
+    }));
+  });
+
+  it('completes an accepted disabled publication but keeps it out of writing context', async () => {
+    const fixture = await createApprovedRun();
+    await setReferenceEnabled(fixture.workspaceRoot, fixture.referenceId, false);
+    let run = await reachReviewReady(fixture);
+    const candidate = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+      now: '2026-07-23T04:00:00.000Z',
+    });
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-disabled-begin',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: 'pending-publish-disabled',
+    })).run;
+    await materializeCandidate(fixture.workspaceRoot, candidate);
+    run = (await completeReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-disabled-complete',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: 'pending-publish-disabled',
+    })).run;
+
+    expect(run.status).toBe('completed');
+    const listed = await listReferenceWorks(fixture.workspaceRoot);
+    expect(listed[0]).toMatchObject({
+      id: fixture.referenceId,
+      enabled: false,
+      deconstructionStatus: 'completed',
+      contextEligible: false,
+      readinessReason: 'disabled',
+      publishedContext: {
+        runId: run.runId,
+        entryCount: 5,
+      },
+    });
+    const selection = await selectReferenceContext({
+      workspaceRoot: fixture.workspaceRoot,
+      explicitReferenceIds: [fixture.referenceId],
+    });
+    expect(selection.included).toEqual([]);
+    expect(selection.omitted).toContainEqual(expect.objectContaining({
+      scope: 'reference',
+      referenceId: fixture.referenceId,
+      reasonCode: 'disabled',
+    }));
+    expect(selection.originalSourceRead).toBe(false);
+  });
+
+  it('selects accepted distilled context without opening the original source', async () => {
+    const fixture = await createApprovedRun();
+    let run = await reachReviewReady(fixture);
+    const candidate = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot: fixture.workspaceRoot,
+      referenceId: fixture.referenceId,
+      runId: run.runId,
+    });
+    run = (await beginReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-lightweight-begin',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: 'pending-publish-lightweight',
+    })).run;
+    await materializeCandidate(fixture.workspaceRoot, candidate);
+    run = (await completeReferenceDeconstructionPublish({
+      ...identity(fixture, run),
+      idempotencyKey: 'publish-lightweight-complete',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: 'pending-publish-lightweight',
+    })).run;
+
+    const sourcesPath = join(
+      fixture.workspaceRoot,
+      'examples',
+      'references',
+      fixture.referenceId,
+      'sources',
+    );
+    await rename(sourcesPath, `${sourcesPath}.unavailable`);
+    const deconstructionPath = join(
+      fixture.workspaceRoot,
+      'examples',
+      'references',
+      fixture.referenceId,
+      'deconstruction',
+    );
+    await rename(deconstructionPath, `${deconstructionPath}.unavailable`);
+    const selection = await selectReferenceContext({
+      workspaceRoot: fixture.workspaceRoot,
+      capability: 'novel.write_chapter',
+      explicitReferenceIds: [fixture.referenceId],
+      maxEntries: 2,
+    });
+    expect(selection.included).toHaveLength(2);
+    expect(selection.originalSourceRead).toBe(false);
+    expect(selection.included.every((entry) =>
+      entry.path.includes('/distilled/'))).toBe(true);
+
+    await rename(`${sourcesPath}.unavailable`, sourcesPath);
+    const metadataPath = join(
+      fixture.workspaceRoot,
+      'examples',
+      'references',
+      fixture.referenceId,
+      'metadata.yaml',
+    );
+    const metadata = parse(await readFile(metadataPath, 'utf-8')) as {
+      checksumSha256: string;
+    };
+    metadata.checksumSha256 = 'f'.repeat(64);
+    await writeFile(metadataPath, stringify(metadata), 'utf-8');
+    const staleSelection = await selectReferenceContext({
+      workspaceRoot: fixture.workspaceRoot,
+      explicitReferenceIds: [fixture.referenceId],
+    });
+    expect(staleSelection.included).toEqual([]);
+    expect(staleSelection.omitted).toContainEqual(expect.objectContaining({
+      referenceId: fixture.referenceId,
+      reasonCode: 'stale',
+    }));
+  });
+
   it('persists append-only attempts and reaches reviewReady through bounded units', async () => {
     const fixture = await createApprovedRun();
     let run = fixture.run;
@@ -498,6 +927,8 @@ describe('reference full deconstruction store', () => {
           ? aggregateOutput(run.runId, execution)
           : execution.unit.kind === 'style'
             ? styleOutput(run.runId, execution)
+            : execution.unit.kind === 'distill'
+              ? distillationOutput(run.runId, execution)
             : await evaluateReservedReferenceFullDeconstructionQuality(
                 fixture.workspaceRoot,
                 fixture.referenceId,
@@ -666,6 +1097,58 @@ async function reserveFull(
   });
 }
 
+async function reachReviewReady(
+  fixture: {
+    workspaceRoot: string;
+    referenceId: string;
+    run: ReferenceDeconstructionRun;
+  },
+): Promise<ReferenceDeconstructionRun> {
+  let run = fixture.run;
+  let sequence = 1;
+  while (run.status !== 'reviewReady') {
+    if (sequence > 64) throw new Error('Fixture did not reach reviewReady.');
+    const reserved = await reserveFull(
+      fixture,
+      run,
+      `advance-ready-${String(sequence).padStart(4, '0')}`,
+    );
+    const execution = reserved.execution!;
+    const output = execution.unit.kind === 'chapterChunk'
+      ? chapterOutput(run.runId, execution)
+      : execution.unit.kind === 'aggregate'
+        ? aggregateOutput(run.runId, execution)
+        : execution.unit.kind === 'style'
+          ? styleOutput(run.runId, execution)
+          : execution.unit.kind === 'distill'
+            ? distillationOutput(run.runId, execution)
+            : await evaluateReservedReferenceFullDeconstructionQuality(
+                fixture.workspaceRoot,
+                fixture.referenceId,
+                run.runId,
+                reserved.reservation!.id,
+              );
+    run = await completeReferenceFullDeconstructionUnit({
+      ...identity(fixture, reserved.run),
+      reservationId: reserved.reservation!.id,
+      output,
+    });
+    sequence += 1;
+  }
+  return run;
+}
+
+async function materializeCandidate(
+  workspaceRoot: string,
+  candidate: ReferenceDeconstructionPublicationCandidate,
+): Promise<void> {
+  for (const file of candidate.files) {
+    const path = join(workspaceRoot, file.path);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, file.content, 'utf-8');
+  }
+}
+
 function identity(
   fixture: { workspaceRoot: string; referenceId: string },
   run: ReferenceDeconstructionRun,
@@ -771,6 +1254,50 @@ function styleOutput(runId: string, execution: ReferenceFullDeconstructionExecut
     coveredUnitIds: execution.coveredUnitIds!,
     coveredChapterIds: execution.coveredChapterIds!,
   });
+}
+
+function distillationOutput(
+  runId: string,
+  execution: ReferenceFullDeconstructionExecution,
+) {
+  const first = execution.verifiedSourceFindings![0]!;
+  return normalizeReferenceDistillationModelOutput({
+    entries: [
+      distillationEntry('writingStyle', 'Functional prose movement', first.id),
+      distillationEntry('pacing', 'Contrasting movement sequence', first.id),
+      distillationEntry('hooks', 'Active reader-facing question', first.id),
+      distillationEntry('scene', 'Consequence-led scene turn', first.id),
+      distillationEntry('character', 'Choice-driven pressure', first.id),
+    ],
+    doNotCopyRules: ['Do not copy source wording, events, names, or signature expression.'],
+    differentiationWarnings: ['Change premise, motives, causality, setting, and consequences.'],
+    uncertainties: [],
+  }, {
+    runId,
+    unit: execution.unit,
+    verifiedFindings: findingMap(execution.verifiedSourceFindings!),
+    coveredUnitIds: execution.coveredUnitIds!,
+    coveredChapterIds: execution.coveredChapterIds!,
+  });
+}
+
+function distillationEntry(
+  category: 'writingStyle' | 'pacing' | 'hooks' | 'scene' | 'character',
+  title: string,
+  sourceFindingRef: string,
+) {
+  return {
+    category,
+    title,
+    technique: `Turn ${title.toLocaleLowerCase('en-US')} into an original task constraint.`,
+    whenUseful: ['Use when the current writing task needs this structural function.'],
+    constraints: ['Replace all source-specific expression and story causality.'],
+    differentiationPrompts: ['Which original motive creates a different causal path?'],
+    sourceFindingRefs: [sourceFindingRef],
+    confidence: 'medium' as const,
+    tags: [category],
+    capabilityIds: ['novel.write_chapter' as const],
+  };
 }
 
 function findingMap(findings: ReferenceDeconstructionFinding[]) {

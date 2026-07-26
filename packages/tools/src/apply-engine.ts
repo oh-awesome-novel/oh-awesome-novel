@@ -6,7 +6,11 @@ import { stringify as stringifyYaml } from 'yaml';
 import { parseFrontmatter, parseSections } from './markdown';
 import { yamlAppendDraft, yamlDeleteDraft, yamlGet, yamlSetDraft } from './yaml-engine';
 
-export type SemanticPatch = ObjectPatch | CollectionPatch | NarrativePatch;
+export type SemanticPatch =
+  | ObjectPatch
+  | CollectionPatch
+  | NarrativePatch
+  | ReferenceArtifactPatch;
 
 export interface ObjectPatch {
   kind: 'object';
@@ -57,6 +61,14 @@ export interface NarrativePatch {
   };
   instruction?: string;
   value?: string;
+}
+
+export interface ReferenceArtifactPatch {
+  kind: 'referenceArtifact';
+  referenceId: string;
+  file: string;
+  operation: 'replaceFile';
+  value: string;
 }
 
 export interface ShadowWriteReference {
@@ -189,6 +201,9 @@ export function validateSemanticPatch(patch: SemanticPatch): void {
     case 'narrative':
       validateNarrativePatch(patch);
       break;
+    case 'referenceArtifact':
+      validateReferenceArtifactPatch(patch);
+      break;
     default:
       throw new Error(`Unsupported SemanticPatch kind: ${String(patch.kind)}`);
   }
@@ -204,6 +219,8 @@ export function resolvePatchTargetFile(patch: SemanticPatch): string {
       return safeRelativePath(join(patch.domain, safeRelativePath(patch.file)));
     case 'narrative':
       return resolveNarrativePatchTarget(patch);
+    case 'referenceArtifact':
+      return resolveReferenceArtifactPatchTarget(patch);
     default:
       throw new Error('Unsupported SemanticPatch kind.');
   }
@@ -302,6 +319,19 @@ function validateNarrativePatch(patch: NarrativePatch): void {
   }
 }
 
+function validateReferenceArtifactPatch(patch: ReferenceArtifactPatch): void {
+  safeReferenceId(patch.referenceId);
+  validateReferenceArtifactFile(patch.file);
+  if (patch.operation !== 'replaceFile') {
+    throw new Error(
+      `Unsupported ReferenceArtifactPatch operation: ${String(patch.operation)}`,
+    );
+  }
+  if (typeof patch.value !== 'string') {
+    throw new Error('ReferenceArtifactPatch replaceFile value is required.');
+  }
+}
+
 async function applyPatchToContent(input: {
   workspaceRoot: string;
   patch: SemanticPatch;
@@ -315,6 +345,8 @@ async function applyPatchToContent(input: {
       return applyCollectionPatch(input.workspaceRoot, input.patch, input.original);
     case 'narrative':
       return applyNarrativePatch(input.patch, input.original);
+    case 'referenceArtifact':
+      return input.patch.value;
   }
 }
 
@@ -421,6 +453,42 @@ function resolveNarrativePatchTarget(patch: NarrativePatch): string {
   }
 
   return file.startsWith(`summaries${sep}`) ? file : safeRelativePath(join('summaries', file));
+}
+
+function resolveReferenceArtifactPatchTarget(
+  patch: ReferenceArtifactPatch,
+): string {
+  const referenceId = safeReferenceId(patch.referenceId);
+  const file = validateReferenceArtifactFile(patch.file);
+  return file === 'references.yaml'
+    ? join('examples', 'references.yaml')
+    : join('examples', 'references', referenceId, file);
+}
+
+function validateReferenceArtifactFile(value: string): string {
+  const file = safeRelativePath(value);
+  if (file === 'references.yaml') return file;
+  if (
+    file === 'deconstruction-manifest.yaml'
+    || file === 'diagnostics.yaml'
+    || file === 'progress.yaml'
+  ) {
+    return file;
+  }
+  if (
+    (file.startsWith(`deconstruction${sep}`)
+      || file.startsWith(`distilled${sep}`))
+    && file.endsWith('.md')
+  ) {
+    return file;
+  }
+  if (
+    file.startsWith(`context${sep}`)
+    && (file.endsWith('.md') || file.endsWith('.yaml'))
+  ) {
+    return file;
+  }
+  throw new Error(`Reference artifact target is not publishable: ${value}`);
 }
 
 async function resolvePatchTarget(
@@ -617,6 +685,16 @@ function safeRelativePath(value: string): string {
 function safeSegment(value: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) {
     throw new Error(`Invalid path segment: ${value}`);
+  }
+  return value;
+}
+
+function safeReferenceId(value: string): string {
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value)
+    || value.includes('..')
+  ) {
+    throw new Error(`Invalid reference id: ${value}`);
   }
   return value;
 }

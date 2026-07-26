@@ -1,6 +1,7 @@
-import { createApp } from 'vue';
+import { createApp, defineComponent, h } from 'vue';
 
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
+import ReferenceImportTab from '../../../apps/desktop-ui/src/components/workspace/ReferenceImportTab.vue';
 import '../../../apps/desktop-ui/src/components/play/play-design.css';
 import { rendererSmokeState } from './mock-oan-client';
 
@@ -34,6 +35,22 @@ createApp(PlayWorkspace, {
   providerConfigured: true,
   files: [],
   filesLoading: false,
-}).mount('#app');
+}).mount('#play-app');
+
+const ReferenceSmokeHost = defineComponent({
+  name: 'ReferenceSmokeHost',
+  setup() {
+    return () => h(ReferenceImportTab, {
+      onReviewPendingAction(pendingActionId: string) {
+        rendererSmokeState.calls.push({
+          method: 'referenceReviewPendingAction',
+          args: [pendingActionId],
+        });
+      },
+    });
+  },
+});
+
+createApp(ReferenceSmokeHost).mount('#reference-app');
 
 rendererSmokeState.ready = true;

@@ -19,7 +19,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
+import {
+  hasExplicitReferenceRecallIntent,
+  startNovelHttpBackend,
+} from '@oh-awesome-novel/backend';
 import {
   createReferenceEvidencePointerMap,
   normalizeReferenceQuickPreviewModelOutput,
@@ -44,6 +47,21 @@ afterEach(async () => {
 });
 
 describe('novel HTTP backend', () => {
+  it('activates reference recall only for explicit request-local intent', () => {
+    expect(hasExplicitReferenceRecallIntent('写下一章，延续当前冲突。')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('Review the next chapter for continuity.')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('不要参考任何作品，直接续写。')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('别参考任何作品，直接续写。')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('避免参考参考作品。')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('Do not use reference material.')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent("Don't draw from the reference novel.")).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('Please avoid using references.')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('Draw from the current chapter conflict.')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('Inspired by the current character arc.')).toBe(false);
+    expect(hasExplicitReferenceRecallIntent('参考作品中的节奏技巧来规划下一章。')).toBe(true);
+    expect(hasExplicitReferenceRecallIntent('Draw from the reference novel pacing notes.')).toBe(true);
+  });
+
   it('streams AI SDK UI message SSE chunks for an agent chat request', async () => {
     const workspaceRoot = await createTempWorkspace();
     const backend = await startNovelHttpBackend({
@@ -239,6 +257,15 @@ describe('novel HTTP backend', () => {
     const backend = await startNovelHttpBackend({ workspaceRoot });
     servers.push(backend);
 
+    for (const body of [{ maxReferences: 21 }, { maxEntries: 51 }]) {
+      const response = await fetch(`${backend.url}/api/workspace/references/context`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+    }
+
     const imported = await fetchJson<{
       reference: {
         id: string;
@@ -292,7 +319,7 @@ describe('novel HTTP backend', () => {
           included: [],
           omitted: [
             expect.objectContaining({
-              id: imported.reference.id,
+              referenceId: imported.reference.id,
               reasonCode: 'notAnalyzed',
             }),
           ],
@@ -321,7 +348,7 @@ describe('novel HTTP backend', () => {
           included: [],
           omitted: [
             expect.objectContaining({
-              id: imported.reference.id,
+              referenceId: imported.reference.id,
               reason: 'disabled',
             }),
           ],

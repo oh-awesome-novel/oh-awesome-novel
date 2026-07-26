@@ -5,17 +5,25 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import {
+  beginReferenceDeconstructionPublish,
   createReferenceEvidencePointerMap,
   normalizeReferenceAggregateAnalysisModelOutput,
   normalizeReferenceChapterAnalysisModelOutput,
+  normalizeReferenceDistillationModelOutput,
   normalizeReferenceQuickPreviewModelOutput,
   normalizeReferenceStyleProfileModelOutput,
+  prepareReferenceDeconstructionPublicationCandidate,
+  rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
 } from '@oh-awesome-novel/core';
 import type {
   ReferenceDeconstructionFinding,
   ReferenceFullDeconstructionExecution,
 } from '@oh-awesome-novel/core';
+import {
+  acceptPendingAction,
+  rejectPendingAction,
+} from '@oh-awesome-novel/tools';
 
 const tempRoots: string[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -37,7 +45,7 @@ describe('reference full deconstruction backend', () => {
     const chapterGate = new Promise<void>((resolve) => {
       releaseChapter = resolve;
     });
-    const calls = { chapter: 0, aggregate: 0, style: 0 };
+    const calls = { chapter: 0, aggregate: 0, style: 0, distill: 0 };
     const backend = await startNovelHttpBackend({
       workspaceRoot,
       globalConfigDir,
@@ -80,6 +88,19 @@ describe('reference full deconstruction backend', () => {
           status: 'completed',
           finishReason: 'stop',
           output: styleOutput(input.runId, {
+            unit: input.unit,
+            verifiedSourceFindings: [...input.verifiedSourceFindings],
+            coveredUnitIds: [...input.coveredUnitIds],
+            coveredChapterIds: [...input.coveredChapterIds],
+          }),
+        };
+      },
+      runReferenceDistillation: async (input) => {
+        calls.distill += 1;
+        return {
+          status: 'completed',
+          finishReason: 'stop',
+          output: distillOutput(input.runId, {
             unit: input.unit,
             verifiedSourceFindings: [...input.verifiedSourceFindings],
             coveredUnitIds: [...input.coveredUnitIds],
@@ -143,11 +164,15 @@ describe('reference full deconstruction backend', () => {
       )).run;
     }
 
-    expect(current.status).toBe('reviewReady');
+    expect(
+      current.status,
+      current.failure?.message ?? current.diagnostics?.map((item) => item.message).join('\n'),
+    ).toBe('reviewReady');
     expect(current.full?.analysisQuality).toMatchObject({ status: 'passed' });
     expect(calls.chapter).toBeGreaterThan(0);
     expect(calls.aggregate).toBeGreaterThan(0);
     expect(calls.style).toBe(1);
+    expect(calls.distill).toBe(1);
     const releasedSwitch = await fetch(`${backend.url}/api/workspaces/open`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -405,13 +430,424 @@ describe('reference full deconstruction backend', () => {
       code: 'ENOENT',
     });
   });
+
+  it('keeps a republished old candidate publishing while its new stable action is being created', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      providerConfig: providerConfig(),
+      runReferenceQuickPreview: async (input) => completedPreview(input),
+      runReferenceChapterAnalysis: async (input) => ({
+        status: 'completed',
+        finishReason: 'stop',
+        output: chapterOutput(input.runId, {
+          unit: input.unit,
+          sourceWindows: [...input.sourceWindows],
+          ...(input.rollingContext
+            ? { rollingContext: { ...input.rollingContext } }
+            : {}),
+        }),
+      }),
+      runReferenceAggregateAnalysis: async (input) => ({
+        status: 'completed',
+        finishReason: 'stop',
+        output: aggregateOutput(input.runId, {
+          unit: input.unit,
+          verifiedSourceFindings: [...input.verifiedSourceFindings],
+          coveredUnitIds: [...input.coveredUnitIds],
+          coveredChapterIds: [...input.coveredChapterIds],
+        }),
+      }),
+      runReferenceStyleProfile: async (input) => ({
+        status: 'completed',
+        finishReason: 'stop',
+        output: styleOutput(input.runId, {
+          unit: input.unit,
+          verifiedSourceFindings: [...input.verifiedSourceFindings],
+          coveredUnitIds: [...input.coveredUnitIds],
+          coveredChapterIds: [...input.coveredChapterIds],
+        }),
+      }),
+      runReferenceDistillation: async (input) => ({
+        status: 'completed',
+        finishReason: 'stop',
+        output: distillOutput(input.runId, {
+          unit: input.unit,
+          verifiedSourceFindings: [...input.verifiedSourceFindings],
+          coveredUnitIds: [...input.coveredUnitIds],
+          coveredChapterIds: [...input.coveredChapterIds],
+        }),
+      }),
+    });
+    servers.push(backend);
+    const approved = await createApprovedRun(backend.url);
+    const runUrl = referenceRunUrl(
+      backend.url,
+      approved.referenceId,
+      approved.run.id,
+    );
+    let reviewReady = approved.run;
+    for (let index = 1; index <= 16 && reviewReady.status !== 'reviewReady'; index += 1) {
+      reviewReady = (await postMutation<RunEnvelope>(
+        `${runUrl}/advance`,
+        reviewReady.runRevision,
+        `advance-republish-${index}`,
+      )).run;
+      if (!['fullApproved', 'fullRunning'].includes(reviewReady.status)) break;
+    }
+    expect(reviewReady.status, reviewReady.failure?.message).toBe('reviewReady');
+
+    const oldPreparedAt = '2000-01-01T00:00:00.000Z';
+    const candidate = await prepareReferenceDeconstructionPublicationCandidate({
+      workspaceRoot,
+      referenceId: approved.referenceId,
+      runId: approved.run.id,
+      now: oldPreparedAt,
+    });
+    expect(candidate.preparedAt).toBe(oldPreparedAt);
+    const first = await beginReferenceDeconstructionPublish({
+      workspaceRoot,
+      referenceId: approved.referenceId,
+      runId: approved.run.id,
+      baseRunRevision: reviewReady.runRevision,
+      idempotencyKey: 'begin-old-candidate',
+      candidateFingerprint: candidate.candidateFingerprint,
+      pendingActionId: `pa_${'8'.repeat(64)}`,
+      now: oldPreparedAt,
+    });
+    const rejected = await rejectReferenceDeconstructionPublish({
+      workspaceRoot,
+      referenceId: approved.referenceId,
+      runId: approved.run.id,
+      baseRunRevision: first.run.revision,
+      idempotencyKey: 'reject-old-candidate',
+      pendingActionId: `pa_${'8'.repeat(64)}`,
+      now: '2000-01-01T00:00:01.000Z',
+    });
+    const republishCandidate =
+      await prepareReferenceDeconstructionPublicationCandidate({
+        workspaceRoot,
+        referenceId: approved.referenceId,
+        runId: approved.run.id,
+        now: oldPreparedAt,
+      });
+    const republished = await beginReferenceDeconstructionPublish({
+      workspaceRoot,
+      referenceId: approved.referenceId,
+      runId: approved.run.id,
+      baseRunRevision: rejected.run.revision,
+      idempotencyKey: 'begin-republished-candidate',
+      candidateFingerprint: republishCandidate.candidateFingerprint,
+      pendingActionId: `pa_${'9'.repeat(64)}`,
+    });
+    expect(republished.run.publication?.preparedAt).toBe(oldPreparedAt);
+    expect(Date.now() - Date.parse(republished.run.updatedAt)).toBeLessThan(30_000);
+
+    const observed = await fetchJson<RunEnvelope>(runUrl);
+    expect(observed.run).toMatchObject({
+      status: 'publishing',
+      runRevision: republished.run.revision,
+    });
+  });
+
+  it('publishes one review bundle through a stable PendingAction and accepts it atomically', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot);
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const manifestPath = join(
+      workspaceRoot,
+      'examples',
+      'references',
+      ready.referenceId,
+      'deconstruction-manifest.yaml',
+    );
+    const manifestBeforePublish = await readFile(manifestPath, 'utf-8');
+
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      'publish-complete-bundle',
+    );
+    expect(published).toMatchObject({
+      run: { status: 'publishing' },
+      replayed: false,
+      pendingAction: { status: 'pending' },
+    });
+    await expect(readFile(manifestPath, 'utf-8')).resolves.toBe(
+      manifestBeforePublish,
+    );
+
+    const replayed = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      'publish-complete-bundle',
+    );
+    expect(replayed).toMatchObject({
+      run: { status: 'publishing' },
+      replayed: true,
+      pendingAction: {
+        id: published.pendingAction.id,
+        status: 'pending',
+      },
+    });
+
+    const accepted = await fetchJson<PendingActionDecisionEnvelope>(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    expect(accepted).toMatchObject({
+      id: published.pendingAction.id,
+      status: 'accepted',
+      referencePublish: {
+        run: { status: 'completed' },
+      },
+    });
+    for (const target of published.pendingAction.touchedFiles) {
+      await expect(readFile(join(workspaceRoot, target), 'utf-8'))
+        .resolves.toEqual(expect.any(String));
+    }
+    await expect(fetchJson<RunEnvelope>(runUrl)).resolves.toMatchObject({
+      run: { status: 'completed' },
+    });
+  });
+
+  it('reconciles an accepted archive after candidate, stages, and source artifacts disappear', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot);
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const idempotencyKey = 'publish-terminal-accepted-recovery';
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      idempotencyKey,
+    );
+    await acceptPendingAction({
+      workspaceRoot,
+      id: published.pendingAction.id,
+      autoCommitOnAccept: false,
+    });
+    const runArtifacts = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      ready.run.id,
+      'reference-deconstruction',
+    );
+    await rm(join(runArtifacts, 'candidate'), { recursive: true, force: true });
+    await rm(join(runArtifacts, 'publication-candidate.yaml'), { force: true });
+    await rm(join(runArtifacts, 'stages'), { recursive: true, force: true });
+    await rm(join(
+      workspaceRoot,
+      'examples',
+      'references',
+      ready.referenceId,
+      'sources',
+    ), { recursive: true, force: true });
+
+    const replayed = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      idempotencyKey,
+    );
+    expect(replayed).toMatchObject({
+      run: { status: 'completed' },
+      replayed: true,
+      pendingAction: {
+        id: published.pendingAction.id,
+        status: 'accepted',
+      },
+    });
+    await expect(fetchJson<RunEnvelope>(runUrl)).resolves.toMatchObject({
+      run: { status: 'completed' },
+    });
+  });
+
+  it('fails closed on published target tampering during accepted terminal recovery', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot);
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      'publish-terminal-tamper',
+    );
+    await acceptPendingAction({
+      workspaceRoot,
+      id: published.pendingAction.id,
+      autoCommitOnAccept: false,
+    });
+    const tamperedTarget = published.pendingAction.touchedFiles.find((file) =>
+      file.endsWith('/progress.yaml'))!;
+    await writeFile(
+      join(workspaceRoot, tamperedTarget),
+      'version: 1\nstatus: forged\n',
+      'utf-8',
+    );
+
+    const response = await fetch(runUrl);
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'validationFailed',
+    });
+  });
+
+  it('allows rejection after source and candidate drift while blocking acceptance and replay', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot);
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const idempotencyKey = 'publish-source-drift-reject';
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      idempotencyKey,
+    );
+    const manifestPath = join(
+      workspaceRoot,
+      'examples',
+      'references',
+      ready.referenceId,
+      'deconstruction-manifest.yaml',
+    );
+    const manifestBeforePublish = await readFile(manifestPath, 'utf-8');
+    await writeFile(join(
+      workspaceRoot,
+      'examples',
+      'references',
+      ready.referenceId,
+      'sources',
+      'original.txt',
+    ), 'externally changed source\n', 'utf-8');
+
+    const acceptResponse = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    expect(acceptResponse.status).toBe(409);
+    await expect(readFile(manifestPath, 'utf-8')).resolves.toBe(
+      manifestBeforePublish,
+    );
+
+    const runArtifacts = join(
+      workspaceRoot,
+      '.workspace',
+      'sessions',
+      ready.run.id,
+      'reference-deconstruction',
+    );
+    await rm(join(runArtifacts, 'candidate'), { recursive: true, force: true });
+    await rm(join(runArtifacts, 'publication-candidate.yaml'), { force: true });
+    await rm(join(runArtifacts, 'stages'), { recursive: true, force: true });
+    const rejected = await fetchJson<PendingActionDecisionEnvelope>(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/reject`,
+      { method: 'POST' },
+    );
+    expect(rejected).toMatchObject({
+      id: published.pendingAction.id,
+      status: 'rejected',
+      referencePublish: {
+        run: { status: 'reviewReady' },
+      },
+    });
+    await expect(readFile(manifestPath, 'utf-8')).resolves.toBe(
+      manifestBeforePublish,
+    );
+
+    const replayResponse = await fetch(`${runUrl}/publish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        baseRunRevision: ready.run.runRevision,
+        idempotencyKey,
+      }),
+    });
+    expect(replayResponse.status).toBe(409);
+  });
+
+  it('rejects a tampered reference publication action before materialization', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot);
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      'publish-tampered-pending-action',
+    );
+    const pendingPath = join(
+      workspaceRoot,
+      '.workspace',
+      'pending-actions',
+      `${published.pendingAction.id}.json`,
+    );
+    const originalStored = JSON.parse(await readFile(pendingPath, 'utf-8')) as {
+      patches: Array<Record<string, unknown>>;
+      origin: { runRevision: number };
+    };
+    const revisionTampered = structuredClone(originalStored);
+    revisionTampered.origin.runRevision -= 1;
+    await writeFile(
+      pendingPath,
+      `${JSON.stringify(revisionTampered, null, 2)}\n`,
+      'utf-8',
+    );
+    const revisionAcceptResponse = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    expect([409, 422]).toContain(revisionAcceptResponse.status);
+
+    const stored = structuredClone(originalStored);
+    stored.patches[0] = {
+      ...stored.patches[0],
+      value: 'version: 1\nreferences: forged\n',
+    };
+    await writeFile(
+      pendingPath,
+      `${JSON.stringify(stored, null, 2)}\n`,
+      'utf-8',
+    );
+    const manifestPath = join(
+      workspaceRoot,
+      'examples',
+      'references',
+      ready.referenceId,
+      'deconstruction-manifest.yaml',
+    );
+    const manifestBeforePublish = await readFile(manifestPath, 'utf-8');
+
+    const acceptResponse = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    expect([409, 422]).toContain(acceptResponse.status);
+    await expect(readFile(manifestPath, 'utf-8')).resolves.toBe(
+      manifestBeforePublish,
+    );
+    await expect(fetchJson<PendingActionDecisionEnvelope>(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/reject`,
+      { method: 'POST' },
+    )).resolves.toMatchObject({
+      status: 'rejected',
+      referencePublish: { run: { status: 'reviewReady' } },
+    });
+  });
 });
 
 interface RunProjection {
   id: string;
   status: string;
   runRevision: number;
-  diagnostics?: Array<{ code: string }>;
+  diagnostics?: Array<{ code: string; message?: string }>;
+  failure?: { code: string; message: string };
   full?: {
     failedUnit?: { id: string };
     analysisQuality?: { status: string };
@@ -420,6 +856,92 @@ interface RunProjection {
 
 interface RunEnvelope {
   run: RunProjection;
+}
+
+interface PublishEnvelope extends RunEnvelope {
+  replayed: boolean;
+  pendingAction: {
+    id: string;
+    status: 'pending' | 'accepted' | 'rejected';
+    touchedFiles: string[];
+    origin: {
+      candidateFingerprint: string;
+    };
+  };
+}
+
+interface PendingActionDecisionEnvelope {
+  id: string;
+  status: 'accepted' | 'rejected';
+  referencePublish: RunEnvelope;
+}
+
+async function startCompleteReferenceBackend(workspaceRoot: string) {
+  return startNovelHttpBackend({
+    workspaceRoot,
+    providerConfig: providerConfig(),
+    runReferenceQuickPreview: async (input) => completedPreview(input),
+    runReferenceChapterAnalysis: async (input) => ({
+      status: 'completed',
+      finishReason: 'stop',
+      output: chapterOutput(input.runId, {
+        unit: input.unit,
+        sourceWindows: [...input.sourceWindows],
+        ...(input.rollingContext
+          ? { rollingContext: { ...input.rollingContext } }
+          : {}),
+      }),
+    }),
+    runReferenceAggregateAnalysis: async (input) => ({
+      status: 'completed',
+      finishReason: 'stop',
+      output: aggregateOutput(input.runId, {
+        unit: input.unit,
+        verifiedSourceFindings: [...input.verifiedSourceFindings],
+        coveredUnitIds: [...input.coveredUnitIds],
+        coveredChapterIds: [...input.coveredChapterIds],
+      }),
+    }),
+    runReferenceStyleProfile: async (input) => ({
+      status: 'completed',
+      finishReason: 'stop',
+      output: styleOutput(input.runId, {
+        unit: input.unit,
+        verifiedSourceFindings: [...input.verifiedSourceFindings],
+        coveredUnitIds: [...input.coveredUnitIds],
+        coveredChapterIds: [...input.coveredChapterIds],
+      }),
+    }),
+    runReferenceDistillation: async (input) => ({
+      status: 'completed',
+      finishReason: 'stop',
+      output: distillOutput(input.runId, {
+        unit: input.unit,
+        verifiedSourceFindings: [...input.verifiedSourceFindings],
+        coveredUnitIds: [...input.coveredUnitIds],
+        coveredChapterIds: [...input.coveredChapterIds],
+      }),
+    }),
+  });
+}
+
+async function createReviewReadyRun(backendUrl: string): Promise<{
+  referenceId: string;
+  run: RunProjection;
+}> {
+  const approved = await createApprovedRun(backendUrl);
+  const runUrl = referenceRunUrl(backendUrl, approved.referenceId, approved.run.id);
+  let current = approved.run;
+  for (let index = 1; index <= 16 && current.status !== 'reviewReady'; index += 1) {
+    current = (await postMutation<RunEnvelope>(
+      `${runUrl}/advance`,
+      current.runRevision,
+      `advance-review-ready-${index}`,
+    )).run;
+    if (!['fullApproved', 'fullRunning', 'reviewReady'].includes(current.status)) break;
+  }
+  expect(current.status, current.failure?.message).toBe('reviewReady');
+  return { referenceId: approved.referenceId, run: current };
 }
 
 async function createApprovedRun(backendUrl: string): Promise<{
@@ -606,6 +1128,42 @@ function styleOutput(
     }],
     transferablePrinciples: ['Give each movement a distinct function.'],
     nonImitationBoundaries: ['Do not reuse source wording, events, or signature expression.'],
+    uncertainties: [],
+  }, {
+    runId,
+    unit: execution.unit,
+    verifiedFindings: findingMap(execution.verifiedSourceFindings!),
+    coveredUnitIds: execution.coveredUnitIds!,
+    coveredChapterIds: execution.coveredChapterIds!,
+  });
+}
+
+function distillOutput(
+  runId: string,
+  execution: ReferenceFullDeconstructionExecution,
+) {
+  const first = execution.verifiedSourceFindings![0]!;
+  return normalizeReferenceDistillationModelOutput({
+    entries: [
+      'writingStyle',
+      'pacing',
+      'hooks',
+      'scene',
+      'character',
+    ].map((category) => ({
+      category,
+      title: `${category} transferable technique`,
+      technique: `Apply a bounded ${category} technique through original causality.`,
+      whenUseful: ['When the current novel needs this narrative function.'],
+      constraints: ['Use original prose, events, and character motivations.'],
+      differentiationPrompts: ['How will the current canon make this structurally different?'],
+      sourceFindingRefs: [first.id],
+      confidence: 'medium',
+      tags: [category],
+      capabilityIds: ['novel.write_chapter'],
+    })),
+    doNotCopyRules: ['Do not reuse source wording, events, or signature expression.'],
+    differentiationWarnings: ['Change premise, causality, and character motivation.'],
     uncertainties: [],
   }, {
     runId,

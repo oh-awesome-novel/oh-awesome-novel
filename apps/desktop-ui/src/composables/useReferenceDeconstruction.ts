@@ -9,12 +9,19 @@ import {
 import { useWorkspaceApi } from './useWorkspaceApi';
 import type {
   MutateReferenceDeconstructionRunInput,
+  ReferenceDeconstructionPublication,
+  ReferenceDeconstructionPublishPendingAction,
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
   RetryReferenceDeconstructionRunInput,
 } from './useWorkspaceApi';
 
 type WorkspaceApi = ReturnType<typeof useWorkspaceApi>;
+
+export type ReferenceDeconstructionPublicationView =
+  ReferenceDeconstructionPublication;
+export type ReferencePublishPendingActionView =
+  ReferenceDeconstructionPublishPendingAction;
 
 export type ReferenceDeconstructionClient = Pick<WorkspaceApi,
   | 'createReferenceDeconstructionRun'
@@ -26,6 +33,7 @@ export type ReferenceDeconstructionClient = Pick<WorkspaceApi,
   | 'retryReferenceDeconstructionRun'
   | 'cancelReferenceDeconstructionRun'
   | 'approveFullReferenceDeconstructionRun'
+  | 'publishReferenceDeconstructionRun'
 >;
 
 export interface UseReferenceDeconstructionOptions {
@@ -45,6 +53,12 @@ interface PendingAdvance {
   runId: string;
   input: MutateReferenceDeconstructionRunInput;
   phase: 'preview' | 'full';
+}
+
+interface PendingPublish {
+  referenceId: string;
+  runId: string;
+  input: MutateReferenceDeconstructionRunInput;
 }
 
 interface PendingControlBase<
@@ -101,9 +115,11 @@ export function useReferenceDeconstruction(
   const pausing = shallowRef(false);
   const resuming = shallowRef(false);
   const retrying = shallowRef(false);
+  const publishing = shallowRef(false);
   const reconciling = shallowRef(false);
   const indeterminate = shallowRef(false);
   const error = shallowRef('');
+  const publishPendingAction = shallowRef<ReferencePublishPendingActionView>();
   const activeAdvanceConnection = shallowRef<{
     runId: string;
     controller: AbortController;
@@ -113,12 +129,13 @@ export function useReferenceDeconstruction(
   let disposed = false;
   let pendingCreate: PendingCreate | undefined;
   let pendingAdvance: PendingAdvance | undefined;
+  let pendingPublish: PendingPublish | undefined;
   let pendingControl: PendingControl | undefined;
 
   const busy = computed(() =>
     loadingActiveRun.value || creating.value || advancing.value ||
     cancelling.value || approving.value || pausing.value || resuming.value ||
-    retrying.value || reconciling.value || indeterminate.value,
+    retrying.value || publishing.value || reconciling.value || indeterminate.value,
   );
   const canStart = computed(() => Boolean(
     selectedReference.value &&
@@ -175,10 +192,18 @@ export function useReferenceDeconstruction(
     !approving.value &&
     !pausing.value &&
     !resuming.value &&
-    !retrying.value,
+    !retrying.value &&
+    !publishing.value,
   ));
   const canApprove = computed(() => Boolean(
     currentRun.value?.status === 'awaitingFullApproval' &&
+    !currentRun.value.diagnostics.some((diagnostic) => diagnostic.blocking) &&
+    !busy.value,
+  ));
+  const publication = computed(() => readPublication(currentRun.value));
+  const canPublish = computed(() => Boolean(
+    currentRun.value?.status === 'reviewReady' &&
+    currentRun.value.full?.analysisQuality?.status === 'passed' &&
     !currentRun.value.diagnostics.some((diagnostic) => diagnostic.blocking) &&
     !busy.value,
   ));
@@ -199,7 +224,9 @@ export function useReferenceDeconstruction(
   async function selectReference(reference?: ReferenceWorkSummary): Promise<void> {
     if (disposed) return;
     const sameReference = reference?.id === selectedReference.value?.id;
-    const hasPendingMutation = Boolean(pendingCreate || pendingAdvance || pendingControl);
+    const hasPendingMutation = Boolean(
+      pendingCreate || pendingAdvance || pendingPublish || pendingControl,
+    );
     if (
       !sameReference &&
       (busy.value || hasPendingMutation)
@@ -216,7 +243,9 @@ export function useReferenceDeconstruction(
     if (!sameReference) {
       pendingCreate = undefined;
       pendingAdvance = undefined;
+      pendingPublish = undefined;
       pendingControl = undefined;
+      publishPendingAction.value = undefined;
       currentRun.value = undefined;
     }
     const generation = ++selectionGeneration;
@@ -515,6 +544,65 @@ export function useReferenceDeconstruction(
     }
   }
 
+  async function publish(
+    replay?: PendingPublish,
+  ): Promise<void> {
+    const reference = selectedReference.value;
+    const run = currentRun.value;
+    if (
+      !reference || !run || disposed ||
+      (!replay && !canPublish.value) ||
+      (
+        replay &&
+        (
+          replay.referenceId !== reference.id ||
+          replay.runId !== run.id ||
+          run.runRevision !== replay.input.baseRunRevision ||
+          run.status !== 'reviewReady'
+        )
+      )
+    ) return;
+
+    const pending = replay ?? {
+      referenceId: reference.id,
+      runId: run.id,
+      input: {
+        baseRunRevision: run.runRevision,
+        idempotencyKey: nextIdempotencyKey('publish'),
+      },
+    };
+    pendingPublish = pending;
+    publishing.value = true;
+    error.value = '';
+    indeterminate.value = false;
+
+    try {
+      const result = await client.publishReferenceDeconstructionRun(
+        reference.id,
+        run.id,
+        pending.input,
+      );
+      applyRun(result.run);
+      const pendingActionId = readPublication(result.run)?.pendingActionId;
+      if (
+        result.pendingAction.id !== pendingActionId ||
+        result.receipt.idempotencyKey !== pending.input.idempotencyKey
+      ) {
+        indeterminate.value = true;
+        throw new Error(
+          'Reference publish response did not prove its PendingAction and mutation receipt.',
+        );
+      }
+      publishPendingAction.value = result.pendingAction;
+      pendingPublish = undefined;
+      indeterminate.value = false;
+    } catch (caught) {
+      await recoverAfterUnknownMutation(caught);
+    } finally {
+      publishing.value = false;
+    }
+  }
+
   async function reconcile(): Promise<void> {
     const reference = selectedReference.value;
     if (!reference || disposed || reconciling.value) return;
@@ -550,6 +638,26 @@ export function useReferenceDeconstruction(
           }
         } else {
           pendingAdvance = undefined;
+        }
+      } else if (currentRun.value && pendingPublish) {
+        const pending = pendingPublish;
+        const currentPublication = readPublication(currentRun.value);
+        if (
+          currentRun.value.status === 'publishing' &&
+          currentPublication?.pendingActionId
+        ) {
+          pendingPublish = undefined;
+          indeterminate.value = false;
+        } else if (
+          currentRun.value.status === 'reviewReady' &&
+          currentRun.value.runRevision === pending.input.baseRunRevision
+        ) {
+          await publish(pending);
+        } else if (currentRun.value.runRevision !== pending.input.baseRunRevision) {
+          pendingPublish = undefined;
+          indeterminate.value = false;
+        } else {
+          indeterminate.value = true;
         }
       } else if (currentRun.value && pendingControl) {
         const pending = pendingControl;
@@ -662,11 +770,24 @@ export function useReferenceDeconstruction(
         ) {
           pendingControl = undefined;
         }
+        const currentPublication = readPublication(result.run);
+        if (
+          pendingPublish &&
+          result.run.status === 'publishing' &&
+          currentPublication?.pendingActionId
+        ) {
+          pendingPublish = undefined;
+        } else if (
+          pendingPublish &&
+          result.run.runRevision !== pendingPublish.input.baseRunRevision
+        ) {
+          pendingPublish = undefined;
+        }
         indeterminate.value = hasActiveProviderUnit(result.run) || Boolean(
           pendingAdvance &&
           !pendingReceipt &&
           result.run.runRevision === pendingAdvance.input.baseRunRevision,
-        ) || Boolean(pendingControl);
+        ) || Boolean(pendingControl) || Boolean(pendingPublish);
         error.value = indeterminate.value
           ? `${toErrorMessage(cause)} Run completion is not yet proven; reconcile or cancel before continuing.`
           : '';
@@ -786,6 +907,7 @@ export function useReferenceDeconstruction(
     pausing: readonly(pausing),
     resuming: readonly(resuming),
     retrying: readonly(retrying),
+    publishing: readonly(publishing),
     reconciling: readonly(reconciling),
     indeterminate: readonly(indeterminate),
     error: readonly(error),
@@ -798,6 +920,9 @@ export function useReferenceDeconstruction(
     canRetry,
     canCancel,
     canApprove,
+    canPublish,
+    publication,
+    publishPendingAction: readonly(publishPendingAction),
     needsReconcile,
     selectReference,
     syncReferences,
@@ -809,9 +934,16 @@ export function useReferenceDeconstruction(
     pauseFull,
     resumeFull,
     retryFailedUnit,
+    publish,
     reconcile,
     dispose,
   };
+}
+
+function readPublication(
+  run: ReferenceDeconstructionRun | undefined,
+): ReferenceDeconstructionPublicationView | undefined {
+  return run?.publication;
 }
 
 function toErrorMessage(value: unknown): string {

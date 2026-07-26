@@ -182,6 +182,71 @@ async function run() {
     'typed Modify hidden projection preservation',
   );
 
+  await waitForSelector('[aria-label="Reference publish preparation"]');
+  await waitForText('.reference-context-panel', 'Consequence-first hook');
+  await waitForText('.reference-published-context', '5 current distilled entries');
+  const referenceBeforePublish = await evaluate(`({
+    selectorText: document.querySelector('.reference-context-panel')
+      ?.textContent.replace(/\\s+/gu, ' ').trim(),
+    candidateText: document.querySelector('[aria-label="Reference publish preparation"]')
+      ?.textContent.replace(/\\s+/gu, ' ').trim(),
+    sourceReadLabel: document.querySelector(
+      '.reference-context-panel .status-pill',
+    )?.textContent.trim(),
+    candidateButtons: Array.from(
+      document.querySelectorAll('[aria-label="Reference publish preparation"] button'),
+      (button) => button.textContent.replace(/\\s+/gu, ' ').trim(),
+    ),
+  })`);
+  assertEqual(
+    referenceBeforePublish.sourceReadLabel,
+    'distilled only',
+    'D5 source-read boundary',
+  );
+  assertEqual(
+    referenceBeforePublish.selectorText.includes('capabilityMatch'),
+    true,
+    'D5 selector reason',
+  );
+  assertEqual(
+    referenceBeforePublish.selectorText.includes('maxEntryCountReached'),
+    true,
+    'D5 selector omission',
+  );
+  assertDeepEqual(
+    referenceBeforePublish.candidateButtons,
+    ['Create publish PendingAction'],
+    'D4 candidate uses global approval handoff',
+  );
+
+  await clickButton(
+    'Create publish PendingAction',
+    '[aria-label="Reference publish preparation"]',
+  );
+  await waitForCallCount('publishReferenceDeconstructionRun', 1);
+  await waitForCallCount('referenceReviewPendingAction', 1);
+  await waitForSelector('.reference-publish-review');
+  await waitForText('.reference-publish-review', 'Approval pending');
+  const referencePublishCall = await evaluate(`window.__playRendererSmoke.calls.find(
+    (call) => call.method === 'publishReferenceDeconstructionRun',
+  )`);
+  assertEqual(referencePublishCall?.args?.[0], 'reference-renderer', 'publish reference id');
+  assertEqual(referencePublishCall?.args?.[1], 'run-reference-renderer', 'publish run id');
+  assertEqual(referencePublishCall?.args?.[2]?.baseRunRevision, 7, 'publish revision CAS');
+  assertEqual(
+    typeof referencePublishCall?.args?.[2]?.idempotencyKey,
+    'string',
+    'publish idempotency key',
+  );
+  const referenceReviewCall = await evaluate(`window.__playRendererSmoke.calls.find(
+    (call) => call.method === 'referenceReviewPendingAction',
+  )`);
+  assertEqual(
+    referenceReviewCall?.args?.[0],
+    'pending-reference-renderer',
+    'global PendingAction review handoff',
+  );
+
   const harnessState = await evaluate(`({
     errors: window.__playRendererSmoke.errors,
     unexpectedCalls: window.__playRendererSmoke.unexpectedCalls,
@@ -200,6 +265,11 @@ async function run() {
       kind: modifyInput.kind,
       stepRef: modifyInput.stepRef,
       replacementBlockCount: modifyInput.replacementBlocks.length,
+    },
+    reference: {
+      sourceReadLabel: referenceBeforePublish.sourceReadLabel,
+      publishRevision: referencePublishCall.args[2].baseRunRevision,
+      pendingActionId: referenceReviewCall.args[0],
     },
     callMethods: harnessState.callMethods,
   })}\n`);

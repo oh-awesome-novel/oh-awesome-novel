@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   retryReferenceDeconstructionRun: vi.fn(),
   cancelReferenceDeconstructionRun: vi.fn(),
   approveFullReferenceDeconstructionRun: vi.fn(),
+  publishReferenceDeconstructionRun: vi.fn(),
 }));
 
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
@@ -25,17 +26,22 @@ import ReferenceImportTab from '../../../apps/desktop-ui/src/components/workspac
 import {
   approvedReferenceRun,
   createdReferenceRun,
+  entryReferenceContextFixture,
   failedFullReferenceRun,
   mutationResult,
   pausedFullReferenceRun,
+  publishedReferenceFixture,
+  publishingReferenceRun,
   previewReferenceRun,
   referenceContextFixture,
   referenceFixture,
+  referencePublishPendingActionFixture,
+  reviewReadyReferenceRun,
   retriedFullReferenceRun,
   runningFullReferenceRun,
 } from './support/referenceDeconstructionFixture';
 
-describe('References product D0-D3 journey', () => {
+describe('References product D0-D5 journey', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.listReferences.mockResolvedValue({ references: [referenceFixture()] });
@@ -260,6 +266,67 @@ describe('References product D0-D3 journey', () => {
     expect(api.advanceReferenceDeconstructionRun).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain('Run next unit');
     wrapper.unmount();
+  });
+
+  it('hands a review-ready candidate to global approval and reopens on entry-level truth', async () => {
+    const reviewReady = reviewReadyReferenceRun();
+    api.getActiveReferenceDeconstructionRun.mockResolvedValue({ run: reviewReady });
+    api.publishReferenceDeconstructionRun.mockImplementation(async (
+      _referenceId: string,
+      _runId: string,
+      input: { idempotencyKey: string },
+    ) => {
+      const run = publishingReferenceRun(input.idempotencyKey);
+      return {
+        run,
+        receipt: run.mutationReceipts.at(-1)!,
+        replayed: false,
+        pendingAction: referencePublishPendingActionFixture(),
+      };
+    });
+
+    const wrapper = mount(ReferenceImportTab);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Analysis ready to publish');
+    await button(wrapper, 'Create publish PendingAction').trigger('click');
+    await flushPromises();
+
+    expect(api.publishReferenceDeconstructionRun).toHaveBeenCalledWith(
+      'reference-1',
+      'run-1',
+      expect.objectContaining({
+        baseRunRevision: reviewReady.runRevision,
+        idempotencyKey: expect.any(String),
+      }),
+    );
+    expect(wrapper.emitted('reviewPendingAction')).toEqual([
+      ['pending-reference-publish-1'],
+    ]);
+    expect(wrapper.text()).toContain('Publish Review');
+    expect(wrapper.text()).toContain('5');
+    expect(wrapper.text()).toContain('Approval pending');
+    wrapper.unmount();
+
+    api.listReferences.mockResolvedValue({
+      references: [publishedReferenceFixture()],
+    });
+    api.getActiveReferenceDeconstructionRun.mockResolvedValue({ run: null });
+    api.selectReferenceContext.mockResolvedValue({
+      selection: entryReferenceContextFixture(),
+    });
+
+    const reopened = mount(ReferenceImportTab);
+    await flushPromises();
+
+    expect(reopened.text()).toContain('1 context eligible');
+    expect(reopened.text()).toContain('Published Selector Entries');
+    expect(reopened.text()).toContain('5 current distilled entries');
+    expect(reopened.text()).toContain('Reference One · Consequence-first hook');
+    expect(reopened.text()).toContain('distilled only');
+    expect(reopened.text()).toContain('142 / 240 tokens');
+    expect(reopened.text()).not.toContain('chunk-0001-0001');
+    reopened.unmount();
   });
 });
 

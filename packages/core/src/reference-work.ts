@@ -30,11 +30,15 @@ import type {
 import {
   assertReferenceMetadata,
   assertReferenceSourceManifest,
-  inspectReferenceWorkReadiness,
+  inspectPublishedReferenceWorkReadiness,
 } from './reference-deconstruction-store.js';
 import type {
   ReferenceReadinessReason,
 } from './reference-deconstruction-store.js';
+import type {
+  ReferenceContextIndexEntry,
+  ReferenceDistilledCategory,
+} from './reference-deconstruction-distill.js';
 
 export type ReferenceSourceType =
   | 'novel'
@@ -132,6 +136,12 @@ export interface ReferenceWorkSummary {
   contextEligible: boolean;
   readinessReason: ReferenceReadinessReason;
   progress: ReferenceProgress;
+  publishedContext?: {
+    runId: string;
+    fingerprint: string;
+    entryCount: number;
+    categoryCounts: Record<ReferenceDistilledCategory, number>;
+  };
 }
 
 export interface ReferenceImportResult {
@@ -144,36 +154,58 @@ export interface ReferenceContextSelectionInput {
   workspaceRoot: string;
   capability?: NovelCopilotCapabilityId;
   goal?: string;
+  sceneType?: string;
+  pacingIntent?: string;
+  hookIntent?: string;
+  styleIntent?: string;
+  characterIntent?: string;
   explicitReferenceIds?: string[];
   tokenBudget?: number;
   maxReferences?: number;
+  maxEntries?: number;
 }
 
 export interface ReferenceContextSelection {
   tokenBudget: number;
+  maxReferences: number;
+  maxEntries: number;
+  usedTokens: number;
   originalSourceRead: boolean;
   noCopyWarnings: string[];
+  differentiationWarnings: string[];
   included: Array<{
     id: string;
-    title: string;
+    referenceId: string;
+    referenceTitle: string;
+    entryTitle: string;
+    category: ReferenceDistilledCategory;
     path: string;
+    tags: string[];
+    capabilityIds: NovelCopilotCapabilityId[];
     reason: string;
+    reasonCode:
+      | 'explicitReference'
+      | 'capabilityMatch'
+      | 'taskMatch'
+      | 'fallback';
     budgetLayer: ContextBudgetLayer;
-    semanticBoundary: SemanticBoundary;
+    semanticBoundary: Extract<SemanticBoundary, 'compressible'>;
     estimatedTokens: number;
     content: string;
-    deconstructionStatus: 'completed';
-    contextEligible: true;
-    reasonCode: 'ready';
   }>;
   omitted: Array<{
-    id: string;
-    title: string;
+    scope: 'reference' | 'entry';
+    referenceId: string;
+    referenceTitle: string;
+    entryId?: string;
+    entryTitle?: string;
+    category?: ReferenceDistilledCategory;
     reason: string;
     budgetLayer: ContextBudgetLayer;
     deconstructionStatus: ReferencePublishedDeconstructionStatus;
     contextEligible: false;
     reasonCode: ReferenceContextOmissionReason;
+    estimatedTokens?: number;
   }>;
 }
 
@@ -187,6 +219,10 @@ export type ReferenceContextOmissionReason =
   | 'needsRebuild'
   | 'missingContextSummary'
   | 'invalidContextPath'
+  | 'invalidContextIndex'
+  | 'capabilityMismatch'
+  | 'taskMismatch'
+  | 'maxEntryCountReached'
   | 'tokenBudgetExceeded';
 
 interface ReferencesIndex {
@@ -380,20 +416,29 @@ export async function listReferenceWorks(workspaceRoot: string): Promise<Referen
   const root = resolve(workspaceRoot);
   const index = await readReferencesIndex(root);
   return Promise.all(index.references.map(async (indexed) => {
-    const inspection = await inspectReferenceWorkReadiness(root, indexed.id);
+    const inspection = await inspectPublishedReferenceWorkReadiness(root, indexed.id);
     const metadata = inspection.metadata;
     const manifest = inspection.sourceManifest;
     if (!metadata || !manifest) {
+      const {
+        publishedContext: _stalePublishedContext,
+        ...indexedWithoutPublishedContext
+      } = indexed;
+      const publishedContext = inspection.status === 'completed'
+        ? inspection.publishedContext
+        : undefined;
       return {
-        ...indexed,
+        ...indexedWithoutPublishedContext,
+        ...(metadata ? { enabled: metadata.enabled } : {}),
         deconstructionStatus: inspection.status,
-        contextEligible: false,
+        contextEligible: inspection.contextEligible,
         readinessReason: inspection.reason,
         progress: {
-          ...indexed.progress,
+          ...(inspection.progress ?? indexed.progress),
           status: inspection.status,
-          contextEligible: false,
+          contextEligible: inspection.contextEligible,
         },
+        ...(publishedContext ? { publishedContext } : {}),
       };
     }
     return createReferenceSummary(
@@ -403,6 +448,7 @@ export async function listReferenceWorks(workspaceRoot: string): Promise<Referen
       inspection.status,
       inspection.contextEligible,
       inspection.reason,
+      inspection.publishedContext,
     );
   }));
 }
@@ -437,9 +483,13 @@ export async function setReferenceEnabled(
   if (typeof enabled !== 'boolean') throw new Error('Reference enabled must be boolean.');
   metadata.enabled = enabled;
   await writeFile(metadataPath, stringify(metadata), 'utf-8');
-  const inspection = await inspectReferenceWorkReadiness(root, safeId);
+  const inspection = await inspectPublishedReferenceWorkReadiness(root, safeId);
+  const {
+    publishedContext: _previousPublishedContext,
+    ...referenceWithoutPublishedContext
+  } = reference;
   const next = {
-    ...reference,
+    ...referenceWithoutPublishedContext,
     enabled,
     structureConfidence:
       inspection.sourceManifest?.detectedStructure.confidence
@@ -452,6 +502,9 @@ export async function setReferenceEnabled(
       contextEligible: inspection.contextEligible,
       status: inspection.status,
     },
+    ...(inspection.publishedContext
+      ? { publishedContext: inspection.publishedContext }
+      : {}),
   };
   index.references = index.references.map((item) => item.id === safeId ? next : item);
   await writeReferencesIndex(root, index);
@@ -464,118 +517,318 @@ export async function selectReferenceContext(
   const workspaceRoot = resolve(input.workspaceRoot);
   const tokenBudget = normalizeSelectionBound(input.tokenBudget, 1_500, 1, 100_000, 'tokenBudget');
   const maxReferences = normalizeSelectionBound(input.maxReferences, 3, 1, 20, 'maxReferences');
+  const maxEntries = normalizeSelectionBound(input.maxEntries, 8, 1, 50, 'maxEntries');
   const explicitReferenceIds = new Set(input.explicitReferenceIds ?? []);
   const references = await listReferenceWorks(workspaceRoot);
   const included: ReferenceContextSelection['included'] = [];
   const omitted: ReferenceContextSelection['omitted'] = [];
+  const candidates: Array<{
+    reference: ReferenceWorkSummary;
+    entry: NonNullable<Awaited<ReturnType<typeof inspectPublishedReferenceWorkReadiness>>['contextIndex']>['entries'][number];
+    score: number;
+    reasonCode: ReferenceContextSelection['included'][number]['reasonCode'];
+    reason: string;
+    referenceOrder: number;
+  }> = [];
+  const protectedRulesByReference = new Map<string, {
+    noCopy: string[];
+    differentiationWarnings: string[];
+  }>();
   let usedTokens = 0;
 
-  for (const reference of references) {
+  for (const [referenceOrder, reference] of references.entries()) {
     if (!reference.enabled) {
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: 'disabled',
-        budgetLayer: 'L3',
-        deconstructionStatus: reference.deconstructionStatus,
-        contextEligible: false,
-        reasonCode: 'disabled',
-      });
+      omitted.push(referenceOmission(reference, 'disabled', 'disabled'));
       continue;
     }
 
     if (explicitReferenceIds.size > 0 && !explicitReferenceIds.has(reference.id)) {
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: 'not explicitly requested for this turn',
-        budgetLayer: 'L3',
-        deconstructionStatus: reference.deconstructionStatus,
-        contextEligible: false,
-        reasonCode: 'notExplicitlyRequested',
-      });
+      omitted.push(referenceOmission(
+        reference,
+        'notExplicitlyRequested',
+        'not explicitly requested for this turn',
+      ));
       continue;
     }
 
     if (!reference.contextEligible || reference.deconstructionStatus !== 'completed') {
       const reasonCode = readinessToOmissionReason(reference.readinessReason);
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: formatReadinessOmissionReason(reasonCode),
-        budgetLayer: 'L3',
-        deconstructionStatus: reference.deconstructionStatus,
-        contextEligible: false,
+      omitted.push(referenceOmission(
+        reference,
         reasonCode,
-      });
+        formatReadinessOmissionReason(reasonCode),
+      ));
       continue;
     }
 
-    if (included.length >= maxReferences) {
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: 'max reference count reached',
-        budgetLayer: 'L3',
-        deconstructionStatus: reference.deconstructionStatus,
-        contextEligible: false,
-        reasonCode: 'maxReferenceCountReached',
-      });
-      continue;
-    }
-
-    const inspection = await inspectReferenceWorkReadiness(workspaceRoot, reference.id);
-    if (!inspection.contextEligible || !inspection.summaryPath || inspection.summaryContent === undefined) {
+    const inspection = await inspectPublishedReferenceWorkReadiness(
+      workspaceRoot,
+      reference.id,
+    );
+    if (!inspection.contextEligible || !inspection.contextIndex || !inspection.contextIndexPath) {
       const reasonCode = readinessToOmissionReason(inspection.reason);
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: formatReadinessOmissionReason(reasonCode),
-        budgetLayer: 'L3',
-        deconstructionStatus: inspection.status,
-        contextEligible: false,
+      omitted.push(referenceOmission(
+        {
+          ...reference,
+          deconstructionStatus: inspection.status,
+        },
         reasonCode,
-      });
+        formatReadinessOmissionReason(reasonCode),
+      ));
       continue;
     }
-    const content = inspection.summaryContent;
-    const estimatedTokens = estimateTokens(content);
-    if (usedTokens + estimatedTokens > tokenBudget) {
-      omitted.push({
-        id: reference.id,
-        title: reference.title,
-        reason: 'token budget exceeded',
-        budgetLayer: 'L3',
-        deconstructionStatus: reference.deconstructionStatus,
-        contextEligible: false,
-        reasonCode: 'tokenBudgetExceeded',
-      });
-      continue;
-    }
-
-    included.push({
-      id: reference.id,
-      title: reference.title,
-      path: inspection.summaryPath,
-      reason: formatReferenceSelectionReason(input, reference),
-      budgetLayer: referenceBudgetLayer(input.capability),
-      semanticBoundary: 'compressible',
-      estimatedTokens,
-      content,
-      deconstructionStatus: 'completed',
-      contextEligible: true,
-      reasonCode: 'ready',
+    protectedRulesByReference.set(reference.id, {
+      noCopy: inspection.contextIndex.protectedRules.doNotCopy,
+      differentiationWarnings:
+        inspection.contextIndex.protectedRules.differentiationWarnings,
     });
-    usedTokens += estimatedTokens;
+    const referenceCandidates: typeof candidates = [];
+    for (const entry of inspection.contextIndex.entries) {
+      if (input.capability && !entry.capabilityIds.includes(input.capability)) {
+        omitted.push(entryOmission(
+          reference,
+          entry,
+          'capabilityMismatch',
+          'entry does not match the current capability',
+        ));
+        continue;
+      }
+      const match = scoreReferenceEntry(input, reference, entry);
+      if (match.score > 0) {
+        referenceCandidates.push({
+          reference,
+          entry,
+          ...match,
+          referenceOrder,
+        });
+      } else {
+        omitted.push(entryOmission(
+          reference,
+          entry,
+          'taskMismatch',
+          'entry does not match the current task',
+        ));
+      }
+    }
+    if (!referenceCandidates.length) {
+      const fallback = inspection.contextIndex.entries.find((entry) =>
+        !input.capability || entry.capabilityIds.includes(input.capability));
+      if (fallback) {
+        const existingOmission = omitted.findIndex((item) =>
+          item.scope === 'entry'
+          && item.referenceId === reference.id
+          && item.entryId === fallback.id);
+        if (existingOmission >= 0) omitted.splice(existingOmission, 1);
+        referenceCandidates.push({
+          reference,
+          entry: fallback,
+          score: 1,
+          reasonCode: 'fallback',
+          reason: 'bounded fallback distilled entry for an eligible reference',
+          referenceOrder,
+        });
+      }
+    }
+    candidates.push(...referenceCandidates);
   }
 
+  candidates.sort((left, right) =>
+    right.score - left.score
+    || left.referenceOrder - right.referenceOrder
+    || distilledCategoryOrder(left.entry.category)
+      - distilledCategoryOrder(right.entry.category)
+    || left.entry.id.localeCompare(right.entry.id));
+  const includedReferenceIds = new Set<string>();
+  for (const candidate of candidates) {
+    const { reference, entry } = candidate;
+    if (
+      !includedReferenceIds.has(reference.id)
+      && includedReferenceIds.size >= maxReferences
+    ) {
+      omitted.push(entryOmission(
+        reference,
+        entry,
+        'maxReferenceCountReached',
+        'max reference count reached',
+      ));
+      continue;
+    }
+    if (included.length >= maxEntries) {
+      omitted.push(entryOmission(
+        reference,
+        entry,
+        'maxEntryCountReached',
+        'max entry count reached',
+      ));
+      continue;
+    }
+    if (usedTokens + entry.estimatedTokens > tokenBudget) {
+      omitted.push(entryOmission(
+        reference,
+        entry,
+        'tokenBudgetExceeded',
+        'token budget exceeded',
+      ));
+      continue;
+    }
+    included.push({
+      id: entry.id,
+      referenceId: reference.id,
+      referenceTitle: reference.title,
+      entryTitle: entry.title,
+      category: entry.category,
+      path: `examples/references/${reference.id}/${entry.path}`,
+      tags: [...entry.tags],
+      capabilityIds: [...entry.capabilityIds],
+      reason: candidate.reason,
+      reasonCode: candidate.reasonCode,
+      budgetLayer: referenceBudgetLayer(input.capability),
+      semanticBoundary: 'compressible',
+      estimatedTokens: entry.estimatedTokens,
+      content: entry.content,
+    });
+    includedReferenceIds.add(reference.id);
+    usedTokens += entry.estimatedTokens;
+  }
+
+  const selectedRules = [...includedReferenceIds]
+    .map((referenceId) => protectedRulesByReference.get(referenceId))
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
   return {
     tokenBudget,
+    maxReferences,
+    maxEntries,
+    usedTokens,
     originalSourceRead: false,
-    noCopyWarnings: [...REFERENCE_NO_COPY_WARNINGS],
+    noCopyWarnings: uniqueStrings([
+      ...REFERENCE_NO_COPY_WARNINGS,
+      ...selectedRules.flatMap((rules) => rules.noCopy),
+    ]),
+    differentiationWarnings: uniqueStrings(
+      selectedRules.flatMap((rules) => rules.differentiationWarnings),
+    ),
     included,
     omitted,
   };
+}
+
+function referenceOmission(
+  reference: ReferenceWorkSummary,
+  reasonCode: ReferenceContextOmissionReason,
+  reason: string,
+): ReferenceContextSelection['omitted'][number] {
+  return {
+    scope: 'reference',
+    referenceId: reference.id,
+    referenceTitle: reference.title,
+    reason,
+    budgetLayer: 'L3',
+    deconstructionStatus: reference.deconstructionStatus,
+    contextEligible: false,
+    reasonCode,
+  };
+}
+
+function entryOmission(
+  reference: ReferenceWorkSummary,
+  entry: ReferenceContextIndexEntry,
+  reasonCode: ReferenceContextOmissionReason,
+  reason: string,
+): ReferenceContextSelection['omitted'][number] {
+  return {
+    scope: 'entry',
+    referenceId: reference.id,
+    referenceTitle: reference.title,
+    entryId: entry.id,
+    entryTitle: entry.title,
+    category: entry.category,
+    reason,
+    budgetLayer: referenceBudgetLayer(undefined),
+    deconstructionStatus: reference.deconstructionStatus,
+    contextEligible: false,
+    reasonCode,
+    estimatedTokens: entry.estimatedTokens,
+  };
+}
+
+function scoreReferenceEntry(
+  input: ReferenceContextSelectionInput,
+  reference: ReferenceWorkSummary,
+  entry: ReferenceContextIndexEntry,
+): {
+  score: number;
+  reasonCode: ReferenceContextSelection['included'][number]['reasonCode'];
+  reason: string;
+} {
+  const explicit = input.explicitReferenceIds?.includes(reference.id) ?? false;
+  const capabilityMatch = Boolean(
+    input.capability && entry.capabilityIds.includes(input.capability),
+  );
+  const categoryHints = new Set<ReferenceDistilledCategory>();
+  if (input.sceneType?.trim()) categoryHints.add('scene');
+  if (input.pacingIntent?.trim()) categoryHints.add('pacing');
+  if (input.hookIntent?.trim()) categoryHints.add('hooks');
+  if (input.styleIntent?.trim()) categoryHints.add('writingStyle');
+  if (input.characterIntent?.trim()) categoryHints.add('character');
+  const categoryMatch = categoryHints.has(entry.category);
+  const queryTokens = normalizeMatchTokens([
+    input.goal,
+    input.sceneType,
+    input.pacingIntent,
+    input.hookIntent,
+    input.styleIntent,
+    input.characterIntent,
+  ]);
+  const entryTokens = normalizeMatchTokens([
+    entry.title,
+    ...entry.tags,
+    ...entry.whenUseful,
+  ]);
+  const tokenMatches = [...queryTokens].filter((token) => entryTokens.has(token)).length;
+  const score =
+    Number(capabilityMatch) * 500
+    + Number(categoryMatch) * 100
+    + Math.min(tokenMatches, 20) * 5;
+  if (explicit && score > 0) {
+    return {
+      score,
+      reasonCode: 'explicitReference',
+      reason: `explicit reference ${reference.id} matched distilled entry ${entry.id}`,
+    };
+  }
+  if (capabilityMatch) {
+    return {
+      score,
+      reasonCode: 'capabilityMatch',
+      reason: `entry supports capability ${input.capability}`,
+    };
+  }
+  return {
+    score,
+    reasonCode: 'taskMatch',
+    reason: categoryMatch
+      ? `entry category ${entry.category} matches the current task intent`
+      : `entry tags or usage notes match ${tokenMatches} task term(s)`,
+  };
+}
+
+function normalizeMatchTokens(values: readonly (string | undefined)[]): Set<string> {
+  const tokens = values.flatMap((value) => value
+    ?.normalize('NFKC')
+    .toLocaleLowerCase('en-US')
+    .split(/[^\p{L}\p{N}_:-]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    ?? []);
+  return new Set(tokens.slice(0, 128));
+}
+
+function distilledCategoryOrder(category: ReferenceDistilledCategory): number {
+  return ['writingStyle', 'pacing', 'hooks', 'scene', 'character'].indexOf(category);
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 export function formatReferenceContextSelectionMarkdown(
@@ -585,28 +838,37 @@ export function formatReferenceContextSelectionMarkdown(
     '## Reference Context Selection',
     '',
     `Original source read: ${selection.originalSourceRead ? 'yes' : 'no'}`,
-    `Token budget: ${selection.tokenBudget}`,
+    `Token budget: ${selection.usedTokens}/${selection.tokenBudget}`,
+    `Entry limit: ${selection.included.length}/${selection.maxEntries}`,
     '',
     '### No-Copy Warnings',
     selection.noCopyWarnings.map((warning) => `- ${warning}`).join('\n'),
     '',
+    '### Differentiation Warnings',
+    selection.differentiationWarnings.length
+      ? selection.differentiationWarnings.map((warning) => `- ${warning}`).join('\n')
+      : '- none',
+    '',
     '### Included Distilled Entries',
     selection.included.length
       ? selection.included.map((entry) => [
-          `#### ${entry.title}`,
+          `#### ${entry.referenceTitle} / ${entry.entryTitle}`,
           '',
+          `- entry: ${entry.id}`,
+          `- category: ${entry.category}`,
           `- path: ${entry.path}`,
           `- reason: ${entry.reason}`,
+          `- tokens: ${entry.estimatedTokens}`,
           `- budget: ${entry.budgetLayer}/${entry.semanticBoundary}`,
           '',
           entry.content.trim(),
         ].join('\n')).join('\n\n')
       : '- none',
     '',
-    '### Omitted References',
+    '### Omitted References And Entries',
     selection.omitted.length
       ? selection.omitted.map((entry) =>
-          `- ${entry.title} [${entry.budgetLayer}]: ${entry.reason}`,
+          `- ${entry.referenceTitle}${entry.entryTitle ? ` / ${entry.entryTitle}` : ''} [${entry.scope}/${entry.budgetLayer}]: ${entry.reason}`,
         ).join('\n')
       : '- none',
   ].join('\n');
@@ -622,14 +884,16 @@ export function referenceSelectionToContextSources(
       budgetLayer: entry.budgetLayer,
       semanticBoundary: entry.semanticBoundary,
       path: entry.path,
-      title: entry.title,
+      title: `${entry.referenceTitle} / ${entry.entryTitle}`,
     })),
     omitted: selection.omitted.map((entry) => ({
       sourceId: 'referenceDistilled',
       reason: entry.reason,
       budgetLayer: entry.budgetLayer,
       semanticBoundary: 'excluded',
-      title: entry.title,
+      title: entry.entryTitle
+        ? `${entry.referenceTitle} / ${entry.entryTitle}`
+        : entry.referenceTitle,
     })),
   };
 }
@@ -729,6 +993,7 @@ function createReferenceSummary(
   deconstructionStatus: ReferencePublishedDeconstructionStatus,
   contextEligible: boolean,
   readinessReason: ReferenceReadinessReason,
+  publishedContext?: ReferenceWorkSummary['publishedContext'],
 ): ReferenceWorkSummary {
   return {
     id: metadata.id,
@@ -754,6 +1019,7 @@ function createReferenceSummary(
       status: deconstructionStatus,
       contextEligible,
     },
+    ...(publishedContext ? { publishedContext } : {}),
   };
 }
 
@@ -776,22 +1042,7 @@ async function readReferencesIndex(workspaceRoot: string): Promise<ReferencesInd
     await assertExistingDirectoryChainSafe(workspaceRoot, ['examples']);
     await assertPathIsNotSymlink(filePath);
     const parsed = parse(await readFile(filePath, 'utf-8')) as unknown;
-    if (
-      !isRecord(parsed)
-      || parsed.version !== 1
-      || !Array.isArray(parsed.references)
-    ) {
-      throw new Error('Unsupported or invalid references index.');
-    }
-    const references = parsed.references.map((value, index) =>
-      assertReferenceIndexEntry(value, index));
-    if (new Set(references.map((reference) => reference.id)).size !== references.length) {
-      throw new Error('References index contains duplicate reference ids.');
-    }
-    return {
-      version: 1,
-      references,
-    };
+    return assertReferencesIndexValue(parsed);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return { version: 1, references: [] };
@@ -799,6 +1050,65 @@ async function readReferencesIndex(workspaceRoot: string): Promise<ReferencesInd
 
     throw error;
   }
+}
+
+export function assertReferencesIndexValue(
+  value: unknown,
+  options: { requireCanonical?: boolean } = {},
+): ReferencesIndex {
+  if (
+    !isRecord(value)
+    || value.version !== 1
+    || !Array.isArray(value.references)
+    || Object.keys(value).some((field) => field !== 'version' && field !== 'references')
+  ) {
+    throw new Error('Unsupported or invalid references index.');
+  }
+  const references = value.references.map((entry, index) => {
+    const normalized = assertReferenceIndexEntry(entry, index);
+    if (!options.requireCanonical) return normalized;
+    if (!isRecord(entry) || typeof entry.contextEligible !== 'boolean') {
+      throw new Error(`Reference index entry ${index} is not canonical.`);
+    }
+    let progress: ReferenceProgress;
+    try {
+      progress = assertReferenceProgress(entry.progress);
+    } catch {
+      throw new Error(`Reference index entry ${normalized.id} progress is invalid.`);
+    }
+    if (
+      progress.referenceId !== normalized.id
+      || progress.status !== normalized.deconstructionStatus
+      || progress.contextEligible !== entry.contextEligible
+      || (
+        normalized.deconstructionStatus === 'completed'
+          !== (normalized.publishedContext !== undefined)
+      )
+      || (
+        entry.contextEligible
+        && (
+          normalized.deconstructionStatus !== 'completed'
+          || normalized.enabled === false
+          || normalized.readinessReason !== 'ready'
+        )
+      )
+    ) {
+      throw new Error(`Reference index entry ${normalized.id} lifecycle is inconsistent.`);
+    }
+    const canonical: ReferenceWorkSummary = {
+      ...normalized,
+      contextEligible: entry.contextEligible,
+      progress,
+    };
+    if (canonicalJson(canonical) !== canonicalJson(entry)) {
+      throw new Error(`Reference index entry ${normalized.id} is not canonical.`);
+    }
+    return canonical;
+  });
+  if (new Set(references.map((reference) => reference.id)).size !== references.length) {
+    throw new Error('References index contains duplicate reference ids.');
+  }
+  return { version: 1, references };
 }
 
 async function assertExistingDirectoryChainSafe(
@@ -1176,6 +1486,7 @@ function assertReferenceIndexEntry(value: unknown, index: number): ReferenceWork
     'contextEligible',
     'readinessReason',
     'progress',
+    'publishedContext',
   ]);
   const unknownField = Object.keys(value).find((field) => !allowedFields.has(field));
   if (unknownField) {
@@ -1264,6 +1575,9 @@ function assertReferenceIndexEntry(value: unknown, index: number): ReferenceWork
   const structureConfidence = value.structureConfidence === undefined
     ? 'low'
     : assertStructureConfidence(value.structureConfidence, id);
+  const publishedContext = value.publishedContext === undefined
+    ? undefined
+    : assertPublishedReferenceContext(value.publishedContext, id);
   return {
     id,
     title: value.title.trim(),
@@ -1282,6 +1596,57 @@ function assertReferenceIndexEntry(value: unknown, index: number): ReferenceWork
     contextEligible: false,
     readinessReason,
     progress: { ...progress, contextEligible: false },
+    ...(publishedContext ? { publishedContext } : {}),
+  };
+}
+
+function assertPublishedReferenceContext(
+  value: unknown,
+  referenceId: string,
+): NonNullable<ReferenceWorkSummary['publishedContext']> {
+  if (!isRecord(value)) {
+    throw new Error(`Reference index entry ${referenceId} publishedContext is invalid.`);
+  }
+  const allowed = new Set(['runId', 'fingerprint', 'entryCount', 'categoryCounts']);
+  const counts = isRecord(value.categoryCounts) ? value.categoryCounts : undefined;
+  if (
+    Object.keys(value).some((field) => !allowed.has(field))
+    || typeof value.runId !== 'string'
+    || !/^[\p{L}\p{N}_:-]{1,180}$/u.test(value.runId)
+    || typeof value.fingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.fingerprint)
+    || !Number.isSafeInteger(value.entryCount)
+    || (value.entryCount as number) < 5
+    || (value.entryCount as number) > 50
+    || !counts
+    || Object.keys(counts).some((category) =>
+      !['writingStyle', 'pacing', 'hooks', 'scene', 'character'].includes(category))
+  ) {
+    throw new Error(`Reference index entry ${referenceId} publishedContext is invalid.`);
+  }
+  const categoryCounts = Object.fromEntries(
+    (['writingStyle', 'pacing', 'hooks', 'scene', 'character'] as const)
+      .map((category) => {
+        const count = counts[category];
+        if (!Number.isSafeInteger(count) || (count as number) < 1 || (count as number) > 12) {
+          throw new Error(
+            `Reference index entry ${referenceId} published category count is invalid.`,
+          );
+        }
+        return [category, count as number];
+      }),
+  ) as Record<ReferenceDistilledCategory, number>;
+  if (
+    Object.values(categoryCounts).reduce((total, count) => total + count, 0)
+      !== value.entryCount
+  ) {
+    throw new Error(`Reference index entry ${referenceId} entry count is inconsistent.`);
+  }
+  return {
+    runId: value.runId,
+    fingerprint: value.fingerprint,
+    entryCount: value.entryCount as number,
+    categoryCounts,
   };
 }
 
@@ -1339,7 +1704,8 @@ function isReadinessReason(value: unknown): value is ReferenceReadinessReason {
     || value === 'stale'
     || value === 'qualityFailed'
     || value === 'needsRebuild'
-    || value === 'missingContextSummary';
+    || value === 'missingContextSummary'
+    || value === 'invalidContextIndex';
 }
 
 function readinessToOmissionReason(
@@ -1355,10 +1721,14 @@ function formatReadinessOmissionReason(reason: ReferenceContextOmissionReason): 
     case 'qualityFailed': return 'reference analysis failed its quality gate';
     case 'missingContextSummary': return 'missing current context summary';
     case 'invalidContextPath': return 'invalid context summary path';
+    case 'invalidContextIndex': return 'invalid or stale distilled context index';
     case 'needsRebuild': return 'reference bundle needs rebuild';
     case 'tokenBudgetExceeded': return 'token budget exceeded';
     case 'notExplicitlyRequested': return 'not explicitly requested for this turn';
     case 'maxReferenceCountReached': return 'max reference count reached';
+    case 'maxEntryCountReached': return 'max entry count reached';
+    case 'capabilityMismatch': return 'entry does not match the current capability';
+    case 'taskMismatch': return 'entry does not match the current task';
     case 'disabled': return 'disabled';
   }
 }
@@ -1386,6 +1756,20 @@ function assertSafeReferenceId(value: unknown): string {
     throw new Error('Reference id is invalid.');
   }
   return value;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

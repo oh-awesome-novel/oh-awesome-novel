@@ -163,6 +163,85 @@ describe('Novel agent message assembly', () => {
       .toContain('selected');
   });
 
+  it('traces entry-level distilled references and preserves protected warnings', () => {
+    const contextPackage = createBaselineNovelAgentContextPackage({
+      request: '/写下一章 请继续',
+      workspace: baseInput.workspace,
+      createdAt: '2026-07-26T00:00:00.000Z',
+      referenceSelection: {
+        tokenBudget: 1_000,
+        maxReferences: 2,
+        maxEntries: 4,
+        usedTokens: 80,
+        originalSourceRead: false,
+        noCopyWarnings: ['Do not copy source expression.', 'Shared warning.'],
+        differentiationWarnings: ['Shared warning.', 'Change premise and causality.'],
+        included: [{
+          id: 'distilled-entry-1',
+          referenceId: 'reference-1',
+          referenceTitle: 'Reference One',
+          entryTitle: 'Pressure turn',
+          category: 'pacing',
+          path: 'examples/references/reference-1/distilled/pacing.md',
+          tags: ['pressure'],
+          capabilityIds: ['novel.write_chapter'],
+          reason: 'entry supports capability novel.write_chapter',
+          reasonCode: 'capabilityMatch',
+          budgetLayer: 'L2',
+          semanticBoundary: 'compressible',
+          estimatedTokens: 80,
+          content: 'A transformed technique note.',
+        }],
+        omitted: [{
+          scope: 'entry',
+          referenceId: 'reference-1',
+          referenceTitle: 'Reference One',
+          entryId: 'distilled-entry-2',
+          entryTitle: 'Unrelated hook',
+          category: 'hooks',
+          reason: 'entry does not match the current task',
+          budgetLayer: 'L2',
+          deconstructionStatus: 'completed',
+          contextEligible: false,
+          reasonCode: 'taskMismatch',
+          estimatedTokens: 60,
+        }],
+      },
+    });
+
+    expect(contextPackage?.selected).toContainEqual(expect.objectContaining({
+      sourceId: 'referenceDistilled',
+      title: 'Reference One / Pressure turn',
+      path: 'examples/references/reference-1/distilled/pacing.md',
+    }));
+    expect(contextPackage?.omitted).toContainEqual(expect.objectContaining({
+      sourceId: 'referenceDistilled',
+      title: 'Reference One / Unrelated hook',
+    }));
+    expect(contextPackage?.trace).toContainEqual(expect.objectContaining({
+      sourceId: 'referenceDistilled',
+      outcome: 'selected',
+      path: 'examples/references/reference-1/distilled/pacing.md',
+    }));
+    expect(contextPackage?.minimalMemory.recentFacts).toEqual(expect.arrayContaining([
+      'Do not copy source expression.',
+      'Shared warning.',
+      'Change premise and causality.',
+    ]));
+    expect(contextPackage?.minimalMemory.recentFacts.filter((item) =>
+      item === 'Shared warning.')).toHaveLength(1);
+    expect(contextPackage?.minimalMemory.styleNotes).toEqual([
+      'Change premise and causality.',
+      'Do not copy source expression.',
+      'Shared warning.',
+    ]);
+    expect(contextPackage?.ruleStack).toContainEqual(expect.objectContaining({
+      id: 'reference-distilled-boundary',
+      sourceId: 'referenceDistilled',
+      label: expect.stringContaining('untrusted'),
+    }));
+  });
+
   it('includes only request-local Play writing references in context and trace', () => {
     const attachment = {
       attachmentId: 'writing-ref-1',

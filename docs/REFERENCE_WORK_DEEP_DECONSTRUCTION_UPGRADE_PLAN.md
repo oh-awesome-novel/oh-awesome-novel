@@ -1,8 +1,8 @@
 # OAN 参考作品深度拆解升级计划
 
-> 计划状态：In Progress。D0 / D1 已于 2026-07-22 落地，D2 / D3 已于 2026-07-23 落地；D4–D5 仍待实施。
+> 计划状态：Completed。D0 / D1 已于 2026-07-22 落地，D2 / D3 已于 2026-07-23 落地，D4 / D5 已于 2026-07-26 落地。
 >
-> 关联任务：`docs/tasks/0900.md`（保持 `Needs Review`，不另建重复领域任务）。
+> 关联任务：`docs/tasks/0900.md`（已完成，不另建重复领域任务）。
 >
 > 分析日期：2026-07-21。
 >
@@ -27,7 +27,7 @@
 
 这不是新的多 Agent 平台、隐藏 RAG 或小说导入器。它是一个由用户启动、可暂停、可恢复、可复核的单模型长任务，产物仍是 Markdown / YAML 文件，并严格与当前小说 truth files 隔离。
 
-本计划先后交付 D0 + D1 与 D2 + D3：
+本计划已按 D0 + D1、D2 + D3、D4、D5 的顺序完成：
 
 1. 修正当前“导入即标记拆解完成”的状态语义。
 2. 未正式发布的 stub / preview 不得进入写作 context。
@@ -35,10 +35,12 @@
 4. 增加 manifest、diagnostics、source pointer、用户继续确认和失败恢复。
 5. 完成可恢复、可暂停和可局部重试的全书 chapter / chunk 分析。
 6. 通过 bounded reduction tree 聚合全局观察，生成 Style Profile，并执行 deterministic analysis quality gate。
+7. 从 verified aggregate / style 生成五类 typed distilled entries，通过 deterministic formatter 构建候选，并经多文件 PendingAction 原子发布。
+8. 把 selector 升级为 accepted published entry 级选择，补齐 hard budget、omission trace、普通写作 request-local 激活和完整 Desktop 审阅旅程。
 
-后续纵向切片只剩 distilled entry 候选、PendingAction 发布与 entry-level selector；D0–D3 已冻结并实现身份、来源、恢复、聚合和分析质量边界。
+所有纵向切片均已冻结并实现；后续候选不再反向扩大本计划。
 
-### 1.1 实施状态（2026-07-23）
+### 1.1 实施状态（2026-07-26）
 
 | 切片 | 状态 | 已落地边界 |
 | --- | --- | --- |
@@ -46,9 +48,12 @@
 | D1 | Completed | bounded Quick Preview、低置信范围确认、单模型 typed runner、`.workspace` run、CAS / idempotency / cancel / restart reconcile、跨 Backend provider lease、Desktop 审阅与 full confirmation gate |
 | D2 | Completed | deterministic chapter / chunk work plan、request-bounded advance、append-only attempts、pause / resume / retry / cancel、restart adoption / interruption、source drift 与 downstream invalidation |
 | D3 | Completed | bounded aggregate reduction tree、Style Profile、evidence / predecessor closure、deterministic analysis quality gate、diagnostics inspector 与 `reviewReady` |
-| D4–D5 | Planned | distilled entry 候选、PendingAction publish、entry-level selector 与完整发布旅程 |
+| D4 | Completed | 五类 typed distilled entries、deterministic candidate、最终质量门、reference-scoped 多文件 PendingAction、Accept / Reject / crash reconcile 与 Git 配置继承 |
+| D5 | Completed | strict published context index、entry-level matching / hard budgets / omission trace、request-local recall、normal Writing context assembly 与 Desktop explanation / approval handoff |
 
 `fullApproved` 仍只记录显式计算授权；第一次 full `advance` 才进入 `fullRunning`，之后每个请求最多处理一个确定 unit，用户未继续时没有后台任务。D3 的 `reviewReady` 只表示分析质量门通过，可以进入 D4，并不会把 Preview 或 provisional analysis 写入 published reference bundle。Desktop 重开后通过 `GET /api/workspace/references/:referenceId/deconstruction-runs/active` 找回权威 run。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
+
+D4 的 `reviewReady -> publishing -> completed | reviewReady` 通过一个全局 PendingAction 审批面完成；Accept 前候选、shadow write 与事务 journal 都位于 `.workspace`。D5 的普通写作路径只在当前请求明确要求参考作品时激活，只读取顶层发布状态、`context/index.yaml`、bounded summary 与 index 指向的 distilled outputs；不打开 `sources/`、published deconstruction evidence 或 provisional run artifact。完整控制面检查仍负责读取原文并验证实际 checksum。
 
 ## 2. 当前基线与真实缺口
 
@@ -720,12 +725,14 @@ Reference 文本中出现“忽略规则”“调用工具”“写入文件”�
 
 ### 11.4 Source drift
 
-Source bundle 内的原始文件或 manifest checksum 被手工修改后：
+Source bundle 内的原始文件或 manifest checksum 被手工修改后，分析 / 审阅 / 发布控制面以实际 checksum 为准：
 
 - active run 立即 stale。
 - publish fail closed。
-- 已发布 distilled 输出对 selector 变为 stale / omitted。
+- 尚未接受的 candidate 与 PendingAction 不能继续 Accept。
 - UI 提供“重新导入 / 从当前 source 新建 run”，不静默 rebase。
+
+已接受的 published bundle 是独立、不可静默 rebase 的版本快照。普通 Writing selector 为证明 no-source 边界，不轮询或打开 `sources/`；它只消费最后一次 accepted manifest / context / distilled closure。对 source 的任意外部手工改动会在下一次 control-plane 校验或新 run 中被识别，不会改变既有快照。若未来需要“手改 source 后在普通 Writing 请求前立即撤销旧快照”，应另建受管 source update / filesystem watcher 任务并持久化 stale marker，不能在 D5 中偷偷恢复每回合读取原文。
 
 当前产品未发布，不实现旧 bundle migration；未知 schema / missing manifest 显示“需要重新拆解”，不能按新格式猜测读取。
 
@@ -802,7 +809,7 @@ Client 应验证：
 
 ## 13. Selector 升级
 
-当前 selector 主要读取一个 `context/reference-summary.md`。完整拆解后升级为 entry-level selection：
+D5 已把原先主要读取 `context/reference-summary.md` 的 selector 升级为 entry-level selection：
 
 - 输入 capability id、显式 reference ids、chapter goal、scene type、style / pacing / hook intent、token budget。
 - 从 `context/index.yaml` 选择少量 distilled entries。
@@ -878,7 +885,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 完成标准：任何 blocking diagnostic 都阻止进入 reviewReady；聚合不依赖一次性全文 prompt。
 
-### D4：Distill、审阅与发布
+### D4：Distill、审阅与发布（Completed, 2026-07-26）
 
 目标：形成真正可被 OAN 写作流程安全消费的参考技法。
 
@@ -892,7 +899,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 完成标准：只有 accepted、current、quality-passed 的 published run 能让 reference 变为 context eligible。
 
-### D5：Entry-level Selector 与完整产品旅程
+### D5：Entry-level Selector 与完整产品旅程（Completed, 2026-07-26）
 
 目标：规划、写作和审稿按任务只读取必要 technique entries。
 
@@ -999,11 +1006,11 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 - [x] Full deconstruction 必须经过 Preview 后的显式用户确认。
 - [x] 分章拆解支持 pause、cancel、restart resume 和局部 retry。
 - [x] 每个 finding 都有合法 source pointer 或明确 general inference boundary。
-- [x] Aggregate / style 不依赖一次性全文 prompt；distilled 留待 D4。
-- [ ] Published bundle 具有 current manifest、diagnostics、output hashes 和 quality pass。
-- [ ] Candidate 发布前只写 `.workspace`；Accept 前真实 bundle 与 Git working tree 不改变。
-- [ ] Reject / Cancel / provider failure / validation failure 不产生部分 published artifact。
-- [ ] Selector 只读取 accepted distilled entries，普通写作路径 `originalSourceRead` 始终为 false。
+- [x] Aggregate / style / distill 不依赖一次性全文 prompt。
+- [x] Published bundle 具有 current manifest、diagnostics、output hashes 和 quality pass。
+- [x] Candidate 发布前只写 `.workspace`；Accept 前真实 bundle 与 Git working tree 不改变。
+- [x] Reject / Cancel / provider failure / validation failure 不产生部分 published artifact。
+- [x] Selector 只读取 accepted distilled entries，普通写作路径 `originalSourceRead` 始终为 false。
 - [x] Reference 不自动修改当前小说 truth files。
 - [x] no-copy、prompt-injection、source drift、并发、恢复和 strict transport 测试通过。
 - [x] Core、Agent、Backend、Client、Desktop 全量相关回归和真实组件旅程通过。
@@ -1019,7 +1026,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 4. 更精细的跨 reference 技法比较与作者自定义标签。
 5. 与 `1110` usage stats 联动的 per-stage token / cost inspector。
 
-这些候选都不能反向扩大 D0–D3 范围。
+这些候选都不能反向扩大 D0–D5 范围。
 
 ## 19. 参考来源与吸收边界
 
@@ -1046,4 +1053,4 @@ D0 状态 / manifest / selector ready gate
   -> D5 entry-level selector / 完整旅程
 ```
 
-D0–D3 的执行级计划与实现已经完成。下一次应先为 D4 创建独立执行级 plan，明确 distilled schema、deterministic formatter、多文件 PendingAction、Accept 后原子发布与 Git 行为；不要提前把 D5 selector 旅程并入 D4。
+D0–D5 的执行级计划与实现已经完成。下一候选优先评估“自有旧稿导入当前 workspace，并生成 summary / state / timeline / foreshadow 候选”；它必须作为独立任务继续遵守 PendingAction、Git diff 与 Human Approval，不并入 reference source 拆解。

@@ -1,5 +1,6 @@
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   readFile,
@@ -48,6 +49,9 @@ export interface CreateWriteIntentToolsOptions {
 }
 
 export const WRITE_INTENT_PREVIEW_SCHEMA_VERSION = 1 as const;
+const PENDING_ACTION_LOCK_WAIT_MS = 10;
+const PENDING_ACTION_LOCK_MAX_ATTEMPTS = 3_000;
+const PENDING_ACTION_LOCK_STALE_MS = 60_000;
 
 export type PreviewableWriteIntentToolName =
   | 'chapter.createDraft'
@@ -108,6 +112,26 @@ export interface WriteIntentPendingAction {
   createdAt: string;
   status: 'pending';
   shadowWrites: ShadowWriteReference[];
+  origin?: PendingActionOrigin;
+}
+
+export interface ReferenceDeconstructionPublishPendingActionOrigin {
+  kind: 'referenceDeconstructionPublish';
+  referenceId: string;
+  runId: string;
+  runRevision: number;
+  candidateFingerprint: string;
+}
+
+export type PendingActionOrigin =
+  ReferenceDeconstructionPublishPendingActionOrigin;
+
+export interface CreatePendingActionInput {
+  id?: string;
+  title: string;
+  description: string;
+  patches: SemanticPatch[];
+  origin?: PendingActionOrigin;
 }
 
 export interface StoredWriteIntentAction
@@ -124,6 +148,11 @@ export interface AcceptPendingActionInput {
 }
 
 export interface RejectPendingActionInput {
+  workspaceRoot: string;
+  id: string;
+}
+
+export interface ReadPendingActionInput {
   workspaceRoot: string;
   id: string;
 }
@@ -156,13 +185,27 @@ interface PreparedShadowWrite {
   targetMode?: number;
 }
 
-interface MaterializedWrite {
-  targetPath: string;
+interface PendingActionTransactionWrite {
+  targetFile: string;
+  stageFile: string;
+  backupFile?: string;
+  originalHash: string;
+  draftHash: string;
   targetExisted: boolean;
-  stagePath?: string;
+}
+
+interface PendingActionTransactionJournal {
+  version: 1;
+  actionId: string;
+  writes: PendingActionTransactionWrite[];
+}
+
+interface DurableMaterializedWrite extends PendingActionTransactionWrite {
+  targetPath: string;
+  stagePath: string;
   backupPath?: string;
-  backupCreated: boolean;
-  applied: boolean;
+  draft: string;
+  targetMode?: number;
 }
 
 interface MaterializationTransaction {
@@ -219,15 +262,25 @@ export async function prepareWriteIntentPreview(
 export async function promoteWriteIntentPreview(
   input: PromoteWriteIntentPreviewInput,
 ): Promise<WriteIntentPendingAction> {
-  const validated = await validateWriteIntentPreviewForPromotion(input);
-  await writeStoredAction(validated.workspaceRealpath, validated.action, true);
-  return validated.action;
+  const workspaceRealpath = await realpath(input.workspaceRoot);
+  const id = safePendingActionId(input.preview.id);
+  return withPendingActionLock(workspaceRealpath, id, async () => {
+    await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+    const validated = await validateWriteIntentPreviewForPromotion(input);
+    await writeStoredAction(validated.workspaceRealpath, validated.action, true);
+    return validated.action;
+  });
 }
 
 export async function validateWriteIntentPreview(
   input: ValidateWriteIntentPreviewInput,
 ): Promise<void> {
-  await validateWriteIntentPreviewForPromotion(input);
+  const workspaceRealpath = await realpath(input.workspaceRoot);
+  const id = safePendingActionId(input.preview.id);
+  await withPendingActionLock(workspaceRealpath, id, async () => {
+    await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+    await validateWriteIntentPreviewForPromotion(input);
+  });
 }
 
 async function validateWriteIntentPreviewForPromotion(
@@ -328,6 +381,7 @@ export async function listPendingActions(input: {
   workspaceRoot: string;
 }): Promise<WriteIntentPendingAction[]> {
   const workspaceRealpath = await realpath(input.workspaceRoot);
+  await recoverAllPendingActionTransactions(workspaceRealpath);
   const pendingRoot = join(workspaceRealpath, '.workspace', 'pending-actions');
 
   try {
@@ -335,7 +389,13 @@ export async function listPendingActions(input: {
     const actions = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-        .map(async (entry) => readStoredAction(workspaceRealpath, basename(entry.name, '.json'))),
+        .map(async (entry) => {
+          const id = safePendingActionId(basename(entry.name, '.json'));
+          return withPendingActionLock(workspaceRealpath, id, async () => {
+            await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+            return readStoredActionFromAnyDirectory(workspaceRealpath, id);
+          });
+        }),
     );
 
     return actions
@@ -350,59 +410,148 @@ export async function listPendingActions(input: {
   }
 }
 
+export async function readPendingAction(
+  input: ReadPendingActionInput,
+): Promise<StoredWriteIntentAction> {
+  const workspaceRealpath = await realpath(input.workspaceRoot);
+  const id = safePendingActionId(input.id);
+  return withPendingActionLock(workspaceRealpath, id, async () => {
+    await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+    return readStoredActionFromAnyDirectory(workspaceRealpath, id);
+  });
+}
+
+async function readStoredActionFromAnyDirectory(
+  workspaceRealpath: string,
+  id: string,
+): Promise<StoredWriteIntentAction> {
+  const locations = [
+    ['accepted-actions', 'accepted'],
+    ['rejected-actions', 'rejected'],
+    ['pending-actions', 'pending'],
+  ] as const;
+  let terminal: StoredWriteIntentAction | undefined;
+  for (const [directory, expectedStatus] of locations) {
+    try {
+      const action = await readStoredActionFromDirectory(
+        workspaceRealpath,
+        id,
+        directory,
+      );
+      if (action.status !== expectedStatus) {
+        throw new Error(`Invalid PendingAction record: ${id}`);
+      }
+      if (expectedStatus === 'accepted' || expectedStatus === 'rejected') {
+        if (terminal && terminal.status !== action.status) {
+          throw new Error(`PendingAction ${id} has conflicting terminal archives.`);
+        }
+        terminal = action;
+        continue;
+      }
+      if (terminal) {
+        await rm(pendingActionPath(workspaceRealpath, id), { force: true });
+        return terminal;
+      }
+      return action;
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
+    }
+  }
+  if (terminal) return terminal;
+  throw Object.assign(new Error(`PendingAction not found: ${id}`), {
+    code: 'ENOENT',
+  });
+}
+
 export async function acceptPendingAction(
   input: AcceptPendingActionInput,
 ): Promise<AcceptedPendingAction> {
   const workspaceRealpath = await realpath(input.workspaceRoot);
-  const action = await readStoredAction(workspaceRealpath, input.id);
-  const autoCommitOnAccept = input.autoCommitOnAccept ?? true;
+  const id = safePendingActionId(input.id);
+  return withPendingActionLock(workspaceRealpath, id, async () => {
+    const autoCommitOnAccept = input.autoCommitOnAccept ?? true;
+    return withPendingActionApplyLock(
+      workspaceRealpath,
+      async () => {
+        await recoverAllPendingActionTransactionsUnlocked(workspaceRealpath);
+        const pendingAction = await readStoredActionFromAnyDirectory(
+          workspaceRealpath,
+          id,
+        );
 
-  if (action.status !== 'pending') {
-    throw new Error(`PendingAction ${input.id} is already ${action.status}.`);
-  }
+        if (pendingAction.status !== 'pending') {
+          throw new Error(
+            `PendingAction ${input.id} is already ${pendingAction.status}.`,
+          );
+        }
 
-  const preparedWrites = await preflightShadowWrites(workspaceRealpath, action);
-  const transaction = await materializePreparedWrites(workspaceRealpath, preparedWrites);
+        const preparedWrites = await preflightShadowWrites(
+          workspaceRealpath,
+          pendingAction,
+        );
+        const transaction = await materializePreparedWrites(
+          workspaceRealpath,
+          pendingAction.id,
+          preparedWrites,
+        );
 
-  const acceptedAction: StoredWriteIntentAction = {
-    ...action,
-    status: 'accepted',
-    acceptedAt: new Date().toISOString(),
-  };
+        const acceptedAction: StoredWriteIntentAction = {
+          ...pendingAction,
+          status: 'accepted',
+          acceptedAt: new Date().toISOString(),
+        };
 
-  try {
-    await archiveStoredAction(workspaceRealpath, acceptedAction, 'accepted-actions');
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
-  }
+        try {
+          await archiveStoredAction(
+            workspaceRealpath,
+            acceptedAction,
+            'accepted-actions',
+            { removePending: false },
+          );
+        } catch (error) {
+          await transaction.rollback();
+          throw error;
+        }
 
-  await transaction.cleanup();
-  const message = createPendingActionCommitMessage({
-    pendingActionId: action.id,
-    title: action.title,
+        await transaction.cleanup();
+        await rm(pendingActionPath(workspaceRealpath, pendingAction.id), {
+          force: true,
+        });
+        const message = createPendingActionCommitMessage({
+          pendingActionId: pendingAction.id,
+          title: pendingAction.title,
+        });
+        const gitDiffBeforeCommit = await gitDiff(
+          workspaceRealpath,
+          pendingAction.touchedFiles,
+        );
+        const gitCommit: GitCommitResult = autoCommitOnAccept
+          ? await commitFiles({
+              workspaceRoot: workspaceRealpath,
+              files: pendingAction.touchedFiles,
+              message,
+            })
+          : {
+              status: 'skipped',
+              reason: 'auto_commit_disabled',
+              message,
+            };
+
+        return {
+          id: pendingAction.id,
+          status: 'accepted',
+          appliedFiles: pendingAction.touchedFiles,
+          gitDiff: gitCommit.status === 'committed' ? '' : gitDiffBeforeCommit,
+          gitCommit,
+          dirtyStatus: await gitStatusShort(
+            workspaceRealpath,
+            pendingAction.touchedFiles,
+          ),
+        };
+      },
+    );
   });
-  const gitDiffBeforeCommit = await gitDiff(workspaceRealpath, action.touchedFiles);
-  const gitCommit: GitCommitResult = autoCommitOnAccept
-    ? await commitFiles({
-        workspaceRoot: workspaceRealpath,
-        files: action.touchedFiles,
-        message,
-      })
-    : {
-        status: 'skipped',
-        reason: 'auto_commit_disabled',
-        message,
-      };
-
-  return {
-    id: action.id,
-    status: 'accepted',
-    appliedFiles: action.touchedFiles,
-    gitDiff: gitCommit.status === 'committed' ? '' : gitDiffBeforeCommit,
-    gitCommit,
-    dirtyStatus: await gitStatusShort(workspaceRealpath, action.touchedFiles),
-  };
 }
 
 async function preflightShadowWrites(
@@ -507,10 +656,10 @@ async function preflightShadowWrites(
 
 async function materializePreparedWrites(
   workspaceRealpath: string,
+  actionId: string,
   preparedWrites: PreparedShadowWrite[],
 ): Promise<MaterializationTransaction> {
-  const materializedWrites: MaterializedWrite[] = [];
-
+  const writes: DurableMaterializedWrite[] = [];
   try {
     for (const prepared of preparedWrites) {
       const targetParent = dirname(prepared.targetPath);
@@ -531,46 +680,94 @@ async function materializePreparedWrites(
         prepared,
         prepared.actionId,
       );
-
-      const token = randomUUID();
-      const write: MaterializedWrite = {
+      const token = sha256(`${actionId}\u0000${prepared.targetFile}`).slice(0, 32);
+      const stagePath = join(realTargetParent, `.oan-pa-${token}.stage`);
+      const backupPath = prepared.targetExisted
+        ? join(realTargetParent, `.oan-pa-${token}.backup`)
+        : undefined;
+      for (const artifact of [stagePath, backupPath].filter(
+        (value): value is string => value !== undefined,
+      )) {
+        try {
+          await lstat(artifact);
+          throw new Error(
+            `PendingAction ${actionId} has a stale materialization artifact.`,
+          );
+        } catch (error) {
+          if (!isNotFoundError(error)) throw error;
+        }
+      }
+      writes.push({
+        targetFile: prepared.targetFile,
         targetPath,
+        stagePath,
+        stageFile: relative(workspaceRealpath, stagePath),
+        ...(backupPath
+          ? {
+              backupPath,
+              backupFile: relative(workspaceRealpath, backupPath),
+            }
+          : {}),
+        originalHash: prepared.originalHash,
+        draftHash: prepared.draftHash,
         targetExisted: prepared.targetExisted,
-        stagePath: join(realTargetParent, `.oan-stage-${token}`),
-        backupPath: prepared.targetExisted
-          ? join(realTargetParent, `.oan-backup-${token}`)
-          : undefined,
-        backupCreated: false,
-        applied: false,
-      };
-      materializedWrites.push(write);
+        draft: prepared.draft,
+        ...(prepared.targetMode === undefined
+          ? {}
+          : { targetMode: prepared.targetMode }),
+      });
+    }
 
-      await writeFile(write.stagePath, prepared.draft, {
+    await writePendingActionTransactionJournal(workspaceRealpath, {
+      version: 1,
+      actionId,
+      writes: writes.map(({
+        targetFile,
+        stageFile,
+        backupFile,
+        originalHash,
+        draftHash,
+        targetExisted,
+      }) => ({
+        targetFile,
+        stageFile,
+        ...(backupFile ? { backupFile } : {}),
+        originalHash,
+        draftHash,
+        targetExisted,
+      })),
+    });
+    for (const write of writes) {
+      await writeFile(write.stagePath, write.draft, {
         encoding: 'utf-8',
         flag: 'wx',
       });
-      if (prepared.targetMode !== undefined) {
-        await chmod(write.stagePath, prepared.targetMode);
+      if (write.targetMode !== undefined) {
+        await chmod(write.stagePath, write.targetMode);
       }
-
+    }
+    for (const write of writes) {
+      await assertTargetMatchesBaseline(
+        workspaceRealpath,
+        write.targetPath,
+        write.targetFile,
+        write,
+        actionId,
+      );
       if (write.backupPath) {
         await rename(write.targetPath, write.backupPath);
-        write.backupCreated = true;
         await assertBackupMatchesBaseline(
           write.backupPath,
-          prepared.targetFile,
-          prepared.originalHash,
-          prepared.actionId,
+          write.targetFile,
+          write.originalHash,
+          actionId,
         );
       }
-
       await rename(write.stagePath, write.targetPath);
-      write.applied = true;
-      write.stagePath = undefined;
     }
   } catch (error) {
     try {
-      await rollbackMaterializedWrites(materializedWrites);
+      await rollbackPendingActionTransaction(workspaceRealpath, actionId);
     } catch (rollbackError) {
       throw new AggregateError(
         [error, rollbackError],
@@ -584,66 +781,380 @@ async function materializePreparedWrites(
   let closed = false;
   return {
     async cleanup() {
-      if (closed) {
-        return;
-      }
+      if (closed) return;
       closed = true;
-
-      for (const write of materializedWrites) {
-        if (write.stagePath) {
-          await rm(write.stagePath, { force: true });
-        }
-        if (write.backupCreated && write.backupPath) {
-          await rm(write.backupPath, { force: true });
-          write.backupCreated = false;
-        }
-      }
+      await finalizeCommittedPendingActionTransaction(workspaceRealpath, actionId);
     },
     async rollback() {
-      if (closed) {
-        return;
-      }
+      if (closed) return;
       closed = true;
-      await rollbackMaterializedWrites(materializedWrites);
+      await rollbackPendingActionTransaction(workspaceRealpath, actionId);
     },
   };
 }
 
-async function rollbackMaterializedWrites(
-  writes: MaterializedWrite[],
+async function writePendingActionTransactionJournal(
+  workspaceRealpath: string,
+  journal: PendingActionTransactionJournal,
 ): Promise<void> {
+  const path = pendingActionTransactionPath(workspaceRealpath, journal.actionId);
+  await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(path));
+  await mkdir(dirname(path), { recursive: true });
+  await assertRealParentInsideWorkspace(workspaceRealpath, dirname(path));
+  await writeExclusiveJsonAtomic(
+    path,
+    journal,
+    `PendingAction ${journal.actionId} transaction journal already exists.`,
+  );
+}
+
+async function recoverPendingActionTransaction(
+  workspaceRealpath: string,
+  actionId: string,
+): Promise<void> {
+  const journal = await readPendingActionTransactionJournal(
+    workspaceRealpath,
+    actionId,
+  );
+  if (!journal) return;
+  const accepted = await tryReadStoredActionFromDirectory(
+    workspaceRealpath,
+    actionId,
+    'accepted-actions',
+  );
+  const rejected = await tryReadStoredActionFromDirectory(
+    workspaceRealpath,
+    actionId,
+    'rejected-actions',
+  );
+  if (accepted && rejected) {
+    throw new Error(`PendingAction ${actionId} has conflicting terminal archives.`);
+  }
+  if (accepted) {
+    await finalizeCommittedPendingActionTransaction(workspaceRealpath, actionId);
+    await rm(pendingActionPath(workspaceRealpath, actionId), { force: true });
+    return;
+  }
+  await rollbackPendingActionTransaction(workspaceRealpath, actionId);
+  if (rejected) {
+    await rm(pendingActionPath(workspaceRealpath, actionId), { force: true });
+  }
+}
+
+async function recoverPendingActionTransactionsWithApplyLock(
+  workspaceRealpath: string,
+): Promise<void> {
+  await withPendingActionApplyLock(workspaceRealpath, async () => {
+    await recoverAllPendingActionTransactionsUnlocked(workspaceRealpath);
+  });
+}
+
+async function recoverAllPendingActionTransactions(
+  workspaceRealpath: string,
+): Promise<void> {
+  const actionIds = await listPendingActionTransactionIds(workspaceRealpath);
+  for (const id of actionIds) {
+    await withPendingActionLock(workspaceRealpath, id, async () => {
+      await withPendingActionApplyLock(workspaceRealpath, async () => {
+        await recoverPendingActionTransaction(workspaceRealpath, id);
+      });
+    });
+  }
+}
+
+async function recoverAllPendingActionTransactionsUnlocked(
+  workspaceRealpath: string,
+): Promise<void> {
+  const actionIds = await listPendingActionTransactionIds(workspaceRealpath);
+  for (const id of actionIds) {
+    await recoverPendingActionTransaction(workspaceRealpath, id);
+  }
+}
+
+async function listPendingActionTransactionIds(
+  workspaceRealpath: string,
+): Promise<string[]> {
+  const transactionsRoot = resolveInternalWorkspacePath(
+    workspaceRealpath,
+    join('.workspace', 'pending-action-transactions'),
+  );
+  try {
+    const entries = await readdir(transactionsRoot, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => safePendingActionId(basename(entry.name, '.json')))
+      .sort();
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw error;
+  }
+}
+
+async function finalizeCommittedPendingActionTransaction(
+  workspaceRealpath: string,
+  actionId: string,
+): Promise<void> {
+  const journal = await readPendingActionTransactionJournal(
+    workspaceRealpath,
+    actionId,
+  );
+  if (!journal) return;
   const errors: unknown[] = [];
-
-  for (const write of [...writes].reverse()) {
-    if (write.applied) {
-      try {
-        await rm(write.targetPath, { force: true });
-        write.applied = false;
-      } catch (error) {
-        errors.push(error);
+  for (const write of journal.writes) {
+    try {
+      const targetPath = resolveTransactionArtifact(
+        workspaceRealpath,
+        write.targetFile,
+      );
+      const current = await readRegularFileHash(targetPath, write.targetFile);
+      if (current !== write.draftHash) {
+        throw new Error(
+          `Accepted PendingAction ${actionId} target is not the committed draft: ${write.targetFile}.`,
+        );
       }
-    }
-
-    if (write.backupCreated && write.backupPath) {
-      try {
-        await rename(write.backupPath, write.targetPath);
-        write.backupCreated = false;
-      } catch (error) {
-        errors.push(error);
+      await rm(resolveTransactionArtifact(workspaceRealpath, write.stageFile), {
+        force: true,
+      });
+      if (write.backupFile) {
+        await rm(resolveTransactionArtifact(workspaceRealpath, write.backupFile), {
+          force: true,
+        });
       }
-    }
-
-    if (write.stagePath) {
-      try {
-        await rm(write.stagePath, { force: true });
-      } catch (error) {
-        errors.push(error);
-      }
+    } catch (error) {
+      errors.push(error);
     }
   }
+  if (errors.length) {
+    throw new AggregateError(
+      errors,
+      `Could not finalize accepted PendingAction ${actionId}.`,
+    );
+  }
+  await rm(pendingActionTransactionPath(workspaceRealpath, actionId), {
+    force: true,
+  });
+}
 
-  if (errors.length > 0) {
-    throw new AggregateError(errors, 'Could not completely roll back PendingAction writes.');
+async function rollbackPendingActionTransaction(
+  workspaceRealpath: string,
+  actionId: string,
+): Promise<void> {
+  const journal = await readPendingActionTransactionJournal(
+    workspaceRealpath,
+    actionId,
+  );
+  if (!journal) return;
+  const errors: unknown[] = [];
+  for (const write of [...journal.writes].reverse()) {
+    try {
+      const targetPath = resolveTransactionArtifact(
+        workspaceRealpath,
+        write.targetFile,
+      );
+      const stagePath = resolveTransactionArtifact(workspaceRealpath, write.stageFile);
+      const backupPath = write.backupFile
+        ? resolveTransactionArtifact(workspaceRealpath, write.backupFile)
+        : undefined;
+      if (write.targetExisted) {
+        const backupHash = backupPath
+          ? await tryReadRegularFileHash(backupPath, write.targetFile)
+          : undefined;
+        if (backupHash !== undefined) {
+          if (backupHash !== write.originalHash) {
+            throw new Error(
+              `PendingAction ${actionId} backup changed during recovery: ${write.targetFile}.`,
+            );
+          }
+          const targetHash = await tryReadRegularFileHash(targetPath, write.targetFile);
+          if (targetHash !== undefined && targetHash !== write.draftHash) {
+            throw new Error(
+              `PendingAction ${actionId} target changed during recovery: ${write.targetFile}.`,
+            );
+          }
+          if (targetHash !== undefined) await rm(targetPath);
+          await rename(backupPath!, targetPath);
+        } else {
+          const targetHash = await tryReadRegularFileHash(targetPath, write.targetFile);
+          if (targetHash !== write.originalHash) {
+            throw new Error(
+              `PendingAction ${actionId} cannot recover original target: ${write.targetFile}.`,
+            );
+          }
+        }
+      } else {
+        const targetHash = await tryReadRegularFileHash(targetPath, write.targetFile);
+        if (targetHash !== undefined) {
+          if (targetHash !== write.draftHash) {
+            throw new Error(
+              `PendingAction ${actionId} target changed during recovery: ${write.targetFile}.`,
+            );
+          }
+          await rm(targetPath);
+        }
+      }
+      await rm(stagePath, { force: true });
+      if (backupPath) await rm(backupPath, { force: true });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length) {
+    throw new AggregateError(
+      errors,
+      `Could not completely roll back PendingAction ${actionId}.`,
+    );
+  }
+  await rm(pendingActionTransactionPath(workspaceRealpath, actionId), {
+    force: true,
+  });
+}
+
+async function readPendingActionTransactionJournal(
+  workspaceRealpath: string,
+  actionId: string,
+): Promise<PendingActionTransactionJournal | undefined> {
+  const path = pendingActionTransactionPath(workspaceRealpath, actionId);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf-8')) as unknown;
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+  if (!isPendingActionTransactionJournal(parsed, actionId)) {
+    throw new Error(`PendingAction ${actionId} transaction journal is invalid.`);
+  }
+  return parsed;
+}
+
+function isPendingActionTransactionJournal(
+  value: unknown,
+  actionId: string,
+): value is PendingActionTransactionJournal {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['version', 'actionId', 'writes'])
+    || value.version !== 1
+    || value.actionId !== actionId
+    || !Array.isArray(value.writes)
+    || value.writes.length < 1
+    || value.writes.length > 4_096
+  ) {
+    return false;
+  }
+  const targets = new Set<string>();
+  try {
+    for (const raw of value.writes) {
+      if (
+        !isRecord(raw)
+        || !hasOnlyKnownFields(raw, [
+          'targetFile',
+          'stageFile',
+          'backupFile',
+          'originalHash',
+          'draftHash',
+          'targetExisted',
+        ])
+        || typeof raw.targetFile !== 'string'
+        || typeof raw.stageFile !== 'string'
+        || (raw.backupFile !== undefined && typeof raw.backupFile !== 'string')
+        || !isSha256(raw.originalHash)
+        || !isSha256(raw.draftHash)
+        || typeof raw.targetExisted !== 'boolean'
+        || raw.targetExisted !== (raw.backupFile !== undefined)
+      ) {
+        return false;
+      }
+      safeRelativePath(raw.targetFile);
+      assertTransactionArtifactFile(raw.stageFile, '.stage');
+      if (raw.backupFile) assertTransactionArtifactFile(raw.backupFile, '.backup');
+      if (targets.has(raw.targetFile)) return false;
+      targets.add(raw.targetFile);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pendingActionTransactionPath(
+  workspaceRealpath: string,
+  actionId: string,
+): string {
+  return resolveInternalWorkspacePath(
+    workspaceRealpath,
+    join(
+      '.workspace',
+      'pending-action-transactions',
+      `${safePendingActionId(actionId)}.json`,
+    ),
+  );
+}
+
+function assertTransactionArtifactFile(
+  value: string,
+  suffix: '.stage' | '.backup',
+): void {
+  const normalized = normalize(value);
+  if (
+    isAbsolute(normalized)
+    || normalized === '..'
+    || normalized.startsWith(`..${sep}`)
+    || normalized.includes('\0')
+    || !basename(normalized).startsWith('.oan-pa-')
+    || !normalized.endsWith(suffix)
+  ) {
+    throw new Error('PendingAction transaction artifact path is invalid.');
+  }
+}
+
+function resolveTransactionArtifact(
+  workspaceRealpath: string,
+  relativePath: string,
+): string {
+  const path = resolve(workspaceRealpath, relativePath);
+  assertPathInside(
+    workspaceRealpath,
+    path,
+    'PendingAction transaction artifact escaped the workspace.',
+  );
+  return path;
+}
+
+async function tryReadStoredActionFromDirectory(
+  workspaceRealpath: string,
+  id: string,
+  directory: 'pending-actions' | 'accepted-actions' | 'rejected-actions',
+): Promise<StoredWriteIntentAction | undefined> {
+  try {
+    return await readStoredActionFromDirectory(workspaceRealpath, id, directory);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function readRegularFileHash(path: string, label: string): Promise<string> {
+  const hash = await tryReadRegularFileHash(path, label);
+  if (hash === undefined) {
+    throw new Error(`PendingAction transaction target is missing: ${label}.`);
+  }
+  return hash;
+}
+
+async function tryReadRegularFileHash(
+  path: string,
+  label: string,
+): Promise<string | undefined> {
+  try {
+    const information = await lstat(path);
+    if (information.isSymbolicLink() || !information.isFile()) {
+      throw new Error(`PendingAction transaction path is not a regular file: ${label}.`);
+    }
+    return sha256(await readFile(path, 'utf-8'));
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
   }
 }
 
@@ -755,31 +1266,34 @@ export async function rejectPendingAction(
   input: RejectPendingActionInput,
 ): Promise<RejectedPendingAction> {
   const workspaceRealpath = await realpath(input.workspaceRoot);
-  const action = await readStoredAction(workspaceRealpath, input.id);
+  const id = safePendingActionId(input.id);
+  return withPendingActionLock(workspaceRealpath, id, async () => {
+    await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+    const action = await readStoredActionFromAnyDirectory(workspaceRealpath, id);
 
-  if (action.status !== 'pending') {
-    throw new Error(`PendingAction ${input.id} is already ${action.status}.`);
-  }
+    if (action.status !== 'pending') {
+      throw new Error(`PendingAction ${input.id} is already ${action.status}.`);
+    }
 
-  for (const write of action.shadowWrites) {
-    const shadowPath = resolveInternalWorkspacePath(workspaceRealpath, write.shadowFile);
-    await rm(dirname(shadowPath), { recursive: true, force: true });
-  }
+    await archiveStoredAction(
+      workspaceRealpath,
+      {
+        ...action,
+        status: 'rejected',
+        rejectedAt: new Date().toISOString(),
+      },
+      'rejected-actions',
+    );
+    await Promise.all(action.shadowWrites.map(async (write) => {
+      const shadowPath = resolveInternalWorkspacePath(workspaceRealpath, write.shadowFile);
+      await rm(dirname(shadowPath), { recursive: true, force: true });
+    }));
 
-  await archiveStoredAction(
-    workspaceRealpath,
-    {
-      ...action,
+    return {
+      id: action.id,
       status: 'rejected',
-      rejectedAt: new Date().toISOString(),
-    },
-    'rejected-actions',
-  );
-
-  return {
-    id: action.id,
-    status: 'rejected',
-  };
+    };
+  });
 }
 
 function characterUpdatePersonalityTool(options: CreateWriteIntentToolsOptions) {
@@ -1077,35 +1591,70 @@ function normalizeCollectionAppendPlan(input: {
   };
 }
 
-async function createPendingAction(
+export async function createPendingAction(
   workspaceRoot: string,
-  input: {
-    title: string;
-    description: string;
-    patches: SemanticPatch[];
-  },
+  input: CreatePendingActionInput,
 ): Promise<WriteIntentPendingAction> {
   const workspaceRealpath = await realpath(workspaceRoot);
-  const id = `pa_${randomUUID()}`;
-  const preview = await previewSemanticPatches({
-    workspaceRoot: workspaceRealpath,
-    patches: input.patches,
-    id,
-  });
-  const action: WriteIntentPendingAction = {
-    id,
-    title: input.title,
-    description: input.description,
-    patches: input.patches,
-    touchedFiles: preview.touchedFiles,
-    diff: preview.diff,
-    createdAt: new Date().toISOString(),
-    status: 'pending',
-    shadowWrites: preview.shadowWrites,
-  };
+  const origin = input.origin === undefined
+    ? undefined
+    : normalizePendingActionOrigin(input.origin);
+  const id = input.id === undefined
+    ? `pa_${randomUUID()}`
+    : safePendingActionId(input.id);
+  return withPendingActionLock(workspaceRealpath, id, async () => {
+    await recoverPendingActionTransactionsWithApplyLock(workspaceRealpath);
+    await assertPendingActionIdentityAvailable(workspaceRealpath, id);
+    const preview = await previewSemanticPatches({
+      workspaceRoot: workspaceRealpath,
+      patches: input.patches,
+      id,
+    });
+    const action: WriteIntentPendingAction = {
+      id,
+      title: input.title,
+      description: input.description,
+      patches: structuredClone(input.patches),
+      touchedFiles: preview.touchedFiles,
+      diff: preview.diff,
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      shadowWrites: preview.shadowWrites,
+      ...(origin ? { origin } : {}),
+    };
 
-  await writeStoredAction(workspaceRealpath, action);
-  return action;
+    await writeStoredAction(workspaceRealpath, action, true);
+    return action;
+  });
+}
+
+function normalizePendingActionOrigin(
+  value: PendingActionOrigin,
+): PendingActionOrigin {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'kind',
+      'referenceId',
+      'runId',
+      'runRevision',
+      'candidateFingerprint',
+    ])
+    || value.kind !== 'referenceDeconstructionPublish'
+    || typeof value.referenceId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
+    || value.referenceId.includes('..')
+    || typeof value.runId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.runId)
+    || value.runId.includes('..')
+    || !Number.isSafeInteger(value.runRevision)
+    || value.runRevision < 0
+    || typeof value.candidateFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.candidateFingerprint)
+  ) {
+    throw new Error('PendingAction origin is invalid.');
+  }
+  return structuredClone(value);
 }
 
 function pendingActionResult(action: WriteIntentPendingAction): {
@@ -1119,15 +1668,23 @@ async function writeStoredAction(
   action: StoredWriteIntentAction,
   rejectDuplicate = false,
 ): Promise<void> {
+  if (rejectDuplicate) {
+    await assertPendingActionIdentityAvailable(workspaceRealpath, action.id);
+  }
   const pendingFile = pendingActionPath(workspaceRealpath, action.id);
   await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(pendingFile));
   await mkdir(dirname(pendingFile), { recursive: true });
   await assertRealParentInsideWorkspace(workspaceRealpath, dirname(pendingFile));
   try {
-    await writeFile(pendingFile, `${JSON.stringify(action, null, 2)}\n`, {
-      encoding: 'utf-8',
-      flag: rejectDuplicate ? 'wx' : 'w',
-    });
+    if (rejectDuplicate) {
+      await writeExclusiveJsonAtomic(
+        pendingFile,
+        action,
+        `Prepared write-intent preview ${action.id} was already promoted.`,
+      );
+    } else {
+      await writeFile(pendingFile, `${JSON.stringify(action, null, 2)}\n`, 'utf-8');
+    }
   } catch (error) {
     if (rejectDuplicate && isAlreadyExistsError(error)) {
       throw new Error(`Prepared write-intent preview ${action.id} was already promoted.`);
@@ -1140,11 +1697,22 @@ async function readStoredAction(
   workspaceRealpath: string,
   id: string,
 ): Promise<StoredWriteIntentAction> {
-  if (!/^pa_[0-9a-f-]+$/i.test(id)) {
-    throw new Error(`Invalid PendingAction id: ${id}`);
-  }
+  return readStoredActionFromDirectory(
+    workspaceRealpath,
+    safePendingActionId(id),
+    'pending-actions',
+  );
+}
 
-  const raw = await readFile(pendingActionPath(workspaceRealpath, id), 'utf-8');
+async function readStoredActionFromDirectory(
+  workspaceRealpath: string,
+  id: string,
+  directory: 'pending-actions' | 'accepted-actions' | 'rejected-actions',
+): Promise<StoredWriteIntentAction> {
+  const raw = await readFile(
+    join(workspaceRealpath, '.workspace', directory, `${safePendingActionId(id)}.json`),
+    'utf-8',
+  );
   const parsed = JSON.parse(raw) as unknown;
 
   if (!isStoredAction(parsed)) {
@@ -1158,18 +1726,243 @@ async function archiveStoredAction(
   workspaceRealpath: string,
   action: StoredWriteIntentAction,
   archiveDirectory: 'accepted-actions' | 'rejected-actions',
+  options: {
+    removePending?: boolean;
+  } = {},
 ): Promise<void> {
   const pendingFile = pendingActionPath(workspaceRealpath, action.id);
   const archiveFile = join(workspaceRealpath, '.workspace', archiveDirectory, `${action.id}.json`);
   await assertExistingAncestorsInsideWorkspace(workspaceRealpath, dirname(archiveFile));
   await mkdir(dirname(archiveFile), { recursive: true });
   await assertRealParentInsideWorkspace(workspaceRealpath, dirname(archiveFile));
-  await writeFile(archiveFile, `${JSON.stringify(action, null, 2)}\n`, 'utf-8');
-  await rm(pendingFile, { force: true });
+  const conflictingDirectory = archiveDirectory === 'accepted-actions'
+    ? 'rejected-actions'
+    : 'accepted-actions';
+  try {
+    await lstat(join(
+      workspaceRealpath,
+      '.workspace',
+      conflictingDirectory,
+      `${action.id}.json`,
+    ));
+    throw new Error(`PendingAction ${action.id} has a conflicting terminal archive.`);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+  await writeExclusiveJsonAtomic(
+    archiveFile,
+    action,
+    `PendingAction terminal archive already exists: ${action.id}.`,
+  );
+  if (options.removePending ?? true) {
+    await rm(pendingFile, { force: true });
+  }
+}
+
+async function writeExclusiveJsonAtomic(
+  path: string,
+  value: unknown,
+  duplicateMessage: string,
+): Promise<void> {
+  const temporary = join(
+    dirname(path),
+    `.${basename(path)}.${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf-8',
+      flag: 'wx',
+    });
+    await link(temporary, path);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      throw new Error(duplicateMessage);
+    }
+    throw error;
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function assertPendingActionIdentityAvailable(
+  workspaceRealpath: string,
+  id: string,
+): Promise<void> {
+  const safeId = safePendingActionId(id);
+  for (const directory of [
+    'pending-actions',
+    'accepted-actions',
+    'rejected-actions',
+  ] as const) {
+    try {
+      await lstat(join(workspaceRealpath, '.workspace', directory, `${safeId}.json`));
+      throw new Error(`Prepared write-intent preview ${safeId} was already promoted.`);
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
+    }
+  }
 }
 
 function pendingActionPath(workspaceRealpath: string, id: string): string {
   return join(workspaceRealpath, '.workspace', 'pending-actions', `${id}.json`);
+}
+
+async function withPendingActionLock<T>(
+  workspaceRealpath: string,
+  id: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await acquirePendingActionLock(workspaceRealpath, id);
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+}
+
+async function withPendingActionApplyLock<T>(
+  workspaceRealpath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await acquirePendingActionApplyLock(workspaceRealpath);
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+}
+
+async function acquirePendingActionLock(
+  workspaceRealpath: string,
+  id: string,
+): Promise<() => Promise<void>> {
+  const safeId = safePendingActionId(id);
+  const locksRoot = resolveInternalWorkspacePath(
+    workspaceRealpath,
+    join('.workspace', 'pending-action-locks'),
+  );
+  await assertExistingAncestorsInsideWorkspace(workspaceRealpath, locksRoot);
+  await mkdir(locksRoot, { recursive: true });
+  await assertRealParentInsideWorkspace(workspaceRealpath, locksRoot);
+  const lockRoot = join(locksRoot, `${safeId}.lock`);
+  return acquireOwnedPendingActionLock(
+    lockRoot,
+    `PendingAction ${safeId}`,
+  );
+}
+
+async function acquirePendingActionApplyLock(
+  workspaceRealpath: string,
+): Promise<() => Promise<void>> {
+  const locksRoot = resolveInternalWorkspacePath(
+    workspaceRealpath,
+    join('.workspace', 'pending-action-locks'),
+  );
+  await assertExistingAncestorsInsideWorkspace(workspaceRealpath, locksRoot);
+  await mkdir(locksRoot, { recursive: true });
+  await assertRealParentInsideWorkspace(workspaceRealpath, locksRoot);
+  return acquireOwnedPendingActionLock(
+    join(locksRoot, 'workspace-apply.lock'),
+    'PendingAction workspace apply',
+  );
+}
+
+async function acquireOwnedPendingActionLock(
+  lockRoot: string,
+  displayName: string,
+): Promise<() => Promise<void>> {
+  const ownerPath = join(lockRoot, 'owner.json');
+  const owner = {
+    token: randomUUID(),
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  };
+  const serializedOwner = `${JSON.stringify(owner)}\n`;
+
+  for (
+    let attempt = 0;
+    attempt < PENDING_ACTION_LOCK_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      await mkdir(lockRoot);
+      try {
+        await writeFile(ownerPath, serializedOwner, {
+          encoding: 'utf-8',
+          flag: 'wx',
+        });
+      } catch (error) {
+        await rm(lockRoot, { recursive: true, force: true });
+        throw error;
+      }
+      return async () => {
+        try {
+          const raw = await readFile(ownerPath, 'utf-8');
+          const current = JSON.parse(raw) as unknown;
+          if (isRecord(current) && current.token === owner.token) {
+            await rm(lockRoot, { recursive: true, force: true });
+          }
+        } catch (error) {
+          if (!isNotFoundError(error)) throw error;
+        }
+      };
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      if (await recoverStalePendingActionLock(lockRoot)) continue;
+      await new Promise<void>((resolveWait) => {
+        setTimeout(resolveWait, PENDING_ACTION_LOCK_WAIT_MS);
+      });
+    }
+  }
+  throw new Error(`${displayName} is locked by another process.`);
+}
+
+async function recoverStalePendingActionLock(lockRoot: string): Promise<boolean> {
+  let information: Awaited<ReturnType<typeof lstat>>;
+  try {
+    information = await lstat(lockRoot);
+  } catch (error) {
+    if (isNotFoundError(error)) return true;
+    throw error;
+  }
+  if (information.isSymbolicLink() || !information.isDirectory()) {
+    throw new Error('PendingAction lock path is invalid.');
+  }
+  if (Date.now() - information.mtimeMs < PENDING_ACTION_LOCK_STALE_MS) {
+    return false;
+  }
+  let ownerPid: number | undefined;
+  try {
+    const owner = JSON.parse(
+      await readFile(join(lockRoot, 'owner.json'), 'utf-8'),
+    ) as unknown;
+    ownerPid = isRecord(owner) && Number.isSafeInteger(owner.pid)
+      ? owner.pid as number
+      : undefined;
+  } catch (error) {
+    if (!isNotFoundError(error) && !(error instanceof SyntaxError)) throw error;
+  }
+  if (ownerPid !== undefined && isProcessAlive(ownerPid)) return false;
+  const quarantine = `${lockRoot}.stale-${randomUUID()}`;
+  try {
+    await rename(lockRoot, quarantine);
+  } catch (error) {
+    if (isNotFoundError(error) || isAlreadyExistsError(error)) return true;
+    throw error;
+  }
+  await rm(quarantine, { recursive: true, force: true });
+  return true;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
 }
 
 async function writePreparedPreviewManifest(
@@ -1252,21 +2045,7 @@ async function assertPreviewHasNotBeenPromoted(
   workspaceRealpath: string,
   id: string,
 ): Promise<void> {
-  const safeId = safePendingActionId(id);
-  const actionFiles = [
-    pendingActionPath(workspaceRealpath, safeId),
-    join(workspaceRealpath, '.workspace', 'accepted-actions', `${safeId}.json`),
-    join(workspaceRealpath, '.workspace', 'rejected-actions', `${safeId}.json`),
-  ];
-  for (const actionFile of actionFiles) {
-    try {
-      await lstat(actionFile);
-      throw new Error(`Prepared write-intent preview ${safeId} was already promoted.`);
-    } catch (error) {
-      if (isNotFoundError(error)) continue;
-      throw error;
-    }
-  }
+  await assertPendingActionIdentityAvailable(workspaceRealpath, id);
 }
 
 function assertPreparedWriteIntentPreview(
@@ -1678,20 +2457,82 @@ function getRecordId(value: unknown): string | undefined {
 }
 
 function isStoredAction(value: unknown): value is StoredWriteIntentAction {
-  return (
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.title === 'string' &&
-    typeof value.description === 'string' &&
-    Array.isArray(value.patches) &&
-    Array.isArray(value.touchedFiles) &&
-    typeof value.diff === 'string' &&
-    typeof value.createdAt === 'string' &&
-    (value.status === 'pending' ||
-      value.status === 'accepted' ||
-      value.status === 'rejected') &&
-    Array.isArray(value.shadowWrites)
-  );
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'title',
+      'description',
+      'patches',
+      'touchedFiles',
+      'diff',
+      'createdAt',
+      'status',
+      'shadowWrites',
+      'origin',
+      'acceptedAt',
+      'rejectedAt',
+    ])
+    || typeof value.title !== 'string'
+    || !value.title.trim()
+    || value.title.length > 1_000
+    || typeof value.description !== 'string'
+    || !value.description.trim()
+    || value.description.length > 4_000
+    || !Array.isArray(value.patches)
+    || value.patches.length === 0
+    || value.patches.length > 4_096
+    || !Array.isArray(value.touchedFiles)
+    || value.touchedFiles.length !== value.patches.length
+    || typeof value.diff !== 'string'
+    || value.diff.length > 10_000_000
+    || typeof value.createdAt !== 'string'
+    || !Number.isFinite(Date.parse(value.createdAt))
+    || (value.status !== 'pending'
+      && value.status !== 'accepted'
+      && value.status !== 'rejected')
+    || !Array.isArray(value.shadowWrites)
+    || value.shadowWrites.length !== value.touchedFiles.length
+    || !value.shadowWrites.every(isStrictShadowWriteWithBaseline)
+    || (value.status === 'pending'
+      && (value.acceptedAt !== undefined || value.rejectedAt !== undefined))
+    || (value.status === 'accepted'
+      && (
+        typeof value.acceptedAt !== 'string'
+        || !Number.isFinite(Date.parse(value.acceptedAt))
+        || value.rejectedAt !== undefined
+      ))
+    || (value.status === 'rejected'
+      && (
+        typeof value.rejectedAt !== 'string'
+        || !Number.isFinite(Date.parse(value.rejectedAt))
+        || value.acceptedAt !== undefined
+      ))
+  ) {
+    return false;
+  }
+  try {
+    safePendingActionId(value.id);
+    const patches = value.patches as SemanticPatch[];
+    for (const patch of patches) validateSemanticPatch(patch);
+    const touchedFiles = value.touchedFiles.map((file) =>
+      safeRelativePath(file as string));
+    if (
+      new Set(touchedFiles).size !== touchedFiles.length
+      || patches.some((patch, index) =>
+        resolvePatchTargetFile(patch) !== touchedFiles[index])
+      || value.shadowWrites.some((write, index) =>
+        (write as ShadowWriteReference).targetFile !== touchedFiles[index])
+    ) {
+      return false;
+    }
+    if (value.origin !== undefined) {
+      normalizePendingActionOrigin(value.origin as PendingActionOrigin);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

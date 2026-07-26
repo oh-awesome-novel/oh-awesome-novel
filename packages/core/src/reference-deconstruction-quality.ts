@@ -21,6 +21,13 @@ import type {
   ReferenceStyleProfileDimensionResult,
   ReferenceStyleProfileResult,
 } from './reference-deconstruction-full.js';
+import {
+  REFERENCE_DISTILLED_CATEGORIES,
+  collectReferenceDistillationFindings,
+} from './reference-deconstruction-distill.js';
+import type {
+  ReferenceDistillationResult,
+} from './reference-deconstruction-distill.js';
 
 export const REFERENCE_ANALYSIS_EXACT_OVERLAP_CHARS = 80 as const;
 export const MAX_REFERENCE_ANALYSIS_QUALITY_SOURCE_CHARS = 2_000_000 as const;
@@ -47,7 +54,8 @@ export interface ReferenceDeconstructionQualitySelectedAttempt {
 export type ReferenceDeconstructionAnalysisOutput =
   | ReferenceChapterAnalysisResult
   | ReferenceAggregateAnalysisResult
-  | ReferenceStyleProfileResult;
+  | ReferenceStyleProfileResult
+  | ReferenceDistillationResult;
 
 export interface EvaluateReferenceDeconstructionAnalysisQualityInput {
   runId: string;
@@ -68,6 +76,7 @@ export interface ReferenceDeconstructionAnalysisCoverage {
   plannedAggregateUnitCount: number;
   completedAggregateUnitCount: number;
   styleCompleted: boolean;
+  distillCompleted: boolean;
   percent: number;
 }
 
@@ -121,6 +130,7 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
   const chapterUnits = requiredUnits.filter((unit) => unit.kind === 'chapterChunk');
   const aggregateUnits = requiredUnits.filter((unit) => unit.kind === 'aggregate');
   const styleUnits = requiredUnits.filter((unit) => unit.kind === 'style');
+  const distillUnits = requiredUnits.filter((unit) => unit.kind === 'distill');
 
   validatePlanShape(plan, diagnostics);
 
@@ -220,6 +230,7 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
     plan,
     aggregateUnits,
     styleUnits,
+    distillUnits,
     outputsByUnitId,
     diagnostics,
   );
@@ -252,6 +263,8 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
     unitsById.get(unitId)?.kind === 'aggregate'));
   const styleCompleted = styleUnits.length === 1
     && checkedUnitIds.includes(styleUnits[0]!.id);
+  const distillCompleted = distillUnits.length === 1
+    && checkedUnitIds.includes(distillUnits[0]!.id);
   const percent = requiredUnits.length
     ? Math.floor((checkedUnitIds.length / requiredUnits.length) * 100)
     : 0;
@@ -273,6 +286,7 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
       plannedAggregateUnitCount: aggregateUnits.length,
       completedAggregateUnitCount: completedAggregateUnitIds.size,
       styleCompleted,
+      distillCompleted,
       percent,
     },
     checkedUnitIds,
@@ -335,6 +349,7 @@ export function parseReferenceDeconstructionAnalysisQualityReport(
     'plannedAggregateUnitCount',
     'completedAggregateUnitCount',
     'styleCompleted',
+    'distillCompleted',
     'percent',
   ]);
   const coverage: ReferenceDeconstructionAnalysisCoverage = {
@@ -387,6 +402,10 @@ export function parseReferenceDeconstructionAnalysisQualityReport(
       2_047,
     ),
     styleCompleted: requireBoolean(coverageRecord.styleCompleted, 'coverage.styleCompleted'),
+    distillCompleted: requireBoolean(
+      coverageRecord.distillCompleted,
+      'coverage.distillCompleted',
+    ),
     percent: requireInteger(coverageRecord.percent, 'coverage.percent', 0, 100),
   };
   const checkedUnitIds = requireUniqueIdentifiers(
@@ -419,12 +438,13 @@ export function parseReferenceDeconstructionAnalysisQualityReport(
     || coverage.plannedUnitCount !== (
       coverage.plannedChapterUnitCount
       + coverage.plannedAggregateUnitCount
-      + 1
+      + 2
     )
     || coverage.checkedUnitCount !== (
       coverage.completedChapterUnitCount
       + coverage.completedAggregateUnitCount
       + Number(coverage.styleCompleted)
+      + Number(coverage.distillCompleted)
     )
     || coverage.percent !== Math.floor(
       (coverage.checkedUnitCount / coverage.plannedUnitCount) * 100,
@@ -507,16 +527,18 @@ function validatePlanShape(
   }
   const aggregateRoot = plan.units.find((unit) => unit.id === plan.aggregateRootUnitId);
   const style = plan.units.find((unit) => unit.id === plan.styleUnitId);
+  const distill = plan.units.find((unit) => unit.id === plan.distillUnitId);
   const quality = plan.units.find((unit) => unit.id === plan.analysisQualityUnitId);
   if (
     aggregateRoot?.kind !== 'aggregate'
     || style?.kind !== 'style'
+    || distill?.kind !== 'distill'
     || quality?.kind !== 'analysisQuality'
   ) {
     diagnostics.push(blockingDiagnostic(
       'quality-plan-terminal-units',
       'quality.plan.invalidTerminalUnits',
-      'The aggregate, style, or analysis-quality terminal unit is invalid.',
+      'The aggregate, style, distill, or analysis-quality terminal unit is invalid.',
     ));
   }
 }
@@ -681,6 +703,8 @@ function outputMatchesUnit(
       ? isAggregateOutput(output)
       : unit.kind === 'style'
         ? isStyleOutput(output)
+        : unit.kind === 'distill'
+          ? isDistillationOutput(output)
         : false;
 }
 
@@ -805,6 +829,7 @@ function validateDerivedCoverageAndClosure(
   plan: ReferenceDeconstructionWorkPlan,
   aggregateUnits: readonly ReferenceDeconstructionWorkUnit[],
   styleUnits: readonly ReferenceDeconstructionWorkUnit[],
+  distillUnits: readonly ReferenceDeconstructionWorkUnit[],
   outputsByUnitId: ReadonlyMap<string, ReferenceDeconstructionAnalysisOutput>,
   diagnostics: ReferenceDeconstructionDiagnostic[],
 ): void {
@@ -872,6 +897,87 @@ function validateDerivedCoverageAndClosure(
     collectDirectPredecessorFindings(styleUnit, outputsByUnitId),
     diagnostics,
   );
+  validateDistillationClosure(
+    plan,
+    distillUnits,
+    outputsByUnitId,
+    diagnostics,
+  );
+}
+
+function validateDistillationClosure(
+  plan: ReferenceDeconstructionWorkPlan,
+  distillUnits: readonly ReferenceDeconstructionWorkUnit[],
+  outputsByUnitId: ReadonlyMap<string, ReferenceDeconstructionAnalysisOutput>,
+  diagnostics: ReferenceDeconstructionDiagnostic[],
+): void {
+  if (distillUnits.length !== 1) {
+    diagnostics.push(blockingDiagnostic(
+      'quality-distill-count',
+      'quality.distill.invalidCount',
+      'The work plan must contain exactly one distill unit.',
+    ));
+    return;
+  }
+  const unit = distillUnits[0]!;
+  const output = outputsByUnitId.get(unit.id);
+  if (!isDistillationOutput(output)) return;
+  const aggregate = outputsByUnitId.get(plan.aggregateRootUnitId);
+  const style = outputsByUnitId.get(plan.styleUnitId);
+  if (!isAggregateOutput(aggregate) || !isStyleOutput(style)) {
+    diagnostics.push(blockingDiagnostic(
+      `quality-distill-predecessor-${unit.ordinal}`,
+      'quality.distill.missingPredecessor',
+      'Distillation requires the final aggregate and style outputs.',
+      unit,
+    ));
+    return;
+  }
+  if (
+    !sameSet(output.coveredUnitIds, aggregate.coveredUnitIds)
+    || !sameSet(output.coveredChapterIds, aggregate.coveredChapterIds)
+    || !sameSet(output.coveredChapterIds, plan.chapterIds)
+  ) {
+    diagnostics.push(blockingDiagnostic(
+      `quality-distill-coverage-${unit.ordinal}`,
+      'quality.distill.coverageMismatch',
+      'Distillation does not cover the final aggregate and all chapters.',
+      unit,
+    ));
+  }
+  const allowedFindings = new Map(
+    collectReferenceDistillationFindings(aggregate.findings, style)
+      .map((finding) => [finding.id, finding]),
+  );
+  const categoryCounts = new Map(
+    REFERENCE_DISTILLED_CATEGORIES.map((category) => [category, 0]),
+  );
+  output.entries.forEach((entry, index) => {
+    categoryCounts.set(entry.category, (categoryCounts.get(entry.category) ?? 0) + 1);
+    if (
+      !entry.sourceFindingRefs.length
+      || entry.sourceFindingRefs.some((findingId) => !allowedFindings.has(findingId))
+      || !Number.isSafeInteger(entry.estimatedTokens)
+      || entry.estimatedTokens < 1
+    ) {
+      diagnostics.push(blockingDiagnostic(
+        `quality-distill-entry-${unit.ordinal}-${index}`,
+        'quality.distill.invalidEntry',
+        `Distilled entry ${entry.id} has invalid finding closure or token estimate.`,
+        unit,
+      ));
+    }
+  });
+  for (const category of REFERENCE_DISTILLED_CATEGORIES) {
+    if (!categoryCounts.get(category)) {
+      diagnostics.push(blockingDiagnostic(
+        `quality-distill-category-${category}`,
+        'quality.distill.missingCategory',
+        `Distillation is missing required category ${category}.`,
+        unit,
+      ));
+    }
+  }
 }
 
 function expectedPredecessorCoverage(
@@ -1036,8 +1142,10 @@ function appendUncertaintyDiagnostics(
         : isAggregateOutput(output)
           ? output.findings.flatMap((finding) =>
               finding.uncertainty ? [finding.uncertainty] : [])
-          : output.dimensions.flatMap((dimension) =>
-              dimension.uncertainty ? [dimension.uncertainty] : [])),
+          : isStyleOutput(output)
+            ? output.dimensions.flatMap((dimension) =>
+                dimension.uncertainty ? [dimension.uncertainty] : [])
+            : []),
     ];
     [...new Set(uncertainties)].forEach((uncertainty, index) => {
       diagnostics.push({
@@ -1122,7 +1230,7 @@ function collectOutputCandidates(
   } else if (isAggregateOutput(output)) {
     append(`${output.unitId}-summary`, output.summary);
     collectFindingCandidates(output.unitId, output.findings, append);
-  } else {
+  } else if (isStyleOutput(output)) {
     append(`${output.unitId}-summary`, output.summary);
     output.dimensions.forEach((dimension, index) => {
       append(`${output.unitId}-dimension-${index}-observation`, dimension.observation);
@@ -1134,6 +1242,21 @@ function collectOutputCandidates(
       append(`${output.unitId}-transferable-${index}`, text));
     output.nonImitationBoundaries.forEach((text, index) =>
       append(`${output.unitId}-non-imitation-${index}`, text));
+  } else {
+    output.entries.forEach((entry, index) => {
+      append(`${output.unitId}-entry-${index}-title`, entry.title);
+      append(`${output.unitId}-entry-${index}-technique`, entry.technique);
+      entry.whenUseful.forEach((text, itemIndex) =>
+        append(`${output.unitId}-entry-${index}-when-${itemIndex}`, text));
+      entry.constraints.forEach((text, itemIndex) =>
+        append(`${output.unitId}-entry-${index}-constraint-${itemIndex}`, text));
+      entry.differentiationPrompts.forEach((text, itemIndex) =>
+        append(`${output.unitId}-entry-${index}-differentiate-${itemIndex}`, text));
+    });
+    output.doNotCopyRules.forEach((text, index) =>
+      append(`${output.unitId}-do-not-copy-${index}`, text));
+    output.differentiationWarnings.forEach((text, index) =>
+      append(`${output.unitId}-differentiation-warning-${index}`, text));
   }
   output.uncertainties.forEach((text, index) =>
     append(`${output.unitId}-uncertainty-${index}`, text));
@@ -1280,6 +1403,12 @@ function isStyleOutput(
   value: ReferenceDeconstructionAnalysisOutput | undefined,
 ): value is ReferenceStyleProfileResult {
   return value !== undefined && 'dimensions' in value;
+}
+
+function isDistillationOutput(
+  value: ReferenceDeconstructionAnalysisOutput | undefined,
+): value is ReferenceDistillationResult {
+  return value !== undefined && 'entries' in value;
 }
 
 function samePointer(left: ReferenceSourcePointer, right: ReferenceSourcePointer): boolean {

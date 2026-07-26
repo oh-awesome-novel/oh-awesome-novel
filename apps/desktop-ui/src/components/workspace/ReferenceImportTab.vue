@@ -15,6 +15,10 @@ import type {
   ReferenceWorkSummary,
 } from '../../composables/useWorkspaceApi';
 
+const emit = defineEmits<{
+  reviewPendingAction: [pendingActionId: string];
+}>();
+
 const api = useWorkspaceApi();
 const references = shallowRef<ReferenceWorkSummary[]>([]);
 const selection = shallowRef<ReferenceContextSelection>();
@@ -47,6 +51,7 @@ async function refreshReferences(): Promise<void> {
     selection.value = (await api.selectReferenceContext({
       tokenBudget: 1500,
       maxReferences: 3,
+      maxEntries: 8,
       capability: 'novel.write_chapter',
       goal: 'Inspect eligible distilled reference context from the References panel.',
     })).selection;
@@ -83,6 +88,14 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
   } finally {
     updatingId.value = '';
   }
+}
+
+async function createPublishPendingAction(): Promise<void> {
+  await deconstruction.publish();
+  const pendingActionId = deconstruction.publication.value?.pendingActionId ??
+    deconstruction.publishPendingAction.value?.id;
+  if (!pendingActionId) return;
+  emit('reviewPendingAction', pendingActionId);
 }
 </script>
 
@@ -124,6 +137,7 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       :pausing="deconstruction.pausing.value"
       :resuming="deconstruction.resuming.value"
       :retrying="deconstruction.retrying.value"
+      :publishing="deconstruction.publishing.value"
       :reconciling="deconstruction.reconciling.value"
       :indeterminate="deconstruction.indeterminate.value"
       :error="deconstruction.error.value"
@@ -135,7 +149,9 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       :can-retry="deconstruction.canRetry.value"
       :can-cancel="deconstruction.canCancel.value"
       :can-approve="deconstruction.canApprove.value"
+      :can-publish="deconstruction.canPublish.value"
       :needs-reconcile="deconstruction.needsReconcile.value"
+      :publication="deconstruction.publication.value"
       @start-preview="deconstruction.startPreview(undefined, $event)"
       @advance-preview="deconstruction.advancePreview()"
       @cancel="deconstruction.cancel()"
@@ -145,6 +161,8 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
       @pause-full="deconstruction.pauseFull()"
       @resume-full="deconstruction.resumeFull()"
       @retry-failed-unit="deconstruction.retryFailedUnit($event)"
+      @publish="createPublishPendingAction"
+      @review-pending-action="emit('reviewPendingAction', $event)"
     />
 
     <ReferenceList

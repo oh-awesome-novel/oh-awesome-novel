@@ -3,15 +3,18 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectReferenceAnalysisFindings,
+  collectReferenceDistillationFindings,
   createReferenceAnalysisOutputHash,
   createReferenceDeconstructionWorkPlan,
   evaluateReferenceDeconstructionAnalysisQuality,
   normalizeReferenceAggregateAnalysisModelOutput,
   normalizeReferenceChapterAnalysisModelOutput,
+  normalizeReferenceDistillationModelOutput,
   normalizeReferenceStyleProfileModelOutput,
   parseReferenceAggregateAnalysisResult,
   parseReferenceChapterAnalysisResult,
   parseReferenceDeconstructionAnalysisQualityReport,
+  parseReferenceDistillationResult,
   parseReferenceStyleProfileResult,
   resolveReferenceChapterWorkUnitWindow,
 } from '@oh-awesome-novel/core';
@@ -36,8 +39,8 @@ describe('reference deconstruction analysis quality', () => {
     expect(report).toMatchObject({
       status: 'passed',
       coverage: {
-        plannedUnitCount: 3,
-        checkedUnitCount: 3,
+        plannedUnitCount: 4,
+        checkedUnitCount: 4,
         plannedChapterUnitCount: 1,
         completedChapterUnitCount: 1,
         plannedChapterCount: 1,
@@ -45,11 +48,12 @@ describe('reference deconstruction analysis quality', () => {
         plannedAggregateUnitCount: 1,
         completedAggregateUnitCount: 1,
         styleCompleted: true,
+        distillCompleted: true,
         percent: 100,
       },
       diagnostics: [],
     });
-    expect(report.checkedUnitIds).toHaveLength(3);
+    expect(report.checkedUnitIds).toHaveLength(4);
     expect(report.outputHashes).toEqual(
       fixture.outputs.map((output) => createReferenceAnalysisOutputHash(output)),
     );
@@ -109,6 +113,7 @@ describe('reference deconstruction analysis quality', () => {
             }),
       },
       fixture.outputs[2]!,
+      fixture.outputs[3]!,
     ];
     const attempts = createAttempts(fixture.plan, outputs);
     const report = evaluateReferenceDeconstructionAnalysisQuality({
@@ -138,6 +143,7 @@ describe('reference deconstruction analysis quality', () => {
       fixture.outputs[0]!,
       { ...aggregateOutput, summary: copied },
       fixture.outputs[2]!,
+      fixture.outputs[3]!,
     ];
     const report = evaluateReferenceDeconstructionAnalysisQuality({
       runId: fixture.runId,
@@ -171,6 +177,7 @@ describe('reference deconstruction analysis quality', () => {
       },
       fixture.outputs[1]!,
       fixture.outputs[2]!,
+      fixture.outputs[3]!,
     ];
     const report = evaluateReferenceDeconstructionAnalysisQuality({
       runId: fixture.runId,
@@ -190,20 +197,23 @@ describe('reference deconstruction analysis quality', () => {
 
   it('strictly reparses canonical stored outputs and rejects unknown fields or broken closure', () => {
     const fixture = createQualityFixture();
-    const [chapter, aggregate, style] = fixture.outputs;
+    const [chapter, aggregate, style, distillation] = fixture.outputs;
     if (
       !chapter
       || !aggregate
       || !style
+      || !distillation
       || !('unitSummary' in chapter)
       || !('findings' in aggregate)
       || !('dimensions' in style)
+      || !('entries' in distillation)
     ) {
       throw new Error('Unexpected strict-parser fixture outputs.');
     }
     const chapterUnit = fixture.plan.units.find((unit) => unit.kind === 'chapterChunk')!;
     const aggregateUnit = fixture.plan.units.find((unit) => unit.kind === 'aggregate')!;
     const styleUnit = fixture.plan.units.find((unit) => unit.kind === 'style')!;
+    const distillUnit = fixture.plan.units.find((unit) => unit.kind === 'distill')!;
     const chapterFindings = Object.fromEntries(
       collectReferenceAnalysisFindings(chapter).map((finding) => [finding.id, finding]),
     );
@@ -231,6 +241,16 @@ describe('reference deconstruction analysis quality', () => {
       coveredUnitIds: aggregate.coveredUnitIds,
       coveredChapterIds: aggregate.coveredChapterIds,
     })).toEqual(style);
+    expect(parseReferenceDistillationResult(distillation, {
+      runId: fixture.runId,
+      unit: distillUnit,
+      verifiedFindings: Object.fromEntries(
+        collectReferenceDistillationFindings(aggregate.findings, style)
+          .map((finding) => [finding.id, finding]),
+      ),
+      coveredUnitIds: aggregate.coveredUnitIds,
+      coveredChapterIds: aggregate.coveredChapterIds,
+    })).toEqual(distillation);
     const report = evaluateReferenceDeconstructionAnalysisQuality({
       runId: fixture.runId,
       plan: fixture.plan,
@@ -293,6 +313,7 @@ function createQualityFixture() {
   const chapterUnit = plan.units.find((unit) => unit.kind === 'chapterChunk')!;
   const aggregateUnit = plan.units.find((unit) => unit.kind === 'aggregate')!;
   const styleUnit = plan.units.find((unit) => unit.kind === 'style')!;
+  const distillUnit = plan.units.find((unit) => unit.kind === 'distill')!;
   const sourceWindow = resolveReferenceChapterWorkUnitWindow(sourceText, chapterUnit);
   const chapter = normalizeReferenceChapterAnalysisModelOutput({
     unitSummary: {
@@ -375,13 +396,81 @@ function createQualityFixture() {
     coveredUnitIds: aggregate.coveredUnitIds,
     coveredChapterIds: aggregate.coveredChapterIds,
   });
-  const outputs: ReferenceDeconstructionAnalysisOutput[] = [chapter, aggregate, style];
+  const distillationFindings = collectReferenceDistillationFindings(
+    aggregate.findings,
+    style,
+  );
+  const distillation = normalizeReferenceDistillationModelOutput({
+    entries: [
+      createDistillationEntry(
+        'writingStyle',
+        'Functional escalation',
+        aggregate.findings[0]!.id,
+      ),
+      createDistillationEntry(
+        'pacing',
+        'Delayed answer pressure',
+        aggregate.findings[0]!.id,
+      ),
+      createDistillationEntry(
+        'hooks',
+        'Visible reader question',
+        aggregate.findings[0]!.id,
+      ),
+      createDistillationEntry(
+        'scene',
+        'Consequence-led turn',
+        aggregate.findings[0]!.id,
+      ),
+      createDistillationEntry(
+        'character',
+        'Choice reveals pressure',
+        style.dimensions[0]!.id,
+      ),
+    ],
+    doNotCopyRules: ['Do not reuse source names, prose, dialogue, or event order.'],
+    differentiationWarnings: ['Change motive, setting, stakes, and consequence structure.'],
+    uncertainties: [],
+  }, {
+    runId,
+    unit: distillUnit,
+    verifiedFindings: Object.fromEntries(
+      distillationFindings.map((finding) => [finding.id, finding]),
+    ),
+    coveredUnitIds: aggregate.coveredUnitIds,
+    coveredChapterIds: aggregate.coveredChapterIds,
+  });
+  const outputs: ReferenceDeconstructionAnalysisOutput[] = [
+    chapter,
+    aggregate,
+    style,
+    distillation,
+  ];
   return {
     runId,
     plan,
     sourceWindow,
     outputs,
     attempts: createAttempts(plan, outputs),
+  };
+}
+
+function createDistillationEntry(
+  category: 'writingStyle' | 'pacing' | 'hooks' | 'scene' | 'character',
+  title: string,
+  sourceFindingRef: string,
+) {
+  return {
+    category,
+    title,
+    technique: `Transform ${title.toLocaleLowerCase('en-US')} into an original planning constraint.`,
+    whenUseful: ['Use when a writing task needs this structural effect.'],
+    constraints: ['Change all story-specific expression and causal details.'],
+    differentiationPrompts: ['What original motive and consequence can replace this pattern?'],
+    sourceFindingRefs: [sourceFindingRef],
+    confidence: 'high' as const,
+    tags: [category],
+    capabilityIds: ['novel.write_chapter' as const],
   };
 }
 

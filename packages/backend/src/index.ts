@@ -149,10 +149,12 @@ import type { NovelAgentPlayWritingReferenceInput } from '@oh-awesome-novel/agen
 import type {
   GenerateReferenceAggregateAnalysisInput,
   GenerateReferenceChapterAnalysisInput,
+  GenerateReferenceDistillationInput,
   GenerateReferenceQuickPreviewInput,
   GenerateReferenceStyleProfileInput,
   ReferenceAggregateAnalysisOutput,
   ReferenceChapterAnalysisOutput,
+  ReferenceDistillationOutput,
   ReferenceFullDeconstructionGenerationResult,
   ReferenceQuickPreviewGenerationResult,
   ReferenceStyleProfileOutput,
@@ -188,6 +190,7 @@ import {
   validateWriteIntentPreview,
   listGitCommits,
   loadYaml,
+  readPendingAction,
   readGitStatus,
   readChapterIndexStatus,
   rejectPendingAction,
@@ -197,6 +200,7 @@ import {
 } from '@oh-awesome-novel/tools';
 import type {
   PreviewableWriteIntentToolName,
+  ReferenceDeconstructionPublishPendingActionOrigin,
   WriteIntentPendingAction,
 } from '@oh-awesome-novel/tools';
 import {
@@ -251,6 +255,9 @@ export interface NovelBackendOptions {
   runReferenceStyleProfile?: (
     input: GenerateReferenceStyleProfileInput,
   ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceStyleProfileOutput>>;
+  runReferenceDistillation?: (
+    input: GenerateReferenceDistillationInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceDistillationOutput>>;
 }
 
 export interface NovelBackendAgentInput {
@@ -415,6 +422,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ...(options.runReferenceStyleProfile
       ? { runStyleProfile: options.runReferenceStyleProfile }
       : {}),
+    ...(options.runReferenceDistillation
+      ? { runDistillation: options.runReferenceDistillation }
+      : {}),
   });
   state.referenceDeconstruction = referenceDeconstruction;
 
@@ -516,6 +526,13 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/cancel', (context) =>
     handleCancelReferenceDeconstructionRun(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
+      context.req.param('runId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/publish', (context) =>
+    handlePublishReferenceDeconstructionRun(
       referenceDeconstruction,
       context.req.param('referenceId') ?? '',
       context.req.param('runId') ?? '',
@@ -1523,8 +1540,14 @@ async function handleSelectReferenceContext(
   const allowedFields = new Set([
     'tokenBudget',
     'maxReferences',
+    'maxEntries',
     'capability',
     'goal',
+    'sceneType',
+    'pacingIntent',
+    'hookIntent',
+    'styleIntent',
+    'characterIntent',
     'explicitReferenceIds',
   ]);
   if (Object.keys(body).some((key) => !allowedFields.has(key))) {
@@ -1532,11 +1555,17 @@ async function handleSelectReferenceContext(
   }
   const tokenBudget = getOptionalNumber(body, 'tokenBudget');
   const maxReferences = getOptionalNumber(body, 'maxReferences');
+  const maxEntries = getOptionalNumber(body, 'maxEntries');
   const requestedCapability = getOptionalString(body, 'capability');
   const capability = requestedCapability && isNovelCopilotCapabilityId(requestedCapability)
     ? requestedCapability
     : undefined;
   const goal = getOptionalString(body, 'goal');
+  const sceneType = getOptionalString(body, 'sceneType');
+  const pacingIntent = getOptionalString(body, 'pacingIntent');
+  const hookIntent = getOptionalString(body, 'hookIntent');
+  const styleIntent = getOptionalString(body, 'styleIntent');
+  const characterIntent = getOptionalString(body, 'characterIntent');
   const explicitReferenceIds = readStringArray(body, 'explicitReferenceIds');
 
   if (hasOwn(body, 'capability') && (!requestedCapability || !capability)) {
@@ -1554,22 +1583,50 @@ async function handleSelectReferenceContext(
   if (hasOwn(body, 'goal') && (typeof body.goal !== 'string' || body.goal.length > 4_000)) {
     return jsonResponse(context, 400, { error: 'Reference goal is invalid.' });
   }
+  for (const [field, value] of [
+    ['sceneType', sceneType],
+    ['pacingIntent', pacingIntent],
+    ['hookIntent', hookIntent],
+    ['styleIntent', styleIntent],
+    ['characterIntent', characterIntent],
+  ] as const) {
+    if (hasOwn(body, field) && (
+      typeof body[field] !== 'string'
+      || value === undefined
+      || value.length > 1_000
+    )) {
+      return jsonResponse(context, 400, {
+        error: `Reference ${field} is invalid.`,
+      });
+    }
+  }
   if (hasOwn(body, 'tokenBudget') && (tokenBudget === undefined ||
     !Number.isSafeInteger(tokenBudget) || tokenBudget < 1 || tokenBudget > 100_000
   )) {
     return jsonResponse(context, 400, { error: 'Reference tokenBudget is invalid.' });
   }
   if (hasOwn(body, 'maxReferences') && (maxReferences === undefined ||
-    !Number.isSafeInteger(maxReferences) || maxReferences < 1 || maxReferences > 32
+    !Number.isSafeInteger(maxReferences) || maxReferences < 1 || maxReferences > 20
   )) {
     return jsonResponse(context, 400, { error: 'Reference maxReferences is invalid.' });
+  }
+  if (hasOwn(body, 'maxEntries') && (maxEntries === undefined ||
+    !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 50
+  )) {
+    return jsonResponse(context, 400, { error: 'Reference maxEntries is invalid.' });
   }
   const selection = await selectReferenceContext({
     workspaceRoot,
     tokenBudget,
     maxReferences,
+    maxEntries,
     capability,
     goal,
+    sceneType,
+    pacingIntent,
+    hookIntent,
+    styleIntent,
+    characterIntent,
     explicitReferenceIds,
   });
 
@@ -1754,6 +1811,22 @@ async function handleCancelReferenceDeconstructionRun(
       context,
     );
     return controller.cancelRun(referenceId, runId, input);
+  });
+}
+
+async function handlePublishReferenceDeconstructionRun(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  runId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    const input = await readReferenceDeconstructionMutationRequest(
+      referenceId,
+      runId,
+      context,
+    );
+    return controller.publishRun(referenceId, runId, input);
   });
 }
 
@@ -5050,17 +5123,48 @@ async function handlePendingActionDecision(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const gitConfig = await readWorkspaceGitConfig(workspaceRoot);
+  const storedAction = await readPendingAction({ workspaceRoot, id });
+  const referenceOrigin = readReferencePublishPendingActionOrigin(
+    storedAction.origin,
+  );
+  const hasReferenceArtifactPatch = storedAction.patches.some((patch) =>
+    isRecord(patch) && patch.kind === 'referenceArtifact');
+  if (hasReferenceArtifactPatch && !referenceOrigin) {
+    return jsonResponse(context, 409, {
+      error: 'Reference publication PendingAction origin is missing or invalid.',
+      code: 'invalid_reference_publish_pending_action',
+    });
+  }
   let result: Awaited<ReturnType<typeof acceptPendingAction>> |
     Awaited<ReturnType<typeof rejectPendingAction>>;
+  let referencePublish:
+    Awaited<ReturnType<ReferenceDeconstructionBackendController[
+      'completePublishPendingAction'
+    ]>> | undefined;
   try {
-    result = decision === 'accept'
-      ? await acceptPendingActionWithPlayAdoptionValidation({
-          workspaceRoot,
-          state,
-          id,
-          autoCommitOnAccept: gitConfig.autoCommitOnAccept,
-        })
-      : await rejectPendingAction({ workspaceRoot, id });
+    if (referenceOrigin) {
+      const controller = state.referenceDeconstruction;
+      if (!controller) {
+        throw new Error('Reference deconstruction controller is unavailable.');
+      }
+      const decided = await controller.decidePublishPendingAction(
+        id,
+        referenceOrigin,
+        decision,
+        gitConfig.autoCommitOnAccept,
+      );
+      result = decided.action;
+      referencePublish = decided.referencePublish;
+    } else {
+      result = decision === 'accept'
+        ? await acceptPendingActionWithPlayAdoptionValidation({
+            workspaceRoot,
+            state,
+            id,
+            autoCommitOnAccept: gitConfig.autoCommitOnAccept,
+          })
+        : await rejectPendingAction({ workspaceRoot, id });
+    }
   } catch (error) {
     if (
       error instanceof StalePlayAdoptionPreviewError ||
@@ -5074,13 +5178,41 @@ async function handlePendingActionDecision(
     if (error instanceof PlayLaunchSourceValidationError) {
       return playLaunchSourceConflictResponse(context, error.diagnostics);
     }
+    if (referenceOrigin) {
+      const response = toReferenceDeconstructionErrorResponse(error);
+      return jsonResponse(context, response.status, response.body);
+    }
     throw error;
   }
 
   return jsonResponse(context, 200, {
     ...result,
+    ...(referencePublish ? { referencePublish } : {}),
     refresh: await buildPostDecisionRefresh(workspaceRoot),
   });
+}
+
+function readReferencePublishPendingActionOrigin(
+  value: unknown,
+): ReferenceDeconstructionPublishPendingActionOrigin | undefined {
+  if (
+    !isRecord(value)
+    || Object.keys(value).length !== 5
+    || value.kind !== 'referenceDeconstructionPublish'
+    || typeof value.referenceId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
+    || value.referenceId.includes('..')
+    || typeof value.runId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.runId)
+    || value.runId.includes('..')
+    || !Number.isSafeInteger(value.runRevision)
+    || (value.runRevision as number) < 0
+    || typeof value.candidateFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.candidateFingerprint)
+  ) {
+    return undefined;
+  }
+  return value as unknown as ReferenceDeconstructionPublishPendingActionOrigin;
 }
 
 async function acceptPendingActionWithPlayAdoptionValidation(input: {
@@ -5242,17 +5374,20 @@ async function createRuntimeEventStream(
     ]);
     const capability = inferNovelAgentCapability(input.request, skill.quickCommands);
     const pendingActions = await listPendingActions({ workspaceRoot: input.workspaceRoot });
+    const referenceRecallActive = hasExplicitReferenceRecallIntent(input.request);
     const [projectHealth, referenceSelection] = await Promise.all([
       readProjectHealth(input.workspaceRoot, {
         pendingActionCount: pendingActions.length,
       }),
-      selectReferenceContext({
-        workspaceRoot: input.workspaceRoot,
-        capability,
-        goal: input.request,
-        tokenBudget: 1_500,
-        maxReferences: 3,
-      }),
+      referenceRecallActive
+        ? selectReferenceContext({
+            workspaceRoot: input.workspaceRoot,
+            capability,
+            goal: input.request,
+            tokenBudget: 1_500,
+            maxReferences: 3,
+          })
+        : Promise.resolve(undefined),
     ]);
     const selectedContext = [
       ...(projectHealth.issues.length
@@ -5263,7 +5398,8 @@ async function createRuntimeEventStream(
           }]
         : []),
       ...(
-        referenceSelection.included.length || referenceSelection.omitted.length
+        referenceSelection
+        && (referenceSelection.included.length || referenceSelection.omitted.length)
           ? [{
               kind: 'selected' as const,
               title: 'Reference Context Selection',
@@ -5281,7 +5417,7 @@ async function createRuntimeEventStream(
       request: input.request,
       skill,
       tools: options.tools,
-      referenceSelection,
+      ...(referenceSelection ? { referenceSelection } : {}),
       playWritingReferences: input.playWritingReferences,
       projectHealth,
       selectedContext,
@@ -5294,6 +5430,22 @@ async function createRuntimeEventStream(
     request: input.request,
     tools: options.tools,
   });
+}
+
+export function hasExplicitReferenceRecallIntent(request: string): boolean {
+  const normalized = request.normalize('NFKC').toLocaleLowerCase();
+  const chineseNegativeIntent =
+    /(?:(?:不要|别|避免|请勿|禁止|无需|不用|不必|不应|不准|不想|不希望|勿|莫)[^\n。！？!?；;]{0,20}|不(?=(?:参考|借鉴|参照|对照)))(?:参考|借鉴|参照|对照)/u;
+  const englishNegativeIntent =
+    /(?:without|avoid(?:ing)?|refrain(?:ing)?\s+from|do\s+not|don't|never|must\s+not|should\s+not|no\s+need\s+to)[^\n.!?;]{0,48}(?:references?\b|reference\s+(?:work|material|novel|book|text)\b|draw(?:ing)?\s+from|take\s+inspiration\s+from)/u;
+  if (
+    chineseNegativeIntent.test(normalized)
+    || englishNegativeIntent.test(normalized)
+  ) {
+    return false;
+  }
+  return /(?:参考(?:作品|书|小说|文本|资料)?|借鉴|参照|对照|references\b|reference\s+(?:work|novel|book|text|material)\b)/u
+    .test(normalized);
 }
 
 async function loadNovelAgentWorkspaceSnapshot(workspaceRoot: string): Promise<{

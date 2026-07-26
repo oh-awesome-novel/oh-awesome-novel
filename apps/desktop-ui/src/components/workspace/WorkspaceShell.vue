@@ -295,7 +295,7 @@ function reviewPendingAction(action?: PendingActionView) {
   layout.openRightPanel('approval');
 }
 
-async function reviewPlayPendingAction(pendingActionId: string): Promise<void> {
+async function reviewPendingActionById(pendingActionId: string): Promise<void> {
   await refreshPendingActionSurface();
   const action = decoratedPendingActions.value.find(
     (candidate) => candidate.id === pendingActionId,
@@ -507,6 +507,7 @@ function applyDecisionRefresh(
       @reject-pending-action="rejectPendingAction"
       @review-pending-action="reviewPendingAction"
       @open-pending-action-diff="openPendingActionDiff"
+      @review-pending-action-id="reviewPendingActionById"
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
     />
@@ -520,7 +521,7 @@ function applyDecisionRefresh(
       :files-error="treeError"
       @configure-provider="emit('configureProvider')"
       @pending-action-created="refreshPendingActionSurface"
-      @review-pending-action="reviewPlayPendingAction"
+      @review-pending-action="reviewPendingActionById"
       @writing-references-updated="conversations.refreshWritingReferences"
     />
 

@@ -147,6 +147,7 @@ export type ReferenceDeconstructionUnitKind =
   | 'chapterChunk'
   | 'aggregate'
   | 'style'
+  | 'distill'
   | 'analysisQuality';
 
 export type ReferenceDeconstructionUnitStatus =
@@ -224,6 +225,43 @@ export interface ReferenceDeconstructionFullRun {
   analysisQuality?: ReferenceDeconstructionAnalysisQuality;
 }
 
+export type ReferenceDistilledCategory =
+  | 'writingStyle'
+  | 'pacing'
+  | 'hooks'
+  | 'scene'
+  | 'character';
+
+export type ReferenceDeconstructionPublicationFileKind =
+  | 'index'
+  | 'manifest'
+  | 'diagnostics'
+  | 'progress'
+  | 'deconstruction'
+  | 'distilled'
+  | 'context';
+
+export interface ReferenceDeconstructionPublicationFile {
+  path: string;
+  checksumSha256: string;
+  kind: ReferenceDeconstructionPublicationFileKind;
+}
+
+export interface ReferenceDeconstructionPublicationEntry {
+  id: string;
+  category: ReferenceDistilledCategory;
+  title: string;
+  estimatedTokens: number;
+}
+
+export interface ReferenceDeconstructionPublication {
+  candidateFingerprint: string;
+  pendingActionId?: string;
+  files: ReferenceDeconstructionPublicationFile[];
+  entryInventory: ReferenceDeconstructionPublicationEntry[];
+  preparedAt: string;
+}
+
 export interface ReferenceDeconstructionRun {
   schemaVersion: 1;
   id: string;
@@ -241,6 +279,7 @@ export interface ReferenceDeconstructionRun {
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   receiptCount: number;
   full?: ReferenceDeconstructionFullRun;
+  publication?: ReferenceDeconstructionPublication;
   createdAt: string;
   updatedAt: string;
   fullApprovedAt?: string;
@@ -268,6 +307,31 @@ export interface ReferenceDeconstructionRunMutationResult {
   run: ReferenceDeconstructionRun;
   receipt: ReferenceDeconstructionMutationReceipt;
   replayed: boolean;
+}
+
+export interface ReferenceDeconstructionPublishPendingActionOrigin {
+  kind: 'referenceDeconstructionPublish';
+  referenceId: string;
+  runId: string;
+  runRevision: number;
+  candidateFingerprint: string;
+}
+
+export interface ReferenceDeconstructionPublishPendingAction {
+  id: string;
+  title: string;
+  description: string;
+  touchedFiles: string[];
+  diff: string;
+  createdAt: string;
+  status: 'pending' | 'accepted';
+  acceptedAt?: string;
+  origin: ReferenceDeconstructionPublishPendingActionOrigin;
+}
+
+export interface ReferenceDeconstructionPublishResult
+  extends ReferenceDeconstructionRunMutationResult {
+  pendingAction: ReferenceDeconstructionPublishPendingAction;
 }
 
 export interface ReferenceDeconstructionRunReadResult {
@@ -324,13 +388,32 @@ const FULL_STAGE_IDS: readonly ReferenceDeconstructionStageId[] = [
   'chapterAnalysis',
   'aggregateAnalysis',
   'styleProfile',
+  'distillForOan',
   'qualityGate',
 ];
 const UNIT_KINDS: ReadonlySet<string> = new Set([
   'chapterChunk',
   'aggregate',
   'style',
+  'distill',
   'analysisQuality',
+]);
+const DISTILLED_CATEGORIES: ReadonlySet<string> = new Set([
+  'writingStyle',
+  'pacing',
+  'hooks',
+  'scene',
+  'character',
+]);
+const MAX_REFERENCE_DISTILLED_ENTRY_TOKENS = 2_048;
+const PUBLICATION_FILE_KINDS: ReadonlySet<string> = new Set([
+  'index',
+  'manifest',
+  'diagnostics',
+  'progress',
+  'deconstruction',
+  'distilled',
+  'context',
 ]);
 const UNIT_STATUSES: ReadonlySet<string> = new Set([
   'queued',
@@ -451,8 +534,14 @@ export function assertRetryReferenceDeconstructionRunInput(
 export function assertReferenceContextRequest(input: {
   tokenBudget?: number;
   maxReferences?: number;
+  maxEntries?: number;
   capability?: NovelCopilotCapabilityId;
   goal?: string;
+  sceneType?: string;
+  pacingIntent?: string;
+  hookIntent?: string;
+  styleIntent?: string;
+  characterIntent?: string;
   explicitReferenceIds?: string[];
 }): void {
   if (
@@ -460,16 +549,32 @@ export function assertReferenceContextRequest(input: {
     !hasOnlyKnownFields(input, [
       'tokenBudget',
       'maxReferences',
+      'maxEntries',
       'capability',
       'goal',
+      'sceneType',
+      'pacingIntent',
+      'hookIntent',
+      'styleIntent',
+      'characterIntent',
       'explicitReferenceIds',
     ]) ||
     (input.tokenBudget !== undefined &&
       (!isPositiveSafeInteger(input.tokenBudget) || input.tokenBudget > 100_000)) ||
     (input.maxReferences !== undefined &&
-      (!isPositiveSafeInteger(input.maxReferences) || input.maxReferences > 32)) ||
+      (!isPositiveSafeInteger(input.maxReferences) || input.maxReferences > 20)) ||
+    (input.maxEntries !== undefined &&
+      (!isPositiveSafeInteger(input.maxEntries) || input.maxEntries > 50)) ||
     (input.capability !== undefined && !CAPABILITY_IDS.has(input.capability)) ||
     (input.goal !== undefined && !isBoundedText(input.goal, 4_000, true)) ||
+    (input.sceneType !== undefined && !isBoundedText(input.sceneType, 1_000, true)) ||
+    (input.pacingIntent !== undefined &&
+      !isBoundedText(input.pacingIntent, 1_000, true)) ||
+    (input.hookIntent !== undefined && !isBoundedText(input.hookIntent, 1_000, true)) ||
+    (input.styleIntent !== undefined &&
+      !isBoundedText(input.styleIntent, 1_000, true)) ||
+    (input.characterIntent !== undefined &&
+      !isBoundedText(input.characterIntent, 1_000, true)) ||
     (input.explicitReferenceIds !== undefined &&
       !isUniqueSafeIdArray(input.explicitReferenceIds, 32))
   ) {
@@ -609,6 +714,62 @@ export function parseReferenceDeconstructionRunMutationResult(
   return value as unknown as ReferenceDeconstructionRunMutationResult;
 }
 
+export function parseReferenceDeconstructionPublishResult(
+  value: unknown,
+  expectedReferenceId: string,
+  expectedRunId: string,
+  expectedInput: MutateReferenceDeconstructionRunInput,
+): ReferenceDeconstructionPublishResult {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'run',
+      'receipt',
+      'replayed',
+      'pendingAction',
+    ])
+  ) {
+    throw new Error('Reference deconstruction publish returned an invalid payload.');
+  }
+  parseReferenceDeconstructionRunMutationResult(
+    {
+      run: value.run,
+      receipt: value.receipt,
+      replayed: value.replayed,
+    },
+    expectedReferenceId,
+    expectedInput.idempotencyKey,
+    expectedRunId,
+  );
+  if (
+    !isReferenceDeconstructionPublishPendingAction(
+      value.pendingAction,
+      expectedReferenceId,
+      expectedRunId,
+      expectedInput.baseRunRevision,
+    )
+  ) {
+    throw new Error('Reference deconstruction publish returned an invalid payload.');
+  }
+  const run = value.run as ReferenceDeconstructionRun;
+  const pendingAction =
+    value.pendingAction as ReferenceDeconstructionPublishPendingAction;
+  if (
+    !run.publication
+    || run.publication.pendingActionId !== pendingAction.id
+    || run.publication.candidateFingerprint !==
+      pendingAction.origin.candidateFingerprint
+    || pendingAction.touchedFiles.length !== run.publication.files.length
+    || pendingAction.touchedFiles.some((path) =>
+      !run.publication?.files.some((file) => file.path === path))
+    || (pendingAction.status === 'pending' && run.status !== 'publishing')
+    || (pendingAction.status === 'accepted' && run.status !== 'completed')
+  ) {
+    throw new Error('Reference deconstruction publish returned an inconsistent payload.');
+  }
+  return value as unknown as ReferenceDeconstructionPublishResult;
+}
+
 export function isReferenceDeconstructionRun(
   value: unknown,
 ): value is ReferenceDeconstructionRun {
@@ -631,6 +792,7 @@ export function isReferenceDeconstructionRun(
       'mutationReceipts',
       'receiptCount',
       'full',
+      'publication',
       'createdAt',
       'updatedAt',
       'fullApprovedAt',
@@ -685,6 +847,14 @@ export function isReferenceDeconstructionRun(
     (value.full !== undefined &&
       !isReferenceDeconstructionFullRun(value.full, value.diagnostics)) ||
     ((value.full === undefined) !== (value.fullApprovedAt === undefined)) ||
+    (value.publication !== undefined &&
+      !isReferenceDeconstructionPublication(value.publication, value.referenceId)) ||
+    ((value.status === 'publishing' || value.status === 'completed') !==
+      (value.publication !== undefined)) ||
+    ((value.status === 'publishing' || value.status === 'completed') &&
+      !isSafeId(
+        (value.publication as unknown as Record<string, unknown>)?.pendingActionId,
+      )) ||
     (value.preview !== undefined && !isQuickPreview(
       value.preview,
       value.id as string,
@@ -699,7 +869,7 @@ export function isReferenceDeconstructionRun(
       value.full !== undefined,
     )) ||
     (requiresPreview(value.status, value.fullApprovedAt) && value.preview === undefined) ||
-    (value.status === 'reviewReady' &&
+    (['reviewReady', 'publishing', 'completed'].includes(value.status as string) &&
       !isReviewReadyFullRun(value.full, value.diagnostics)) ||
     value.mutationReceipts.some((receipt) =>
       receipt.resultingRunRevision > (value.runRevision as number))
@@ -777,6 +947,157 @@ function isReferenceDeconstructionFullRun(
       .filter((item): item is ReferenceDeconstructionUnitSummary => item !== undefined),
   ];
   return units.every((unit) => unit.ordinal <= progress.plannedUnits);
+}
+
+function isReferenceDeconstructionPublication(
+  value: unknown,
+  referenceId: unknown,
+): value is ReferenceDeconstructionPublication {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'candidateFingerprint',
+      'pendingActionId',
+      'files',
+      'entryInventory',
+      'preparedAt',
+    ])
+    || !isSha256(value.candidateFingerprint)
+    || (value.pendingActionId !== undefined && !isPendingActionId(value.pendingActionId))
+    || !Array.isArray(value.files)
+    || value.files.length < 1
+    || value.files.length > 4_096
+    || !value.files.every((file) =>
+      isReferenceDeconstructionPublicationFile(file, referenceId))
+    || !hasUniqueStringField(value.files, 'path')
+    || !Array.isArray(value.entryInventory)
+    || value.entryInventory.length < 5
+    || value.entryInventory.length > 50
+    || !value.entryInventory.every(isReferenceDeconstructionPublicationEntry)
+    || !hasUniqueIds(value.entryInventory)
+    || !isTimestamp(value.preparedAt)
+  ) {
+    return false;
+  }
+  const entries = value.entryInventory as ReferenceDeconstructionPublicationEntry[];
+  return [...DISTILLED_CATEGORIES].every((category) => {
+    const count = entries.filter((entry) => entry.category === category).length;
+    return count >= 1 && count <= 12;
+  });
+}
+
+function isReferenceDeconstructionPublicationFile(
+  value: unknown,
+  referenceId: unknown,
+): value is ReferenceDeconstructionPublicationFile {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, ['path', 'checksumSha256', 'kind'])
+    || typeof value.path !== 'string'
+    || !isSafeRelativePath(value.path)
+    || !isSha256(value.checksumSha256)
+    || typeof value.kind !== 'string'
+    || !PUBLICATION_FILE_KINDS.has(value.kind)
+    || !isSafeId(referenceId)
+  ) {
+    return false;
+  }
+  const bundlePrefix = `examples/references/${referenceId}/`;
+  if (value.kind === 'index') return value.path === 'examples/references.yaml';
+  if (!value.path.startsWith(bundlePrefix)) return false;
+  const relativePath = value.path.slice(bundlePrefix.length);
+  switch (value.kind) {
+    case 'manifest':
+      return relativePath === 'deconstruction-manifest.yaml';
+    case 'diagnostics':
+      return relativePath === 'diagnostics.yaml';
+    case 'progress':
+      return relativePath === 'progress.yaml';
+    case 'deconstruction':
+      return relativePath.startsWith('deconstruction/')
+        && relativePath.endsWith('.md');
+    case 'distilled':
+      return relativePath.startsWith('distilled/')
+        && relativePath.endsWith('.md');
+    case 'context':
+      return relativePath.startsWith('context/')
+        && (relativePath.endsWith('.md') || relativePath.endsWith('.yaml'));
+    default:
+      return false;
+  }
+}
+
+function isReferenceDeconstructionPublicationEntry(
+  value: unknown,
+): value is ReferenceDeconstructionPublicationEntry {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'category',
+      'title',
+      'estimatedTokens',
+    ])
+    && isSafeId(value.id)
+    && typeof value.category === 'string'
+    && DISTILLED_CATEGORIES.has(value.category)
+    && isBoundedText(value.title, 500)
+    && isPositiveSafeInteger(value.estimatedTokens)
+    && value.estimatedTokens <= MAX_REFERENCE_DISTILLED_ENTRY_TOKENS;
+}
+
+function isReferenceDeconstructionPublishPendingAction(
+  value: unknown,
+  referenceId: string,
+  runId: string,
+  runRevision: number,
+): value is ReferenceDeconstructionPublishPendingAction {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'title',
+      'description',
+      'touchedFiles',
+      'diff',
+      'createdAt',
+      'status',
+      'acceptedAt',
+      'rejectedAt',
+      'origin',
+    ])
+    || !isPendingActionId(value.id)
+    || !isBoundedText(value.title, 1_000)
+    || !isBoundedText(value.description, 4_000)
+    || !Array.isArray(value.touchedFiles)
+    || value.touchedFiles.length < 1
+    || value.touchedFiles.length > 4_096
+    || !value.touchedFiles.every(isSafeRelativePath)
+    || new Set(value.touchedFiles).size !== value.touchedFiles.length
+    || typeof value.diff !== 'string'
+    || value.diff.length > 10_000_000
+    || !isTimestamp(value.createdAt)
+    || (value.status !== 'pending' && value.status !== 'accepted')
+    || (value.acceptedAt !== undefined && !isTimestamp(value.acceptedAt))
+    || value.rejectedAt !== undefined
+    || !isRecord(value.origin)
+    || !hasOnlyKnownFields(value.origin, [
+      'kind',
+      'referenceId',
+      'runId',
+      'runRevision',
+      'candidateFingerprint',
+    ])
+    || value.origin.kind !== 'referenceDeconstructionPublish'
+    || value.origin.referenceId !== referenceId
+    || value.origin.runId !== runId
+    || value.origin.runRevision !== runRevision
+    || !isSha256(value.origin.candidateFingerprint)
+  ) {
+    return false;
+  }
+  return value.status === 'accepted'
+    ? value.acceptedAt !== undefined
+    : value.acceptedAt === undefined;
 }
 
 function isFullStageSummary(
@@ -894,6 +1215,7 @@ function isUnitSummary(
   if (
     (value.kind === 'aggregate') !== (value.stageId === 'aggregateAnalysis') ||
     (value.kind === 'style') !== (value.stageId === 'styleProfile') ||
+    (value.kind === 'distill') !== (value.stageId === 'distillForOan') ||
     (value.kind === 'analysisQuality') !== (value.stageId === 'qualityGate')
   ) return false;
   if (
@@ -1359,6 +1681,7 @@ function isReferenceWorkSummary(value: unknown): value is ReferenceWorkSummary {
     'deconstructionStatus',
     'contextEligible',
     'readinessReason',
+    'publishedContext',
   ];
   return hasOnlyKnownFields(value, allowed) &&
     isSafeId(value.id) &&
@@ -1388,8 +1711,41 @@ function isReferenceWorkSummary(value: unknown): value is ReferenceWorkSummary {
     isPublishedDeconstructionStatus(value.deconstructionStatus) &&
     typeof value.contextEligible === 'boolean' &&
     isReferenceReadinessReason(value.readinessReason) &&
+    (value.publishedContext === undefined ||
+      isPublishedReferenceContext(value.publishedContext)) &&
+    ((value.deconstructionStatus === 'completed') ===
+      (value.publishedContext !== undefined)) &&
     isReferenceSummaryReadinessConsistent(value) &&
     (!value.contextEligible || value.deconstructionStatus === 'completed');
+}
+
+function isPublishedReferenceContext(value: unknown): boolean {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'runId',
+      'fingerprint',
+      'entryCount',
+      'categoryCounts',
+    ])
+    || !isSafeId(value.runId)
+    || !isSha256(value.fingerprint)
+    || !isPositiveSafeInteger(value.entryCount)
+    || value.entryCount < DISTILLED_CATEGORIES.size
+    || value.entryCount > 50
+    || !isRecord(value.categoryCounts)
+    || Object.keys(value.categoryCounts).length !== DISTILLED_CATEGORIES.size
+    || ![...DISTILLED_CATEGORIES].every((category) =>
+      isPositiveSafeInteger(
+        (value.categoryCounts as Record<string, unknown>)[category],
+      )
+      && Number((value.categoryCounts as Record<string, unknown>)[category]) <= 12)
+  ) {
+    return false;
+  }
+  const categoryCounts = value.categoryCounts as Record<string, unknown>;
+  return Object.values(categoryCounts)
+    .reduce<number>((total, count) => total + Number(count), 0) === value.entryCount;
 }
 
 function isReferenceSummaryReadinessConsistent(
@@ -1406,7 +1762,8 @@ function isReferenceSummaryReadinessConsistent(
     return value.readinessReason === 'notAnalyzed';
   }
   if (value.deconstructionStatus === 'stale') {
-    return value.readinessReason === 'stale';
+    return value.readinessReason === 'stale'
+      || value.readinessReason === 'invalidContextIndex';
   }
   if (value.deconstructionStatus === 'qualityFailed') {
     return value.readinessReason === 'qualityFailed';
@@ -1521,82 +1878,191 @@ function isReferenceContextSelection(value: unknown): value is ReferenceContextS
     !isRecord(value) ||
     !hasOnlyKnownFields(value, [
       'tokenBudget',
+      'maxReferences',
+      'maxEntries',
+      'usedTokens',
       'originalSourceRead',
       'noCopyWarnings',
+      'differentiationWarnings',
       'included',
       'omitted',
     ]) ||
     !isPositiveSafeInteger(value.tokenBudget) ||
     value.tokenBudget > 100_000 ||
+    !isPositiveSafeInteger(value.maxReferences) ||
+    value.maxReferences > 20 ||
+    !isPositiveSafeInteger(value.maxEntries) ||
+    value.maxEntries > 50 ||
+    !isNonNegativeSafeInteger(value.usedTokens) ||
+    value.usedTokens > value.tokenBudget ||
     value.originalSourceRead !== false ||
     !isBoundedStringArray(value.noCopyWarnings, 32, 2_000) ||
+    !isBoundedStringArray(value.differentiationWarnings, 32, 2_000) ||
     !Array.isArray(value.included) ||
-    value.included.length > 32 ||
+    value.included.length > value.maxEntries ||
     !value.included.every(isIncludedReferenceContext) ||
     !hasUniqueIds(value.included) ||
+    new Set((value.included as Array<{ referenceId: string }>)
+      .map((entry) => entry.referenceId)).size > value.maxReferences ||
     !Array.isArray(value.omitted) ||
-    value.omitted.length > 1_000 ||
+    value.omitted.length > 4_096 ||
     !value.omitted.every(isOmittedReferenceContext) ||
-    !hasUniqueIds(value.omitted)
+    !hasUniqueReferenceContextOmissions(value.omitted)
   ) {
     return false;
   }
-  const included = value.included as Array<{ id: string; estimatedTokens: number }>;
-  const omitted = value.omitted as Array<{ id: string }>;
-  if (included.some((item) => omitted.some((candidate) => candidate.id === item.id))) {
+  const included = value.included as Array<{
+    id: string;
+    referenceId: string;
+    estimatedTokens: number;
+  }>;
+  const omitted = value.omitted as Array<{
+    scope: string;
+    referenceId: string;
+    entryId?: string;
+  }>;
+  if (included.some((item) => omitted.some((candidate) =>
+    candidate.scope === 'entry'
+    && candidate.referenceId === item.referenceId
+    && candidate.entryId === item.id))) {
     return false;
   }
   const usedTokens = included
     .reduce((sum, item) => sum + item.estimatedTokens, 0);
-  return usedTokens <= value.tokenBudget;
+  return usedTokens === value.usedTokens && usedTokens <= value.tokenBudget;
 }
 
 function isIncludedReferenceContext(value: unknown): boolean {
   return isRecord(value) &&
     hasOnlyKnownFields(value, [
       'id',
-      'title',
+      'referenceId',
+      'referenceTitle',
+      'entryTitle',
+      'category',
       'path',
+      'tags',
+      'capabilityIds',
       'reason',
+      'reasonCode',
       'budgetLayer',
       'semanticBoundary',
       'estimatedTokens',
       'content',
-      'deconstructionStatus',
-      'contextEligible',
-      'reasonCode',
     ]) &&
     isSafeId(value.id) &&
-    isBoundedText(value.title, 500) &&
-    value.path === `examples/references/${value.id}/context/reference-summary.md` &&
+    isSafeId(value.referenceId) &&
+    isBoundedText(value.referenceTitle, 500) &&
+    isBoundedText(value.entryTitle, 500) &&
+    isReferenceDistilledCategory(value.category) &&
+    value.path === referenceDistilledCategoryPath(
+      value.referenceId,
+      value.category,
+    ) &&
+    isBoundedStringArray(value.tags, 32, 200) &&
+    Array.isArray(value.capabilityIds) &&
+    value.capabilityIds.length > 0 &&
+    value.capabilityIds.length <= CAPABILITY_IDS.size &&
+    value.capabilityIds.every((id) => CAPABILITY_IDS.has(id)) &&
+    new Set(value.capabilityIds).size === value.capabilityIds.length &&
     isBoundedText(value.reason, 2_000) &&
+    (value.reasonCode === 'explicitReference' ||
+      value.reasonCode === 'capabilityMatch' ||
+      value.reasonCode === 'taskMatch' ||
+      value.reasonCode === 'fallback') &&
     isBudgetLayer(value.budgetLayer) &&
-    (value.semanticBoundary === 'protected' || value.semanticBoundary === 'compressible') &&
+    value.semanticBoundary === 'compressible' &&
     isPositiveSafeInteger(value.estimatedTokens) &&
-    isBoundedText(value.content, 400_000) &&
-    value.deconstructionStatus === 'completed' &&
-    value.contextEligible === true &&
-    value.reasonCode === 'ready';
+    value.estimatedTokens <= MAX_REFERENCE_DISTILLED_ENTRY_TOKENS &&
+    isBoundedText(value.content, 400_000);
 }
 
 function isOmittedReferenceContext(value: unknown): boolean {
-  return isRecord(value) &&
-    hasOnlyKnownFields(value, [
-      'id',
-      'title',
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, [
+      'scope',
+      'referenceId',
+      'referenceTitle',
+      'entryId',
+      'entryTitle',
+      'category',
       'reason',
       'budgetLayer',
       'deconstructionStatus',
       'contextEligible',
       'reasonCode',
-    ]) &&
-    isSafeId(value.id) &&
-    isBoundedText(value.title, 500) &&
-    isBoundedText(value.reason, 2_000) &&
-    isBudgetLayer(value.budgetLayer) &&
-    isPublishedDeconstructionStatus(value.deconstructionStatus) &&
-    value.contextEligible === false &&
-    isReferenceContextOmissionReason(value.reasonCode);
+      'estimatedTokens',
+    ]) ||
+    (value.scope !== 'reference' && value.scope !== 'entry') ||
+    !isSafeId(value.referenceId) ||
+    !isBoundedText(value.referenceTitle, 500) ||
+    !isBoundedText(value.reason, 2_000) ||
+    !isBudgetLayer(value.budgetLayer) ||
+    !isPublishedDeconstructionStatus(value.deconstructionStatus) ||
+    value.contextEligible !== false ||
+    !isReferenceContextOmissionReason(value.reasonCode) ||
+    (value.estimatedTokens !== undefined &&
+      (!isPositiveSafeInteger(value.estimatedTokens) ||
+        value.estimatedTokens > MAX_REFERENCE_DISTILLED_ENTRY_TOKENS))
+  ) {
+    return false;
+  }
+  if (value.scope === 'reference') {
+    return value.entryId === undefined
+      && value.entryTitle === undefined
+      && value.category === undefined
+      && !isEntryOmissionReason(value.reasonCode);
+  }
+  return isSafeId(value.entryId)
+    && isBoundedText(value.entryTitle, 500)
+    && isReferenceDistilledCategory(value.category)
+    && value.deconstructionStatus === 'completed'
+    && isEntryOmissionReason(value.reasonCode);
+}
+
+function hasUniqueReferenceContextOmissions(values: readonly unknown[]): boolean {
+  const identities = values.map((value) => {
+    if (!isRecord(value) || typeof value.scope !== 'string' ||
+      typeof value.referenceId !== 'string') return undefined;
+    return value.scope === 'entry' && typeof value.entryId === 'string'
+      ? `entry\u0000${value.referenceId}\u0000${value.entryId}`
+      : `reference\u0000${value.referenceId}`;
+  });
+  return identities.every((identity): identity is string => identity !== undefined)
+    && new Set(identities).size === identities.length;
+}
+
+function isEntryOmissionReason(value: unknown): boolean {
+  return value === 'capabilityMismatch'
+    || value === 'taskMismatch'
+    || value === 'maxReferenceCountReached'
+    || value === 'maxEntryCountReached'
+    || value === 'tokenBudgetExceeded';
+}
+
+function isReferenceDistilledCategory(
+  value: unknown,
+): value is ReferenceDistilledCategory {
+  return typeof value === 'string' && DISTILLED_CATEGORIES.has(value);
+}
+
+function referenceDistilledCategoryPath(
+  referenceId: unknown,
+  category: unknown,
+): string {
+  const file = category === 'writingStyle'
+    ? 'writing-style.md'
+    : category === 'pacing'
+      ? 'pacing.md'
+      : category === 'hooks'
+        ? 'hooks.md'
+        : category === 'scene'
+          ? 'scene-techniques.md'
+          : category === 'character'
+            ? 'character-techniques.md'
+            : '';
+  return `examples/references/${String(referenceId)}/distilled/${file}`;
 }
 
 function allEvidenceRefs(
@@ -1648,7 +2114,8 @@ function isReferenceReadinessReason(value: unknown): boolean {
     value === 'stale' ||
     value === 'qualityFailed' ||
     value === 'needsRebuild' ||
-    value === 'missingContextSummary';
+    value === 'missingContextSummary' ||
+    value === 'invalidContextIndex';
 }
 
 function isReferenceContextOmissionReason(value: unknown): boolean {
@@ -1661,6 +2128,10 @@ function isReferenceContextOmissionReason(value: unknown): boolean {
     value === 'needsRebuild' ||
     value === 'missingContextSummary' ||
     value === 'invalidContextPath' ||
+    value === 'invalidContextIndex' ||
+    value === 'capabilityMismatch' ||
+    value === 'taskMismatch' ||
+    value === 'maxEntryCountReached' ||
     value === 'tokenBudgetExceeded';
 }
 
@@ -1744,6 +2215,10 @@ function isSafeId(value: unknown): value is string {
     !value.includes('..');
 }
 
+function isPendingActionId(value: unknown): value is string {
+  return typeof value === 'string' && /^pa_[a-f0-9-]{16,128}$/u.test(value);
+}
+
 function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
 }
@@ -1764,6 +2239,19 @@ function isSafeRelativePath(value: unknown): value is string {
   ) return false;
   return value.split('/').every((segment) =>
     segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function hasUniqueStringField(
+  values: readonly unknown[],
+  field: string,
+): boolean {
+  const strings = values.map((value) =>
+    isRecord(value) && typeof value[field] === 'string'
+      ? value[field] as string
+      : undefined,
+  );
+  return strings.every((value): value is string => value !== undefined)
+    && new Set(strings).size === strings.length;
 }
 
 function isBoundedText(value: unknown, maximum: number, allowEmpty = false): value is string {

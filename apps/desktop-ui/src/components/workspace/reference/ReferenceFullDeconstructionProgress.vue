@@ -93,8 +93,9 @@ const emit = defineEmits<{
       </span>
     </div>
     <p v-if="status === 'reviewReady'" class="reference-review-ready">
-      Analysis quality passed. D0–D3 results are ready for later candidate review and publish;
-      the reference bundle has not been published by this run.
+      Analysis, distillation, and quality checks passed. Review the complete candidate below;
+      the reference bundle has not been published and remains unchanged until its PendingAction
+      is accepted.
     </p>
   </section>
 </template>

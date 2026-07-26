@@ -12,6 +12,13 @@ const emit = defineEmits<{
   toggleEnabled: [reference: ReferenceWorkSummary];
   select: [reference: ReferenceWorkSummary];
 }>();
+
+function publishedContext(reference: ReferenceWorkSummary): {
+  fingerprint: string;
+  entryCount: number;
+} | undefined {
+  return reference.publishedContext;
+}
 </script>
 
 <template>
@@ -58,6 +65,10 @@ const emit = defineEmits<{
         </div>
       </div>
       <p class="reference-readiness">{{ reference.readinessReason }}</p>
+      <p v-if="publishedContext(reference)" class="reference-published-summary">
+        {{ publishedContext(reference)?.entryCount }} distilled entries ·
+        fingerprint {{ publishedContext(reference)?.fingerprint }}
+      </p>
       <p class="reference-path">{{ reference.summaryPath }}</p>
       <p class="reference-path">{{ reference.bundlePath }}</p>
       <p class="reference-checksum">{{ reference.checksumSha256 }}</p>
@@ -122,6 +133,7 @@ const emit = defineEmits<{
 
 .reference-card-title span,
 .reference-readiness,
+.reference-published-summary,
 .reference-path,
 .reference-checksum {
   overflow-wrap: anywhere;
@@ -132,6 +144,7 @@ const emit = defineEmits<{
 
 :global([data-theme="dark"]) .reference-card-title span,
 :global([data-theme="dark"]) .reference-readiness,
+:global([data-theme="dark"]) .reference-published-summary,
 :global([data-theme="dark"]) .reference-path,
 :global([data-theme="dark"]) .reference-checksum {
   color: rgb(163 163 163);
@@ -151,6 +164,14 @@ const emit = defineEmits<{
 .reference-readiness {
   margin: 8px 0 0;
   color: rgb(100 116 139);
+  font-size: 12px;
+}
+
+.reference-published-summary {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  color: rgb(21 128 61);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
 </style>
