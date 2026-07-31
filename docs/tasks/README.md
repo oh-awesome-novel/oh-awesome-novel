@@ -79,7 +79,7 @@
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
 - [0800 SemanticPatch Apply Engine](0800.md)
-- [1110 Agent Usage And Context Stats](1110.md)
+- [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 
 ## Package Call Route
 

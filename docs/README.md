@@ -24,6 +24,7 @@
 - [NOVEL_AGENT_COPILOT_SPEC.md](NOVEL_AGENT_COPILOT_SPEC.md): Novel Agent Copilot workflow、快捷指令、审批链路和桌面 UI 规格。
 - [WORKSPACE_FRONTEND_LAYOUT_PLAN.md](WORKSPACE_FRONTEND_LAYOUT_PLAN.md): Codex-like 工作台前端布局计划，包含左右栏隐藏、右侧审阅区和消息流升级。
 - [OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md): OAN agent 写作指引 vNext 的实现规格、任务拆分和验收矩阵。
+- [AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md](AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md): ContextPackage 来源证据、protected budget、provider egress、estimated/actual usage、session artifact 与桌面 Inspector 的实施计划。
 - [PLAY_MODE_SPEC.md](PLAY_MODE_SPEC.md): Play Mode / Roleplay Sandbox 的模式边界、session 文件布局和 adoption 边界。
 - [PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md): 将 Play 提升为与 Writing 同层级的顶级工作区，并引入世界时间、外部事件、回合事务和 HUD 的升级计划。
 - [MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md](MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md): MuseAI 的穿书装配、入场设计、场景推进、分层记忆与角色复盘对 Play Mode 的可吸收点分析。
