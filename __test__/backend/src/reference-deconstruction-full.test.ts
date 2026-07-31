@@ -7,6 +7,7 @@ import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import {
   beginReferenceDeconstructionPublish,
   createReferenceEvidencePointerMap,
+  inspectPublishedReferenceWorkReadiness,
   normalizeReferenceAggregateAnalysisModelOutput,
   normalizeReferenceChapterAnalysisModelOutput,
   normalizeReferenceDistillationModelOutput,
@@ -613,6 +614,57 @@ describe('reference full deconstruction backend', () => {
     });
   });
 
+  it('publishes warned quality with a manifest summary and visible PendingAction count', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot, {
+      withQualityWarning: true,
+    });
+    servers.push(backend);
+    const ready = await createReviewReadyRun(backend.url);
+    expect(ready.run.full?.analysisQuality).toMatchObject({
+      status: 'warned',
+      blockingDiagnosticCount: 0,
+    });
+    expect(ready.run.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'quality.uncertainty',
+      severity: 'warning',
+      blocking: false,
+    }));
+
+    const runUrl = referenceRunUrl(backend.url, ready.referenceId, ready.run.id);
+    const published = await postMutation<PublishEnvelope>(
+      `${runUrl}/publish`,
+      ready.run.runRevision,
+      'publish-warned-bundle',
+    );
+    expect(published.pendingAction.description).toMatch(
+      /Includes [1-9]\d* non-blocking quality warning\(s\)/u,
+    );
+
+    await fetchJson<PendingActionDecisionEnvelope>(
+      `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    await expect(inspectPublishedReferenceWorkReadiness(
+      workspaceRoot,
+      ready.referenceId,
+    )).resolves.toMatchObject({
+      status: 'completed',
+      contextEligible: true,
+      reason: 'ready',
+      deconstructionManifest: {
+        qualityStatus: 'warned',
+        warningSummary: {
+          count: expect.any(Number),
+          codes: expect.arrayContaining(['quality.uncertainty']),
+        },
+      },
+      progress: {
+        contextEligible: true,
+      },
+    });
+  });
+
   it('reconciles an accepted archive after candidate, stages, and source artifacts disappear', async () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startCompleteReferenceBackend(workspaceRoot);
@@ -876,7 +928,10 @@ interface PendingActionDecisionEnvelope {
   referencePublish: RunEnvelope;
 }
 
-async function startCompleteReferenceBackend(workspaceRoot: string) {
+async function startCompleteReferenceBackend(
+  workspaceRoot: string,
+  options: { withQualityWarning?: boolean } = {},
+) {
   return startNovelHttpBackend({
     workspaceRoot,
     providerConfig: providerConfig(),
@@ -890,7 +945,9 @@ async function startCompleteReferenceBackend(workspaceRoot: string) {
         ...(input.rollingContext
           ? { rollingContext: { ...input.rollingContext } }
           : {}),
-      }),
+      }, options.withQualityWarning
+        ? 'The chapter-level pattern may change outside this bounded source window.'
+        : undefined),
     }),
     runReferenceAggregateAnalysis: async (input) => ({
       status: 'completed',
@@ -1042,6 +1099,7 @@ function completedPreview(
 function chapterOutput(
   runId: string,
   execution: ReferenceFullDeconstructionExecution,
+  uncertainty?: string,
 ) {
   const unit = execution.unit;
   const sourceWindow = execution.sourceWindows![0]!;
@@ -1073,7 +1131,7 @@ function chapterOutput(
     }],
     rollingSummary: 'Prior movement established changing pressure and an unresolved reader question.',
     rollingEvidenceRefs: [sourceWindow.pointerId],
-    uncertainties: [],
+    uncertainties: uncertainty ? [uncertainty] : [],
   }, {
     runId,
     unit,

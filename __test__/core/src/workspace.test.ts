@@ -95,7 +95,13 @@ describe('initWorkspace', () => {
       await expect(stat(join(tempDir, dir))).resolves.toBeDefined();
     }
 
-    const oanDirs = ['constitution', 'prompts', 'skills', 'extensions'];
+    const oanDirs = [
+      'constitution',
+      'prompts',
+      'skills',
+      'extensions',
+      'writing-profiles',
+    ];
     for (const dir of oanDirs) {
       await expect(stat(join(tempDir, '.oan', dir))).resolves.toBeDefined();
     }
@@ -112,6 +118,7 @@ describe('initWorkspace', () => {
       'utf-8',
     );
     expect(configContent).toContain('version: 1');
+    expect(configContent).toContain('activeProfileId: commercialWriting');
   });
 
   it('throws when initialising a non-empty directory', async () => {

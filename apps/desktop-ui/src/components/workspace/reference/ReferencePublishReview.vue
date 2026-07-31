@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import ReferenceQualityWarnings from './ReferenceQualityWarnings.vue';
 import type {
+  ReferenceDeconstructionAnalysisQualityStatus,
   ReferenceDeconstructionDiagnostic,
   ReferenceDeconstructionRunStatus,
 } from '../../../composables/useWorkspaceApi';
@@ -16,6 +18,7 @@ const props = defineProps<{
   pipelineVersion: number;
   capabilityVersion: string;
   coveragePercent: number;
+  qualityStatus: ReferenceDeconstructionAnalysisQualityStatus;
   diagnostics: readonly ReferenceDeconstructionDiagnostic[];
   publishing: boolean;
   canPublish: boolean;
@@ -33,9 +36,8 @@ const categoryCounts = computed(() => {
   }
   return [...counts.entries()].map(([category, count]) => ({ category, count }));
 });
-const visibleDiagnostics = computed(() =>
-  props.diagnostics.filter((diagnostic) =>
-    diagnostic.severity !== 'info' || diagnostic.code.includes('copy')),
+const warningDiagnostics = computed(() =>
+  props.diagnostics.filter((diagnostic) => !diagnostic.blocking),
 );
 </script>
 
@@ -68,6 +70,10 @@ const visibleDiagnostics = computed(() =>
       <div class="status-block">
         <span>Entries</span>
         <strong>{{ publication.entryInventory.length }}</strong>
+      </div>
+      <div class="status-block">
+        <span>Warnings</span>
+        <strong>{{ warningDiagnostics.length }}</strong>
       </div>
     </div>
 
@@ -119,19 +125,10 @@ const visibleDiagnostics = computed(() =>
       </ul>
     </section>
 
-    <section
-      v-if="visibleDiagnostics.length"
-      class="reference-publish-section"
-      aria-label="Publish warnings"
-    >
-      <h5>Warnings and no-copy checks</h5>
-      <ul class="reference-publish-warning-list">
-        <li v-for="diagnostic in visibleDiagnostics" :key="diagnostic.id">
-          <strong>{{ diagnostic.code }}</strong>
-          <span>{{ diagnostic.message }}</span>
-        </li>
-      </ul>
-    </section>
+    <ReferenceQualityWarnings
+      :status="qualityStatus"
+      :diagnostics="diagnostics"
+    />
 
     <p class="reference-publish-boundary">
       Accept writes the complete candidate atomically and follows the existing Git
@@ -230,8 +227,7 @@ const visibleDiagnostics = computed(() =>
 }
 
 .reference-publish-file-list,
-.reference-publish-entry-list,
-.reference-publish-warning-list {
+.reference-publish-entry-list {
   display: grid;
   gap: 6px;
   margin: 0;
@@ -240,8 +236,7 @@ const visibleDiagnostics = computed(() =>
 }
 
 .reference-publish-file-list li,
-.reference-publish-entry-list li,
-.reference-publish-warning-list li {
+.reference-publish-entry-list li {
   display: grid;
   gap: 3px;
   padding: 8px;
@@ -252,8 +247,7 @@ const visibleDiagnostics = computed(() =>
 .reference-publish-file-list span,
 .reference-publish-file-list small,
 .reference-publish-entry-list span,
-.reference-publish-entry-list small,
-.reference-publish-warning-list span {
+.reference-publish-entry-list small {
   overflow-wrap: anywhere;
   color: rgb(100 116 139);
   font-size: 12px;
@@ -284,8 +278,7 @@ const visibleDiagnostics = computed(() =>
 }
 
 :global([data-theme="dark"]) .reference-publish-file-list li,
-:global([data-theme="dark"]) .reference-publish-entry-list li,
-:global([data-theme="dark"]) .reference-publish-warning-list li {
+:global([data-theme="dark"]) .reference-publish-entry-list li {
   background: rgb(23 23 23);
 }
 

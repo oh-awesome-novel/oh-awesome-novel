@@ -5,6 +5,7 @@ import ReferenceDiagnostics from './ReferenceDiagnostics.vue';
 import ReferenceFullDeconstructionProgress from './ReferenceFullDeconstructionProgress.vue';
 import ReferencePublishReview from './ReferencePublishReview.vue';
 import ReferencePublishedContextSummary from './ReferencePublishedContextSummary.vue';
+import ReferenceQualityWarnings from './ReferenceQualityWarnings.vue';
 import ReferenceQuickPreview from './ReferenceQuickPreview.vue';
 import type {
   ReferenceDeconstructionPublicationView,
@@ -75,6 +76,7 @@ const runStatusLabels: Record<ReferenceDeconstructionRunStatus, string> = {
 
 const confirmingFull = shallowRef(false);
 const confirmingLowConfidenceRange = shallowRef(false);
+const qualityWarningsReviewed = shallowRef(false);
 const blockingDiagnosticCount = computed(() =>
   props.run?.diagnostics.filter((diagnostic) => diagnostic.blocking).length ?? 0,
 );
@@ -84,6 +86,16 @@ const detectedPreviewChapterCount = computed(() =>
 );
 const hasLowBoundaryConfidence = computed(() =>
   props.reference?.structureConfidence === 'low',
+);
+const nonBlockingDiagnosticCount = computed(() =>
+  props.run?.diagnostics.filter((diagnostic) => !diagnostic.blocking).length ?? 0,
+);
+const canCreatePublishAction = computed(() =>
+  props.canPublish
+  && (
+    nonBlockingDiagnosticCount.value === 0
+    || qualityWarningsReviewed.value
+  ),
 );
 
 const statusLabel = computed(() => {
@@ -103,6 +115,7 @@ watch(
   () => {
     confirmingFull.value = false;
     confirmingLowConfidenceRange.value = false;
+    qualityWarningsReviewed.value = false;
   },
 );
 
@@ -241,10 +254,22 @@ function requestFullApproval(): void {
           Prepare the deterministic multi-file candidate and open one global PendingAction.
           The published reference bundle remains unchanged until that action is accepted.
         </p>
+        <ReferenceQualityWarnings
+          :status="run.full?.analysisQuality?.status ?? 'notEvaluated'"
+          :diagnostics="run.diagnostics"
+          :require-expansion="nonBlockingDiagnosticCount > 0"
+          @reviewed="qualityWarningsReviewed = true"
+        />
+        <p
+          v-if="nonBlockingDiagnosticCount > 0 && !qualityWarningsReviewed"
+          class="empty-copy"
+        >
+          Expand the warning list once before creating the publish PendingAction.
+        </p>
         <button
           class="primary-button tight-button"
           type="button"
-          :disabled="!canPublish"
+          :disabled="!canCreatePublishAction"
           @click="emit('publish')"
         >
           {{ publishing ? 'Creating PendingAction…' : 'Create publish PendingAction' }}
@@ -258,6 +283,7 @@ function requestFullApproval(): void {
         :pipeline-version="run.pipelineVersion"
         :capability-version="run.capabilityVersion"
         :coverage-percent="run.full?.analysisQuality?.coveragePercent ?? 0"
+        :quality-status="run.full?.analysisQuality?.status ?? 'notEvaluated'"
         :diagnostics="run.diagnostics"
         :publishing="publishing"
         :can-publish="canPublish"

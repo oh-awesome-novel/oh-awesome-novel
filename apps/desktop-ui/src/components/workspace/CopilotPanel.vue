@@ -7,10 +7,12 @@ import ChatComposer from '../agent-checkpoint/ChatComposer.vue';
 import CompactApprovalTray from '../agent-checkpoint/CompactApprovalTray.vue';
 import PendingActionPanel from '../agent-checkpoint/PendingActionPanel.vue';
 import WritingReferenceSelector from './WritingReferenceSelector.vue';
+import WritingProfileSummary from './writing-profile/WritingProfileSummary.vue';
 import { useAgentTimeline } from '../../composables/useAgentTimeline';
 import type {
   PendingAction,
   PlayWritingReferenceAttachment,
+  WritingProfileState,
 } from '../../composables/useWorkspaceApi';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
@@ -29,6 +31,8 @@ const props = defineProps<{
   selectedWritingReferenceAttachmentIds: string[];
   writingReferencesLoading: boolean;
   writingReferencesError: string;
+  writingProfileState?: WritingProfileState;
+  writingProfilesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -142,6 +146,11 @@ function mergePendingActions(
     >
       停止
     </button>
+
+    <WritingProfileSummary
+      :state="writingProfileState"
+      :error="writingProfilesError"
+    />
 
     <div v-if="!providerConfigured" class="provider-disabled">
       <strong>Copilot 当前不可用</strong>

@@ -25,7 +25,10 @@ my-novel/
 ├── .oan/
 │   ├── AGENTS.md
 │   ├── CODEX.md
+│   ├── config.yaml
 │   ├── workflow.yaml
+│   ├── writing-profiles/
+│   │   └── <safe-id>.yaml
 │   ├── indexes/
 │   │   └── chapters.yaml
 │   ├── constitution/
@@ -106,6 +109,29 @@ my-novel/
 ├── schemas/
 └── .git/
 ```
+
+### Workspace Configuration And Writing Profiles
+
+`.oan/config.yaml` 是 workspace 级配置文件。Writing Profile 只占用其中的
+`writingProfile` 子树：
+
+```yaml
+version: 1
+writingProfile:
+  activeProfileId: commercialWriting
+```
+
+缺少 `writingProfile` 时，Host 以只读内置 Profile `commercialWriting`
+作为非持久化 fallback。`writingProfile` 子树使用 strict 校验；未知字段、
+非法 id 或指向不存在 / 无效 Profile 时必须产生可定位的 Profile 配置错误，
+但不能使 `git`、`onboarding` 等其它宽松配置 section 失效，也不能阻止
+workspace 打开。
+
+用户自定义 Profile 存放在 `.oan/writing-profiles/<safe-id>.yaml`。文件名
+必须与 Profile 内的 `id` 一致；文件使用固定字段和 strict schema，不能包含
+任意 prompt、脚本、工具、路径或 source binding。内置 Profile 由 Host
+提供，不写入该目录且不可编辑；创建、克隆、更新、删除与激活均为用户显式、
+Git-visible 的原子配置操作。
 
 ## Domain Categories
 

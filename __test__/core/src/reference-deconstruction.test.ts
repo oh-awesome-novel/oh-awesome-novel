@@ -3,13 +3,74 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS,
+  REFERENCE_DECONSTRUCTION_STAGE_IDS,
+  assertReferenceDeconstructionManifest,
+  createNotAnalyzedReferenceManifest,
   createReferenceEvidencePointerMap,
+  createReferenceProgressProjection,
   createReferenceQuickPreviewSelection,
   createReferenceStructureFingerprint,
   normalizeReferenceQuickPreviewModelOutput,
 } from '@oh-awesome-novel/core';
 
 describe('reference deconstruction contracts', () => {
+  it('strictly binds warned manifests to their warning summary and eligibility', () => {
+    const manifest = createNotAnalyzedReferenceManifest({
+      referenceId: 'reference-warned',
+      sourceChecksumSha256: sha256('source'),
+      structureFingerprint: sha256('structure'),
+    });
+    const warned = {
+      ...manifest,
+      status: 'completed' as const,
+      qualityStatus: 'warned' as const,
+      warningSummary: {
+        count: 2,
+        codes: ['quality.copyRisk.exactOverlap', 'quality.uncertainty'],
+      },
+      publishedRunId: 'run-warned',
+      publishedAt: '2026-07-31T00:00:00.000Z',
+      stages: Object.fromEntries(
+        REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [
+          stageId,
+          { status: 'completed', outputHashes: [] },
+        ]),
+      ),
+      outputs: [
+        {
+          kind: 'deconstruction',
+          path: 'deconstruction/quick-preview.md',
+          checksumSha256: sha256('deconstruction'),
+        },
+        {
+          kind: 'distilled',
+          path: 'distilled/writing-style.md',
+          checksumSha256: sha256('distilled'),
+        },
+        {
+          kind: 'context',
+          path: 'context/index.yaml',
+          checksumSha256: sha256('context'),
+        },
+      ],
+    };
+
+    const parsed = assertReferenceDeconstructionManifest(warned);
+    expect(parsed.warningSummary).toEqual(warned.warningSummary);
+    expect(createReferenceProgressProjection(
+      parsed,
+      '2026-07-31T00:00:00.000Z',
+    ).contextEligible).toBe(true);
+    expect(() => assertReferenceDeconstructionManifest({
+      ...warned,
+      warningSummary: { count: 0, codes: [] },
+    })).toThrow('warning summary');
+    expect(() => assertReferenceDeconstructionManifest({
+      ...warned,
+      qualityStatus: 'passed',
+    })).toThrow('warning summary');
+  });
+
   it('selects at most three requested chapters under a hard character budget', () => {
     const sourceText = [
       'Chapter 1',
@@ -140,7 +201,7 @@ describe('reference deconstruction contracts', () => {
     })).toThrow('unknown evidence ref');
   });
 
-  it('reports blocking exact-overlap diagnostics without returning source text', () => {
+  it('reports non-blocking exact-overlap warnings without returning source text', () => {
     const copied = 'This is a deliberately long exact source expression '.repeat(4);
     const sourceText = `Chapter 1\n${copied}`;
     const chapters = [{
@@ -176,7 +237,8 @@ describe('reference deconstruction contracts', () => {
 
     expect(preview.diagnostics).toContainEqual(expect.objectContaining({
       code: 'copyRisk.exactOverlap',
-      blocking: true,
+      severity: 'warning',
+      blocking: false,
       evidenceRefs: [],
     }));
     expect(JSON.stringify(preview.diagnostics)).not.toContain(copied);
@@ -301,7 +363,8 @@ describe('reference deconstruction contracts', () => {
       });
       expect(preview.diagnostics, mutation.name).toContainEqual(expect.objectContaining({
         code: 'copyRisk.exactOverlap',
-        blocking: true,
+        severity: 'warning',
+        blocking: false,
       }));
     }
   });

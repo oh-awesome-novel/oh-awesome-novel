@@ -42,11 +42,34 @@ import type {
   ReferenceDeconstructionRunReadResult,
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
+import {
+  assertCloneWritingProfileInput,
+  assertWritingProfile,
+  assertWritingProfileId,
+  parseWritingProfileStateEnvelope,
+} from './writing-profile.js';
+import type {
+  CloneWritingProfileInput,
+  WritingProfile,
+  WritingProfileState,
+} from './writing-profile.js';
 
 export {
   OanRequestError,
   isPlayRehearsalSessionEnvelope,
 } from './play-rehearsal.js';
+export {
+  WRITING_PROFILE_OUTPUTS,
+  WRITING_REMINDER_IDS,
+} from './writing-profile.js';
+export type {
+  CloneWritingProfileInput,
+  WritingProfile,
+  WritingProfileListItem,
+  WritingProfileOutput,
+  WritingProfileState,
+  WritingReminderId,
+} from './writing-profile.js';
 export type {
   CharacterStepDraft,
   CharacterStepDraftStatus,
@@ -446,6 +469,10 @@ export interface ReferenceContextSelection {
   originalSourceRead: boolean;
   noCopyWarnings: string[];
   differentiationWarnings: string[];
+  profileOmission?: {
+    reasonCode: 'profileExcludesTechniques';
+    reason: string;
+  };
   included: Array<{
     id: string;
     referenceId: string;
@@ -1731,6 +1758,18 @@ export interface OanClient extends PlayRehearsalClientMethods {
   getWorkspaceTree(): Promise<{ tree: FileTreeNode[] }>;
   getWorkspaceFile(path: string): Promise<{ path: string; content: string }>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
+  getWritingProfiles(): Promise<{ state: WritingProfileState }>;
+  createWritingProfile(profile: WritingProfile): Promise<{ state: WritingProfileState }>;
+  cloneWritingProfile(
+    sourceProfileId: string,
+    input: CloneWritingProfileInput,
+  ): Promise<{ state: WritingProfileState }>;
+  updateWritingProfile(
+    profileId: string,
+    profile: WritingProfile,
+  ): Promise<{ state: WritingProfileState }>;
+  deleteWritingProfile(profileId: string): Promise<{ state: WritingProfileState }>;
+  activateWritingProfile(profileId: string): Promise<{ state: WritingProfileState }>;
   listReferences(): Promise<{ references: ReferenceWorkSummary[] }>;
   importReference(input: ReferenceImportInput): Promise<ReferenceImportResult>;
   setReferenceEnabled(id: string, enabled: boolean): Promise<{ reference: ReferenceWorkSummary }>;
@@ -2101,6 +2140,49 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/api/workspace/file?path=${encodeURIComponent(path)}`,
       ),
     getWorkspaceStatus: () => requestJson<WorkspaceStatus>('/api/workspace/status'),
+    getWritingProfiles: () =>
+      requestJson<unknown>('/api/workspace/writing-profiles')
+        .then(parseWritingProfileStateEnvelope),
+    createWritingProfile: (profile) => {
+      assertWritingProfile(profile);
+      return requestJson<unknown>('/api/workspace/writing-profiles', {
+        method: 'POST',
+        body: profile,
+      }).then(parseWritingProfileStateEnvelope);
+    },
+    cloneWritingProfile: (sourceProfileIdValue, input) => {
+      assertWritingProfileId(sourceProfileIdValue);
+      assertCloneWritingProfileInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/writing-profiles/${encodeURIComponent(sourceProfileIdValue)}/clone`,
+        { method: 'POST', body: input },
+      ).then(parseWritingProfileStateEnvelope);
+    },
+    updateWritingProfile: (profileIdValue, profile) => {
+      assertWritingProfileId(profileIdValue);
+      assertWritingProfile(profile);
+      if (profile.id !== profileIdValue) {
+        throw new Error('Writing Profile id must match the update route.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/writing-profiles/${encodeURIComponent(profileIdValue)}`,
+        { method: 'PATCH', body: profile },
+      ).then(parseWritingProfileStateEnvelope);
+    },
+    deleteWritingProfile: (profileIdValue) => {
+      assertWritingProfileId(profileIdValue);
+      return requestJson<unknown>(
+        `/api/workspace/writing-profiles/${encodeURIComponent(profileIdValue)}`,
+        { method: 'DELETE' },
+      ).then(parseWritingProfileStateEnvelope);
+    },
+    activateWritingProfile: (profileIdValue) => {
+      assertWritingProfileId(profileIdValue);
+      return requestJson<unknown>(
+        `/api/workspace/writing-profiles/${encodeURIComponent(profileIdValue)}/activate`,
+        { method: 'POST', body: {} },
+      ).then(parseWritingProfileStateEnvelope);
+    },
     listReferences: () =>
       requestJson<unknown>('/api/workspace/references').then(parseReferenceListEnvelope),
     importReference: (input) => {

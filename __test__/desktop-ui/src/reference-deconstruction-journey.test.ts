@@ -289,6 +289,9 @@ describe('References product D0-D5 journey', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('Analysis ready to publish');
+    const warningDetails = wrapper.get('details');
+    (warningDetails.element as HTMLDetailsElement).open = true;
+    await warningDetails.trigger('toggle');
     await button(wrapper, 'Create publish PendingAction').trigger('click');
     await flushPromises();
 

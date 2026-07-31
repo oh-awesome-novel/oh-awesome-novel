@@ -18,6 +18,7 @@ import {
   PanelRightOpen,
   Pencil,
   Search,
+  SlidersHorizontal,
   Sun,
   LogOut,
 } from '@lucide/vue';
@@ -80,6 +81,7 @@ const navigationItems: ToolbarNavItem[] = [
   { id: 'search', label: 'Search', icon: Search },
   { id: 'pending', label: 'Pending actions', icon: ListChecks, rightTab: 'approval' },
   { id: 'git', label: 'Git', icon: GitBranch, rightTab: 'git' },
+  { id: 'profiles', label: 'Writing Profiles', icon: SlidersHorizontal, rightTab: 'profiles' },
   { id: 'references', label: 'References', icon: Library, rightTab: 'references' },
 ];
 

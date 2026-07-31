@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_REFERENCE_ANALYSIS_QUALITY_SOURCE_CHARS,
   collectReferenceAnalysisFindings,
   collectReferenceDistillationFindings,
   createReferenceAnalysisOutputHash,
@@ -88,6 +89,68 @@ describe('reference deconstruction analysis quality', () => {
     ]));
   });
 
+  it('keeps plan, output, evidence-window, and scan-overflow failures blocking', () => {
+    const fixture = createQualityFixture();
+    const cases = [
+      {
+        code: 'quality.plan.invalidUnits',
+        report: evaluateReferenceDeconstructionAnalysisQuality({
+          runId: fixture.runId,
+          plan: {
+            ...fixture.plan,
+            units: [...fixture.plan.units, fixture.plan.units[0]!],
+          },
+          selectedAttempts: fixture.attempts,
+          outputs: fixture.outputs,
+          sourceWindows: [fixture.sourceWindow],
+        }),
+      },
+      {
+        code: 'quality.output.missing',
+        report: evaluateReferenceDeconstructionAnalysisQuality({
+          runId: fixture.runId,
+          plan: fixture.plan,
+          selectedAttempts: fixture.attempts,
+          outputs: fixture.outputs.slice(1),
+          sourceWindows: [fixture.sourceWindow],
+        }),
+      },
+      {
+        code: 'quality.pointer.missingWindow',
+        report: evaluateReferenceDeconstructionAnalysisQuality({
+          runId: fixture.runId,
+          plan: fixture.plan,
+          selectedAttempts: fixture.attempts,
+          outputs: fixture.outputs,
+          sourceWindows: [],
+        }),
+      },
+      {
+        code: 'quality.copyRisk.scanOverflow',
+        report: evaluateReferenceDeconstructionAnalysisQuality({
+          runId: fixture.runId,
+          plan: fixture.plan,
+          selectedAttempts: fixture.attempts,
+          outputs: fixture.outputs,
+          sourceWindows: [{
+            ...fixture.sourceWindow,
+            content: 'x'.repeat(MAX_REFERENCE_ANALYSIS_QUALITY_SOURCE_CHARS + 1),
+            charLength: MAX_REFERENCE_ANALYSIS_QUALITY_SOURCE_CHARS + 1,
+          }],
+        }),
+      },
+    ];
+
+    for (const { code, report } of cases) {
+      expect(report.status, code).toBe('failed');
+      expect(report.diagnostics, code).toContainEqual(expect.objectContaining({
+        code,
+        severity: 'error',
+        blocking: true,
+      }));
+    }
+  });
+
   it('revalidates chapter pointers and derived finding closure', () => {
     const fixture = createQualityFixture();
     const chapterOutput = fixture.outputs[0]!;
@@ -131,7 +194,7 @@ describe('reference deconstruction analysis quality', () => {
     ]));
   });
 
-  it('blocks long exact source overlap after all structural gates pass', () => {
+  it('warns on long exact source overlap after all structural gates pass', () => {
     const fixture = createQualityFixture();
     const copied = fixture.sourceWindow.content;
     expect(copied.length).toBeGreaterThanOrEqual(80);
@@ -153,12 +216,49 @@ describe('reference deconstruction analysis quality', () => {
       sourceWindows: [fixture.sourceWindow],
     });
 
-    expect(report.status).toBe('failed');
+    expect(report.status).toBe('warned');
     expect(report.diagnostics).toContainEqual(expect.objectContaining({
       code: 'quality.copyRisk.exactOverlap',
-      blocking: true,
+      severity: 'warning',
+      blocking: false,
+      unitId: aggregateOutput.unitId,
+      pointerId: fixture.sourceWindow.pointerId,
+      evidenceRefs: [fixture.sourceWindow.pointerId],
     }));
     expect(JSON.stringify(report.diagnostics)).not.toContain(copied);
+    expect(parseReferenceDeconstructionAnalysisQualityReport(report)).toEqual(report);
+  });
+
+  it('warns when a distilled category is missing without removing the check', () => {
+    const fixture = createQualityFixture();
+    const distillation = fixture.outputs[3]!;
+    if (!('entries' in distillation)) {
+      throw new Error('Unexpected distillation fixture output.');
+    }
+    const outputs: ReferenceDeconstructionAnalysisOutput[] = [
+      fixture.outputs[0]!,
+      fixture.outputs[1]!,
+      fixture.outputs[2]!,
+      {
+        ...distillation,
+        entries: distillation.entries.filter((entry) =>
+          entry.category !== 'character'),
+      },
+    ];
+    const report = evaluateReferenceDeconstructionAnalysisQuality({
+      runId: fixture.runId,
+      plan: fixture.plan,
+      selectedAttempts: createAttempts(fixture.plan, outputs),
+      outputs,
+      sourceWindows: [fixture.sourceWindow],
+    });
+
+    expect(report.status).toBe('warned');
+    expect(report.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'quality.distill.missingCategory',
+      severity: 'warning',
+      blocking: false,
+    }));
   });
 
   it('turns diagnostic overflow into a bounded blocking failure', () => {

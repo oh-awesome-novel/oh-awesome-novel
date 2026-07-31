@@ -205,6 +205,11 @@ export type {
   WorkspaceOnboardingInput,
   WorkspaceStatus,
   WorkspaceSummary,
+  WritingProfile,
+  WritingProfileListItem,
+  WritingProfileOutput,
+  WritingProfileState,
+  WritingReminderId,
 } from '@oh-awesome-novel/client';
 
 export function useWorkspaceApi() {

@@ -12,6 +12,7 @@ import type {
   ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
+  WritingProfileState,
 } from '@oh-awesome-novel/client';
 
 interface RendererSmokeCall {
@@ -71,6 +72,11 @@ let activeAttempt = createDraftAttempt();
 let activeReferenceRun = referenceReviewReadyRun();
 
 const methods = {
+  async getWritingProfiles() {
+    record('getWritingProfiles', []);
+    return { state: writingProfileState() };
+  },
+
   async listReferences() {
     record('listReferences', []);
     return { references: [publishedReferenceSummary()] };
@@ -427,6 +433,35 @@ function publishedReferenceSummary(): ReferenceWorkSummary {
   };
 }
 
+function writingProfileState(): WritingProfileState {
+  const profile = {
+    version: 1 as const,
+    id: 'commercialWriting',
+    displayName: '商业写作',
+    description: 'Renderer smoke preset.',
+    deconstruction: { outputs: ['techniques' as const] },
+    writingReminders: {
+      originality: true,
+      aiVoice: true,
+      characterConsistency: false,
+      adaptationFreedom: false,
+    },
+  };
+  return {
+    activeProfileId: profile.id,
+    activeProfile: profile,
+    profiles: [{ profile, builtIn: true, active: true }],
+    fallbackUsed: false,
+    profileErrors: [],
+    summary: {
+      profileId: profile.id,
+      displayName: profile.displayName,
+      outputs: ['techniques'],
+      reminders: ['originality', 'aiVoice'],
+    },
+  };
+}
+
 function referenceContextSelection(): ReferenceContextSelection {
   return {
     tokenBudget: 240,
@@ -484,12 +519,14 @@ function referenceReviewReadyRun(): ReferenceDeconstructionRun {
     evidence: [],
     diagnostics: [{
       id: 'candidate-copy-check',
-      severity: 'info',
-      code: 'quality.copy-risk-clear',
-      message: 'No blocking long exact overlap was found.',
+      severity: 'warning',
+      code: 'quality.copyRisk.exactOverlap',
+      message: 'A candidate output contains an exact overlap that needs author review.',
       blocking: false,
       evidenceRefs: [],
       stageId: 'qualityGate',
+      unitId: 'quality-gate',
+      pointerId: 'pointer-renderer-warning',
     }],
     mutationReceipts: [{
       idempotencyKey: 'review-ready-renderer',
@@ -517,7 +554,7 @@ function referenceReviewReadyRun(): ReferenceDeconstructionRun {
       recentUnits: [],
       recentAttempts: [],
       analysisQuality: {
-        status: 'passed',
+        status: 'warned',
         coveragePercent: 100,
         blockingDiagnosticCount: 0,
         outputHashes: ['e'.repeat(64)],

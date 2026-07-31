@@ -45,6 +45,7 @@
 - [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0600 Write Intent And Human Approval](0600.md)
+- [0900 Project References](0900.md)
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
 - [1010 Context Package And Source Discipline](1010.md)
 - [1020 Planning Commands And Prewrite Calibration](1020.md)
@@ -63,11 +64,12 @@
 - [1170 Evidence-backed Play Adoption Path](1170.md)
 - [1180 Play Long-session Context And Experience Closure](1180.md)
 - [1190 Advanced Director Controls And Long-session Rehearsal](1190.md)
+- [1200 Writing Profile Configuration And Prompt Reminders](1200.md)
+- [1205 Reference Quality Gate Warning Degradation](1205.md)
 
 ## Needs Review Tasks
 
 - [0700 Summary Workflow Extensions Polish](0700.md)
-- [0900 Project References](0900.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 
 ## Planned Tasks

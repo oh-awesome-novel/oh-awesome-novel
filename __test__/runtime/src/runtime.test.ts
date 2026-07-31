@@ -374,4 +374,27 @@ describe('PriorityRuntimeContextBuilder', () => {
       false,
     );
   });
+
+  it('places Writing reminders after the shared skill and before selected context', () => {
+    const builder = new PriorityRuntimeContextBuilder();
+    const messages = builder.build({
+      doneMessages: [],
+      curMessages: [{ role: 'user', content: 'Write' }],
+      skill: {
+        name: 'novel-copilot',
+        system: 'Shared skill once.',
+      },
+      context: [
+        { kind: 'selected', content: 'Accepted project truth.' },
+        { kind: 'reminder', content: 'Character consistency.' },
+      ],
+    });
+
+    expect(messages.map((message) => message.content)).toEqual([
+      '# Skill Prompt: novel-copilot\n\nShared skill once.',
+      '# Writing Reminders\n\nCharacter consistency.',
+      '# Selected Context\n\nAccepted project truth.',
+      'Write',
+    ]);
+  });
 });

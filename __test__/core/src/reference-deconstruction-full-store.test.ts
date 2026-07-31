@@ -280,7 +280,7 @@ describe('reference full deconstruction store', () => {
     });
   });
 
-  it('blocks copied chapter text before the attempt can feed aggregate analysis', async () => {
+  it('retains copied chapter text for the final warning gate', async () => {
     const fixture = await createApprovedRun();
     const reserved = await reserveFull(fixture, fixture.run, 'advance-copy-risk-0001');
     const copied = reserved.execution!.sourceWindows![0]!.content
@@ -293,35 +293,23 @@ describe('reference full deconstruction store', () => {
       copied,
     );
 
-    const failed = await completeReferenceFullDeconstructionUnit({
+    const completed = await completeReferenceFullDeconstructionUnit({
       ...identity(fixture, reserved.run),
       reservationId: reserved.reservation!.id,
       output,
     });
-    expect(failed).toMatchObject({
-      status: 'failed',
-      activeReservation: undefined,
-      failure: { code: 'invalid_output' },
-    });
-    expect(failed.full?.units[0]?.status).toBe('failed');
-    expect(failed.full?.units[0]?.selectedAttemptId).toBeUndefined();
-    expect(failed.full?.attempts[0]).toMatchObject({
-      status: 'failed',
-      failure: {
-        code: 'invalid_output',
-        message: expect.stringContaining('long exact overlap'),
-      },
-    });
-    const retried = await retryReferenceDeconstructionUnit({
-      ...identity(fixture, failed),
-      idempotencyKey: 'retry-copy-risk-0001',
-      unitId: reserved.reservation!.unitId,
-    });
-    expect(retried.run).toMatchObject({
+    expect(completed).toMatchObject({
       status: 'fullRunning',
       activeReservation: undefined,
+      failure: undefined,
     });
-    expect(retried.run.full?.units[0]?.status).toBe('queued');
+    expect(completed.full?.units[0]).toMatchObject({
+      status: 'completed',
+      selectedAttemptId: reserved.reservation!.attemptId,
+    });
+    expect(completed.full?.attempts[0]).toMatchObject({
+      status: 'completed',
+    });
   });
 
   it('never overwrites an existing attempt artifact and accepts only identical bytes', async () => {
@@ -944,7 +932,7 @@ describe('reference full deconstruction store', () => {
     }
 
     expect(run.full?.analysisQuality).toMatchObject({
-      status: 'passed',
+      status: 'warned',
       coveragePercent: 100,
       blockingDiagnosticCount: 0,
     });
@@ -957,7 +945,7 @@ describe('reference full deconstruction store', () => {
       receiptCount: run.revision + 1,
       full: {
         progress: { percent: 100, failedUnits: 0 },
-        analysisQuality: { status: 'passed' },
+        analysisQuality: { status: 'warned' },
       },
     });
     expect(transport.full?.stages.every((stage) => stage.status === 'completed')).toBe(true);

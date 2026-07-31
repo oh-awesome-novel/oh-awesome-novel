@@ -6,10 +6,12 @@ import GitReviewTab from './GitReviewTab.vue';
 import ProjectHealthTab from './ProjectHealthTab.vue';
 import ReferenceImportTab from './ReferenceImportTab.vue';
 import WorkspacePanelTabs from './WorkspacePanelTabs.vue';
+import WritingProfileManagerTab from './writing-profile/WritingProfileManagerTab.vue';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 import type { WorkspaceRightTab } from '../../composables/useWorkspaceLayoutState';
 import type {
   ProjectHealth,
+  WritingProfileState,
   WorkspaceStatus,
 } from '../../composables/useWorkspaceApi';
 
@@ -29,6 +31,9 @@ defineProps<{
   pendingActionsError: string;
   workspaceStatus?: WorkspaceStatus;
   projectHealth?: ProjectHealth;
+  writingProfileState?: WritingProfileState;
+  writingProfilesLoading: boolean;
+  writingProfilesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -39,6 +44,8 @@ const emit = defineEmits<{
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   reviewPendingActionId: [pendingActionId: string];
+  refreshWritingProfiles: [];
+  writingProfileStateChanged: [state: WritingProfileState];
 }>();
 </script>
 
@@ -78,6 +85,14 @@ const emit = defineEmits<{
       :health="projectHealth"
     />
     <GitReviewTab v-else-if="activeTab === 'git'" />
+    <WritingProfileManagerTab
+      v-else-if="activeTab === 'profiles'"
+      :state="writingProfileState"
+      :loading="writingProfilesLoading"
+      :load-error="writingProfilesError"
+      @refresh="emit('refreshWritingProfiles')"
+      @state-changed="emit('writingProfileStateChanged', $event)"
+    />
     <ReferenceImportTab
       v-else-if="activeTab === 'references'"
       @review-pending-action="emit('reviewPendingActionId', $event)"

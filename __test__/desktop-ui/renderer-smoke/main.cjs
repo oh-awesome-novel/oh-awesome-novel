@@ -213,10 +213,35 @@ async function run() {
     true,
     'D5 selector omission',
   );
+  assertEqual(
+    referenceBeforePublish.candidateText.includes('Warned — 1 notice(s)'),
+    true,
+    'W2a warned quality conclusion',
+  );
+  assertEqual(
+    referenceBeforePublish.candidateText.includes('quality.copyRisk.exactOverlap'),
+    true,
+    'W2a warning diagnostic group',
+  );
   assertDeepEqual(
     referenceBeforePublish.candidateButtons,
     ['Create publish PendingAction'],
     'D4 candidate uses global approval handoff',
+  );
+  assertEqual(
+    await isButtonEnabled(
+      'Create publish PendingAction',
+      '[aria-label="Reference publish preparation"]',
+    ),
+    false,
+    'W2a publish requires warning review',
+  );
+  await clickSelector(
+    '[aria-label="Reference publish preparation"] .reference-quality-details summary',
+  );
+  await waitForEnabledButton(
+    'Create publish PendingAction',
+    '[aria-label="Reference publish preparation"]',
   );
 
   await clickButton(
@@ -268,6 +293,7 @@ async function run() {
     },
     reference: {
       sourceReadLabel: referenceBeforePublish.sourceReadLabel,
+      qualityStatus: 'warned',
       publishRevision: referencePublishCall.args[2].baseRunRevision,
       pendingActionId: referenceReviewCall.args[0],
     },
@@ -304,6 +330,27 @@ async function clickButton(label, scopeSelector = 'body') {
   })()`);
   assertEqual(clicked, true, `click ${label}`);
   await delay(20);
+}
+
+async function clickSelector(selector) {
+  const clicked = await evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return false;
+    element.click();
+    return true;
+  })()`);
+  assertEqual(clicked, true, `click selector ${selector}`);
+  await delay(20);
+}
+
+async function isButtonEnabled(label, scopeSelector) {
+  return evaluate(`(() => {
+    const scope = document.querySelector(${JSON.stringify(scopeSelector)});
+    const button = scope && Array.from(scope.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent.replace(/\\s+/gu, ' ').trim() === ${JSON.stringify(label)},
+    );
+    return Boolean(button && !button.disabled);
+  })()`);
 }
 
 async function setValue(selector, value) {

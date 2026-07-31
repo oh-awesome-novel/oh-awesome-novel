@@ -7,6 +7,8 @@ import {
   createRuntimeTurnInput,
   inferNovelAgentCapability,
 } from '@oh-awesome-novel/agent';
+import { PriorityRuntimeContextBuilder } from '@oh-awesome-novel/runtime';
+import type { NovelCopilotCapabilityId } from '@oh-awesome-novel/agent';
 
 const baseInput = {
   request: '帮我检查女主状态',
@@ -22,6 +24,164 @@ const baseInput = {
 };
 
 describe('Novel agent message assembly', () => {
+  it('keeps the no-reminder assembly byte-for-byte unchanged', () => {
+    const baseline = assembleNovelAgentMessages({
+      ...baseInput,
+      capability: 'novel.write_chapter',
+      skill: {
+        name: 'novel-copilot',
+        system: 'Shared skill prompt.',
+      },
+    });
+    const disabled = assembleNovelAgentMessages({
+      ...baseInput,
+      capability: 'novel.write_chapter',
+      skill: {
+        name: 'novel-copilot',
+        system: 'Shared skill prompt.',
+      },
+      writingProfile: profileWithReminders([]),
+    });
+
+    expect(disabled).toEqual(baseline);
+  });
+
+  it('assembles a golden commercial review prompt with one shared skill', () => {
+    const assembly = assembleNovelAgentMessages({
+      request: '/审稿 第一章',
+      workspace: { workspaceRoot: '/novel' },
+      capability: 'novel.review_chapter',
+      skill: {
+        name: 'novel-copilot',
+        system: 'SHARED_SKILL_BASELINE',
+      },
+      writingProfile: profileWithReminders(['originality', 'aiVoice']),
+      selectedContext: [{
+        kind: 'selected',
+        title: 'Accepted Chapter',
+        content: 'CURRENT_PROJECT_TRUTH',
+      }],
+    });
+    const messages = new PriorityRuntimeContextBuilder().build({
+      doneMessages: [],
+      curMessages: assembly.messages,
+      context: assembly.context,
+      skill: assembly.skill,
+    });
+    const modelSystem = messages
+      .filter((message) => message.role === 'system')
+      .map((message) => message.content)
+      .join('\n\n');
+
+    expect(modelSystem.match(/SHARED_SKILL_BASELINE/gu)).toHaveLength(1);
+    expect(modelSystem).toMatchInlineSnapshot(`
+      "# Skill Prompt: novel-copilot
+
+      SHARED_SKILL_BASELINE
+
+      # Writing Reminders: Active fixed fragments
+
+      Apply only the following fixed, non-blocking Writing reminders.
+      They do not authorize direct writes, do not change PendingAction approval, and do not add new context sources.
+
+      - Originality reminder: Keep the premise execution, scene progression, phrasing, and imagery independently expressed and meaningfully differentiated. Do not copy identifiable wording, proprietary names, or a reference work scene sequence. This is a non-blocking writing reminder, not a similarity verdict.
+      - AI-voice reminder: During review or requested revision, identify mechanical sentence patterns, empty summaries, generic transitions, repetitive abstractions, and excessively symmetrical phrasing. Report concrete, non-blocking suggestions and do not rewrite prose unless the user explicitly requests a revision.
+
+      # Selected Context: Accepted Chapter
+
+      CURRENT_PROJECT_TRUTH
+
+      You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.
+      Use tools to inspect or edit the active workspace.
+      Do not operate outside the active workspace.
+      Do not target hidden files or hidden directories.
+      Prefer structured workspace context over broad file loading.
+      Workspace root: /novel
+      Active skill: novel-copilot"
+    `);
+  });
+
+  it('maps each fixed reminder only to the frozen capability table', () => {
+    const mappings: Record<string, NovelCopilotCapabilityId[]> = {
+      originality: [
+        'novel.plan_outline',
+        'novel.plan_volume',
+        'novel.plan_chapter',
+        'novel.write_chapter',
+        'novel.review_chapter',
+      ],
+      aiVoice: [
+        'novel.review_chapter',
+        'novel.revise_chapter',
+      ],
+      characterConsistency: [
+        'novel.plan_chapter',
+        'novel.write_chapter',
+        'novel.review_chapter',
+        'novel.generate_character_card',
+        'novel.settle_chapter',
+      ],
+      adaptationFreedom: [
+        'novel.plan_outline',
+        'novel.plan_volume',
+        'novel.plan_chapter',
+        'novel.generate_character_card',
+      ],
+    };
+    const fragments: Record<string, string> = {
+      originality: 'Originality reminder:',
+      aiVoice: 'AI-voice reminder:',
+      characterConsistency: 'Character-consistency reminder:',
+      adaptationFreedom: 'Adaptation-freedom reminder:',
+    };
+    const capabilities: NovelCopilotCapabilityId[] = [
+      'novel.generate_character_card',
+      'novel.plan_outline',
+      'novel.plan_volume',
+      'novel.plan_chapter',
+      'novel.write_chapter',
+      'novel.review_chapter',
+      'novel.revise_chapter',
+      'novel.settle_chapter',
+      'novel.update_state',
+      'novel.plan_foreshadow',
+      'novel.de_ai',
+      'novel.play_scene',
+      'novel.import_tavern_character',
+      'novel.deconstruct_reference',
+    ];
+
+    for (const [reminder, allowed] of Object.entries(mappings)) {
+      const profile = profileWithReminders([reminder]);
+      for (const capability of capabilities) {
+        const assembly = assembleNovelAgentMessages({
+          ...baseInput,
+          capability,
+          writingProfile: profile,
+        });
+        const reminderText = assembly.context
+          .find((item) => item.kind === 'reminder')?.content;
+        expect(Boolean(reminderText?.includes(fragments[reminder]!)))
+          .toBe(allowed.includes(capability));
+      }
+    }
+  });
+
+  it('injects no reminder when capability inference fails', () => {
+    const assembly = assembleNovelAgentMessages({
+      ...baseInput,
+      request: '随便聊聊',
+      writingProfile: profileWithReminders([
+        'originality',
+        'aiVoice',
+        'characterConsistency',
+        'adaptationFreedom',
+      ]),
+    });
+
+    expect(assembly.context.some((item) => item.kind === 'reminder')).toBe(false);
+  });
+
   it('creates a filesystem-first system prompt without hidden planning language', () => {
     const prompt = createNovelAgentSystemPrompt({
       ...baseInput,
@@ -376,3 +536,21 @@ describe('Novel agent message assembly', () => {
       item.title.startsWith('Play outcome'))).toBe(false);
   });
 });
+
+function profileWithReminders(
+  reminders: string[],
+) {
+  return {
+    version: 1 as const,
+    id: 'testProfile',
+    displayName: 'Test Profile',
+    description: 'Test fixed reminder combination.',
+    deconstruction: { outputs: ['techniques'] as Array<'techniques'> },
+    writingReminders: {
+      originality: reminders.includes('originality'),
+      aiVoice: reminders.includes('aiVoice'),
+      characterConsistency: reminders.includes('characterConsistency'),
+      adaptationFreedom: reminders.includes('adaptationFreedom'),
+    },
+  };
+}

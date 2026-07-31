@@ -1,7 +1,14 @@
 import { computed, shallowRef, watch } from 'vue';
 
 export type WorkspaceMode = 'writing' | 'play';
-export type WorkspaceRightTab = 'file' | 'diff' | 'approval' | 'health' | 'git' | 'references';
+export type WorkspaceRightTab =
+  | 'file'
+  | 'diff'
+  | 'approval'
+  | 'health'
+  | 'git'
+  | 'profiles'
+  | 'references';
 export type WorkspaceSidebarTab = 'files' | 'chapters' | 'history';
 
 interface PersistedWorkspaceUiState {
@@ -22,6 +29,7 @@ const WORKSPACE_RIGHT_TABS: readonly WorkspaceRightTab[] = [
   'approval',
   'health',
   'git',
+  'profiles',
   'references',
 ];
 const WORKSPACE_SIDEBAR_TABS: readonly WorkspaceSidebarTab[] = [

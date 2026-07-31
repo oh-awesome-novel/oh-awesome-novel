@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parse, stringify } from 'yaml';
+import { writeFileAtomically } from './atomic-file.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -235,7 +236,7 @@ export async function saveWorkspaceOnboarding(
     updatedAt: new Date().toISOString(),
   }) as WorkspaceOnboardingState;
 
-  await writeFile(workspaceConfigPath(rootDir), stringify(config), 'utf-8');
+  await writeFileAtomically(workspaceConfigPath(rootDir), stringify(config));
 
   return config;
 }
@@ -272,7 +273,13 @@ const WORKSPACE_SUBDIRS = [
 ] as const;
 
 /** Directories created inside `.oan/`. */
-const OAN_SUBDIRS = ['constitution', 'prompts', 'skills', 'extensions'] as const;
+const OAN_SUBDIRS = [
+  'constitution',
+  'prompts',
+  'skills',
+  'extensions',
+  'writing-profiles',
+] as const;
 
 const NOVEL_BODY_NUMBER_WIDTH = 4;
 
@@ -388,6 +395,8 @@ steps:
   const defaultConfig = `# oh-awesome-novel workspace config
 # Edit this file to customise your workspace settings.
 version: 1
+writingProfile:
+  activeProfileId: commercialWriting
 `;
   await writeFile(join(oanDir, 'config.yaml'), defaultConfig, 'utf-8');
 

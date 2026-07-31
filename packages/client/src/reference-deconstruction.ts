@@ -205,6 +205,7 @@ export interface ReferenceDeconstructionAttemptSummary {
 export type ReferenceDeconstructionAnalysisQualityStatus =
   | 'notEvaluated'
   | 'passed'
+  | 'warned'
   | 'failed';
 
 export interface ReferenceDeconstructionAnalysisQuality {
@@ -435,6 +436,7 @@ const ATTEMPT_STATUSES: ReadonlySet<string> = new Set([
 const ANALYSIS_QUALITY_STATUSES: ReadonlySet<string> = new Set([
   'notEvaluated',
   'passed',
+  'warned',
   'failed',
 ]);
 const MAX_FULL_DECONSTRUCTION_UNITS = 2_048;
@@ -1298,7 +1300,16 @@ function isAnalysisQuality(
   if (value.status === 'passed') {
     return value.coveragePercent === 100 &&
       value.blockingDiagnosticCount === 0 &&
-      value.outputHashes.length > 0;
+      value.outputHashes.length > 0 &&
+      diagnostics.length === 0;
+  }
+  if (value.status === 'warned') {
+    return value.coveragePercent === 100 &&
+      value.blockingDiagnosticCount === 0 &&
+      value.outputHashes.length > 0 &&
+      diagnostics.length > 0 &&
+      !diagnostics.some((diagnostic) =>
+        isRecord(diagnostic) && diagnostic.blocking === true);
   }
   return value.status !== 'failed' || (value.blockingDiagnosticCount as number) > 0;
 }
@@ -1371,7 +1382,10 @@ function isReviewReadyFullRun(
     value.currentUnit === undefined &&
     value.failedUnit === undefined &&
     value.stages.every((stage) => stage.status === 'completed') &&
-    value.analysisQuality?.status === 'passed' &&
+    (
+      value.analysisQuality?.status === 'passed'
+      || value.analysisQuality?.status === 'warned'
+    ) &&
     value.analysisQuality.coveragePercent === 100 &&
     value.analysisQuality.blockingDiagnosticCount === 0 &&
     Array.isArray(diagnostics) &&
@@ -1884,6 +1898,7 @@ function isReferenceContextSelection(value: unknown): value is ReferenceContextS
       'originalSourceRead',
       'noCopyWarnings',
       'differentiationWarnings',
+      'profileOmission',
       'included',
       'omitted',
     ]) ||
@@ -1898,6 +1913,8 @@ function isReferenceContextSelection(value: unknown): value is ReferenceContextS
     value.originalSourceRead !== false ||
     !isBoundedStringArray(value.noCopyWarnings, 32, 2_000) ||
     !isBoundedStringArray(value.differentiationWarnings, 32, 2_000) ||
+    (value.profileOmission !== undefined &&
+      !isReferenceProfileOmission(value.profileOmission)) ||
     !Array.isArray(value.included) ||
     value.included.length > value.maxEntries ||
     !value.included.every(isIncludedReferenceContext) ||
@@ -1930,6 +1947,14 @@ function isReferenceContextSelection(value: unknown): value is ReferenceContextS
   const usedTokens = included
     .reduce((sum, item) => sum + item.estimatedTokens, 0);
   return usedTokens === value.usedTokens && usedTokens <= value.tokenBudget;
+}
+
+function isReferenceProfileOmission(value: unknown): boolean {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['reasonCode', 'reason'])
+    && Object.keys(value).length === 2
+    && value.reasonCode === 'profileExcludesTechniques'
+    && isBoundedText(value.reason, 2_000);
 }
 
 function isIncludedReferenceContext(value: unknown): boolean {

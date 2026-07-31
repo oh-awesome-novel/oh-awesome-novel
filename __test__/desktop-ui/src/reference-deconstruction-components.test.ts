@@ -210,7 +210,7 @@ describe('Reference D0-D5 components', () => {
     expect(wrapper.emitted('retry')).toEqual([['chapter-0001']]);
   });
 
-  it('shows review-ready as analysis-complete but not published', () => {
+  it('shows review-ready as analysis-complete but not published', async () => {
     const run = reviewReadyReferenceRun();
     const wrapper = mountPanel({
       run,
@@ -218,10 +218,15 @@ describe('Reference D0-D5 components', () => {
     });
 
     expect(wrapper.text()).toContain('Analysis ready for review');
-    expect(wrapper.text()).toContain('Analysis quality: passed');
+    expect(wrapper.text()).toContain('Analysis quality: warned');
     expect(wrapper.text()).toContain('the reference bundle has not been published');
     expect(wrapper.text()).toContain('Analysis ready to publish');
     expect(wrapper.text()).toContain('Create publish PendingAction');
+    expect(button(wrapper, 'Create publish PendingAction').attributes('disabled')).toBeDefined();
+    const warningDetails = wrapper.get('details');
+    (warningDetails.element as HTMLDetailsElement).open = true;
+    await warningDetails.trigger('toggle');
+    expect(button(wrapper, 'Create publish PendingAction').attributes('disabled')).toBeUndefined();
   });
 
   it('reviews the complete publishing candidate and hands approval to the global PendingAction', async () => {
@@ -235,6 +240,7 @@ describe('Reference D0-D5 components', () => {
         pipelineVersion: run.pipelineVersion,
         capabilityVersion: run.capabilityVersion,
         coveragePercent: 100,
+        qualityStatus: run.full!.analysisQuality!.status,
         diagnostics: run.diagnostics,
         publishing: false,
         canPublish: false,
@@ -244,6 +250,9 @@ describe('Reference D0-D5 components', () => {
     expect(wrapper.text()).toContain('examples/references/reference-1/context/index.yaml');
     expect(wrapper.text()).toContain('writingStyle 1');
     expect(wrapper.text()).toContain('Consequence-first hook');
+    expect(wrapper.text()).toContain('Warnings1');
+    expect(wrapper.text()).toContain('Review 1 non-blocking warning(s)');
+    expect(wrapper.text()).toContain('preview.low-sample');
     expect(wrapper.text()).toContain(publication.candidateFingerprint);
     expect(wrapper.text()).not.toContain('chunk-0001-0001');
 

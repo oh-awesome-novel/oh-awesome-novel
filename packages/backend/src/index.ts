@@ -19,9 +19,12 @@ import {
   NOVEL_COPILOT_CAPABILITY_IDS,
   PlaySessionWriteConflictError,
   PlayLaunchSourceValidationError,
+  activateWritingProfile,
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
+  cloneCustomWritingProfile,
+  createCustomWritingProfile,
   createEmptyLlmProviderConfigState,
   getDefaultLlmProviderConfig,
   getPlaySessionStartMode,
@@ -46,6 +49,7 @@ import {
   loadAppConfig,
   saveAppConfig,
   loadWorkspaceConfig,
+  loadWritingProfileState,
   loadNovelCopilotSkill,
   loadWorkspaceList,
   listPlaySessions,
@@ -87,7 +91,9 @@ import {
   upsertLlmProviderConfig,
   previewPlayLaunchPackage,
   validatePlayLaunchPackageSources,
+  deleteCustomWritingProfile,
   detachPlayWritingReferenceAttachment,
+  updateCustomWritingProfile,
   withPlaySessionFileTransaction,
   writePlayLaunchPackage,
   writePlayOutcomeReport,
@@ -462,6 +468,38 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.get('/api/workspace/writing-profiles', (context) =>
+    handleGetWritingProfiles(options, state, context));
+  app.post('/api/workspace/writing-profiles', (context) =>
+    handleCreateWritingProfile(options, state, context));
+  app.post('/api/workspace/writing-profiles/:id/clone', (context) =>
+    handleCloneWritingProfile(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.patch('/api/workspace/writing-profiles/:id', (context) =>
+    handleUpdateWritingProfile(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.delete('/api/workspace/writing-profiles/:id', (context) =>
+    handleDeleteWritingProfile(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/writing-profiles/:id/activate', (context) =>
+    handleActivateWritingProfile(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
   app.get('/api/workspace/references', (context) =>
     handleListReferenceWorks(options, state, context));
   app.post('/api/workspace/references/import', (context) =>
@@ -1404,6 +1442,116 @@ async function handleWorkspaceStatus(
   });
 }
 
+async function handleGetWritingProfiles(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  return jsonResponse(context, 200, {
+    state: await loadWritingProfileState(workspaceRoot),
+  });
+}
+
+async function handleCreateWritingProfile(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  return handleWritingProfileMutation(context, () =>
+    createCustomWritingProfile(workspaceRoot, body));
+}
+
+async function handleCloneWritingProfile(
+  options: NovelBackendOptions,
+  state: BackendState,
+  sourceProfileId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const allowedFields = new Set(['id', 'displayName', 'description']);
+  if (
+    Object.keys(body).some((key) => !allowedFields.has(key))
+    || typeof body.id !== 'string'
+    || (hasOwn(body, 'displayName') && typeof body.displayName !== 'string')
+    || (hasOwn(body, 'description') && typeof body.description !== 'string')
+  ) {
+    return jsonResponse(context, 400, {
+      error: 'Writing Profile clone request is invalid.',
+    });
+  }
+  return handleWritingProfileMutation(context, () =>
+    cloneCustomWritingProfile(workspaceRoot, sourceProfileId, {
+      id: body.id as string,
+      ...(typeof body.displayName === 'string'
+        ? { displayName: body.displayName }
+        : {}),
+      ...(typeof body.description === 'string'
+        ? { description: body.description }
+        : {}),
+    }));
+}
+
+async function handleUpdateWritingProfile(
+  options: NovelBackendOptions,
+  state: BackendState,
+  profileId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  return handleWritingProfileMutation(context, () =>
+    updateCustomWritingProfile(workspaceRoot, profileId, body));
+}
+
+async function handleDeleteWritingProfile(
+  options: NovelBackendOptions,
+  state: BackendState,
+  profileId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  return handleWritingProfileMutation(context, () =>
+    deleteCustomWritingProfile(workspaceRoot, profileId));
+}
+
+async function handleActivateWritingProfile(
+  options: NovelBackendOptions,
+  state: BackendState,
+  profileId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  if (Object.keys(body).length > 0) {
+    return jsonResponse(context, 400, {
+      error: 'Writing Profile activate request must be empty.',
+    });
+  }
+  return handleWritingProfileMutation(context, () =>
+    activateWritingProfile(workspaceRoot, profileId));
+}
+
+async function handleWritingProfileMutation(
+  context: NovelBackendContext,
+  mutate: () => Promise<Awaited<ReturnType<typeof loadWritingProfileState>>>,
+): Promise<Response> {
+  try {
+    return jsonResponse(context, 200, { state: await mutate() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = /not found|does not exist/iu.test(message)
+      ? 404
+      : /read-only|already exists|before deleting the active/iu.test(message)
+        ? 409
+        : 400;
+    return jsonResponse(context, status, { error: message });
+  }
+}
+
 async function handleListReferenceWorks(
   options: NovelBackendOptions,
   state: BackendState,
@@ -1615,8 +1763,11 @@ async function handleSelectReferenceContext(
   )) {
     return jsonResponse(context, 400, { error: 'Reference maxEntries is invalid.' });
   }
+  const writingProfile = await loadWritingProfileState(workspaceRoot);
   const selection = await selectReferenceContext({
     workspaceRoot,
+    techniquesEnabled:
+      writingProfile.activeProfile.deconstruction.outputs.includes('techniques'),
     tokenBudget,
     maxReferences,
     maxEntries,
@@ -5368,9 +5519,10 @@ async function createRuntimeEventStream(
       throw new Error('Model mode requires provider config.');
     }
 
-    const [workspace, skill] = await Promise.all([
+    const [workspace, skill, writingProfileState] = await Promise.all([
       loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
       loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
+      loadWritingProfileState(input.workspaceRoot),
     ]);
     const capability = inferNovelAgentCapability(input.request, skill.quickCommands);
     const pendingActions = await listPendingActions({ workspaceRoot: input.workspaceRoot });
@@ -5382,6 +5534,8 @@ async function createRuntimeEventStream(
       referenceRecallActive
         ? selectReferenceContext({
             workspaceRoot: input.workspaceRoot,
+            techniquesEnabled:
+              writingProfileState.activeProfile.deconstruction.outputs.includes('techniques'),
             capability,
             goal: input.request,
             tokenBudget: 1_500,
@@ -5399,7 +5553,11 @@ async function createRuntimeEventStream(
         : []),
       ...(
         referenceSelection
-        && (referenceSelection.included.length || referenceSelection.omitted.length)
+        && (
+          referenceSelection.included.length
+          || referenceSelection.omitted.length
+          || referenceSelection.profileOmission
+        )
           ? [{
               kind: 'selected' as const,
               title: 'Reference Context Selection',
@@ -5416,6 +5574,8 @@ async function createRuntimeEventStream(
       workspace,
       request: input.request,
       skill,
+      capability,
+      writingProfile: writingProfileState.activeProfile,
       tools: options.tools,
       ...(referenceSelection ? { referenceSelection } : {}),
       playWritingReferences: input.playWritingReferences,

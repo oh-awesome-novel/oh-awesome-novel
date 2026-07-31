@@ -632,7 +632,7 @@ describe('reference deconstruction run store', () => {
     )).rejects.toBeInstanceOf(ReferenceDeconstructionValidationError);
   });
 
-  it('keeps a blocking copy-risk preview reviewable but refuses full approval', async () => {
+  it('keeps a copy-risk preview warning visible and allows full approval', async () => {
     const fixture = await createReferenceFixture();
     const created = await createReferenceDeconstructionRun({
       workspaceRoot: fixture.workspaceRoot,
@@ -658,7 +658,8 @@ describe('reference deconstruction run store', () => {
     const preview = createPreview(fixture.selection, created.run.runId, copiedOverview);
     expect(preview.diagnostics).toContainEqual(expect.objectContaining({
       code: 'copyRisk.exactOverlap',
-      blocking: true,
+      severity: 'warning',
+      blocking: false,
     }));
     await completeReferenceQuickPreview({
       workspaceRoot: fixture.workspaceRoot,
@@ -675,7 +676,17 @@ describe('reference deconstruction run store', () => {
       runId: created.run.runId,
       baseRunRevision: 1,
       idempotencyKey: 'approve-copy-risk-preview',
-    })).rejects.toBeInstanceOf(ReferenceDeconstructionValidationError);
+    })).resolves.toMatchObject({
+      run: {
+        status: 'fullApproved',
+        diagnostics: [
+          expect.objectContaining({
+            code: 'copyRisk.exactOverlap',
+            blocking: false,
+          }),
+        ],
+      },
+    });
   });
 });
 

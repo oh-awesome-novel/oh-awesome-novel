@@ -85,6 +85,7 @@ export interface RuntimeContextItem {
     | 'constitution'
     | 'workflow'
     | 'skill'
+    | 'reminder'
     | 'selected'
     | 'summary'
     | 'state'

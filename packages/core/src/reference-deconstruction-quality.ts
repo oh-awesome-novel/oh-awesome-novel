@@ -86,7 +86,7 @@ export interface ReferenceDeconstructionAnalysisQualityReport {
   planId: string;
   referenceId: string;
   sourceChecksumSha256: string;
-  status: 'passed' | 'failed';
+  status: 'passed' | 'warned' | 'failed';
   coverage: ReferenceDeconstructionAnalysisCoverage;
   checkedUnitIds: string[];
   selectedAttemptIds: string[];
@@ -107,7 +107,13 @@ interface QualityCandidate {
   text: string;
 }
 
+interface NormalizedOverlapSource {
+  pointerId: string;
+  source: string;
+}
+
 interface RollingHashLocation {
+  pointerId: string;
   source: string;
   index: number;
 }
@@ -275,7 +281,11 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
     planId: plan.id,
     referenceId: plan.referenceId,
     sourceChecksumSha256: plan.sourceChecksumSha256,
-    status: boundedDiagnostics.some((item) => item.blocking) ? 'failed' : 'passed',
+    status: boundedDiagnostics.some((item) => item.blocking)
+      ? 'failed'
+      : boundedDiagnostics.length
+        ? 'warned'
+        : 'passed',
     coverage: {
       plannedUnitCount: requiredUnits.length,
       checkedUnitCount: checkedUnitIds.length,
@@ -427,7 +437,11 @@ export function parseReferenceDeconstructionAnalysisQualityReport(
     0,
     MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
   ).map((diagnostic, index) => parseStoredQualityDiagnostic(diagnostic, index));
-  const status = requireEnum(record.status, ['passed', 'failed'] as const, 'quality status');
+  const status = requireEnum(
+    record.status,
+    ['passed', 'warned', 'failed'] as const,
+    'quality status',
+  );
   if (
     coverage.checkedUnitCount !== checkedUnitIds.length
     || selectedAttemptIds.length !== checkedUnitIds.length
@@ -451,6 +465,11 @@ export function parseReferenceDeconstructionAnalysisQualityReport(
     )
     || status === 'passed' && (
       coverage.percent !== 100
+      || diagnostics.length !== 0
+    )
+    || status === 'warned' && (
+      coverage.percent !== 100
+      || diagnostics.length === 0
       || diagnostics.some((diagnostic) => diagnostic.blocking)
     )
     || status === 'failed' && !diagnostics.some((diagnostic) => diagnostic.blocking)
@@ -970,7 +989,7 @@ function validateDistillationClosure(
   });
   for (const category of REFERENCE_DISTILLED_CATEGORIES) {
     if (!categoryCounts.get(category)) {
-      diagnostics.push(blockingDiagnostic(
+      diagnostics.push(warningDiagnostic(
         `quality-distill-category-${category}`,
         'quality.distill.missingCategory',
         `Distillation is missing required category ${category}.`,
@@ -1154,9 +1173,11 @@ function appendUncertaintyDiagnostics(
         severity: 'warning',
         blocking: false,
         message: boundedMessage(uncertainty),
-        evidenceRefs: [],
+        evidenceRefs: unit?.pointerId ? [unit.pointerId] : [],
         ...(unit ? { stageId: unit.stageId } : {}),
+        ...(unit ? { unitId: unit.id } : {}),
         ...(unit?.chapterId ? { chapterId: unit.chapterId } : {}),
+        ...(unit?.pointerId ? { pointerId: unit.pointerId } : {}),
       });
     });
   }
@@ -1169,10 +1190,16 @@ function appendCopyRiskDiagnostics(
   diagnostics: ReferenceDeconstructionDiagnostic[],
 ): void {
   const normalizedSources = windows
-    .map((window) => normalizeOverlapText(window.content))
-    .filter(Boolean);
+    .map((window) => ({
+      pointerId: window.pointerId,
+      source: normalizeOverlapText(window.content),
+    }))
+    .filter((window) => Boolean(window.source));
   const candidates = outputs.flatMap((output) => collectOutputCandidates(output));
-  const totalSourceChars = normalizedSources.reduce((total, value) => total + value.length, 0);
+  const totalSourceChars = normalizedSources.reduce(
+    (total, value) => total + value.source.length,
+    0,
+  );
   const totalOutputChars = candidates.reduce((total, value) => total + value.text.length, 0);
   if (
     totalSourceChars > MAX_REFERENCE_ANALYSIS_QUALITY_SOURCE_CHARS
@@ -1191,20 +1218,22 @@ function appendCopyRiskDiagnostics(
   );
   for (const candidate of candidates) {
     const normalized = normalizeOverlapText(candidate.text);
-    if (
-      normalized.length >= REFERENCE_ANALYSIS_EXACT_OVERLAP_CHARS
-      && containsIndexedOverlap(
-        normalized,
-        sourceIndex,
-        REFERENCE_ANALYSIS_EXACT_OVERLAP_CHARS,
-      )
-    ) {
+    const matchedPointerId = normalized.length >= REFERENCE_ANALYSIS_EXACT_OVERLAP_CHARS
+      ? findIndexedOverlapPointer(
+          normalized,
+          sourceIndex,
+          REFERENCE_ANALYSIS_EXACT_OVERLAP_CHARS,
+        )
+      : undefined;
+    if (matchedPointerId) {
       const unit = unitsById.get(candidate.unitId);
-      diagnostics.push(blockingDiagnostic(
+      diagnostics.push(warningDiagnostic(
         `quality-copy-risk-${stableToken(candidate.id)}`,
         'quality.copyRisk.exactOverlap',
         `Analysis output ${candidate.id} contains a long exact overlap with source text.`,
         unit,
+        undefined,
+        matchedPointerId,
       ));
     }
   }
@@ -1278,18 +1307,19 @@ function collectFindingCandidates(
 }
 
 function createOverlapIndex(
-  sources: readonly string[],
+  sources: readonly NormalizedOverlapSource[],
   length: number,
 ): Map<number, RollingHashLocation[]> {
   const index = new Map<number, RollingHashLocation[]>();
-  for (const source of sources) {
+  for (const { pointerId, source } of sources) {
     if (source.length < length) continue;
     forEachRollingHash(source, length, (hash, offset) => {
       const locations = index.get(hash) ?? [];
       const probe = source.slice(offset, offset + length);
       if (!locations.some((location) =>
-        location.source.slice(location.index, location.index + length) === probe)) {
-        locations.push({ source, index: offset });
+        location.pointerId === pointerId
+        && location.source.slice(location.index, location.index + length) === probe)) {
+        locations.push({ pointerId, source, index: offset });
       }
       index.set(hash, locations);
     });
@@ -1297,19 +1327,20 @@ function createOverlapIndex(
   return index;
 }
 
-function containsIndexedOverlap(
+function findIndexedOverlapPointer(
   candidate: string,
   sourceIndex: ReadonlyMap<number, readonly RollingHashLocation[]>,
   length: number,
-): boolean {
-  let found = false;
+): string | undefined {
+  let pointerId: string | undefined;
   forEachRollingHash(candidate, length, (hash, offset) => {
-    if (found) return;
+    if (pointerId) return;
     const probe = candidate.slice(offset, offset + length);
-    found = (sourceIndex.get(hash) ?? []).some((location) =>
-      location.source.slice(location.index, location.index + length) === probe);
+    pointerId = (sourceIndex.get(hash) ?? []).find((location) =>
+      location.source.slice(location.index, location.index + length) === probe)
+      ?.pointerId;
   });
-  return found;
+  return pointerId;
 }
 
 function forEachRollingHash(
@@ -1381,9 +1412,34 @@ function blockingDiagnostic(
     message: boundedMessage(message),
     evidenceRefs: [],
     ...(unit ? { stageId: unit.stageId } : {}),
+    ...(unit ? { unitId: unit.id } : {}),
     ...(unit?.chapterId || chapterId
       ? { chapterId: unit?.chapterId ?? chapterId }
       : {}),
+  };
+}
+
+function warningDiagnostic(
+  id: string,
+  code: string,
+  message: string,
+  unit?: ReferenceDeconstructionWorkUnit,
+  chapterId?: string,
+  pointerId = unit?.pointerId,
+): ReferenceDeconstructionDiagnostic {
+  return {
+    id,
+    code,
+    severity: 'warning',
+    blocking: false,
+    message: boundedMessage(message),
+    evidenceRefs: pointerId ? [pointerId] : [],
+    ...(unit ? { stageId: unit.stageId } : {}),
+    ...(unit ? { unitId: unit.id } : {}),
+    ...(unit?.chapterId || chapterId
+      ? { chapterId: unit?.chapterId ?? chapterId }
+      : {}),
+    ...(pointerId ? { pointerId } : {}),
   };
 }
 

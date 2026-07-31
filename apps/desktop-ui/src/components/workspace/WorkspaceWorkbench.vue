@@ -19,6 +19,7 @@ import type {
   WorkspaceOnboardingInput,
   WorkspaceStatus,
   WorkspaceSummary,
+  WritingProfileState,
 } from '../../composables/useWorkspaceApi';
 
 interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
@@ -68,6 +69,9 @@ defineProps<{
   selectedWritingReferenceAttachmentIds: string[];
   writingReferencesLoading: boolean;
   writingReferencesError: string;
+  writingProfileState?: WritingProfileState;
+  writingProfilesLoading: boolean;
+  writingProfilesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -94,6 +98,8 @@ const emit = defineEmits<{
   stopChat: [];
   refreshWritingReferences: [];
   toggleWritingReference: [id: string];
+  refreshWritingProfiles: [];
+  writingProfileStateChanged: [state: WritingProfileState];
 }>();
 </script>
 
@@ -174,6 +180,8 @@ const emit = defineEmits<{
         :selected-writing-reference-attachment-ids="selectedWritingReferenceAttachmentIds"
         :writing-references-loading="writingReferencesLoading"
         :writing-references-error="writingReferencesError"
+        :writing-profile-state="writingProfileState"
+        :writing-profiles-error="writingProfilesError"
         @update-chat-input="emit('updateChatInput', $event)"
         @send-chat-input="emit('sendChatInput')"
         @stop-chat="emit('stopChat')"
@@ -201,6 +209,9 @@ const emit = defineEmits<{
       :pending-actions-error="pendingActionsError"
       :workspace-status="workspaceStatus"
       :project-health="projectHealth"
+      :writing-profile-state="writingProfileState"
+      :writing-profiles-loading="writingProfilesLoading"
+      :writing-profiles-error="writingProfilesError"
       @select-tab="emit('selectRightTab', $event)"
       @close="emit('closeRight')"
       @accept-pending-action="emit('acceptPendingAction', $event)"
@@ -208,6 +219,8 @@ const emit = defineEmits<{
       @review-pending-action="emit('reviewPendingAction', $event)"
       @open-pending-action-diff="emit('openPendingActionDiff', $event)"
       @review-pending-action-id="emit('reviewPendingActionId', $event)"
+      @refresh-writing-profiles="emit('refreshWritingProfiles')"
+      @writing-profile-state-changed="emit('writingProfileStateChanged', $event)"
     />
   </div>
 </template>

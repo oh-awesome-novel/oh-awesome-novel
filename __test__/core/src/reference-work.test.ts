@@ -21,6 +21,27 @@ import {
 } from '@oh-awesome-novel/core';
 
 describe('reference work import', () => {
+  it('returns before reference scoring when the active Profile excludes techniques', async () => {
+    const selection = await selectReferenceContext({
+      workspaceRoot: '/workspace-that-does-not-need-to-exist',
+      techniquesEnabled: false,
+      capability: 'novel.write_chapter',
+      goal: '参考作品中的节奏技巧',
+    });
+
+    expect(selection).toMatchObject({
+      usedTokens: 0,
+      originalSourceRead: false,
+      profileOmission: {
+        reasonCode: 'profileExcludesTechniques',
+      },
+      included: [],
+      omitted: [],
+    });
+    expect(formatReferenceContextSelectionMarkdown(selection))
+      .toContain('Profile omission: profileExcludesTechniques');
+  });
+
   it('rejects invalid metadata values before creating a reference bundle', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-'));
 

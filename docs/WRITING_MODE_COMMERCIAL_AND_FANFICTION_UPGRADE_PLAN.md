@@ -1,6 +1,6 @@
 # OAN Writing Profile 与拆书材料升级计划
 
-> 计划状态：Planned。
+> 计划状态：In Progress（W0 + W1 + W2a 已于 2026-07-31 完成；W2b + W3 仍为 Planned）。
 >
 > 计划日期：2026-07-26。
 >
@@ -8,13 +8,15 @@
 >
 > 2026-07-28 第二轮收敛（对照代码复核后）：本计划**不是纯新增**。它必须修改 `0900` 已落地的若干共享契约，包括 quality gate 的阻断语义、publish 完成性判定、work plan 终端单元字段和 manifest output kind 枚举。这些破坏性变更已在 §7 和 §11 中显式列为交付物，不允许在实现时当作“顺手改动”。
 >
-> 推荐首个关联任务：`docs/tasks/1200.md`，建议命名为 `Writing Profile Configuration And Prompt Reminders`。开始实现前必须先创建 task，并把本计划登记到 `Related Plans`。
+> 首个关联任务：`docs/tasks/1200.md`（`Writing Profile Configuration And Prompt Reminders`），已完成并在 `Related Plans` 登记本计划。
 >
-> 本计划还需登记到 `docs/README.md` 的计划索引，与 `REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md` 及两份 Play upgrade plan 保持一致。
+> 本计划已登记到 `docs/README.md` 的计划索引，与 `REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md` 及两份 Play upgrade plan 保持一致。
 >
 > 主要复用任务：`0900`、`1000`、`1010`、`1020`、`1030`、`1040`、`1070`、`1080`。其中 `0900` 已完成的 D0–D5 深度拆解流水线是本计划扩展拆书产物的基础。
 >
-> `0900` 状态需先对齐：`docs/tasks/0900.md` 自述 `Completed`，而 `docs/tasks/README.md` 索引仍列为 `Needs Review`。本计划整体建立在 0900 之上，创建 1200 时应顺带修正索引，并在 0900 的 Implementation Notes 中记录本计划将修改其 quality gate 与 publish 契约。
+> `0900` 状态已对齐为 `Completed`；其 Implementation Notes 已记录 W0 / W1
+> 只增加 D5 Profile gate，1205 已完成 quality gate warning 语义，后续 1210
+> 再修改 per-track publish / manifest 完成性契约。
 >
 > 依赖提醒：W3 的材料采用依赖 SemanticPatch 的 `object` / `collection` domain 覆盖，而 `docs/tasks/0800.md`（SemanticPatch Apply Engine）仍为 `Planned`，且现有 domain 枚举不包含 relationships 与 outline。详见 §8.2。
 >
@@ -1025,7 +1027,7 @@ packages/agent/src/reference-story-material.ts
 
 W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task。
 
-#### W2a：Quality Gate 降级（`1205`）
+#### W2a：Quality Gate 降级（`1205`，Completed 2026-07-31）
 
 这一步与 track 无关，只改质量判定的阻断语义，因此可以独立交付并独立验证。
 
@@ -1237,18 +1239,18 @@ W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task
 
 ## 14. 完成定义
 
-- [ ] Workspace 可以选择当前 Writing Profile。
-- [ ] OAN 提供只读 `commercialWriting` 与 `fanfictionWriting`。
-- [ ] 用户可以组合固定 deconstruction outputs 和 Writing reminders。
-- [ ] Profile 不引入题材类型、source binding 或 capability gate。
-- [ ] Writing prompt 由 shared skill + reminder context item 组成，reminder 全关时装配结果不变。
-- [ ] reminder 生效位置定义在真实 `novel.*` capability 联合上。
-- [ ] D5 只新增 profile gate，评分与预算逻辑未被修改。
+- [x] Workspace 可以选择当前 Writing Profile。
+- [x] OAN 提供只读 `commercialWriting` 与 `fanfictionWriting`。
+- [x] 用户可以组合固定 deconstruction outputs 和 Writing reminders。
+- [x] Profile 不引入题材类型、source binding 或 capability gate。
+- [x] Writing prompt 由 shared skill + reminder context item 组成，reminder 全关时装配结果不变。
+- [x] reminder 生效位置定义在真实 `novel.*` capability 联合上。
+- [x] D5 只新增 profile gate，评分与预算逻辑未被修改。
 - [ ] commercialWriting 默认只发布 techniques。
 - [ ] fanfictionWriting 默认发布 world / characters / relationships / outline / timeline，不发布 techniques，且能正常走到 `completed` 并发布。
 - [ ] 两种 Profile 共用 import / chunk / run / resume / evidence / publish 控制框架，但从 Quick Preview 开始使用独立 typed analysis track。
 - [ ] work plan 终端单元、stage id 与 manifest output kind 已完成 track 化改造，且旧 schema 缺失时明确报错。
-- [ ] quality gate 的内容质量判断为非阻断 warning，结构完整性判断仍然阻断。
+- [x] quality gate 的内容质量判断为非阻断 warning，结构完整性判断仍然阻断。
 - [ ] `warned` 产物可以发布，且提示在 Publish Review、References 列表和采用 Preview 中可见。
 - [ ] Technique Projection 保持现有抽象合同。
 - [ ] Story Material Track 拥有独立 Preview、Chapter Findings、Aggregate 和 Projection，并可以保留有 evidence 的具体原作设定、角色和剧情材料。
@@ -1256,20 +1258,20 @@ W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task
 - [ ] custom both 在一个 deconstruction run 中执行两条 track，不复制第二套 controller。
 - [ ] 用户可以显式选择 materials，生成 workspace 修改候选。
 - [ ] materials 只有 Accept 后才成为当前小说文件。
-- [ ] 正式 Writing 不读取 reference 原文或未采用 materials。
+- [x] 正式 Writing 不读取 reference 原文或未采用 materials。
 - [ ] 界面提供简短内容提示，不新增法律或内容 hard gate。
 - [ ] Profile、prompt、projection、adoption 和 Desktop 旅程测试通过。
-- [ ] `FILESYSTEM_SPEC.md`（含 `config.yaml`）、`docs/README.md` 索引、对应 task 和 Implementation Notes 同步更新。
-- [ ] `0900` 的状态标记与 Implementation Notes 已记录本计划对其 quality gate 与 publish 契约的修改。
+- [x] `FILESYSTEM_SPEC.md`（含 `config.yaml`）、`docs/README.md` 索引、对应 task 和 W0 / W1 Implementation Notes 同步更新。
+- [x] `0900` 的状态标记已对齐，Implementation Notes 已记录后续 W2 对 quality gate 与 publish 契约的修改边界。
 
 ## 15. 推荐任务拆分
 
-现有任务编号最高为 `1190`，`1200` / `1210` / `1220` 均未创建。
+`1200` 与 `1205` 已创建并完成；`1210` / `1220` 尚未创建。
 
 | Slice | 推荐任务 | 状态 |
 | --- | --- | --- |
-| W0 + W1 | `1200 Writing Profile Configuration And Prompt Reminders` | Planned，尚未创建 |
-| W2 前半 | `1205 Reference Quality Gate Warning Degradation` | Planned，尚未创建 |
+| W0 + W1 | `1200 Writing Profile Configuration And Prompt Reminders` | Completed |
+| W2 前半 | `1205 Reference Quality Gate Warning Degradation` | Completed |
 | W2 后半 | `1210 Reference Story Material Analysis Track` | Planned，尚未创建 |
 | W3 | `1220 Reference Material Adoption And Desktop Closure` | Planned，尚未创建 |
 
@@ -1277,4 +1279,7 @@ W2 建议拆成两个 task。`1205` 只做 quality gate 降级与相关 publish 
 
 `1205` 需要在 `Related Plans` 中同时链接本计划与 `REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md`，因为它修改的是后者交付的契约。
 
-第一步只创建并实现 1200。W0 / W1 完成后，用户已经能使用两个内置 Profile 和自定义组合；之后按 1205 → 1210 → 1220 推进。不要复制第二套 controller，也不要为了将来可能需要的原作绑定、source-canon selector 或复杂 Profile 能力提前扩展范围。
+1200 与 1205 已完成。用户已经能使用两个内置 Profile 和自定义组合，且
+Technique Track 的内容质量提示不再阻断发布；后续按 1210 → 1220 推进。
+不要复制第二套 controller，也不要为了将来可能需要的原作绑定、
+source-canon selector 或复杂 Profile 能力提前扩展范围。

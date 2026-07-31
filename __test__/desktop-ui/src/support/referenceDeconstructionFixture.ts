@@ -595,7 +595,7 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
       recentUnits: units,
       recentAttempts: attempts,
       analysisQuality: {
-        status: 'passed',
+        status: 'warned',
         coveragePercent: 100,
         blockingDiagnosticCount: 0,
         outputHashes: attempts.map((attempt) => attempt.outputHash),

@@ -152,6 +152,7 @@ export interface ReferenceImportResult {
 
 export interface ReferenceContextSelectionInput {
   workspaceRoot: string;
+  techniquesEnabled?: boolean;
   capability?: NovelCopilotCapabilityId;
   goal?: string;
   sceneType?: string;
@@ -173,6 +174,10 @@ export interface ReferenceContextSelection {
   originalSourceRead: boolean;
   noCopyWarnings: string[];
   differentiationWarnings: string[];
+  profileOmission?: {
+    reasonCode: 'profileExcludesTechniques';
+    reason: string;
+  };
   included: Array<{
     id: string;
     referenceId: string;
@@ -514,10 +519,28 @@ export async function setReferenceEnabled(
 export async function selectReferenceContext(
   input: ReferenceContextSelectionInput,
 ): Promise<ReferenceContextSelection> {
-  const workspaceRoot = resolve(input.workspaceRoot);
   const tokenBudget = normalizeSelectionBound(input.tokenBudget, 1_500, 1, 100_000, 'tokenBudget');
   const maxReferences = normalizeSelectionBound(input.maxReferences, 3, 1, 20, 'maxReferences');
   const maxEntries = normalizeSelectionBound(input.maxEntries, 8, 1, 50, 'maxEntries');
+  if (input.techniquesEnabled === false) {
+    return {
+      tokenBudget,
+      maxReferences,
+      maxEntries,
+      usedTokens: 0,
+      originalSourceRead: false,
+      noCopyWarnings: [],
+      differentiationWarnings: [],
+      profileOmission: {
+        reasonCode: 'profileExcludesTechniques',
+        reason: 'The active Writing Profile excludes abstract techniques.',
+      },
+      included: [],
+      omitted: [],
+    };
+  }
+
+  const workspaceRoot = resolve(input.workspaceRoot);
   const explicitReferenceIds = new Set(input.explicitReferenceIds ?? []);
   const references = await listReferenceWorks(workspaceRoot);
   const included: ReferenceContextSelection['included'] = [];
@@ -840,9 +863,17 @@ export function formatReferenceContextSelectionMarkdown(
     `Original source read: ${selection.originalSourceRead ? 'yes' : 'no'}`,
     `Token budget: ${selection.usedTokens}/${selection.tokenBudget}`,
     `Entry limit: ${selection.included.length}/${selection.maxEntries}`,
+    ...(selection.profileOmission
+      ? [
+          `Profile omission: ${selection.profileOmission.reasonCode}`,
+          `Profile reason: ${selection.profileOmission.reason}`,
+        ]
+      : []),
     '',
     '### No-Copy Warnings',
-    selection.noCopyWarnings.map((warning) => `- ${warning}`).join('\n'),
+    selection.noCopyWarnings.length
+      ? selection.noCopyWarnings.map((warning) => `- ${warning}`).join('\n')
+      : '- none',
     '',
     '### Differentiation Warnings',
     selection.differentiationWarnings.length

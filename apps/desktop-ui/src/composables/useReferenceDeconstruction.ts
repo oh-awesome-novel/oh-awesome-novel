@@ -203,7 +203,10 @@ export function useReferenceDeconstruction(
   const publication = computed(() => readPublication(currentRun.value));
   const canPublish = computed(() => Boolean(
     currentRun.value?.status === 'reviewReady' &&
-    currentRun.value.full?.analysisQuality?.status === 'passed' &&
+    (
+      currentRun.value.full?.analysisQuality?.status === 'passed'
+      || currentRun.value.full?.analysisQuality?.status === 'warned'
+    ) &&
     !currentRun.value.diagnostics.some((diagnostic) => diagnostic.blocking) &&
     !busy.value,
   ));

@@ -10,7 +10,8 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@oh-awesome-novel/agent": "^0.0.1"
+    "@oh-awesome-novel/agent": "^0.0.1",
+    "@oh-awesome-novel/runtime": "^0.0.1"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

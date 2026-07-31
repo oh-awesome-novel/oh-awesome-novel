@@ -266,7 +266,7 @@ export interface ReferenceDeconstructionAttemptSummary {
 }
 
 export interface ReferenceDeconstructionAnalysisQualitySummary {
-  status: 'notEvaluated' | 'passed' | 'failed';
+  status: 'notEvaluated' | 'passed' | 'warned' | 'failed';
   coveragePercent: number;
   blockingDiagnosticCount: number;
   outputHashes: string[];
@@ -1257,9 +1257,12 @@ export async function completeReferenceFullDeconstructionUnit(
     const qualityReport = unit.kind === 'analysisQuality'
       ? output as ReferenceDeconstructionAnalysisQualityReport
       : undefined;
+    const diagnostics = qualityReport
+      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
+      : run.diagnostics;
     const quality = qualityReport
       ? {
-          status: qualityReport.status,
+          status: effectiveQualityStatus(qualityReport.status, diagnostics),
           coveragePercent: qualityReport.coverage.percent,
           blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
             item.blocking).length,
@@ -1267,7 +1270,7 @@ export async function completeReferenceFullDeconstructionUnit(
         } satisfies ReferenceDeconstructionAnalysisQualitySummary
       : full.analysisQuality;
     const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
-      ? quality?.status === 'passed' ? 'reviewReady' : 'failed'
+      ? quality?.status === 'failed' ? 'failed' : 'reviewReady'
       : 'fullRunning';
     const nextFull: ReferenceFullDeconstructionState = {
       ...full,
@@ -1279,9 +1282,6 @@ export async function completeReferenceFullDeconstructionUnit(
         : candidate),
       ...(quality ? { analysisQuality: quality } : {}),
     };
-    const diagnostics = qualityReport
-      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
-      : run.diagnostics;
     const next: ReferenceDeconstructionRun = {
       ...run,
       status: resultStatus,
@@ -1650,20 +1650,20 @@ async function tryAdoptTerminalFullAttempt(
     const qualityReport = unit.kind === 'analysisQuality'
       ? output as ReferenceDeconstructionAnalysisQualityReport
       : undefined;
+    const diagnostics = qualityReport
+      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
+      : run.diagnostics;
     const quality = qualityReport
       ? {
-          status: qualityReport.status,
+          status: effectiveQualityStatus(qualityReport.status, diagnostics),
           coveragePercent: qualityReport.coverage.percent,
           blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
             item.blocking).length,
           outputHashes: [...qualityReport.outputHashes],
         } satisfies ReferenceDeconstructionAnalysisQualitySummary
       : run.full.analysisQuality;
-    const diagnostics = qualityReport
-      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
-      : run.diagnostics;
     const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
-      ? quality?.status === 'passed' ? 'reviewReady' : 'failed'
+      ? quality?.status === 'failed' ? 'failed' : 'reviewReady'
       : 'fullRunning';
     const next: ReferenceDeconstructionRun = {
       ...run,
@@ -2119,6 +2119,8 @@ async function inspectReferenceWorkReadinessInternal(
       persistedDiagnostics.referenceId !== safeReferenceId
       || persistedDiagnostics.sourceChecksumSha256
         !== deconstructionManifest.sourceChecksumSha256
+      || stableJson(deconstructionManifest.warningSummary)
+        !== stableJson(summarizeWarningDiagnostics(persistedDiagnostics.items))
       || progress.referenceId !== safeReferenceId
       || stableJson(progress) !== stableJson(expectedProgress)
       || REFERENCE_DECONSTRUCTION_STAGE_IDS.some((stageId) =>
@@ -2157,7 +2159,7 @@ async function inspectReferenceWorkReadinessInternal(
       progress,
     };
   }
-  if (deconstructionManifest.qualityStatus !== 'passed') {
+  if (!isPublishableQualityStatus(deconstructionManifest.qualityStatus)) {
     return {
       status: 'qualityFailed',
       contextEligible: false,
@@ -2896,6 +2898,32 @@ function mergeRunDiagnostics(
   ];
 }
 
+function effectiveQualityStatus(
+  reportStatus: ReferenceDeconstructionAnalysisQualityReport['status'],
+  diagnostics: readonly ReferenceDeconstructionDiagnostic[],
+): Exclude<ReferenceDeconstructionAnalysisQualitySummary['status'], 'notEvaluated'> {
+  if (
+    reportStatus === 'failed'
+    || diagnostics.some((diagnostic) => diagnostic.blocking)
+  ) return 'failed';
+  return diagnostics.length ? 'warned' : 'passed';
+}
+
+function isPublishableQualityStatus(value: unknown): value is 'passed' | 'warned' {
+  return value === 'passed' || value === 'warned';
+}
+
+function summarizeWarningDiagnostics(
+  diagnostics: readonly ReferenceDeconstructionDiagnostic[],
+): { count: number; codes: string[] } {
+  const warnings = diagnostics.filter((diagnostic) => !diagnostic.blocking);
+  return {
+    count: warnings.length,
+    codes: [...new Set(warnings.map((diagnostic) => diagnostic.code))]
+      .sort((left, right) => left.localeCompare(right)),
+  };
+}
+
 function requireStoredUnit(
   full: ReferenceFullDeconstructionState,
   unitId: string,
@@ -3208,8 +3236,11 @@ function assertQualityReportMatchesRun(
     || stableJson(report.outputHashes)
       !== stableJson(selectedAttempts.map(requireAttemptOutputHash))
     || report.status === 'passed'
+      && (report.coverage.percent !== 100 || report.diagnostics.length !== 0)
+    || report.status === 'warned'
       && (
         report.coverage.percent !== 100
+        || report.diagnostics.length === 0
         || report.diagnostics.some((diagnostic) => diagnostic.blocking)
       )
     || report.status === 'failed'
@@ -3579,7 +3610,9 @@ export async function completeReferenceDeconstructionPublish(
     if (
       readiness.status !== 'completed'
       || readiness.deconstructionManifest?.status !== 'completed'
-      || readiness.deconstructionManifest.qualityStatus !== 'passed'
+      || !isPublishableQualityStatus(
+        readiness.deconstructionManifest.qualityStatus,
+      )
       || readiness.deconstructionManifest.publishedRunId !== run.runId
       || readiness.publishedContext?.runId !== run.runId
       || (!readiness.contextEligible && readiness.reason !== 'disabled')
@@ -3746,7 +3779,7 @@ async function buildPublicationCandidate(
     || !('entries' in distillation)
     || !quality
     || !('planId' in quality)
-    || quality.status !== 'passed'
+    || !isPublishableQualityStatus(quality.status)
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference publication terminal outputs are invalid.',
@@ -3889,7 +3922,8 @@ async function buildPublicationCandidate(
     pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: 'completed',
-    qualityStatus: 'passed',
+    qualityStatus: full.analysisQuality!.status,
+    warningSummary: summarizeWarningDiagnostics(run.diagnostics),
     publishedRunId: run.runId,
     publishedAt: preparedAt,
     stages: createPublishedManifestStages(run),
@@ -4178,7 +4212,7 @@ function assertReviewReadyForPublication(run: ReferenceDeconstructionRun): void 
     run.status !== 'reviewReady'
     || !run.full
     || run.full.units.some((unit) => unit.status !== 'completed')
-    || run.full.analysisQuality?.status !== 'passed'
+    || !isPublishableQualityStatus(run.full.analysisQuality?.status)
     || run.full.analysisQuality.coveragePercent !== 100
     || run.diagnostics.some((diagnostic) => diagnostic.blocking)
   ) {
@@ -4369,7 +4403,10 @@ async function assertPublicationStateMaterialized(
   if (
     manifest.referenceId !== run.referenceId
     || manifest.status !== 'completed'
-    || manifest.qualityStatus !== 'passed'
+    || !isPublishableQualityStatus(manifest.qualityStatus)
+    || manifest.qualityStatus !== run.full?.analysisQuality?.status
+    || stableJson(manifest.warningSummary)
+      !== stableJson(summarizeWarningDiagnostics(run.diagnostics))
     || manifest.publishedRunId !== run.runId
     || manifest.sourceChecksumSha256 !== run.sourceChecksumSha256
     || manifest.structureFingerprint !== run.structureFingerprint
@@ -5151,6 +5188,9 @@ function assertRunState(
 
 function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
   const full = run.full!;
+  const blockingDiagnosticCount = run.diagnostics.filter((diagnostic) =>
+    diagnostic.blocking).length;
+  const warningDiagnosticCount = run.diagnostics.length - blockingDiagnosticCount;
   if (
     full.plan.referenceId !== run.referenceId
     || full.plan.sourceChecksumSha256 !== run.sourceChecksumSha256
@@ -5162,7 +5202,11 @@ function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
   }
   if (
     full.analysisQuality?.blockingDiagnosticCount
-      !== run.diagnostics.filter((diagnostic) => diagnostic.blocking).length
+      !== blockingDiagnosticCount
+    || full.analysisQuality?.status === 'passed'
+      && run.diagnostics.length !== 0
+    || full.analysisQuality?.status === 'warned'
+      && (blockingDiagnosticCount !== 0 || warningDiagnosticCount === 0)
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference analysis quality summary does not match run diagnostics.',
@@ -5194,7 +5238,7 @@ function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
     || run.status === 'reviewReady'
       && (
         full.units.some((unit) => unit.status !== 'completed')
-        || full.analysisQuality?.status !== 'passed'
+        || !isPublishableQualityStatus(full.analysisQuality?.status)
         || full.analysisQuality.coveragePercent !== 100
         || full.analysisQuality.blockingDiagnosticCount !== 0
         || run.diagnostics.some((diagnostic) => diagnostic.blocking)
@@ -5840,7 +5884,7 @@ function assertStoredAnalysisQuality(
   }
   const status = requireEnum(
     record.status,
-    ['notEvaluated', 'passed', 'failed'] as const,
+    ['notEvaluated', 'passed', 'warned', 'failed'] as const,
     'analysis quality status',
   );
   const coveragePercent = safeInteger(record.coveragePercent, 'coveragePercent', 0, 100);
@@ -5852,6 +5896,8 @@ function assertStoredAnalysisQuality(
     );
   if (
     status === 'passed'
+      && (coveragePercent !== 100 || blockingDiagnosticCount !== 0 || !outputHashes.length)
+    || status === 'warned'
       && (coveragePercent !== 100 || blockingDiagnosticCount !== 0 || !outputHashes.length)
     || status === 'failed' && blockingDiagnosticCount === 0
     || status === 'notEvaluated' && (coveragePercent !== 0 || outputHashes.length)

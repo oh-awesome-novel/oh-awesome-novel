@@ -19,6 +19,7 @@ import type {
   WorkspaceOnboardingInput,
   WorkspaceStatus,
   WorkspaceSummary,
+  WritingProfileState,
 } from '../../composables/useWorkspaceApi';
 
 const props = defineProps<{
@@ -70,6 +71,9 @@ const guideVisible = shallowRef(props.startGuide);
 const guideSaving = shallowRef(false);
 const guideError = shallowRef('');
 const editorError = shallowRef('');
+const writingProfileState = shallowRef<WritingProfileState>();
+const writingProfilesLoading = shallowRef(false);
+const writingProfilesError = shallowRef('');
 
 const fileSearchResults = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -100,6 +104,7 @@ onMounted(() => {
   void loadWorkspaceStatus();
   void loadProjectHealth();
   void loadPendingActions();
+  void loadWritingProfiles();
   void conversations.refreshWritingReferences();
 });
 
@@ -197,6 +202,23 @@ async function loadProjectHealth() {
   } catch {
     projectHealth.value = undefined;
   }
+}
+
+async function loadWritingProfiles() {
+  writingProfilesLoading.value = true;
+  writingProfilesError.value = '';
+  try {
+    writingProfileState.value = (await api.getWritingProfiles()).state;
+  } catch (error) {
+    writingProfilesError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    writingProfilesLoading.value = false;
+  }
+}
+
+function updateWritingProfileState(state: WritingProfileState) {
+  writingProfileState.value = state;
+  writingProfilesError.value = '';
 }
 
 async function openFile(path: string) {
@@ -487,6 +509,9 @@ function applyDecisionRefresh(
       :selected-writing-reference-attachment-ids="conversations.selectedWritingReferenceAttachmentIds.value"
       :writing-references-loading="conversations.writingReferencesLoading.value"
       :writing-references-error="conversations.writingReferencesError.value"
+      :writing-profile-state="writingProfileState"
+      :writing-profiles-loading="writingProfilesLoading"
+      :writing-profiles-error="writingProfilesError"
       @update-left-overlay-open="layout.leftOverlayOpen.value = $event"
       @update-sidebar-tab="layout.sidebarTab.value = $event"
       @open-file="openFile"
@@ -502,6 +527,8 @@ function applyDecisionRefresh(
       @stop-chat="conversations.stop"
       @refresh-writing-references="conversations.refreshWritingReferences"
       @toggle-writing-reference="conversations.toggleWritingReferenceAttachment"
+      @refresh-writing-profiles="loadWritingProfiles"
+      @writing-profile-state-changed="updateWritingProfileState"
       @prompt-consumed="clearQueuedPrompt"
       @accept-pending-action="acceptPendingAction"
       @reject-pending-action="rejectPendingAction"

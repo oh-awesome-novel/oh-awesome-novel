@@ -1209,6 +1209,8 @@ export function createReferenceDeconstructionBackendController(
           runRevision: input.baseRunRevision,
           pendingActionId: publication.pendingActionId,
           candidate,
+          warningCount: current.diagnostics.filter((diagnostic) =>
+            !diagnostic.blocking).length,
         });
         assertStoredReferencePublishAction(pendingAction, pendingAction.origin as
           ReferenceDeconstructionPublishPendingActionOrigin, replayed.run, candidate);
@@ -1247,6 +1249,8 @@ export function createReferenceDeconstructionBackendController(
           pendingActionId,
           candidate,
           patches,
+          warningCount: begun.run.diagnostics.filter((diagnostic) =>
+            !diagnostic.blocking).length,
         });
         const pendingAction = pending.action;
         createdPendingAction = pending.created;
@@ -1543,6 +1547,7 @@ async function createOrReadReferencePublishPendingAction(input: {
   runRevision: number;
   pendingActionId: string;
   candidate: ReferenceDeconstructionPublicationCandidate;
+  warningCount: number;
   patches?: ReferenceArtifactPatch[];
 }): Promise<{ action: StoredWriteIntentAction; created: boolean }> {
   const origin: ReferenceDeconstructionPublishPendingActionOrigin = {
@@ -1557,8 +1562,7 @@ async function createOrReadReferencePublishPendingAction(input: {
       action: await createPendingAction(input.workspaceRoot, {
       id: input.pendingActionId,
       title: `Publish reference ${input.referenceId}`,
-      description:
-        `Publish reviewed deconstruction run ${input.runId} as one atomic reference bundle update.`,
+      description: referencePublishDescription(input.runId, input.warningCount),
       patches: input.patches
         ?? referencePublicationPatches(input.referenceId, input.candidate.files),
       origin,
@@ -1629,6 +1633,10 @@ function assertStoredReferencePublishAction(
       : `examples/references/${run.referenceId}/${patch.file}`);
   if (
     action.id !== run.publication?.pendingActionId
+    || action.description !== referencePublishDescription(
+      run.runId,
+      run.diagnostics.filter((diagnostic) => !diagnostic.blocking).length,
+    )
     || !isReferencePublishPendingActionOrigin(action.origin)
     || JSON.stringify(action.origin) !== JSON.stringify(origin)
     || action.origin.referenceId !== run.referenceId
@@ -1649,6 +1657,10 @@ function assertStoredReferencePublishAction(
       `Reference publish PendingAction ${action.id} no longer matches its run.`,
     );
   }
+}
+
+function referencePublishDescription(runId: string, warningCount: number): string {
+  return `Publish reviewed deconstruction run ${runId} as one atomic reference bundle update. Includes ${warningCount} non-blocking quality warning(s) for author review.`;
 }
 
 function assertStoredReferencePublishActionOwnership(

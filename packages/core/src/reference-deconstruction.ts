@@ -61,6 +61,7 @@ export type ReferencePublishedDeconstructionStatus =
 export type ReferenceDeconstructionQualityStatus =
   | 'notEvaluated'
   | 'passed'
+  | 'warned'
   | 'failed';
 
 export type ReferenceDeconstructionConfidence = 'low' | 'medium' | 'high';
@@ -112,6 +113,11 @@ export interface ReferenceDeconstructionManifestOutput {
   checksumSha256: string;
 }
 
+export interface ReferenceDeconstructionWarningSummary {
+  count: number;
+  codes: string[];
+}
+
 export interface ReferenceDeconstructionManifest {
   version: typeof REFERENCE_DECONSTRUCTION_SCHEMA_VERSION;
   referenceId: string;
@@ -122,6 +128,7 @@ export interface ReferenceDeconstructionManifest {
   capabilityVersion: typeof REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION;
   status: ReferencePublishedDeconstructionStatus;
   qualityStatus: ReferenceDeconstructionQualityStatus;
+  warningSummary: ReferenceDeconstructionWarningSummary;
   publishedRunId?: string;
   publishedAt?: string;
   stages: ReferenceDeconstructionManifestStages;
@@ -324,6 +331,7 @@ const PUBLISHED_STATUS_VALUES: readonly ReferencePublishedDeconstructionStatus[]
 const QUALITY_STATUS_VALUES: readonly ReferenceDeconstructionQualityStatus[] = [
   'notEvaluated',
   'passed',
+  'warned',
   'failed',
 ];
 const CONFIDENCE_VALUES: readonly ReferenceDeconstructionConfidence[] = [
@@ -393,6 +401,10 @@ export function createNotAnalyzedReferenceManifest(input: {
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: 'notAnalyzed',
     qualityStatus: 'notEvaluated',
+    warningSummary: {
+      count: 0,
+      codes: [],
+    },
     stages,
     outputs: [],
   };
@@ -433,7 +445,10 @@ export function createReferenceProgressProjection(
     ])) as ReferenceProgress['stages'],
     resumable: false,
     contextEligible: manifest.status === 'completed'
-      && manifest.qualityStatus === 'passed',
+      && (
+        manifest.qualityStatus === 'passed'
+        || manifest.qualityStatus === 'warned'
+      ),
     updatedAt: requireIsoDate(updatedAt, 'updatedAt'),
   };
 }
@@ -990,6 +1005,7 @@ export function assertReferenceDeconstructionManifest(
     'capabilityVersion',
     'status',
     'qualityStatus',
+    'warningSummary',
     'publishedRunId',
     'publishedAt',
     'stages',
@@ -1069,6 +1085,7 @@ export function assertReferenceDeconstructionManifest(
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: requireEnum(record.status, PUBLISHED_STATUS_VALUES, 'manifest status'),
     qualityStatus: requireEnum(record.qualityStatus, QUALITY_STATUS_VALUES, 'qualityStatus'),
+    warningSummary: parseReferenceDeconstructionWarningSummary(record.warningSummary),
     ...(record.publishedRunId === undefined
       ? {}
       : { publishedRunId: requireSafeIdentifier(record.publishedRunId, 'publishedRunId') }),
@@ -1080,7 +1097,10 @@ export function assertReferenceDeconstructionManifest(
   };
   if (manifest.status === 'completed') {
     if (
-      manifest.qualityStatus !== 'passed'
+      (
+        manifest.qualityStatus !== 'passed'
+        && manifest.qualityStatus !== 'warned'
+      )
       || !manifest.publishedRunId
       || !manifest.publishedAt
       || REFERENCE_DECONSTRUCTION_STAGE_IDS.some((stageId) =>
@@ -1089,9 +1109,21 @@ export function assertReferenceDeconstructionManifest(
         !manifest.outputs.some((output) => output.kind === kind))
     ) {
       throw new Error(
-        'Completed reference manifest requires a passed published run and completed pipeline.',
+        'Completed reference manifest requires a publishable quality result and completed pipeline.',
       );
     }
+  }
+  if (
+    manifest.qualityStatus === 'warned'
+      && manifest.warningSummary.count === 0
+    || (
+      manifest.qualityStatus === 'passed'
+      || manifest.qualityStatus === 'notEvaluated'
+    ) && manifest.warningSummary.count !== 0
+  ) {
+    throw new Error(
+      'Reference manifest warning summary does not match its quality status.',
+    );
   }
   return manifest;
 }
@@ -1205,12 +1237,42 @@ function detectReferenceQuickPreviewExactOverlap(
   return [{
     id: 'preview-copy-risk-exact-overlap',
     code: 'copyRisk.exactOverlap',
-    severity: 'error',
-    blocking: true,
-    message: 'Preview output contains a long exact overlap with the reference source; revise it into transformed analysis before further use.',
+    severity: 'warning',
+    blocking: false,
+    message: 'Preview output contains a long exact overlap with the reference source; review or revise it before publication.',
     evidenceRefs: [],
     stageId: 'quickPreview',
   }];
+}
+
+function parseReferenceDeconstructionWarningSummary(
+  value: unknown,
+): ReferenceDeconstructionWarningSummary {
+  const record = requireRecord(value, 'warningSummary');
+  assertOnlyKnownFields(record, ['count', 'codes']);
+  const count = requireSafeInteger(
+    record.count,
+    'warningSummary count',
+    0,
+    MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
+  );
+  const codes = requireArray(
+    record.codes,
+    'warningSummary codes',
+    0,
+    MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
+  ).map((code, index) =>
+    requireCode(code, `warningSummary codes[${index}]`));
+  if (
+    new Set(codes).size !== codes.length
+    || [...codes].sort((left, right) => left.localeCompare(right))
+      .some((code, index) => code !== codes[index])
+    || count < codes.length
+    || (count === 0) !== (codes.length === 0)
+  ) {
+    throw new Error('Reference manifest warning summary is internally inconsistent.');
+  }
+  return { count, codes };
 }
 
 function chunkChapterLines(

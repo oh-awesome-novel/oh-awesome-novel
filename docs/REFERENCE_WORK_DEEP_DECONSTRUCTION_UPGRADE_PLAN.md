@@ -1,5 +1,11 @@
 # OAN 参考作品深度拆解升级计划
 
+> 后续契约覆盖：`docs/tasks/1205.md` 已于 2026-07-31 按
+> `WRITING_MODE_COMMERCIAL_AND_FANFICTION_UPGRADE_PLAN.md` 完成 quality gate
+> warning 降级。本文 D0–D5 中“exact-overlap blocking / quality-passed only”
+> 描述保留为当时交付基线；当前实现以 1205 的
+> `passed | warned | failed`、warned 可发布且可进入 D5 为准。
+
 > 计划状态：Completed。D0 / D1 已于 2026-07-22 落地，D2 / D3 已于 2026-07-23 落地，D4 / D5 已于 2026-07-26 落地。
 >
 > 关联任务：`docs/tasks/0900.md`（已完成，不另建重复领域任务）。

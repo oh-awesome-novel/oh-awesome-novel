@@ -25,6 +25,45 @@ export type {
   ChapterPathParts,
 } from './workspace.js';
 
+// Atomic filesystem writes
+export {
+  writeFileAtomically,
+} from './atomic-file.js';
+
+// Writing Profile configuration
+export {
+  DEFAULT_WRITING_PROFILE_ID,
+  WRITING_PROFILE_OUTPUTS,
+  WRITING_PROFILE_VERSION,
+  WRITING_REMINDER_IDS,
+  activateWritingProfile,
+  cloneCustomWritingProfile,
+  createCustomWritingProfile,
+  createWritingProfileStatusSummary,
+  deleteCustomWritingProfile,
+  getBuiltinWritingProfiles,
+  loadWritingProfileState,
+  normalizeWritingProfile,
+  updateCustomWritingProfile,
+} from './writing-profile.js';
+
+export type {
+  CloneWritingProfileInput,
+  WritingProfile,
+  WritingProfileListItem,
+  WritingProfileLoadError,
+  WritingProfileOutput,
+  WritingProfileState,
+  WritingProfileStatusSummary,
+  WritingReminderId,
+} from './writing-profile.js';
+
+export {
+  WRITING_PROFILE_REMINDER_FRAGMENTS,
+  formatWritingProfileReminders,
+  selectWritingReminderIds,
+} from './writing-profile-reminders.js';
+
 // Application Configuration
 export {
   loadAppConfig,
@@ -786,6 +825,7 @@ export type {
   ReferenceDeconstructionManifestStages,
   ReferenceDeconstructionOutputKind,
   ReferenceDeconstructionQualityStatus,
+  ReferenceDeconstructionWarningSummary,
   ReferenceDeconstructionRunStatus,
   ReferenceDeconstructionStageId,
   ReferenceDeconstructionStageStatus,
