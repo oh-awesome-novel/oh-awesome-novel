@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -176,10 +176,49 @@ describe('SemanticPatch Apply Engine preview', () => {
     ).resolves.toContain('notAnalyzed');
   });
 
+  it('allows only the five fixed Story Material YAML targets', async () => {
+    const workspaceRoot = await createWorkspace();
+    const materialFiles = [
+      'world.yaml',
+      'characters.yaml',
+      'relationships.yaml',
+      'outline.yaml',
+      'timeline.yaml',
+    ];
+
+    const result = await previewSemanticPatches({
+      workspaceRoot,
+      patches: materialFiles.map((file) => ({
+        kind: 'referenceArtifact' as const,
+        referenceId: 'reference-1',
+        file: `materials/${file}`,
+        operation: 'replaceFile' as const,
+        value: `version: 1\nkind: ${file.replace('.yaml', '')}\nentries: []\n`,
+      })),
+    });
+
+    expect(result.touchedFiles).toEqual(materialFiles.map((file) =>
+      `examples/references/reference-1/materials/${file}`));
+    for (const file of materialFiles) {
+      expect(result.diff).toContain(
+        `b/examples/references/reference-1/materials/${file}`,
+      );
+      await expect(readFile(
+        join(workspaceRoot, 'examples/references/reference-1/materials', file),
+        'utf-8',
+      )).rejects.toThrow();
+    }
+  });
+
   it.each([
     'metadata.yaml',
     'sources/original.txt',
     'context/source.txt',
+    'materials/world.md',
+    'materials/extra.yaml',
+    'materials/nested/world.yaml',
+    'materials/.hidden.yaml',
+    'materials/../world.yaml',
     '../reference-2/context/index.yaml',
     'unrelated.md',
   ])('rejects non-publication reference artifact target %s', async (file) => {
@@ -194,6 +233,31 @@ describe('SemanticPatch Apply Engine preview', () => {
         value: 'blocked\n',
       }],
     })).rejects.toThrow(/not publishable|Invalid workspace relative path/);
+  });
+
+  it('rejects a fixed Story Material target through a symlinked directory', async () => {
+    const workspaceRoot = await createWorkspace();
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'oan-materials-outside-'));
+    tempRoots.push(outsideRoot);
+    const referenceRoot = join(
+      workspaceRoot,
+      'examples/references/reference-1',
+    );
+    await mkdir(referenceRoot, { recursive: true });
+    await symlink(outsideRoot, join(referenceRoot, 'materials'));
+
+    await expect(previewSemanticPatches({
+      workspaceRoot,
+      patches: [{
+        kind: 'referenceArtifact',
+        referenceId: 'reference-1',
+        file: 'materials/world.yaml',
+        operation: 'replaceFile',
+        value: 'version: 1\nentries: []\n',
+      }],
+    })).rejects.toThrow(/Parent directory resolves outside/);
+    await expect(readFile(join(outsideRoot, 'world.yaml'), 'utf-8'))
+      .rejects.toThrow();
   });
 
   it('rejects patch targets that point at hidden workspace paths', async () => {

@@ -203,10 +203,7 @@ export function useReferenceDeconstruction(
   const publication = computed(() => readPublication(currentRun.value));
   const canPublish = computed(() => Boolean(
     currentRun.value?.status === 'reviewReady' &&
-    (
-      currentRun.value.full?.analysisQuality?.status === 'passed'
-      || currentRun.value.full?.analysisQuality?.status === 'warned'
-    ) &&
+    hasPublishableTrackQuality(currentRun.value) &&
     !currentRun.value.diagnostics.some((diagnostic) => diagnostic.blocking) &&
     !busy.value,
   ));
@@ -1030,8 +1027,30 @@ function hasSameImmutableRunIdentity(
     previous.structureFingerprint === next.structureFingerprint &&
     previous.pipelineVersion === next.pipelineVersion &&
     previous.capabilityVersion === next.capabilityVersion &&
+    previous.profileId === next.profileId &&
+    previous.outputs.length === next.outputs.length &&
+    previous.outputs.every((output, index) => output === next.outputs[index]) &&
     previous.createdAt === next.createdAt &&
     previous.selectedChapterIds.length === next.selectedChapterIds.length &&
     previous.selectedChapterIds.every((chapterId, index) =>
       chapterId === next.selectedChapterIds[index]);
+}
+
+function hasPublishableTrackQuality(run: ReferenceDeconstructionRun): boolean {
+  if (!run.full) return false;
+  const selectedTracks = [
+    ...(run.outputs.includes('techniques') ? ['technique' as const] : []),
+    ...(run.outputs.some((output) => output !== 'techniques')
+      ? ['storyMaterial' as const]
+      : []),
+  ];
+  return selectedTracks.length > 0 && selectedTracks.every((track) => {
+    const quality = run.full?.analysisQuality[track];
+    return Boolean(
+      quality
+      && (quality.status === 'passed' || quality.status === 'warned')
+      && quality.coveragePercent === 100
+      && quality.blockingDiagnosticCount === 0,
+    );
+  });
 }

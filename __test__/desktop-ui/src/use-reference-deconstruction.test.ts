@@ -12,6 +12,7 @@ import type {
   ReferenceWorkSummary,
 } from '@oh-awesome-novel/client';
 import {
+  materialReviewReadyReferenceRun,
   publishingReferenceRun,
   referencePublishPendingActionFixture,
   reviewReadyReferenceRun,
@@ -585,6 +586,23 @@ describe('useReferenceDeconstruction', () => {
     expect(flow.indeterminate.value).toBe(false);
   });
 
+  it('requires a publishable quality conclusion for every selected track', async () => {
+    const materialOnly = materialReviewReadyReferenceRun();
+    const materialFlow = useReferenceDeconstruction({
+      client: client({ active: async () => ({ run: materialOnly }) }),
+    });
+    await materialFlow.selectReference(reference());
+    expect(materialFlow.canPublish.value).toBe(true);
+
+    const missingStoryQuality = structuredClone(materialOnly);
+    missingStoryQuality.full!.analysisQuality = {};
+    const blockedFlow = useReferenceDeconstruction({
+      client: client({ active: async () => ({ run: missingStoryQuality }) }),
+    });
+    await blockedFlow.selectReference(reference());
+    expect(blockedFlow.canPublish.value).toBe(false);
+  });
+
   it('does not expose cancellation while the publish mutation is in flight', async () => {
     const pending = deferred<ReferenceDeconstructionPublishResult>();
     const flow = useReferenceDeconstruction({
@@ -768,7 +786,7 @@ function reference(): ReferenceWorkSummary {
     chapterCount: 2,
     structureConfidence: 'high',
     progress: {
-      version: 1,
+      version: 2,
       referenceId: 'reference-1',
       status: 'notAnalyzed',
       currentStage: null,
@@ -872,7 +890,7 @@ function previewRun(
     mutationReceipts,
     evidence,
     preview: {
-      version: 1,
+      version: 2,
       runId: 'run-1',
       referenceId: 'reference-1',
       sourceChecksumSha256: 'a'.repeat(64),
@@ -884,8 +902,25 @@ function previewRun(
         evidenceRefs: ['pointer-1'],
         confidence: 'high',
       }],
-      findings: [],
-      borrowablePatterns: [],
+      findings: [{
+        id: 'finding-1',
+        kind: 'hook',
+        observation: 'Pressure arrives before the setting is fully explained.',
+        technique: 'Open with a bounded disturbance before expanding context.',
+        whenUseful: 'When the chapter needs immediate forward pressure.',
+        avoid: 'Do not reproduce the source situation or prose.',
+        confidence: 'high',
+        evidenceRefs: ['pointer-1'],
+        generalInference: false,
+      }],
+      borrowablePatterns: [{
+        id: 'pattern-1',
+        title: 'Pressure before explanation',
+        technique: 'Introduce an actionable disturbance before backstory.',
+        whenUseful: 'Opening a chapter with a clear change in state.',
+        evidenceRefs: ['pointer-1'],
+        confidence: 'high',
+      }],
       doNotCopy: ['Do not copy source prose.'],
       differentiationRequirements: ['Change conflict and setting.'],
       differentiationPrompts: ['What belongs to this novel?'],
@@ -925,7 +960,7 @@ function fullRunningRun(): ReferenceDeconstructionRun {
   const approved = approvedRun();
   const nextUnit = chapterUnit({
     id: 'chapter-0002',
-    ordinal: 1,
+    ordinal: 2,
     chapterId: '0002',
     chunkId: 'chapter-0002-chunk-0001',
   });
@@ -944,6 +979,7 @@ function fullRunningRun(): ReferenceDeconstructionRun {
         fullStage('chapterAnalysis', 'running', 2, 1),
         fullStage('aggregateAnalysis', 'notStarted', 1),
         fullStage('styleProfile', 'notStarted', 1),
+        fullStage('distillForOan', 'notStarted', 1),
         fullStage('qualityGate', 'notStarted', 1),
       ],
       progress: fullProgress(1, 0, 1),
@@ -975,7 +1011,7 @@ function activeFullUnitRun(): ReferenceDeconstructionRun {
   const running = fullRunningRun();
   const currentUnit = chapterUnit({
     id: 'chapter-0002',
-    ordinal: 1,
+    ordinal: 2,
     chapterId: '0002',
     chunkId: 'chapter-0002-chunk-0001',
     status: 'running',
@@ -1060,6 +1096,7 @@ function failedFullRun(): ReferenceDeconstructionRun {
         fullStage('chapterAnalysis', 'failed', 2, 0, 1),
         fullStage('aggregateAnalysis', 'notStarted', 1),
         fullStage('styleProfile', 'notStarted', 1),
+        fullStage('distillForOan', 'notStarted', 1),
         fullStage('qualityGate', 'notStarted', 1),
       ],
       progress: fullProgress(0, 1, 0),
@@ -1076,10 +1113,12 @@ function failedFullRun(): ReferenceDeconstructionRun {
         completedAt: '2026-07-22T00:03:00.000Z',
       }],
       analysisQuality: {
-        status: 'notEvaluated',
-        coveragePercent: 0,
-        blockingDiagnosticCount: 1,
-        outputHashes: [],
+        technique: {
+          status: 'notEvaluated',
+          coveragePercent: 0,
+          blockingDiagnosticCount: 1,
+          outputHashes: [],
+        },
       },
     },
     updatedAt: '2026-07-22T00:03:00.000Z',
@@ -1105,6 +1144,7 @@ function retriedFullRun(): ReferenceDeconstructionRun {
         fullStage('chapterAnalysis', 'queued', 2),
         fullStage('aggregateAnalysis', 'notStarted', 1),
         fullStage('styleProfile', 'notStarted', 1),
+        fullStage('distillForOan', 'notStarted', 1),
         fullStage('qualityGate', 'notStarted', 1),
       ],
       progress: fullProgress(0, 0, 0),
@@ -1112,10 +1152,12 @@ function retriedFullRun(): ReferenceDeconstructionRun {
       failedUnit: undefined,
       recentUnits: [nextUnit],
       analysisQuality: {
-        status: 'notEvaluated',
-        coveragePercent: 0,
-        blockingDiagnosticCount: 0,
-        outputHashes: [],
+        technique: {
+          status: 'notEvaluated',
+          coveragePercent: 0,
+          blockingDiagnosticCount: 0,
+          outputHashes: [],
+        },
       },
     },
     updatedAt: '2026-07-22T00:04:00.000Z',
@@ -1127,17 +1169,29 @@ function baseRun(
 ): ReferenceDeconstructionRun {
   const mutationReceipts = patch.mutationReceipts ?? [];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'run-1',
     referenceId: 'reference-1',
     runRevision: 0,
     status: 'created',
     sourceChecksumSha256: 'a'.repeat(64),
     structureFingerprint: 'b'.repeat(64),
-    pipelineVersion: 1,
-    capabilityVersion: 'novel.deconstruct_reference@1',
+    pipelineVersion: 2,
+    capabilityVersion: 'novel.deconstruct_reference@2',
+    profileId: 'commercialWriting',
+    outputs: ['techniques'],
     selectedChapterIds: ['0001'],
-    evidence: [],
+    evidence: [{
+      id: 'pointer-1',
+      pointer: {
+        referenceId: 'reference-1',
+        sourceChecksumSha256: 'a'.repeat(64),
+        chapterId: '0001',
+        chunkId: 'chunk-0001-0001',
+        lineStart: 1,
+        lineEnd: 20,
+      },
+    }],
     diagnostics: [],
     mutationReceipts,
     receiptCount: mutationReceipts.length,
@@ -1154,6 +1208,7 @@ function initialFull(): ReferenceDeconstructionFullRun {
       fullStage('chapterAnalysis', 'queued', 2),
       fullStage('aggregateAnalysis', 'notStarted', 1),
       fullStage('styleProfile', 'notStarted', 1),
+      fullStage('distillForOan', 'notStarted', 1),
       fullStage('qualityGate', 'notStarted', 1),
     ],
     progress: fullProgress(0, 0, 0),
@@ -1161,10 +1216,12 @@ function initialFull(): ReferenceDeconstructionFullRun {
     recentUnits: [nextUnit],
     recentAttempts: [],
     analysisQuality: {
-      status: 'notEvaluated',
-      coveragePercent: 0,
-      blockingDiagnosticCount: 0,
-      outputHashes: [],
+      technique: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
     },
   };
 }
@@ -1174,7 +1231,8 @@ function chapterUnit(
 ): ReferenceDeconstructionFullRun['recentUnits'][number] {
   return {
     id: 'chapter-0001',
-    ordinal: 0,
+    ordinal: 1,
+    track: 'technique',
     stageId: 'chapterAnalysis',
     kind: 'chapterChunk',
     chapterId: '0001',
@@ -1192,7 +1250,14 @@ function fullStage(
   completedUnits = 0,
   failedUnits = 0,
 ): ReferenceDeconstructionFullRun['stages'][number] {
-  return { stageId, status, plannedUnits, completedUnits, failedUnits };
+  return {
+    track: 'technique',
+    stageId,
+    status,
+    plannedUnits,
+    completedUnits,
+    failedUnits,
+  };
 }
 
 function fullProgress(
@@ -1201,12 +1266,12 @@ function fullProgress(
   completedChapters: number,
 ): ReferenceDeconstructionFullRun['progress'] {
   return {
-    plannedUnits: 5,
+    plannedUnits: 6,
     completedUnits,
     failedUnits,
     completedChapters,
     totalChapters: 2,
-    percent: Math.round((completedUnits / 5) * 100),
+    percent: Math.round((completedUnits / 6) * 100),
   };
 }
 

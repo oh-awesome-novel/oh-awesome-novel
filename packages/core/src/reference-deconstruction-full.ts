@@ -12,6 +12,12 @@ import type {
   ReferenceEvidencePointerMap,
   ReferenceSourcePointer,
 } from './reference-deconstruction.js';
+import {
+  WRITING_PROFILE_OUTPUTS,
+} from './writing-profile.js';
+import type {
+  WritingProfileOutput,
+} from './writing-profile.js';
 
 export const MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS = 12_000 as const;
 export const MAX_REFERENCE_ROLLING_CONTEXT_CHARS = 6_000 as const;
@@ -25,17 +31,35 @@ export type ReferenceDeconstructionWorkUnitKind =
   | 'aggregate'
   | 'style'
   | 'distill'
+  | 'materialProjection'
   | 'analysisQuality';
+
+export const REFERENCE_DECONSTRUCTION_TRACK_IDS = [
+  'technique',
+  'storyMaterial',
+] as const;
+
+export type ReferenceDeconstructionTrackId =
+  typeof REFERENCE_DECONSTRUCTION_TRACK_IDS[number];
+
+export type ReferenceStoryMaterialKind = Exclude<
+  WritingProfileOutput,
+  'techniques'
+>;
 
 export interface ReferenceDeconstructionWorkUnit {
   id: string;
   ordinal: number;
+  track: ReferenceDeconstructionTrackId;
   stageId: Extract<
     ReferenceDeconstructionStageId,
     | 'chapterAnalysis'
     | 'aggregateAnalysis'
     | 'styleProfile'
     | 'distillForOan'
+    | 'materialChapterAnalysis'
+    | 'materialAggregateAnalysis'
+    | 'materialProjection'
     | 'qualityGate'
   >;
   kind: ReferenceDeconstructionWorkUnitKind;
@@ -50,6 +74,20 @@ export interface ReferenceDeconstructionWorkUnit {
   aggregateLevel?: number;
 }
 
+export interface ReferenceTechniqueWorkPlanTrack {
+  aggregateRootUnitId: string;
+  styleUnitId: string;
+  distillUnitId: string;
+  analysisQualityUnitId: string;
+}
+
+export interface ReferenceStoryMaterialWorkPlanTrack {
+  aggregateRootUnitId: string;
+  projectionUnitId: string;
+  analysisQualityUnitId: string;
+  materialKinds: ReferenceStoryMaterialKind[];
+}
+
 export interface ReferenceDeconstructionWorkPlan {
   version: typeof REFERENCE_DECONSTRUCTION_SCHEMA_VERSION;
   id: string;
@@ -57,11 +95,12 @@ export interface ReferenceDeconstructionWorkPlan {
   sourceChecksumSha256: string;
   structureFingerprint: string;
   chapterIds: string[];
+  outputs: WritingProfileOutput[];
   units: ReferenceDeconstructionWorkUnit[];
-  aggregateRootUnitId: string;
-  styleUnitId: string;
-  distillUnitId: string;
-  analysisQualityUnitId: string;
+  tracks: {
+    technique?: ReferenceTechniqueWorkPlanTrack;
+    storyMaterial?: ReferenceStoryMaterialWorkPlanTrack;
+  };
 }
 
 export interface CreateReferenceDeconstructionWorkPlanInput {
@@ -77,6 +116,7 @@ export interface CreateReferenceDeconstructionWorkPlanInput {
   }>;
   maxChunkChars?: number;
   aggregateFanIn?: number;
+  outputs?: readonly WritingProfileOutput[];
 }
 
 export interface ReferenceChapterWorkUnitWindow {
@@ -330,9 +370,26 @@ export function createReferenceDeconstructionWorkPlan(
     throw new Error('Reference full analysis chapter ids must be unique.');
   }
 
-  const units: ReferenceDeconstructionWorkUnit[] = [];
-  let ordinal = 0;
-  let previousChapterUnitId: string | undefined;
+  const outputs = normalizeReferenceDeconstructionOutputs(
+    input.outputs ?? ['techniques'],
+  );
+  const materialKinds = outputs.filter(
+    (output): output is ReferenceStoryMaterialKind => output !== 'techniques',
+  );
+  const selectedTracks: ReferenceDeconstructionTrackId[] = [
+    ...(outputs.includes('techniques') ? ['technique' as const] : []),
+    ...(materialKinds.length ? ['storyMaterial' as const] : []),
+  ];
+
+  const sourceChunks: Array<{
+    chapterId: string;
+    chunkId: string;
+    pointerId: string;
+    pointer: ReferenceSourcePointer;
+    isLastChunkInChapter: boolean;
+    lineCharStart?: number;
+    lineCharEnd?: number;
+  }> = [];
   for (const chapter of input.chapters) {
     const chapterId = requireSafeIdentifier(chapter.id, 'chapterId');
     const lineStart = boundedInteger(chapter.lineStart, 1, sourceLines.length, 'lineStart');
@@ -346,7 +403,6 @@ export function createReferenceDeconstructionWorkPlan(
       throw new Error(`Reference chapter ${chapterId} produced no analysis chunks.`);
     }
     chunks.forEach((chunk, chunkIndex) => {
-      ordinal += 1;
       const chunkId = `${chapterId}-full-chunk-${String(chunkIndex + 1).padStart(4, '0')}`;
       const pointer: ReferenceSourcePointer = {
         referenceId,
@@ -365,13 +421,7 @@ export function createReferenceDeconstructionWorkPlan(
         String(chunk.lineEnd),
         sha256(chunk.content),
       ]);
-      const id = stableId('unit-chapter', [referenceId, chapterId, chunkId]);
-      units.push({
-        id,
-        ordinal,
-        stageId: 'chapterAnalysis',
-        kind: 'chapterChunk',
-        predecessorUnitIds: previousChapterUnitId ? [previousChapterUnitId] : [],
+      sourceChunks.push({
         chapterId,
         chunkId,
         pointerId,
@@ -384,74 +434,170 @@ export function createReferenceDeconstructionWorkPlan(
               lineCharEnd: chunk.lineCharEnd,
             }),
       });
-      previousChapterUnitId = id;
     });
   }
 
-  let aggregateLevel = 0;
-  let aggregateInputs = units
-    .filter((unit) => unit.kind === 'chapterChunk')
-    .map((unit) => unit.id);
-  do {
-    aggregateLevel += 1;
-    const nextLevel: string[] = [];
-    for (let index = 0; index < aggregateInputs.length; index += aggregateFanIn) {
-      const predecessorUnitIds = aggregateInputs.slice(index, index + aggregateFanIn);
+  const units: ReferenceDeconstructionWorkUnit[] = [];
+  let ordinal = 0;
+  const aggregateRootIds = new Map<ReferenceDeconstructionTrackId, string>();
+  for (const track of selectedTracks) {
+    let previousChapterUnitId: string | undefined;
+    const chapterUnitIds: string[] = [];
+    for (const chunk of sourceChunks) {
       ordinal += 1;
-      const id = stableId('unit-aggregate', [
+      const id = stableId('unit-chapter', [
         referenceId,
-        String(aggregateLevel),
-        String(Math.floor(index / aggregateFanIn) + 1),
-        ...predecessorUnitIds,
+        track,
+        chunk.chapterId,
+        chunk.chunkId,
       ]);
       units.push({
         id,
         ordinal,
-        stageId: 'aggregateAnalysis',
-        kind: 'aggregate',
-        predecessorUnitIds,
-        aggregateLevel,
+        track,
+        stageId: track === 'technique'
+          ? 'chapterAnalysis'
+          : 'materialChapterAnalysis',
+        kind: 'chapterChunk',
+        predecessorUnitIds: previousChapterUnitId ? [previousChapterUnitId] : [],
+        chapterId: chunk.chapterId,
+        chunkId: chunk.chunkId,
+        pointerId: chunk.pointerId,
+        pointer: chunk.pointer,
+        isLastChunkInChapter: chunk.isLastChunkInChapter,
+        ...(chunk.lineCharStart === undefined
+          ? {}
+          : {
+              lineCharStart: chunk.lineCharStart,
+              lineCharEnd: chunk.lineCharEnd,
+            }),
       });
-      nextLevel.push(id);
+      previousChapterUnitId = id;
+      chapterUnitIds.push(id);
     }
-    aggregateInputs = nextLevel;
-  } while (aggregateInputs.length > 1);
 
-  const aggregateRootUnitId = aggregateInputs[0]!;
-  ordinal += 1;
-  const styleUnitId = stableId('unit-style', [referenceId, aggregateRootUnitId]);
-  units.push({
-    id: styleUnitId,
-    ordinal,
-    stageId: 'styleProfile',
-    kind: 'style',
-    predecessorUnitIds: [aggregateRootUnitId],
-  });
-  ordinal += 1;
-  const distillUnitId = stableId('unit-distill', [
-    referenceId,
-    aggregateRootUnitId,
-    styleUnitId,
-  ]);
-  units.push({
-    id: distillUnitId,
-    ordinal,
-    stageId: 'distillForOan',
-    kind: 'distill',
-    predecessorUnitIds: [aggregateRootUnitId, styleUnitId],
-  });
-  ordinal += 1;
-  const analysisQualityUnitId = stableId('unit-analysis-quality', [
-    referenceId,
-    distillUnitId,
-  ]);
-  units.push({
-    id: analysisQualityUnitId,
-    ordinal,
-    stageId: 'qualityGate',
-    kind: 'analysisQuality',
-    predecessorUnitIds: [distillUnitId],
-  });
+    let aggregateLevel = 0;
+    let aggregateInputs = chapterUnitIds;
+    do {
+      aggregateLevel += 1;
+      const nextLevel: string[] = [];
+      for (let index = 0; index < aggregateInputs.length; index += aggregateFanIn) {
+        const predecessorUnitIds = aggregateInputs.slice(index, index + aggregateFanIn);
+        ordinal += 1;
+        const id = stableId('unit-aggregate', [
+          referenceId,
+          track,
+          String(aggregateLevel),
+          String(Math.floor(index / aggregateFanIn) + 1),
+          ...predecessorUnitIds,
+        ]);
+        units.push({
+          id,
+          ordinal,
+          track,
+          stageId: track === 'technique'
+            ? 'aggregateAnalysis'
+            : 'materialAggregateAnalysis',
+          kind: 'aggregate',
+          predecessorUnitIds,
+          aggregateLevel,
+        });
+        nextLevel.push(id);
+      }
+      aggregateInputs = nextLevel;
+    } while (aggregateInputs.length > 1);
+    aggregateRootIds.set(track, aggregateInputs[0]!);
+  }
+
+  const tracks: ReferenceDeconstructionWorkPlan['tracks'] = {};
+  const techniqueAggregateRootUnitId = aggregateRootIds.get('technique');
+  if (techniqueAggregateRootUnitId) {
+    ordinal += 1;
+    const styleUnitId = stableId('unit-style', [
+      referenceId,
+      techniqueAggregateRootUnitId,
+    ]);
+    units.push({
+      id: styleUnitId,
+      ordinal,
+      track: 'technique',
+      stageId: 'styleProfile',
+      kind: 'style',
+      predecessorUnitIds: [techniqueAggregateRootUnitId],
+    });
+    ordinal += 1;
+    const distillUnitId = stableId('unit-distill', [
+      referenceId,
+      techniqueAggregateRootUnitId,
+      styleUnitId,
+    ]);
+    units.push({
+      id: distillUnitId,
+      ordinal,
+      track: 'technique',
+      stageId: 'distillForOan',
+      kind: 'distill',
+      predecessorUnitIds: [techniqueAggregateRootUnitId, styleUnitId],
+    });
+    ordinal += 1;
+    const analysisQualityUnitId = stableId('unit-analysis-quality', [
+      referenceId,
+      'technique',
+      distillUnitId,
+    ]);
+    units.push({
+      id: analysisQualityUnitId,
+      ordinal,
+      track: 'technique',
+      stageId: 'qualityGate',
+      kind: 'analysisQuality',
+      predecessorUnitIds: [distillUnitId],
+    });
+    tracks.technique = {
+      aggregateRootUnitId: techniqueAggregateRootUnitId,
+      styleUnitId,
+      distillUnitId,
+      analysisQualityUnitId,
+    };
+  }
+
+  const materialAggregateRootUnitId = aggregateRootIds.get('storyMaterial');
+  if (materialAggregateRootUnitId) {
+    ordinal += 1;
+    const projectionUnitId = stableId('unit-material-projection', [
+      referenceId,
+      materialAggregateRootUnitId,
+      ...materialKinds,
+    ]);
+    units.push({
+      id: projectionUnitId,
+      ordinal,
+      track: 'storyMaterial',
+      stageId: 'materialProjection',
+      kind: 'materialProjection',
+      predecessorUnitIds: [materialAggregateRootUnitId],
+    });
+    ordinal += 1;
+    const analysisQualityUnitId = stableId('unit-analysis-quality', [
+      referenceId,
+      'storyMaterial',
+      projectionUnitId,
+    ]);
+    units.push({
+      id: analysisQualityUnitId,
+      ordinal,
+      track: 'storyMaterial',
+      stageId: 'qualityGate',
+      kind: 'analysisQuality',
+      predecessorUnitIds: [projectionUnitId],
+    });
+    tracks.storyMaterial = {
+      aggregateRootUnitId: materialAggregateRootUnitId,
+      projectionUnitId,
+      analysisQualityUnitId,
+      materialKinds,
+    };
+  }
 
   if (units.length > MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS) {
     throw new Error(
@@ -473,12 +619,27 @@ export function createReferenceDeconstructionWorkPlan(
     sourceChecksumSha256,
     structureFingerprint,
     chapterIds,
+    outputs,
     units,
-    aggregateRootUnitId,
-    styleUnitId,
-    distillUnitId,
-    analysisQualityUnitId,
+    tracks,
   };
+}
+
+export function normalizeReferenceDeconstructionOutputs(
+  value: readonly WritingProfileOutput[],
+): WritingProfileOutput[] {
+  if (!Array.isArray(value) || !value.length) {
+    throw new Error('Reference deconstruction outputs must be non-empty.');
+  }
+  const outputs = value.map((output) => requireEnum(
+    output,
+    WRITING_PROFILE_OUTPUTS,
+    'deconstruction output',
+  ));
+  if (new Set(outputs).size !== outputs.length) {
+    throw new Error('Reference deconstruction outputs must be unique.');
+  }
+  return WRITING_PROFILE_OUTPUTS.filter((output) => outputs.includes(output));
 }
 
 export function resolveReferenceChapterWorkUnitWindow(

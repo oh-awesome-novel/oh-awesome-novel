@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS,
-  REFERENCE_DECONSTRUCTION_STAGE_IDS,
   assertReferenceDeconstructionManifest,
   createNotAnalyzedReferenceManifest,
   createReferenceEvidencePointerMap,
@@ -28,31 +27,42 @@ describe('reference deconstruction contracts', () => {
         count: 2,
         codes: ['quality.copyRisk.exactOverlap', 'quality.uncertainty'],
       },
+      profileId: 'commercialWriting',
+      selectedOutputs: ['techniques'] as const,
       publishedRunId: 'run-warned',
       publishedAt: '2026-07-31T00:00:00.000Z',
       stages: Object.fromEntries(
-        REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [
+        [
+          'detectStructure',
+          'quickPreview',
+          'chapterAnalysis',
+          'aggregateAnalysis',
+          'styleProfile',
+          'distillForOan',
+          'qualityGate',
+        ].map((stageId) => [
           stageId,
           { status: 'completed', outputHashes: [] },
         ]),
       ),
       outputs: [
-        {
-          kind: 'deconstruction',
-          path: 'deconstruction/quick-preview.md',
-          checksumSha256: sha256('deconstruction'),
-        },
-        {
-          kind: 'distilled',
-          path: 'distilled/writing-style.md',
-          checksumSha256: sha256('distilled'),
-        },
-        {
-          kind: 'context',
-          path: 'context/index.yaml',
-          checksumSha256: sha256('context'),
-        },
-      ],
+        ['deconstruction', 'deconstruction/quick-preview.md'],
+        ['distilled', 'distilled/writing-style.md'],
+        ['distilled', 'distilled/pacing.md'],
+        ['distilled', 'distilled/hooks.md'],
+        ['distilled', 'distilled/scene-techniques.md'],
+        ['distilled', 'distilled/character-techniques.md'],
+        ['distilled', 'distilled/do-not-copy.md'],
+        ['context', 'context/index.yaml'],
+        ['context', 'context/reference-summary.md'],
+      ].map(([kind, path]) => ({
+        kind,
+        path,
+        checksumSha256: sha256(path),
+        sourceRunId: 'run-warned',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
+      })),
     };
 
     const parsed = assertReferenceDeconstructionManifest(warned);

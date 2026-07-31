@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS,
+  REFERENCE_DECONSTRUCTION_STAGE_IDS,
   REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
 } from './reference-deconstruction.js';
 import type {
@@ -132,7 +133,8 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
   const evaluatedAt = normalizeDate(input.evaluatedAt);
   const diagnostics: ReferenceDeconstructionDiagnostic[] = [];
   const unitsById = new Map(plan.units.map((unit) => [unit.id, unit]));
-  const requiredUnits = plan.units.filter((unit) => unit.kind !== 'analysisQuality');
+  const requiredUnits = plan.units.filter((unit) =>
+    unit.track === 'technique' && unit.kind !== 'analysisQuality');
   const chapterUnits = requiredUnits.filter((unit) => unit.kind === 'chapterChunk');
   const aggregateUnits = requiredUnits.filter((unit) => unit.kind === 'aggregate');
   const styleUnits = requiredUnits.filter((unit) => unit.kind === 'style');
@@ -248,7 +250,10 @@ export function evaluateReferenceDeconstructionAnalysisQuality(
     units: plan.units,
   }));
 
-  const boundedDiagnostics = boundDiagnostics(diagnostics, plan.analysisQualityUnitId);
+  const boundedDiagnostics = boundDiagnostics(
+    diagnostics,
+    plan.tracks.technique?.analysisQualityUnitId ?? 'missing-technique-quality-unit',
+  );
   const checkedUnitIds = requiredUnits
     .filter((unit) => {
       const attempt = attemptsByUnitId.get(unit.id);
@@ -544,10 +549,13 @@ function validatePlanShape(
       ));
     }
   }
-  const aggregateRoot = plan.units.find((unit) => unit.id === plan.aggregateRootUnitId);
-  const style = plan.units.find((unit) => unit.id === plan.styleUnitId);
-  const distill = plan.units.find((unit) => unit.id === plan.distillUnitId);
-  const quality = plan.units.find((unit) => unit.id === plan.analysisQualityUnitId);
+  const technique = plan.tracks.technique;
+  const aggregateRoot = plan.units.find((unit) =>
+    unit.id === technique?.aggregateRootUnitId);
+  const style = plan.units.find((unit) => unit.id === technique?.styleUnitId);
+  const distill = plan.units.find((unit) => unit.id === technique?.distillUnitId);
+  const quality = plan.units.find((unit) =>
+    unit.id === technique?.analysisQualityUnitId);
   if (
     aggregateRoot?.kind !== 'aggregate'
     || style?.kind !== 'style'
@@ -891,7 +899,9 @@ function validateDerivedCoverageAndClosure(
   const styleUnit = styleUnits[0]!;
   const styleOutput = outputsByUnitId.get(styleUnit.id);
   if (!isStyleOutput(styleOutput)) return;
-  const rootOutput = outputsByUnitId.get(plan.aggregateRootUnitId);
+  const rootOutput = outputsByUnitId.get(
+    plan.tracks.technique?.aggregateRootUnitId ?? '',
+  );
   const rootCoverage = isAggregateOutput(rootOutput)
     ? {
         unitIds: rootOutput.coveredUnitIds,
@@ -941,8 +951,10 @@ function validateDistillationClosure(
   const unit = distillUnits[0]!;
   const output = outputsByUnitId.get(unit.id);
   if (!isDistillationOutput(output)) return;
-  const aggregate = outputsByUnitId.get(plan.aggregateRootUnitId);
-  const style = outputsByUnitId.get(plan.styleUnitId);
+  const aggregate = outputsByUnitId.get(
+    plan.tracks.technique?.aggregateRootUnitId ?? '',
+  );
+  const style = outputsByUnitId.get(plan.tracks.technique?.styleUnitId ?? '');
   if (!isAggregateOutput(aggregate) || !isStyleOutput(style)) {
     diagnostics.push(blockingDiagnostic(
       `quality-distill-predecessor-${unit.ordinal}`,
@@ -1533,15 +1545,7 @@ function parseStoredQualityDiagnostic(
       : {
           stageId: requireEnum(
             record.stageId,
-            [
-              'quickPreview',
-              'chapterAnalysis',
-              'aggregateAnalysis',
-              'styleProfile',
-              'distillForOan',
-              'qualityGate',
-              'publish',
-            ] as const,
+            REFERENCE_DECONSTRUCTION_STAGE_IDS,
             `quality diagnostics[${index}].stageId`,
           ),
         }),

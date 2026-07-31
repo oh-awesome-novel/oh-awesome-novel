@@ -28,7 +28,7 @@ export function referenceFixture(
     chapterCount: 2,
     structureConfidence: 'high',
     progress: {
-      version: 1,
+      version: 2,
       referenceId: 'reference-1',
       status: 'notAnalyzed',
       currentStage: null,
@@ -108,6 +108,53 @@ export function publishedReferenceFixture(): ReferenceWorkSummary {
       },
     },
   } as ReferenceWorkSummary;
+}
+
+export function materialOnlyPublishedReferenceFixture(): ReferenceWorkSummary {
+  const reference = referenceFixture({
+    deconstructionStatus: 'completed',
+    contextEligible: false,
+    readinessReason: 'techniqueTrackNotPublished',
+  });
+  return {
+    ...reference,
+    progress: {
+      ...reference.progress,
+      status: 'completed',
+      currentStage: null,
+      nextStage: null,
+      completedStages: [
+        'detectStructure',
+        'quickPreview',
+        'materialChapterAnalysis',
+        'materialAggregateAnalysis',
+        'materialProjection',
+        'qualityGate',
+      ],
+      stages: {
+        detectStructure: 'completed',
+        quickPreview: 'completed',
+        materialChapterAnalysis: 'completed',
+        materialAggregateAnalysis: 'completed',
+        materialProjection: 'completed',
+        qualityGate: 'completed',
+      },
+      resumable: false,
+      contextEligible: false,
+    },
+    publishedContext: {
+      runId: 'run-material-1',
+      fingerprint: 'f'.repeat(64),
+      entryCount: 0,
+      categoryCounts: {
+        writingStyle: 0,
+        pacing: 0,
+        hooks: 0,
+        scene: 0,
+        character: 0,
+      },
+    },
+  };
 }
 
 export function referenceContextFixture(): ReferenceContextSelection {
@@ -243,6 +290,57 @@ export function referencePublicationFixture(
   };
 }
 
+export function materialPublicationFixture(): ReferenceDeconstructionPublicationView {
+  return {
+    candidateFingerprint: 'a'.repeat(64),
+    files: [{
+      path: 'examples/references.yaml',
+      checksumSha256: '1'.repeat(64),
+      kind: 'index',
+    }, {
+      path: 'examples/references/reference-1/deconstruction-manifest.yaml',
+      checksumSha256: '2'.repeat(64),
+      kind: 'manifest',
+    }, {
+      path: 'examples/references/reference-1/deconstruction/material-aggregate.md',
+      checksumSha256: '3'.repeat(64),
+      kind: 'deconstruction',
+    }, {
+      path: 'examples/references/reference-1/materials/world.yaml',
+      checksumSha256: '4'.repeat(64),
+      kind: 'materials',
+    }, {
+      path: 'examples/references/reference-1/materials/characters.yaml',
+      checksumSha256: '5'.repeat(64),
+      kind: 'materials',
+    }],
+    entryInventory: [],
+    materialInventory: [{
+      id: 'material-world-gate',
+      materialKind: 'world',
+      title: 'The winter gate opens once each solstice',
+      assertionType: 'fact',
+      confidence: 'high',
+      path: 'materials/world.yaml',
+    }, {
+      id: 'material-world-cost',
+      materialKind: 'world',
+      title: 'Opening the gate consumes a keeper memory',
+      assertionType: 'interpretation',
+      confidence: 'medium',
+      path: 'materials/world.yaml',
+    }, {
+      id: 'material-character-courier',
+      materialKind: 'characters',
+      title: 'The courier wants to expose the hidden council',
+      assertionType: 'uncertain',
+      confidence: 'low',
+      path: 'materials/characters.yaml',
+    }],
+    preparedAt: '2026-07-22T00:08:30.000Z',
+  };
+}
+
 export function referencePublishPendingActionFixture(): ReferencePublishPendingActionView {
   return {
     id: 'pending-reference-publish-1',
@@ -307,7 +405,7 @@ export function previewReferenceRun(
       receipt(advanceKey, 1, 'awaitingFullApproval', '2'),
     ],
     preview: {
-      version: 1,
+      version: 2,
       runId: 'run-1',
       referenceId: 'reference-1',
       sourceChecksumSha256: 'a'.repeat(64),
@@ -358,6 +456,179 @@ export function previewReferenceRun(
   });
 }
 
+export function materialPreviewReferenceRun(): ReferenceDeconstructionRun {
+  const evidence = [{
+    id: 'pointer-1',
+    pointer: {
+      referenceId: 'reference-1',
+      sourceChecksumSha256: 'a'.repeat(64),
+      chapterId: '0001',
+      chunkId: 'chunk-0001-0001',
+      lineStart: 4,
+      lineEnd: 22,
+    },
+  }];
+  return baseReferenceRun({
+    status: 'awaitingFullApproval',
+    profileId: 'fanfictionWriting',
+    outputs: ['world', 'characters'],
+    runRevision: 1,
+    evidence,
+    mutationReceipts: [
+      receipt('create-key', 0, 'created', '1'),
+      receipt('material-preview-key', 1, 'awaitingFullApproval', '2'),
+    ],
+    materialPreview: {
+      version: 2,
+      runId: 'run-1',
+      referenceId: 'reference-1',
+      sourceChecksumSha256: 'a'.repeat(64),
+      track: 'storyMaterial',
+      materialKinds: ['world', 'characters'],
+      items: [{
+        id: 'coverage-world-1',
+        materialKind: 'world',
+        coverage: 'substantial',
+        summary: 'The opening establishes a concrete rule and its cost.',
+        confidence: 'high',
+        evidenceRefs: ['pointer-1'],
+      }, {
+        id: 'coverage-characters-1',
+        materialKind: 'characters',
+        coverage: 'partial',
+        summary: 'One character goal is visible, while later development is unknown.',
+        confidence: 'medium',
+        evidenceRefs: ['pointer-1'],
+        uncertainty: 'Only the opening window was inspected.',
+      }],
+      uncertainties: ['Relationship and timeline coverage were not selected.'],
+    },
+  });
+}
+
+export function materialReviewReadyReferenceRun(): ReferenceDeconstructionRun {
+  const preview = materialPreviewReferenceRun();
+  const units: ReferenceDeconstructionFullRun['recentUnits'] = [{
+    id: 'material-chapter-0001',
+    ordinal: 1,
+    track: 'storyMaterial',
+    stageId: 'materialChapterAnalysis',
+    kind: 'chapterChunk',
+    chapterId: '0001',
+    chunkId: 'chunk-0001-0001',
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: 'material-chapter-0001-attempt-1',
+  }, {
+    id: 'material-aggregate',
+    ordinal: 2,
+    track: 'storyMaterial',
+    stageId: 'materialAggregateAnalysis',
+    kind: 'aggregate',
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: 'material-aggregate-attempt-1',
+  }, {
+    id: 'material-projection',
+    ordinal: 3,
+    track: 'storyMaterial',
+    stageId: 'materialProjection',
+    kind: 'materialProjection',
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: 'material-projection-attempt-1',
+  }, {
+    id: 'material-quality',
+    ordinal: 4,
+    track: 'storyMaterial',
+    stageId: 'qualityGate',
+    kind: 'analysisQuality',
+    status: 'completed',
+    attemptCount: 1,
+    selectedAttemptId: 'material-quality-attempt-1',
+  }];
+  const attempts: ReferenceDeconstructionFullRun['recentAttempts'] = units.map(
+    (unit, index) => ({
+      id: unit.selectedAttemptId!,
+      unitId: unit.id,
+      attemptNumber: 1,
+      status: 'completed',
+      inputFingerprint: (index + 1).toString(16).repeat(64),
+      outputHash: (index + 10).toString(16).repeat(64),
+      startedAt: `2026-07-22T00:0${index + 2}:00.000Z`,
+      completedAt: `2026-07-22T00:0${index + 2}:30.000Z`,
+    }),
+  );
+  const fullReceipts = units.map((_, index) => receipt(
+    `material-full-${index + 1}`,
+    index + 3,
+    index === units.length - 1 ? 'reviewReady' : 'fullRunning',
+    ['4', '5', '6', '7'][index]!,
+  ));
+  return {
+    ...preview,
+    status: 'reviewReady',
+    runRevision: 6,
+    mutationReceipts: [
+      ...preview.mutationReceipts,
+      receipt('material-approve', 2, 'fullApproved', '3'),
+      ...fullReceipts,
+    ],
+    receiptCount: 7,
+    full: {
+      stages: [{
+        track: 'storyMaterial',
+        stageId: 'materialChapterAnalysis',
+        status: 'completed',
+        plannedUnits: 1,
+        completedUnits: 1,
+        failedUnits: 0,
+      }, {
+        track: 'storyMaterial',
+        stageId: 'materialAggregateAnalysis',
+        status: 'completed',
+        plannedUnits: 1,
+        completedUnits: 1,
+        failedUnits: 0,
+      }, {
+        track: 'storyMaterial',
+        stageId: 'materialProjection',
+        status: 'completed',
+        plannedUnits: 1,
+        completedUnits: 1,
+        failedUnits: 0,
+      }, {
+        track: 'storyMaterial',
+        stageId: 'qualityGate',
+        status: 'completed',
+        plannedUnits: 1,
+        completedUnits: 1,
+        failedUnits: 0,
+      }],
+      progress: {
+        plannedUnits: 4,
+        completedUnits: 4,
+        failedUnits: 0,
+        completedChapters: 1,
+        totalChapters: 1,
+        percent: 100,
+      },
+      recentUnits: units,
+      recentAttempts: attempts,
+      analysisQuality: {
+        storyMaterial: {
+          status: 'passed',
+          coveragePercent: 100,
+          blockingDiagnosticCount: 0,
+          outputHashes: attempts.map((attempt) => attempt.outputHash!),
+        },
+      },
+    },
+    fullApprovedAt: '2026-07-22T00:02:00.000Z',
+    updatedAt: '2026-07-22T00:05:30.000Z',
+  };
+}
+
 export function approvedReferenceRun(
   createKey = 'create-key',
   advanceKey = 'advance-key',
@@ -390,7 +661,7 @@ export function runningFullReferenceRun(
   });
   const nextUnit = chapterUnit({
     id: 'chapter-0002',
-    ordinal: 1,
+    ordinal: 2,
     chapterId: '0002',
     chunkId: 'chapter-0002-chunk-0001',
   });
@@ -409,6 +680,7 @@ export function runningFullReferenceRun(
         stage('chapterAnalysis', 'running', 2, 1),
         stage('aggregateAnalysis', 'notStarted', 1),
         stage('styleProfile', 'notStarted', 1),
+        stage('distillForOan', 'notStarted', 1),
         stage('qualityGate', 'notStarted', 1),
       ],
       progress: progress(1, 0, 1),
@@ -482,6 +754,7 @@ export function failedFullReferenceRun(
         stage('chapterAnalysis', 'failed', 2, 0, 1),
         stage('aggregateAnalysis', 'notStarted', 1),
         stage('styleProfile', 'notStarted', 1),
+        stage('distillForOan', 'notStarted', 1),
         stage('qualityGate', 'notStarted', 1),
       ],
       progress: progress(0, 1, 0),
@@ -490,10 +763,12 @@ export function failedFullReferenceRun(
       recentUnits: [failedUnit],
       recentAttempts: [failedAttempt],
       analysisQuality: {
-        status: 'notEvaluated',
-        coveragePercent: 0,
-        blockingDiagnosticCount: 1,
-        outputHashes: [],
+        technique: {
+          status: 'notEvaluated',
+          coveragePercent: 0,
+          blockingDiagnosticCount: 1,
+          outputHashes: [],
+        },
       },
     },
     updatedAt: '2026-07-22T00:03:30.000Z',
@@ -521,6 +796,7 @@ export function retriedFullReferenceRun(
         stage('chapterAnalysis', 'queued', 2),
         stage('aggregateAnalysis', 'notStarted', 1),
         stage('styleProfile', 'notStarted', 1),
+        stage('distillForOan', 'notStarted', 1),
         stage('qualityGate', 'notStarted', 1),
       ],
       progress: progress(0, 0, 0),
@@ -528,10 +804,12 @@ export function retriedFullReferenceRun(
       failedUnit: undefined,
       recentUnits: [nextUnit],
       analysisQuality: {
-        status: 'notEvaluated',
-        coveragePercent: 0,
-        blockingDiagnosticCount: 0,
-        outputHashes: [],
+        technique: {
+          status: 'notEvaluated',
+          coveragePercent: 0,
+          blockingDiagnosticCount: 0,
+          outputHashes: [],
+        },
       },
     },
     updatedAt: '2026-07-22T00:04:00.000Z',
@@ -548,25 +826,25 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
     }),
     chapterUnit({
       id: 'chapter-0002',
-      ordinal: 1,
+      ordinal: 2,
       chapterId: '0002',
       chunkId: 'chapter-0002-chunk-0001',
       status: 'completed',
       attemptCount: 1,
       selectedAttemptId: 'chapter-0002-attempt-0001',
     }),
-    nonChapterUnit('aggregate-root', 2, 'aggregateAnalysis', 'aggregate'),
-    nonChapterUnit('style-profile', 3, 'styleProfile', 'style'),
-    nonChapterUnit('distill-for-oan', 4, 'distillForOan', 'distill'),
-    nonChapterUnit('analysis-quality', 5, 'qualityGate', 'analysisQuality'),
+    nonChapterUnit('aggregate-root', 3, 'aggregateAnalysis', 'aggregate'),
+    nonChapterUnit('style-profile', 4, 'styleProfile', 'style'),
+    nonChapterUnit('distill-for-oan', 5, 'distillForOan', 'distill'),
+    nonChapterUnit('analysis-quality', 6, 'qualityGate', 'analysisQuality'),
   ];
   const attempts = units.map((unit, index) => ({
     id: unit.selectedAttemptId!,
     unitId: unit.id,
     attemptNumber: 1,
     status: 'completed' as const,
-    inputFingerprint: String(index + 1).repeat(64),
-    outputHash: String(index + 5).repeat(64),
+    inputFingerprint: (index + 1).toString(16).repeat(64),
+    outputHash: (index + 10).toString(16).repeat(64),
     startedAt: `2026-07-22T00:0${index + 3}:00.000Z`,
     completedAt: `2026-07-22T00:0${index + 3}:30.000Z`,
   }));
@@ -595,10 +873,12 @@ export function reviewReadyReferenceRun(): ReferenceDeconstructionRun {
       recentUnits: units,
       recentAttempts: attempts,
       analysisQuality: {
-        status: 'warned',
-        coveragePercent: 100,
-        blockingDiagnosticCount: 0,
-        outputHashes: attempts.map((attempt) => attempt.outputHash),
+        technique: {
+          status: 'warned',
+          coveragePercent: 100,
+          blockingDiagnosticCount: 0,
+          outputHashes: attempts.map((attempt) => attempt.outputHash),
+        },
       },
     },
     updatedAt: '2026-07-22T00:08:30.000Z',
@@ -647,17 +927,29 @@ function baseReferenceRun(
 ): ReferenceDeconstructionRun {
   const mutationReceipts = patch.mutationReceipts ?? [];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'run-1',
     referenceId: 'reference-1',
     runRevision: 0,
     status: 'created',
     sourceChecksumSha256: 'a'.repeat(64),
     structureFingerprint: 'b'.repeat(64),
-    pipelineVersion: 1,
-    capabilityVersion: 'novel.deconstruct_reference@1',
+    pipelineVersion: 2,
+    capabilityVersion: 'novel.deconstruct_reference@2',
+    profileId: 'commercialWriting',
+    outputs: ['techniques'],
     selectedChapterIds: ['0001'],
-    evidence: [],
+    evidence: [{
+      id: 'pointer-1',
+      pointer: {
+        referenceId: 'reference-1',
+        sourceChecksumSha256: 'a'.repeat(64),
+        chapterId: '0001',
+        chunkId: 'chunk-0001-0001',
+        lineStart: 4,
+        lineEnd: 22,
+      },
+    }],
     diagnostics: [],
     mutationReceipts,
     receiptCount: mutationReceipts.length,
@@ -674,6 +966,7 @@ function fullReferenceFixture(): ReferenceDeconstructionFullRun {
       stage('chapterAnalysis', 'queued', 2),
       stage('aggregateAnalysis', 'notStarted', 1),
       stage('styleProfile', 'notStarted', 1),
+      stage('distillForOan', 'notStarted', 1),
       stage('qualityGate', 'notStarted', 1),
     ],
     progress: progress(0, 0, 0),
@@ -681,10 +974,12 @@ function fullReferenceFixture(): ReferenceDeconstructionFullRun {
     recentUnits: [nextUnit],
     recentAttempts: [],
     analysisQuality: {
-      status: 'notEvaluated',
-      coveragePercent: 0,
-      blockingDiagnosticCount: 0,
-      outputHashes: [],
+      technique: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
     },
   };
 }
@@ -694,7 +989,8 @@ function chapterUnit(
 ): ReferenceDeconstructionFullRun['recentUnits'][number] {
   return {
     id: 'chapter-0001',
-    ordinal: 0,
+    ordinal: 1,
+    track: 'technique',
     stageId: 'chapterAnalysis',
     kind: 'chapterChunk',
     chapterId: '0001',
@@ -708,12 +1004,13 @@ function chapterUnit(
 function nonChapterUnit(
   id: string,
   ordinal: number,
-  stageId: 'aggregateAnalysis' | 'styleProfile' | 'qualityGate',
-  kind: 'aggregate' | 'style' | 'analysisQuality',
+  stageId: 'aggregateAnalysis' | 'styleProfile' | 'distillForOan' | 'qualityGate',
+  kind: 'aggregate' | 'style' | 'distill' | 'analysisQuality',
 ): ReferenceDeconstructionFullRun['recentUnits'][number] {
   return {
     id,
     ordinal,
+    track: 'technique',
     stageId,
     kind,
     status: 'completed',
@@ -742,7 +1039,14 @@ function stage(
   completedUnits = 0,
   failedUnits = 0,
 ): ReferenceDeconstructionFullRun['stages'][number] {
-  return { stageId, status, plannedUnits, completedUnits, failedUnits };
+  return {
+    track: 'technique',
+    stageId,
+    status,
+    plannedUnits,
+    completedUnits,
+    failedUnits,
+  };
 }
 
 function progress(
@@ -751,12 +1055,12 @@ function progress(
   completedChapters: number,
 ): ReferenceDeconstructionFullRun['progress'] {
   return {
-    plannedUnits: 5,
+    plannedUnits: 6,
     completedUnits,
     failedUnits,
     completedChapters,
     totalChapters: 2,
-    percent: Math.round((completedUnits / 5) * 100),
+    percent: Math.round((completedUnits / 6) * 100),
   };
 }
 

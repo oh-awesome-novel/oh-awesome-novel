@@ -105,7 +105,9 @@ export interface ReferenceContextIndex {
   pipelineVersion: typeof REFERENCE_DECONSTRUCTION_PIPELINE_VERSION;
   capabilityVersion: typeof REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION;
   status: 'completed';
-  contextEligible: true;
+  techniqueTrackRan: boolean;
+  contextEligible: boolean;
+  omittedReason?: 'techniqueTrackNotPublished';
   originalSourceRead: false;
   summaryPath: 'context/reference-summary.md';
   entries: ReferenceContextIndexEntry[];
@@ -121,6 +123,13 @@ export interface CreateReferenceContextIndexInput {
   sourceChecksumSha256: string;
   structureFingerprint: string;
   distillation: ReferenceDistillationResult;
+}
+
+export interface CreateEmptyReferenceContextIndexInput {
+  referenceId: string;
+  publishedRunId: string;
+  sourceChecksumSha256: string;
+  structureFingerprint: string;
 }
 
 export interface AssertReferenceContextIndexIdentity {
@@ -399,6 +408,7 @@ export function createReferenceContextIndex(
     pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: 'completed',
+    techniqueTrackRan: true,
     contextEligible: true,
     originalSourceRead: false,
     summaryPath: 'context/reference-summary.md',
@@ -412,6 +422,42 @@ export function createReferenceContextIndex(
     publishedRunId,
     sourceChecksumSha256,
     structureFingerprint,
+  });
+}
+
+export function createEmptyReferenceContextIndex(
+  input: CreateEmptyReferenceContextIndexInput,
+): ReferenceContextIndex {
+  return assertReferenceContextIndex({
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
+    referenceId: requireSafeIdentifier(input.referenceId, 'referenceId'),
+    publishedRunId: requireSafeIdentifier(input.publishedRunId, 'publishedRunId'),
+    sourceChecksumSha256: requireSha256(
+      input.sourceChecksumSha256,
+      'sourceChecksumSha256',
+    ),
+    structureFingerprint: requireSha256(
+      input.structureFingerprint,
+      'structureFingerprint',
+    ),
+    pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
+    capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
+    status: 'completed',
+    techniqueTrackRan: false,
+    contextEligible: false,
+    omittedReason: 'techniqueTrackNotPublished',
+    originalSourceRead: false,
+    summaryPath: 'context/reference-summary.md',
+    entries: [],
+    protectedRules: {
+      doNotCopy: [],
+      differentiationWarnings: [],
+    },
+  }, {
+    referenceId: input.referenceId,
+    publishedRunId: input.publishedRunId,
+    sourceChecksumSha256: input.sourceChecksumSha256,
+    structureFingerprint: input.structureFingerprint,
   });
 }
 
@@ -429,7 +475,9 @@ export function assertReferenceContextIndex(
     'pipelineVersion',
     'capabilityVersion',
     'status',
+    'techniqueTrackRan',
     'contextEligible',
+    'omittedReason',
     'originalSourceRead',
     'summaryPath',
     'entries',
@@ -440,7 +488,11 @@ export function assertReferenceContextIndex(
     || record.pipelineVersion !== REFERENCE_DECONSTRUCTION_PIPELINE_VERSION
     || record.capabilityVersion !== REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION
     || record.status !== 'completed'
-    || record.contextEligible !== true
+    || typeof record.techniqueTrackRan !== 'boolean'
+    || record.contextEligible !== record.techniqueTrackRan
+    || (record.techniqueTrackRan
+      ? record.omittedReason !== undefined
+      : record.omittedReason !== 'techniqueTrackNotPublished')
     || record.originalSourceRead !== false
     || record.summaryPath !== 'context/reference-summary.md'
   ) {
@@ -469,7 +521,7 @@ export function assertReferenceContextIndex(
   const entries = requireArray(
     record.entries,
     'context index entries',
-    REFERENCE_DISTILLED_CATEGORIES.length,
+    record.techniqueTrackRan ? REFERENCE_DISTILLED_CATEGORIES.length : 0,
     MAX_REFERENCE_DISTILLED_ENTRIES,
   ).map((value, index): ReferenceContextIndexEntry => {
     const entry = requireRecord(value, `context index entries[${index}]`);
@@ -514,9 +566,12 @@ export function assertReferenceContextIndex(
     throw new Error('Reference context index entry ids must be unique.');
   }
   for (const category of REFERENCE_DISTILLED_CATEGORIES) {
-    if (!entries.some((entry) => entry.category === category)) {
+    if (record.techniqueTrackRan && !entries.some((entry) => entry.category === category)) {
       throw new Error(`Reference context index is missing category ${category}.`);
     }
+  }
+  if (!record.techniqueTrackRan && entries.length) {
+    throw new Error('Reference material-only context index must not contain entries.');
   }
   if (stableJson(entries) !== stableJson(sortDistilledEntries(entries))) {
     throw new Error('Reference context index entries are not in canonical order.');
@@ -532,7 +587,11 @@ export function assertReferenceContextIndex(
     pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: 'completed',
-    contextEligible: true,
+    techniqueTrackRan: record.techniqueTrackRan,
+    contextEligible: record.techniqueTrackRan,
+    ...(record.techniqueTrackRan
+      ? {}
+      : { omittedReason: 'techniqueTrackNotPublished' as const }),
     originalSourceRead: false,
     summaryPath: 'context/reference-summary.md',
     entries,
@@ -540,14 +599,14 @@ export function assertReferenceContextIndex(
       doNotCopy: requireStringArray(
         protectedRules.doNotCopy,
         'protectedRules.doNotCopy',
-        1,
+        record.techniqueTrackRan ? 1 : 0,
         MAX_DISTILLATION_RULES,
         MAX_ENTRY_LIST_ITEM_CHARS,
       ),
       differentiationWarnings: requireStringArray(
         protectedRules.differentiationWarnings,
         'protectedRules.differentiationWarnings',
-        1,
+        record.techniqueTrackRan ? 1 : 0,
         MAX_DISTILLATION_RULES,
         MAX_ENTRY_LIST_ITEM_CHARS,
       ),

@@ -36,6 +36,7 @@ import {
   reserveReferenceFullDeconstructionUnit,
   reserveReferenceQuickPreview,
   resolveReferenceDeconstructionAttemptArtifactPath,
+  resolveReferenceDeconstructionRunArtifactPath,
   resumeReferenceDeconstructionRun,
   retryReferenceDeconstructionUnit,
   selectReferenceContext,
@@ -126,7 +127,7 @@ describe('reference full deconstruction store', () => {
     const outputHash = createReferenceAnalysisOutputHash(output);
     await writeFile(findingsPath, stringify(output), 'utf-8');
     await writeFile(receiptPath, stringify({
-      version: 1,
+      version: 2,
       runId: fixture.run.runId,
       unitId: reserved.reservation!.unitId,
       attemptId: reserved.reservation!.attemptId,
@@ -165,7 +166,7 @@ describe('reference full deconstruction store', () => {
     );
     const completedAt = '2026-07-23T00:00:00.000Z';
     await writeFile(receiptPath, stringify({
-      version: 1,
+      version: 2,
       runId: fixture.run.runId,
       unitId: reserved.reservation!.unitId,
       attemptId: reserved.reservation!.attemptId,
@@ -225,7 +226,7 @@ describe('reference full deconstruction store', () => {
     );
     await writeFile(findingsPath, stringify(output), 'utf-8');
     await writeFile(receiptPath, stringify({
-      version: 1,
+      version: 2,
       runId: fixture.run.runId,
       unitId: reserved.reservation!.unitId,
       attemptId: reserved.reservation!.attemptId,
@@ -395,7 +396,7 @@ describe('reference full deconstruction store', () => {
       { createDirectory: true },
     );
     const originalBytes = stringify({
-      version: 1,
+      version: 2,
       runId: fixture.run.runId,
       referenceId: fixture.referenceId,
       unitId: unit.id,
@@ -423,6 +424,34 @@ describe('reference full deconstruction store', () => {
       output: chapterOutput(fixture.run.runId, reserved.execution!),
     });
     expect(completed.full?.units[0]?.status).toBe('completed');
+  });
+
+  it('explicitly rejects the v1 singleton terminal work-plan codec', async () => {
+    const fixture = await createApprovedRun();
+    const runStatePath = await resolveReferenceDeconstructionRunArtifactPath(
+      fixture.workspaceRoot,
+      fixture.run.runId,
+      'run-state.yaml',
+      { requireExistingArtifact: true },
+    );
+    const state = parse(await readFile(runStatePath, 'utf-8')) as {
+      full: { plan: Record<string, unknown> };
+    };
+    const tracks = state.full.plan.tracks as {
+      technique: Record<string, unknown>;
+    };
+    const { tracks: _tracks, ...withoutTracks } = state.full.plan;
+    state.full.plan = {
+      ...withoutTracks,
+      ...tracks.technique,
+    };
+    await writeFile(runStatePath, stringify(state), 'utf-8');
+
+    await expect(readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      fixture.run.runId,
+    )).rejects.toThrow('Unknown field: aggregateRootUnitId');
   });
 
   it('prepares a strict publication candidate from the completed quality DAG', async () => {
@@ -932,9 +961,11 @@ describe('reference full deconstruction store', () => {
     }
 
     expect(run.full?.analysisQuality).toMatchObject({
-      status: 'warned',
-      coveragePercent: 100,
-      blockingDiagnosticCount: 0,
+      technique: {
+        status: 'passed',
+        coveragePercent: 100,
+        blockingDiagnosticCount: 0,
+      },
     });
     expect(run.full?.units.every((unit) => unit.status === 'completed')).toBe(true);
     expect(run.full?.attempts.filter((attempt) =>
@@ -945,7 +976,7 @@ describe('reference full deconstruction store', () => {
       receiptCount: run.revision + 1,
       full: {
         progress: { percent: 100, failedUnits: 0 },
-        analysisQuality: { status: 'warned' },
+        analysisQuality: { technique: { status: 'passed' } },
       },
     });
     expect(transport.full?.stages.every((stage) => stage.status === 'completed')).toBe(true);

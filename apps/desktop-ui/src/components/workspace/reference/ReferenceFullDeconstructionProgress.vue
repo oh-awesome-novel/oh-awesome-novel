@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 import ReferenceAttemptHistory from './ReferenceAttemptHistory.vue';
 import ReferenceFullStageCoverage from './ReferenceFullStageCoverage.vue';
 import type {
@@ -6,7 +8,7 @@ import type {
   ReferenceDeconstructionRunStatus,
 } from '../../../composables/useWorkspaceApi';
 
-defineProps<{
+const props = defineProps<{
   full: ReferenceDeconstructionFullRun;
   status: ReferenceDeconstructionRunStatus;
   advancing: boolean;
@@ -18,6 +20,16 @@ defineProps<{
   canResume: boolean;
   canRetry: boolean;
 }>();
+
+const qualityRows = computed(() => (['technique', 'storyMaterial'] as const)
+  .flatMap((track) => {
+    const quality = props.full.analysisQuality[track];
+    return quality ? [{
+      track,
+      label: track === 'technique' ? 'Technique' : 'Story Materials',
+      quality,
+    }] : [];
+  }));
 
 const emit = defineEmits<{
   advance: [];
@@ -85,11 +97,15 @@ const emit = defineEmits<{
       :units="full.recentUnits"
     />
 
-    <div v-if="full.analysisQuality" class="reference-analysis-quality">
-      <strong>Analysis quality: {{ full.analysisQuality.status }}</strong>
+    <div
+      v-for="row in qualityRows"
+      :key="row.track"
+      class="reference-analysis-quality"
+    >
+      <strong>Analysis quality: {{ row.quality.status }} · {{ row.label }}</strong>
       <span>
-        Coverage {{ full.analysisQuality.coveragePercent }}% ·
-        {{ full.analysisQuality.blockingDiagnosticCount }} blocking diagnostic(s)
+        Coverage {{ row.quality.coveragePercent }}% ·
+        {{ row.quality.blockingDiagnosticCount }} blocking diagnostic(s)
       </span>
     </div>
     <p v-if="status === 'reviewReady'" class="reference-review-ready">

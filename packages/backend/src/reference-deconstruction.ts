@@ -33,6 +33,7 @@ import {
   interruptReferenceFullDeconstructionUnit,
   interruptReferenceQuickPreview,
   listReferenceDeconstructionRuns,
+  loadWritingProfileState,
   pauseReferenceDeconstructionRun,
   projectReferenceDeconstructionRunForTransport,
   readReferenceDeconstructionRun,
@@ -60,6 +61,11 @@ import type {
   ReferenceFullDeconstructionOutput,
   ReferenceFullDeconstructionReservation,
   ReferenceFullDeconstructionReservationResult,
+  ReferenceStoryMaterialAggregateResult,
+  ReferenceStoryMaterialChapterResult,
+  ReferenceStoryMaterialCoveragePreview,
+  ReferenceStoryMaterialKind,
+  ReferenceStoryMaterialProjectionResult,
 } from '@oh-awesome-novel/core';
 import {
   acceptPendingAction,
@@ -78,6 +84,10 @@ import {
   generateReferenceAggregateAnalysis,
   generateReferenceChapterAnalysis,
   generateReferenceDistillation,
+  generateReferenceMaterialAggregate,
+  generateReferenceMaterialChapter,
+  generateReferenceMaterialCoverage,
+  generateReferenceMaterialProjection,
   generateReferenceQuickPreview,
   generateReferenceStyleProfile,
 } from '@oh-awesome-novel/agent';
@@ -85,6 +95,10 @@ import type {
   GenerateReferenceAggregateAnalysisInput,
   GenerateReferenceChapterAnalysisInput,
   GenerateReferenceDistillationInput,
+  GenerateReferenceMaterialAggregateInput,
+  GenerateReferenceMaterialChapterInput,
+  GenerateReferenceMaterialCoverageInput,
+  GenerateReferenceMaterialProjectionInput,
   GenerateReferenceQuickPreviewInput,
   GenerateReferenceStyleProfileInput,
   ReferenceAggregateAnalysisOutput,
@@ -93,6 +107,7 @@ import type {
   ReferenceDistillationOutput,
   ReferenceFullDeconstructionGenerationResult,
   ReferenceQuickPreviewGenerationResult,
+  ReferenceStoryMaterialGenerationResult,
   ReferenceStyleProfileOutput,
 } from '@oh-awesome-novel/agent';
 
@@ -101,12 +116,17 @@ export interface ReferenceDeconstructionModelRuntime {
   readonly resolveModel: ReferenceDeconstructionModelResolver;
 }
 
+type ReferenceDeconstructionTrackId = 'technique' | 'storyMaterial';
+
 export interface CreateReferenceDeconstructionBackendControllerOptions {
   getWorkspaceRoot(): string;
   getModelRuntime(): Promise<ReferenceDeconstructionModelRuntime>;
   runQuickPreview?: (
     input: GenerateReferenceQuickPreviewInput,
   ) => Promise<ReferenceQuickPreviewGenerationResult>;
+  runMaterialCoverage?: (
+    input: GenerateReferenceMaterialCoverageInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialCoveragePreview>>;
   runChapterAnalysis?: (
     input: GenerateReferenceChapterAnalysisInput,
   ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceChapterAnalysisOutput>>;
@@ -119,6 +139,15 @@ export interface CreateReferenceDeconstructionBackendControllerOptions {
   runDistillation?: (
     input: GenerateReferenceDistillationInput,
   ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceDistillationOutput>>;
+  runMaterialChapter?: (
+    input: GenerateReferenceMaterialChapterInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialChapterResult>>;
+  runMaterialAggregate?: (
+    input: GenerateReferenceMaterialAggregateInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialAggregateResult>>;
+  runMaterialProjection?: (
+    input: GenerateReferenceMaterialProjectionInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialProjectionResult>>;
 }
 
 export interface CreateReferenceDeconstructionRunCommand {
@@ -256,6 +285,7 @@ interface ActiveReferencePreparation {
 
 interface PreparedReferencePreview {
   readonly kind: 'preview';
+  readonly track: ReferenceDeconstructionTrackId;
   readonly active: ActiveReferenceExecution;
   readonly providerLease: ReferencePreviewProviderLease;
   readonly request: ReferenceDeconstructionRunRequest;
@@ -318,6 +348,10 @@ type ReferencePreviewReservation =
 type ReferenceFullProviderGenerationResult =
   ReferenceFullDeconstructionGenerationResult<ReferenceFullDeconstructionOutput>;
 
+type ReferencePreviewProviderGenerationResult =
+  | ReferenceQuickPreviewGenerationResult
+  | ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialCoveragePreview>;
+
 const ACTIVE_REFERENCE_DECONSTRUCTION_STATUSES: readonly ReferenceDeconstructionRunStatus[] = [
   'created',
   'previewRunning',
@@ -366,12 +400,20 @@ export function createReferenceDeconstructionBackendController(
   const activePreparations = new Map<string, ActiveReferencePreparation>();
   const locks = new Map<string, Promise<void>>();
   const runQuickPreview = options.runQuickPreview ?? generateReferenceQuickPreview;
+  const runMaterialCoverage =
+    options.runMaterialCoverage ?? generateReferenceMaterialCoverage;
   const runChapterAnalysis =
     options.runChapterAnalysis ?? generateReferenceChapterAnalysis;
   const runAggregateAnalysis =
     options.runAggregateAnalysis ?? generateReferenceAggregateAnalysis;
   const runStyleProfile = options.runStyleProfile ?? generateReferenceStyleProfile;
   const runDistillation = options.runDistillation ?? generateReferenceDistillation;
+  const runMaterialChapter =
+    options.runMaterialChapter ?? generateReferenceMaterialChapter;
+  const runMaterialAggregate =
+    options.runMaterialAggregate ?? generateReferenceMaterialAggregate;
+  const runMaterialProjection =
+    options.runMaterialProjection ?? generateReferenceMaterialProjection;
 
   async function withReferenceLock<T>(
     workspaceRoot: string,
@@ -412,6 +454,7 @@ export function createReferenceDeconstructionBackendController(
     }
 
     return withReferenceLock(workspaceRoot, referenceId, async () => {
+      const writingProfile = await loadWritingProfileState(workspaceRoot);
       const source = await readReferencePreviewSource(workspaceRoot, referenceId);
       const structureConfidence = source.sourceManifest.detectedStructure.confidence;
       const rangeConfirmed = input.selectedChapterIds !== undefined
@@ -443,6 +486,8 @@ export function createReferenceDeconstructionBackendController(
       const result = await createReferenceDeconstructionRun({
         workspaceRoot,
         referenceId,
+        profileId: writingProfile.activeProfile.id,
+        outputs: writingProfile.activeProfile.deconstruction.outputs,
         sourceChecksumSha256: selection.sourceChecksumSha256,
         structureFingerprint: selection.structureFingerprint,
         structureConfidence,
@@ -779,6 +824,7 @@ export function createReferenceDeconstructionBackendController(
 
             return {
               kind: 'preview',
+              track: activeReservation.track,
               active,
               providerLease,
               request,
@@ -877,7 +923,7 @@ export function createReferenceDeconstructionBackendController(
       if (reservation.kind === 'preview') {
         const generation = await runReferenceQuickPreviewProvider(
           options,
-          runQuickPreview,
+          { runQuickPreview, runMaterialCoverage },
           reservation,
         );
 
@@ -898,7 +944,9 @@ export function createReferenceDeconstructionBackendController(
               runId,
               baseRunRevision: reservation.reserved.run.revision,
               reservationId: reservation.active.reservationId,
-              preview: generation.preview,
+              preview: 'preview' in generation
+                ? generation.preview
+                : generation.output,
             });
           } else if (generation.status === 'failed') {
             settled = await failReferenceQuickPreview({
@@ -933,6 +981,9 @@ export function createReferenceDeconstructionBackendController(
           runAggregateAnalysis,
           runStyleProfile,
           runDistillation,
+          runMaterialChapter,
+          runMaterialAggregate,
+          runMaterialProjection,
         },
         reservation,
       );
@@ -1747,22 +1798,47 @@ export function toReferenceDeconstructionErrorResponse(error: unknown): {
 
 async function runReferenceQuickPreviewProvider(
   options: CreateReferenceDeconstructionBackendControllerOptions,
-  runQuickPreview: NonNullable<
-    CreateReferenceDeconstructionBackendControllerOptions['runQuickPreview']
-  >,
+  runners: {
+    runQuickPreview: NonNullable<
+      CreateReferenceDeconstructionBackendControllerOptions['runQuickPreview']
+    >;
+    runMaterialCoverage: NonNullable<
+      CreateReferenceDeconstructionBackendControllerOptions['runMaterialCoverage']
+    >;
+  },
   reservation: PreparedReferencePreview,
-): Promise<ReferenceQuickPreviewGenerationResult> {
+): Promise<ReferencePreviewProviderGenerationResult> {
   try {
     assertReferenceWorkspaceUnchanged(options, reservation.active.workspaceRoot);
     const runtime = await options.getModelRuntime();
     assertReferenceWorkspaceUnchanged(options, reservation.active.workspaceRoot);
-    return await runQuickPreview({
+    const shared = {
       runId: reservation.active.runId,
       providerConfig: runtime.providerConfig,
       resolveModel: runtime.resolveModel,
       selection: reservation.request.selection,
       abortSignal: reservation.active.abortController.signal,
-    });
+    };
+    if (reservation.track === 'storyMaterial') {
+      const materialKinds = reservation.request.outputs.filter(
+        (output): output is ReferenceStoryMaterialKind => output !== 'techniques',
+      );
+      if (!materialKinds.length) {
+        throw new ReferenceDeconstructionValidationError(
+          'Story Material preview is missing its frozen material outputs.',
+        );
+      }
+      return await runners.runMaterialCoverage({
+        ...shared,
+        materialKinds,
+      });
+    }
+    if (!reservation.request.outputs.includes('techniques')) {
+      throw new ReferenceDeconstructionValidationError(
+        'Technique preview is not selected by the frozen run outputs.',
+      );
+    }
+    return await runners.runQuickPreview(shared);
   } catch {
     return reservation.active.abortController.signal.aborted
       ? {
@@ -1795,6 +1871,15 @@ async function runReferenceFullUnitProvider(
     runDistillation: NonNullable<
       CreateReferenceDeconstructionBackendControllerOptions['runDistillation']
     >;
+    runMaterialChapter: NonNullable<
+      CreateReferenceDeconstructionBackendControllerOptions['runMaterialChapter']
+    >;
+    runMaterialAggregate: NonNullable<
+      CreateReferenceDeconstructionBackendControllerOptions['runMaterialAggregate']
+    >;
+    runMaterialProjection: NonNullable<
+      CreateReferenceDeconstructionBackendControllerOptions['runMaterialProjection']
+    >;
   },
   prepared: PreparedReferenceFullUnit,
 ): Promise<ReferenceFullProviderGenerationResult> {
@@ -1824,6 +1909,47 @@ async function runReferenceFullUnitProvider(
       unit: execution.unit,
       abortSignal: prepared.active.abortController.signal,
     };
+    if (execution.unit.track === 'storyMaterial') {
+      const materialKinds = execution.materialKinds;
+      if (!materialKinds?.length) {
+        throw new ReferenceDeconstructionValidationError(
+          'Story Material execution is missing its frozen material outputs.',
+        );
+      }
+      if (execution.unit.kind === 'chapterChunk') {
+        if (!execution.sourceWindows?.length) {
+          throw new ReferenceDeconstructionValidationError(
+            'Story Material chapter execution is missing its bounded source window.',
+          );
+        }
+        return runners.runMaterialChapter({
+          ...shared,
+          materialKinds,
+          sourceWindows: execution.sourceWindows,
+        });
+      }
+      const materialReductionInput = {
+        ...shared,
+        materialKinds,
+        verifiedFindings: execution.verifiedStoryMaterialFindings ?? [],
+        coveredUnitIds: execution.coveredUnitIds ?? [],
+        coveredChapterIds: execution.coveredChapterIds ?? [],
+      };
+      if (execution.unit.kind === 'aggregate') {
+        return runners.runMaterialAggregate(materialReductionInput);
+      }
+      if (execution.unit.kind === 'materialProjection') {
+        return runners.runMaterialProjection(materialReductionInput);
+      }
+      throw new ReferenceDeconstructionValidationError(
+        `Unsupported Story Material work unit kind: ${execution.unit.kind}.`,
+      );
+    }
+    if (execution.unit.track !== 'technique') {
+      throw new ReferenceDeconstructionValidationError(
+        `Unsupported reference work-unit track: ${execution.unit.track}.`,
+      );
+    }
     if (execution.unit.kind === 'chapterChunk') {
       if (!execution.sourceWindows?.length) {
         throw new ReferenceDeconstructionValidationError(
@@ -2563,8 +2689,8 @@ function isProcessAlive(pid: number): boolean {
 
 function readActiveReservation(
   run: ReferenceDeconstructionRun,
-  expectedKind: 'preview' | 'fullUnit',
-): { id: string } {
+  expectedKind: 'preview',
+): { id: string; track: ReferenceDeconstructionTrackId } {
   const value = run.activeReservation;
   if (
     !value
@@ -2577,7 +2703,7 @@ function readActiveReservation(
       'advanceSuperseded',
     );
   }
-  return { id: value.id };
+  return { id: value.id, track: value.track };
 }
 
 function readProviderLeaseReservationIdentity(

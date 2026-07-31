@@ -21,6 +21,7 @@ import {
   createReferenceProgressProjection,
   createReferenceStructureFingerprint,
   assertReferenceProgress,
+  REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
 } from './reference-deconstruction.js';
 import type {
   ReferenceDeconstructionStageId,
@@ -225,6 +226,7 @@ export type ReferenceContextOmissionReason =
   | 'missingContextSummary'
   | 'invalidContextPath'
   | 'invalidContextIndex'
+  | 'techniqueTrackNotPublished'
   | 'capabilityMismatch'
   | 'taskMismatch'
   | 'maxEntryCountReached'
@@ -1121,6 +1123,9 @@ export function assertReferencesIndexValue(
           normalized.deconstructionStatus !== 'completed'
           || normalized.enabled === false
           || normalized.readinessReason !== 'ready'
+          || !normalized.publishedContext
+          || normalized.publishedContext.entryCount < 5
+          || Object.values(normalized.publishedContext.categoryCounts).some((count) => count < 1)
         )
       )
     ) {
@@ -1647,7 +1652,7 @@ function assertPublishedReferenceContext(
     || typeof value.fingerprint !== 'string'
     || !/^[a-f0-9]{64}$/u.test(value.fingerprint)
     || !Number.isSafeInteger(value.entryCount)
-    || (value.entryCount as number) < 5
+    || (value.entryCount as number) < 0
     || (value.entryCount as number) > 50
     || !counts
     || Object.keys(counts).some((category) =>
@@ -1659,7 +1664,7 @@ function assertPublishedReferenceContext(
     (['writingStyle', 'pacing', 'hooks', 'scene', 'character'] as const)
       .map((category) => {
         const count = counts[category];
-        if (!Number.isSafeInteger(count) || (count as number) < 1 || (count as number) > 12) {
+        if (!Number.isSafeInteger(count) || (count as number) < 0 || (count as number) > 12) {
           throw new Error(
             `Reference index entry ${referenceId} published category count is invalid.`,
           );
@@ -1698,7 +1703,7 @@ function createNeedsRebuildProgress(
   updatedAt: string,
 ): ReferenceProgress {
   return {
-    version: 1,
+    version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
     referenceId,
     status: 'needsRebuild',
     currentStage: null,
@@ -1736,7 +1741,8 @@ function isReadinessReason(value: unknown): value is ReferenceReadinessReason {
     || value === 'qualityFailed'
     || value === 'needsRebuild'
     || value === 'missingContextSummary'
-    || value === 'invalidContextIndex';
+    || value === 'invalidContextIndex'
+    || value === 'techniqueTrackNotPublished';
 }
 
 function readinessToOmissionReason(
@@ -1753,6 +1759,7 @@ function formatReadinessOmissionReason(reason: ReferenceContextOmissionReason): 
     case 'missingContextSummary': return 'missing current context summary';
     case 'invalidContextPath': return 'invalid context summary path';
     case 'invalidContextIndex': return 'invalid or stale distilled context index';
+    case 'techniqueTrackNotPublished': return 'current profile did not publish techniques';
     case 'needsRebuild': return 'reference bundle needs rebuild';
     case 'tokenBudgetExceeded': return 'token budget exceeded';
     case 'notExplicitlyRequested': return 'not explicitly requested for this turn';

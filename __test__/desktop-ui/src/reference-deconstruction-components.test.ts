@@ -10,10 +10,15 @@ import ReferenceDiagnostics from '../../../apps/desktop-ui/src/components/worksp
 import ReferenceFullDeconstructionProgress from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceFullDeconstructionProgress.vue';
 import ReferencePublishReview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferencePublishReview.vue';
 import ReferenceQuickPreview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceQuickPreview.vue';
+import ReferenceStoryMaterialCoveragePreview from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceStoryMaterialCoveragePreview.vue';
 import {
   approvedReferenceRun,
   entryReferenceContextFixture,
   failedFullReferenceRun,
+  materialPublicationFixture,
+  materialOnlyPublishedReferenceFixture,
+  materialPreviewReferenceRun,
+  materialReviewReadyReferenceRun,
   previewReferenceRun,
   publishedReferenceFixture,
   publishingReferenceRun,
@@ -70,6 +75,48 @@ describe('Reference D0-D5 components', () => {
     expect(wrapper.html()).not.toContain('v-html');
   });
 
+  it('shows Story Material coverage by kind without exposing source chunks', () => {
+    const run = materialPreviewReferenceRun();
+    const wrapper = mount(ReferenceStoryMaterialCoveragePreview, {
+      props: {
+        preview: run.materialPreview!,
+        evidence: run.evidence,
+      },
+    });
+
+    expect(wrapper.text()).toContain('Story Material Coverage Preview');
+    expect(wrapper.text()).toContain('world');
+    expect(wrapper.text()).toContain('substantial · high confidence');
+    expect(wrapper.text()).toContain('characters');
+    expect(wrapper.text()).toContain('Uncertainty: Only the opening window was inspected.');
+    expect(wrapper.text()).toContain('0001 · lines 4-22');
+    expect(wrapper.text()).not.toContain('chunk-0001-0001');
+  });
+
+  it('renders Story Material stages, units, and quality as an independent track', () => {
+    const run = materialReviewReadyReferenceRun();
+    const wrapper = mount(ReferenceFullDeconstructionProgress, {
+      props: {
+        full: run.full!,
+        status: run.status,
+        advancing: false,
+        pausing: false,
+        resuming: false,
+        retrying: false,
+        canAdvance: false,
+        canPause: false,
+        canResume: false,
+        canRetry: false,
+      },
+    });
+
+    expect(wrapper.text()).toContain('Story Materials · Material chapter analysis');
+    expect(wrapper.text()).toContain('Story Materials · Story Material projection');
+    expect(wrapper.text()).toContain('Unit 3 · Story Materials · Story Material projection');
+    expect(wrapper.text()).toContain('Analysis quality: passed · Story Materials');
+    expect(wrapper.text()).toContain('4/4 units');
+  });
+
   it('starts a high-confidence detected range with one click and no override flag', async () => {
     const wrapper = mountPanel({ canStart: true });
 
@@ -77,6 +124,31 @@ describe('Reference D0-D5 components', () => {
 
     expect(wrapper.emitted('startPreview')).toEqual([[undefined]]);
     expect(wrapper.text()).toContain('boundary confidence high');
+  });
+
+  it('shows the active Profile, outputs, and Story Material notice before starting a run', () => {
+    const wrapper = mountPanel({
+      writingProfile: {
+        version: 1,
+        id: 'fanfictionWriting',
+        displayName: 'Fanfiction Writing',
+        description: 'Concrete source-story material extraction.',
+        deconstruction: {
+          outputs: ['world', 'characters', 'relationships', 'outline', 'timeline'],
+        },
+        writingReminders: {
+          originality: false,
+          aiVoice: false,
+          characterConsistency: true,
+          adaptationFreedom: true,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Current Profile: Fanfiction Writing (fanfictionWriting)');
+    expect(wrapper.text()).toContain('will generate world, characters, relationships, outline, timeline');
+    expect(wrapper.text()).toContain('Story Materials may contain source settings');
+    expect(wrapper.text()).toContain('this notice adds no hard gate');
   });
 
   it('requires a second local confirmation for a low-confidence detected range', async () => {
@@ -116,7 +188,7 @@ describe('Reference D0-D5 components', () => {
       canAdvanceFull: true,
     });
     expect(wrapper.text()).toContain('Full Deconstruction');
-    expect(wrapper.text()).toContain('0/5 units');
+    expect(wrapper.text()).toContain('0/6 units');
     expect(wrapper.text()).toContain('No full-analysis attempt has started');
     expect(button(wrapper, 'Run next unit').exists()).toBe(true);
   });
@@ -175,8 +247,8 @@ describe('Reference D0-D5 components', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('20%');
-    expect(wrapper.text()).toContain('1/5 units');
+    expect(wrapper.text()).toContain('17%');
+    expect(wrapper.text()).toContain('1/6 units');
     expect(wrapper.text()).toContain('1/2 chapters');
     expect(wrapper.text()).toContain('Chapter analysis');
     expect(wrapper.text()).toContain('Attempt 1 · completed');
@@ -240,7 +312,7 @@ describe('Reference D0-D5 components', () => {
         pipelineVersion: run.pipelineVersion,
         capabilityVersion: run.capabilityVersion,
         coveragePercent: 100,
-        qualityStatus: run.full!.analysisQuality!.status,
+        qualityStatus: run.full!.analysisQuality.technique!.status,
         diagnostics: run.diagnostics,
         publishing: false,
         canPublish: false,
@@ -261,6 +333,35 @@ describe('Reference D0-D5 components', () => {
       ['pending-reference-publish-1'],
     ]);
     expect(wrapper.text()).toContain('Awaiting an explicit global approval decision');
+  });
+
+  it('groups Story Materials separately and summarizes inventory kinds and counts', () => {
+    const publication = materialPublicationFixture();
+    const wrapper = mount(ReferencePublishReview, {
+      props: {
+        publication,
+        status: 'reviewReady',
+        sourceChecksumSha256: 'a'.repeat(64),
+        pipelineVersion: 2,
+        capabilityVersion: 'novel.deconstruct_reference@2',
+        coveragePercent: 100,
+        qualityStatus: 'passed',
+        diagnostics: [],
+        publishing: false,
+        canPublish: true,
+      },
+    });
+
+    expect(wrapper.text()).toContain('Technique');
+    expect(wrapper.text()).toContain('No Technique projection in this candidate');
+    expect(wrapper.text()).toContain('No Technique selector entries in this candidate');
+    expect(wrapper.text()).toContain('Story Materials');
+    expect(wrapper.text()).toContain('world 2 · materials/world.yaml');
+    expect(wrapper.text()).toContain('characters 1 · materials/characters.yaml');
+    expect(wrapper.text()).toContain('material-aggregate.md');
+    expect(wrapper.text()).toContain('The winter gate opens once each solstice');
+    expect(wrapper.text()).toContain('world · fact · high confidence');
+    expect(wrapper.text()).toContain('Material entries3');
   });
 
   it('explains entry-level inclusion, omission, budget, and the distilled-only boundary', () => {
@@ -295,6 +396,23 @@ describe('Reference D0-D5 components', () => {
     expect(wrapper.text()).toContain('writingStyle 1');
     expect(wrapper.text()).toContain('Context eligible');
     expect(wrapper.text()).toContain('e'.repeat(64));
+  });
+
+  it('shows material-only completion as a valid bundle without Technique context', () => {
+    const reference = materialOnlyPublishedReferenceFixture();
+    const wrapper = mount(ReferenceList, {
+      props: {
+        references: [reference],
+        updatingId: '',
+        selectedId: '',
+        selectionDisabled: false,
+      },
+    });
+
+    expect(wrapper.text()).toContain('Analysiscompleted');
+    expect(wrapper.text()).toContain('Writing contextNot generated');
+    expect(wrapper.text()).toContain('Story Materials published');
+    expect(wrapper.text()).not.toContain('techniqueTrackNotPublished');
   });
 
   it('filters diagnostics by severity, stage, and chapter while retaining blocking context', async () => {

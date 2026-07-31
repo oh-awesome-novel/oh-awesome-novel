@@ -388,6 +388,26 @@ export {
   formatReferenceQuickPreviewPrompt,
   generateReferenceQuickPreview,
 } from './reference-deconstruction.js';
+export {
+  MAX_REFERENCE_MATERIAL_AGGREGATE_OUTPUT_TOKENS,
+  MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS,
+  MAX_REFERENCE_MATERIAL_COVERAGE_OUTPUT_TOKENS,
+  MAX_REFERENCE_MATERIAL_PROJECTION_OUTPUT_TOKENS,
+  MAX_REFERENCE_MATERIAL_REDUCTION_INPUT_CHARACTERS,
+  MAX_REFERENCE_MATERIAL_SOURCE_INPUT_CHARACTERS,
+  REFERENCE_MATERIAL_AGGREGATE_SYSTEM_PROMPT,
+  REFERENCE_MATERIAL_CHAPTER_SYSTEM_PROMPT,
+  REFERENCE_MATERIAL_COVERAGE_SYSTEM_PROMPT,
+  REFERENCE_MATERIAL_PROJECTION_SYSTEM_PROMPT,
+  formatReferenceMaterialAggregatePrompt,
+  formatReferenceMaterialChapterPrompt,
+  formatReferenceMaterialCoveragePrompt,
+  formatReferenceMaterialProjectionPrompt,
+  generateReferenceMaterialAggregate,
+  generateReferenceMaterialChapter,
+  generateReferenceMaterialCoverage,
+  generateReferenceMaterialProjection,
+} from './reference-story-material.js';
 export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
   AgentSessionMetadata,
@@ -445,6 +465,17 @@ export type {
   ReferenceQuickPreviewGenerationError,
   ReferenceQuickPreviewGenerationResult,
 } from './reference-deconstruction.js';
+export type {
+  GenerateReferenceMaterialAggregateInput,
+  GenerateReferenceMaterialChapterInput,
+  GenerateReferenceMaterialCoverageInput,
+  GenerateReferenceMaterialProjectionInput,
+  ReferenceMaterialChapterPromptInput,
+  ReferenceMaterialCoveragePromptInput,
+  ReferenceMaterialReductionPromptInput,
+  ReferenceStoryMaterialGenerationError,
+  ReferenceStoryMaterialGenerationResult,
+} from './reference-story-material.js';
 export type { RuntimeEventUiStreamOptions } from './ui-stream';
 
 async function prepareAgentSession(input: {

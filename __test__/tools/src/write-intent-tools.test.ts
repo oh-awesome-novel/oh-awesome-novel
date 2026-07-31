@@ -135,7 +135,7 @@ describe('write intent tools and human approval', () => {
     expect(accepted.dirtyStatus).toContain('state/characters.yaml');
   });
 
-  it('publishes a reference artifact set through one typed PendingAction transaction', async () => {
+  it('publishes technique and Story Material artifacts through one typed PendingAction transaction', async () => {
     const workspaceRoot = await createTempNovelWorkspace();
     await mkdir(
       join(workspaceRoot, 'examples/references/reference-1'),
@@ -183,6 +183,20 @@ describe('write intent tools and human approval', () => {
         {
           kind: 'referenceArtifact',
           referenceId: 'reference-1',
+          file: 'materials/world.yaml',
+          operation: 'replaceFile',
+          value: 'version: 1\nkind: world\nentries:\n  - id: world-1\n',
+        },
+        {
+          kind: 'referenceArtifact',
+          referenceId: 'reference-1',
+          file: 'materials/characters.yaml',
+          operation: 'replaceFile',
+          value: 'version: 1\nkind: characters\nentries:\n  - id: character-1\n',
+        },
+        {
+          kind: 'referenceArtifact',
+          referenceId: 'reference-1',
           file: 'context/index.yaml',
           operation: 'replaceFile',
           value: 'version: 1\nentries: []\n',
@@ -209,6 +223,8 @@ describe('write intent tools and human approval', () => {
       touchedFiles: [
         'examples/references.yaml',
         'examples/references/reference-1/distilled/pacing.md',
+        'examples/references/reference-1/materials/world.yaml',
+        'examples/references/reference-1/materials/characters.yaml',
         'examples/references/reference-1/context/index.yaml',
         'examples/references/reference-1/deconstruction-manifest.yaml',
       ],
@@ -222,6 +238,24 @@ describe('write intent tools and human approval', () => {
         'utf-8',
       ),
     ).resolves.toContain('notAnalyzed');
+    await expect(
+      readFile(
+        join(
+          workspaceRoot,
+          'examples/references/reference-1/materials/world.yaml',
+        ),
+        'utf-8',
+      ),
+    ).rejects.toThrow();
+    await expect(
+      readFile(
+        join(
+          workspaceRoot,
+          'examples/references/reference-1/materials/characters.yaml',
+        ),
+        'utf-8',
+      ),
+    ).rejects.toThrow();
 
     const accepted = await acceptPendingAction({
       workspaceRoot,
@@ -251,6 +285,24 @@ describe('write intent tools and human approval', () => {
         'utf-8',
       ),
     ).resolves.toContain('bounded escalation');
+    await expect(
+      readFile(
+        join(
+          workspaceRoot,
+          'examples/references/reference-1/materials/world.yaml',
+        ),
+        'utf-8',
+      ),
+    ).resolves.toContain('world-1');
+    await expect(
+      readFile(
+        join(
+          workspaceRoot,
+          'examples/references/reference-1/materials/characters.yaml',
+        ),
+        'utf-8',
+      ),
+    ).resolves.toContain('character-1');
   });
 
   it('rejects a reference publication PendingAction without changing its bundle', async () => {

@@ -19,6 +19,16 @@ function publishedContext(reference: ReferenceWorkSummary): {
 } | undefined {
   return reference.publishedContext;
 }
+
+function isStoryMaterialOnly(reference: ReferenceWorkSummary): boolean {
+  return reference.deconstructionStatus === 'completed'
+    && reference.readinessReason === 'techniqueTrackNotPublished';
+}
+
+function writingContextLabel(reference: ReferenceWorkSummary): string {
+  if (reference.contextEligible) return 'Eligible';
+  return isStoryMaterialOnly(reference) ? 'Not generated' : 'Not eligible';
+}
 </script>
 
 <template>
@@ -61,10 +71,13 @@ function publishedContext(reference: ReferenceWorkSummary): {
         </div>
         <div class="status-block">
           <span>Writing context</span>
-          <strong>{{ reference.contextEligible ? 'Eligible' : 'Not eligible' }}</strong>
+          <strong>{{ writingContextLabel(reference) }}</strong>
         </div>
       </div>
-      <p class="reference-readiness">{{ reference.readinessReason }}</p>
+      <p v-if="isStoryMaterialOnly(reference)" class="reference-material-summary">
+        Story Materials published · Technique context was not selected for this run.
+      </p>
+      <p v-else class="reference-readiness">{{ reference.readinessReason }}</p>
       <p v-if="publishedContext(reference)" class="reference-published-summary">
         {{ publishedContext(reference)?.entryCount }} distilled entries ·
         fingerprint {{ publishedContext(reference)?.fingerprint }}
@@ -133,6 +146,7 @@ function publishedContext(reference: ReferenceWorkSummary): {
 
 .reference-card-title span,
 .reference-readiness,
+.reference-material-summary,
 .reference-published-summary,
 .reference-path,
 .reference-checksum {
@@ -144,6 +158,7 @@ function publishedContext(reference: ReferenceWorkSummary): {
 
 :global([data-theme="dark"]) .reference-card-title span,
 :global([data-theme="dark"]) .reference-readiness,
+:global([data-theme="dark"]) .reference-material-summary,
 :global([data-theme="dark"]) .reference-published-summary,
 :global([data-theme="dark"]) .reference-path,
 :global([data-theme="dark"]) .reference-checksum {
@@ -165,6 +180,11 @@ function publishedContext(reference: ReferenceWorkSummary): {
   margin: 8px 0 0;
   color: rgb(100 116 139);
   font-size: 12px;
+}
+
+.reference-material-summary {
+  margin: 8px 0 0;
+  color: rgb(126 34 206);
 }
 
 .reference-published-summary {

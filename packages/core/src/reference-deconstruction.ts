@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 
-export const REFERENCE_DECONSTRUCTION_SCHEMA_VERSION = 1 as const;
-export const REFERENCE_DECONSTRUCTION_PIPELINE_VERSION = 1 as const;
+export const REFERENCE_DECONSTRUCTION_SCHEMA_VERSION = 2 as const;
+export const REFERENCE_DECONSTRUCTION_PIPELINE_VERSION = 2 as const;
 export const REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION =
-  'novel.deconstruct_reference@1' as const;
+  'novel.deconstruct_reference@2' as const;
 
 export const MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS = 3 as const;
 export const MAX_REFERENCE_QUICK_PREVIEW_CHARS = 48_000 as const;
@@ -21,6 +21,9 @@ export const REFERENCE_DECONSTRUCTION_STAGE_IDS = [
   'aggregateAnalysis',
   'styleProfile',
   'distillForOan',
+  'materialChapterAnalysis',
+  'materialAggregateAnalysis',
+  'materialProjection',
   'qualityGate',
 ] as const;
 
@@ -97,20 +100,36 @@ export interface ReferenceDeconstructionManifestStage {
   outputHashes: string[];
 }
 
-export type ReferenceDeconstructionManifestStages = Record<
+export type ReferenceDeconstructionManifestStages = Partial<Record<
   ReferenceDeconstructionStageId,
   ReferenceDeconstructionManifestStage
->;
+>>;
 
 export type ReferenceDeconstructionOutputKind =
   | 'deconstruction'
   | 'distilled'
+  | 'materials'
   | 'context';
+
+export const REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS = [
+  'techniques',
+  'world',
+  'characters',
+  'relationships',
+  'outline',
+  'timeline',
+] as const;
+
+export type ReferenceDeconstructionSelectedOutput =
+  typeof REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS[number];
 
 export interface ReferenceDeconstructionManifestOutput {
   kind: ReferenceDeconstructionOutputKind;
   path: string;
   checksumSha256: string;
+  sourceRunId: string;
+  sourceChecksumSha256: string;
+  stale: boolean;
 }
 
 export interface ReferenceDeconstructionWarningSummary {
@@ -129,10 +148,63 @@ export interface ReferenceDeconstructionManifest {
   status: ReferencePublishedDeconstructionStatus;
   qualityStatus: ReferenceDeconstructionQualityStatus;
   warningSummary: ReferenceDeconstructionWarningSummary;
+  profileId?: string;
+  selectedOutputs?: ReferenceDeconstructionSelectedOutput[];
   publishedRunId?: string;
   publishedAt?: string;
   stages: ReferenceDeconstructionManifestStages;
   outputs: ReferenceDeconstructionManifestOutput[];
+}
+
+export function requiredReferenceDeconstructionStageIds(
+  outputs: readonly ReferenceDeconstructionSelectedOutput[],
+): ReferenceDeconstructionStageId[] {
+  const required: ReferenceDeconstructionStageId[] = [
+    'detectStructure',
+    'quickPreview',
+  ];
+  if (outputs.includes('techniques')) {
+    required.push(
+      'chapterAnalysis',
+      'aggregateAnalysis',
+      'styleProfile',
+      'distillForOan',
+    );
+  }
+  if (outputs.some((output) => output !== 'techniques')) {
+    required.push(
+      'materialChapterAnalysis',
+      'materialAggregateAnalysis',
+      'materialProjection',
+    );
+  }
+  required.push('qualityGate');
+  return REFERENCE_DECONSTRUCTION_STAGE_IDS.filter((stageId) =>
+    required.includes(stageId));
+}
+
+function requireReferenceDeconstructionSelectedOutputs(
+  value: unknown,
+): ReferenceDeconstructionSelectedOutput[] {
+  const outputs = requireArray(
+    value,
+    'selectedOutputs',
+    1,
+    REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS.length,
+  ).map((output) => requireEnum(
+    output,
+    REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS,
+    'selected output',
+  ));
+  if (new Set(outputs).size !== outputs.length) {
+    throw new Error('Reference selected outputs must be unique.');
+  }
+  const canonical = REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS.filter((output) =>
+    outputs.includes(output));
+  if (JSON.stringify(canonical) !== JSON.stringify(outputs)) {
+    throw new Error('Reference selected outputs are not in canonical order.');
+  }
+  return canonical;
 }
 
 export interface ReferenceProgressFailure {
@@ -149,7 +221,10 @@ export interface ReferenceProgress {
   nextStage: ReferenceDeconstructionStageId | null;
   completedStages: ReferenceDeconstructionStageId[];
   failedStages: ReferenceProgressFailure[];
-  stages: Record<ReferenceDeconstructionStageId, ReferenceDeconstructionStageStatus>;
+  stages: Partial<Record<
+    ReferenceDeconstructionStageId,
+    ReferenceDeconstructionStageStatus
+  >>;
   resumable: boolean;
   contextEligible: boolean;
   updatedAt: string;
@@ -414,17 +489,19 @@ export function createReferenceProgressProjection(
   manifest: ReferenceDeconstructionManifest,
   updatedAt: string,
 ): ReferenceProgress {
-  const currentStage = REFERENCE_DECONSTRUCTION_STAGE_IDS.find((stageId) =>
-    manifest.stages[stageId].status === 'running') ?? null;
+  const presentStageIds = REFERENCE_DECONSTRUCTION_STAGE_IDS.filter((stageId) =>
+    manifest.stages[stageId] !== undefined);
+  const currentStage = presentStageIds.find((stageId) =>
+    manifest.stages[stageId]?.status === 'running') ?? null;
   const nextStage = manifest.status === 'completed'
     ? null
-    : REFERENCE_DECONSTRUCTION_STAGE_IDS.find((stageId) =>
-      manifest.stages[stageId].status === 'notStarted'
-      || manifest.stages[stageId].status === 'queued') ?? null;
-  const completedStages = REFERENCE_DECONSTRUCTION_STAGE_IDS.filter((stageId) =>
-    manifest.stages[stageId].status === 'completed');
-  const failedStages = REFERENCE_DECONSTRUCTION_STAGE_IDS
-    .filter((stageId) => manifest.stages[stageId].status === 'failed')
+    : presentStageIds.find((stageId) =>
+      manifest.stages[stageId]?.status === 'notStarted'
+      || manifest.stages[stageId]?.status === 'queued') ?? null;
+  const completedStages = presentStageIds.filter((stageId) =>
+    manifest.stages[stageId]?.status === 'completed');
+  const failedStages = presentStageIds
+    .filter((stageId) => manifest.stages[stageId]?.status === 'failed')
     .map((stage) => ({
       stage,
       message: 'Stage failed. Inspect diagnostics for details.',
@@ -439,16 +516,18 @@ export function createReferenceProgressProjection(
     nextStage,
     completedStages,
     failedStages,
-    stages: Object.fromEntries(REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [
+    stages: Object.fromEntries(presentStageIds.map((stageId) => [
       stageId,
-      manifest.stages[stageId].status,
+      manifest.stages[stageId]!.status,
     ])) as ReferenceProgress['stages'],
     resumable: false,
     contextEligible: manifest.status === 'completed'
       && (
         manifest.qualityStatus === 'passed'
         || manifest.qualityStatus === 'warned'
-      ),
+      )
+      && manifest.outputs.some((output) =>
+        output.kind === 'distilled' && !output.stale),
     updatedAt: requireIsoDate(updatedAt, 'updatedAt'),
   };
 }
@@ -1006,6 +1085,8 @@ export function assertReferenceDeconstructionManifest(
     'status',
     'qualityStatus',
     'warningSummary',
+    'profileId',
+    'selectedOutputs',
     'publishedRunId',
     'publishedAt',
     'stages',
@@ -1022,8 +1103,13 @@ export function assertReferenceDeconstructionManifest(
   }
   const stagesRecord = requireRecord(record.stages, 'manifest stages');
   assertOnlyKnownFields(stagesRecord, [...REFERENCE_DECONSTRUCTION_STAGE_IDS]);
-  const stages = Object.fromEntries(REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => {
-    const stage = requireRecord(stagesRecord[stageId], `manifest stage ${stageId}`);
+  const stages = Object.fromEntries(Object.entries(stagesRecord).map(([rawStageId, value]) => {
+    const stageId = requireEnum(
+      rawStageId,
+      REFERENCE_DECONSTRUCTION_STAGE_IDS,
+      'manifest stage id',
+    );
+    const stage = requireRecord(value, `manifest stage ${stageId}`);
     assertOnlyKnownFields(stage, [
       'status',
       'selectedAttemptId',
@@ -1055,19 +1141,35 @@ export function assertReferenceDeconstructionManifest(
   const outputs = requireArray(record.outputs, 'manifest outputs', 0, 10_000)
     .map((item, index): ReferenceDeconstructionManifestOutput => {
       const output = requireRecord(item, `manifest outputs[${index}]`);
-      assertOnlyKnownFields(output, ['kind', 'path', 'checksumSha256']);
+      assertOnlyKnownFields(output, [
+        'kind',
+        'path',
+        'checksumSha256',
+        'sourceRunId',
+        'sourceChecksumSha256',
+        'stale',
+      ]);
       return {
         kind: requireEnum(
           output.kind,
-          ['deconstruction', 'distilled', 'context'] as const,
+          ['deconstruction', 'distilled', 'materials', 'context'] as const,
           'output kind',
         ),
         path: requireRelativeArtifactPath(output.path, 'output path'),
         checksumSha256: requireSha256(output.checksumSha256, 'output checksumSha256'),
+        sourceRunId: requireSafeIdentifier(output.sourceRunId, 'output sourceRunId'),
+        sourceChecksumSha256: requireSha256(
+          output.sourceChecksumSha256,
+          'output sourceChecksumSha256',
+        ),
+        stale: requireBoolean(output.stale, 'output stale'),
       };
     });
   if (new Set(outputs.map((output) => output.path)).size !== outputs.length) {
     throw new Error('Reference manifest output paths must be unique.');
+  }
+  if (outputs.some((output) => !manifestOutputPathMatchesKind(output))) {
+    throw new Error('Reference manifest output path does not match its kind.');
   }
   const manifest: ReferenceDeconstructionManifest = {
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
@@ -1086,6 +1188,16 @@ export function assertReferenceDeconstructionManifest(
     status: requireEnum(record.status, PUBLISHED_STATUS_VALUES, 'manifest status'),
     qualityStatus: requireEnum(record.qualityStatus, QUALITY_STATUS_VALUES, 'qualityStatus'),
     warningSummary: parseReferenceDeconstructionWarningSummary(record.warningSummary),
+    ...(record.profileId === undefined
+      ? {}
+      : { profileId: requireSafeIdentifier(record.profileId, 'profileId') }),
+    ...(record.selectedOutputs === undefined
+      ? {}
+      : {
+          selectedOutputs: requireReferenceDeconstructionSelectedOutputs(
+            record.selectedOutputs,
+          ),
+        }),
     ...(record.publishedRunId === undefined
       ? {}
       : { publishedRunId: requireSafeIdentifier(record.publishedRunId, 'publishedRunId') }),
@@ -1096,6 +1208,41 @@ export function assertReferenceDeconstructionManifest(
     outputs,
   };
   if (manifest.status === 'completed') {
+    if (!manifest.profileId || !manifest.selectedOutputs?.length) {
+      throw new Error(
+        'Completed reference manifest is missing its Writing Profile output selection.',
+      );
+    }
+    const requiredStages = requiredReferenceDeconstructionStageIds(
+      manifest.selectedOutputs,
+    );
+    const requiredOutputKinds: ReferenceDeconstructionOutputKind[] = [
+      'deconstruction',
+      'context',
+      ...(manifest.selectedOutputs.includes('techniques')
+        ? ['distilled' as const]
+        : []),
+      ...(manifest.selectedOutputs.some((output) => output !== 'techniques')
+        ? ['materials' as const]
+        : []),
+    ];
+    const requiredCurrentPaths = [
+      ...(manifest.selectedOutputs.includes('techniques')
+        ? [
+            'distilled/writing-style.md',
+            'distilled/pacing.md',
+            'distilled/hooks.md',
+            'distilled/scene-techniques.md',
+            'distilled/character-techniques.md',
+            'distilled/do-not-copy.md',
+            'context/index.yaml',
+            'context/reference-summary.md',
+          ]
+        : []),
+      ...manifest.selectedOutputs
+        .filter((output) => output !== 'techniques')
+        .map((output) => `materials/${output}.yaml`),
+    ];
     if (
       (
         manifest.qualityStatus !== 'passed'
@@ -1103,10 +1250,20 @@ export function assertReferenceDeconstructionManifest(
       )
       || !manifest.publishedRunId
       || !manifest.publishedAt
-      || REFERENCE_DECONSTRUCTION_STAGE_IDS.some((stageId) =>
-        manifest.stages[stageId].status !== 'completed')
-      || (['deconstruction', 'distilled', 'context'] as const).some((kind) =>
-        !manifest.outputs.some((output) => output.kind === kind))
+      || Object.keys(manifest.stages).length !== requiredStages.length
+      || requiredStages.some((stageId) =>
+        manifest.stages[stageId]?.status !== 'completed')
+      || requiredOutputKinds.some((kind) =>
+        !manifest.outputs.some((output) => output.kind === kind && !output.stale))
+      || manifest.outputs.some((output) =>
+        !output.stale
+        && output.sourceChecksumSha256 !== manifest.sourceChecksumSha256)
+      || requiredCurrentPaths.some((path) =>
+        !manifest.outputs.some((output) =>
+          output.path === path
+          && !output.stale
+          && output.sourceRunId === manifest.publishedRunId
+          && output.sourceChecksumSha256 === manifest.sourceChecksumSha256))
     ) {
       throw new Error(
         'Completed reference manifest requires a publishable quality result and completed pipeline.',
@@ -1126,6 +1283,24 @@ export function assertReferenceDeconstructionManifest(
     );
   }
   return manifest;
+}
+
+function manifestOutputPathMatchesKind(
+  output: ReferenceDeconstructionManifestOutput,
+): boolean {
+  if (output.kind === 'deconstruction') {
+    return output.path.startsWith('deconstruction/') && output.path.endsWith('.md');
+  }
+  if (output.kind === 'distilled') {
+    return output.path.startsWith('distilled/') && output.path.endsWith('.md');
+  }
+  if (output.kind === 'materials') {
+    return REFERENCE_DECONSTRUCTION_SELECTED_OUTPUTS
+      .filter((kind) => kind !== 'techniques')
+      .some((kind) => output.path === `materials/${kind}.yaml`);
+  }
+  return output.path === 'context/index.yaml'
+    || output.path === 'context/reference-summary.md';
 }
 
 export function assertReferenceDeconstructionDiagnostics(
@@ -1197,9 +1372,9 @@ export function assertReferenceProgress(value: unknown): ReferenceProgress {
           failedAt: requireIsoDate(failure.failedAt, 'failedAt'),
         };
       }),
-    stages: Object.fromEntries(REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [
-      stageId,
-      requireEnum(stagesRecord[stageId], STAGE_STATUS_VALUES, `${stageId} status`),
+    stages: Object.fromEntries(Object.entries(stagesRecord).map(([stageId, status]) => [
+      requireEnum(stageId, REFERENCE_DECONSTRUCTION_STAGE_IDS, 'progress stage id'),
+      requireEnum(status, STAGE_STATUS_VALUES, `${stageId} status`),
     ])) as ReferenceProgress['stages'],
     resumable: requireBoolean(record.resumable, 'resumable'),
     contextEligible: requireBoolean(record.contextEligible, 'contextEligible'),

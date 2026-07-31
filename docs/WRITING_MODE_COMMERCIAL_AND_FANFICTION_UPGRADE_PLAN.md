@@ -1,6 +1,6 @@
 # OAN Writing Profile 与拆书材料升级计划
 
-> 计划状态：In Progress（W0 + W1 + W2a 已于 2026-07-31 完成；W2b + W3 仍为 Planned）。
+> 计划状态：In Progress（W0 + W1 + W2 已于 2026-07-31 完成；W3 仍为 Planned）。
 >
 > 计划日期：2026-07-26。
 >
@@ -15,8 +15,8 @@
 > 主要复用任务：`0900`、`1000`、`1010`、`1020`、`1030`、`1040`、`1070`、`1080`。其中 `0900` 已完成的 D0–D5 深度拆解流水线是本计划扩展拆书产物的基础。
 >
 > `0900` 状态已对齐为 `Completed`；其 Implementation Notes 已记录 W0 / W1
-> 只增加 D5 Profile gate，1205 已完成 quality gate warning 语义，后续 1210
-> 再修改 per-track publish / manifest 完成性契约。
+> 的 D5 Profile gate、1205 的 quality gate warning 语义，以及 1210 已完成的
+> per-track publish / manifest v2、provenance 与纯 material context 契约。
 >
 > 依赖提醒：W3 的材料采用依赖 SemanticPatch 的 `object` / `collection` domain 覆盖，而 `docs/tasks/0800.md`（SemanticPatch Apply Engine）仍为 `Planned`，且现有 domain 枚举不包含 relationships 与 outline。详见 §8.2。
 >
@@ -1048,7 +1048,7 @@ W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task
 - 没有移除任何检查；所有诊断继续产出。
 - `0900` 的现有测试全部更新并通过，不留下“因为降级而失效”的断言。
 
-#### W2b：Story Material Analysis Track（`1210`）
+#### W2b：Story Material Analysis Track（`1210`，Completed 2026-07-31）
 
 交付的共享契约修改：
 
@@ -1086,6 +1086,12 @@ W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task
 - custom both 在一个 run 中完成两条 typed track，任一 track 失败都不会伪装成对应 projection 已完成。
 - selected projection 原子更新，未选择 projection 不被删除也不被标记 stale。
 - 旧 schema 的 run / bundle 在读取时明确报错，不静默通过。
+
+实现结果：上述共享契约与新增能力均已通过 task `1210` 落地。commercial、
+fanfiction 与 custom both 分别覆盖 Technique-only、material-only 和双轨同 run；
+`materials/*` 通过既有 PendingAction 发布，per-output provenance 支持安全部分发布，
+Desktop 已完成 Preview / Publish Review / References 分区展示。selected material
+adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实现。
 
 ### W3：材料采用与 Desktop 闭环
 
@@ -1246,40 +1252,45 @@ W2 是本计划唯一包含破坏性变更的阶段，按 §15 拆成两个 task
 - [x] Writing prompt 由 shared skill + reminder context item 组成，reminder 全关时装配结果不变。
 - [x] reminder 生效位置定义在真实 `novel.*` capability 联合上。
 - [x] D5 只新增 profile gate，评分与预算逻辑未被修改。
-- [ ] commercialWriting 默认只发布 techniques。
-- [ ] fanfictionWriting 默认发布 world / characters / relationships / outline / timeline，不发布 techniques，且能正常走到 `completed` 并发布。
-- [ ] 两种 Profile 共用 import / chunk / run / resume / evidence / publish 控制框架，但从 Quick Preview 开始使用独立 typed analysis track。
-- [ ] work plan 终端单元、stage id 与 manifest output kind 已完成 track 化改造，且旧 schema 缺失时明确报错。
+- [x] commercialWriting 默认只发布 techniques。
+- [x] fanfictionWriting 默认发布 world / characters / relationships / outline / timeline，不发布 techniques，且能正常走到 `completed` 并发布。
+- [x] 两种 Profile 共用 import / chunk / run / resume / evidence / publish 控制框架，但从 Quick Preview 开始使用独立 typed analysis track。
+- [x] work plan 终端单元、stage id 与 manifest output kind 已完成 track 化改造，且旧 schema 缺失时明确报错。
 - [x] quality gate 的内容质量判断为非阻断 warning，结构完整性判断仍然阻断。
-- [ ] `warned` 产物可以发布，且提示在 Publish Review、References 列表和采用 Preview 中可见。
-- [ ] Technique Projection 保持现有抽象合同。
-- [ ] Story Material Track 拥有独立 Preview、Chapter Findings、Aggregate 和 Projection，并可以保留有 evidence 的具体原作设定、角色和剧情材料。
-- [ ] `materials/*` 与同名 `deconstruction/*` 技法文件已明确区分并分区展示。
-- [ ] custom both 在一个 deconstruction run 中执行两条 track，不复制第二套 controller。
+- [x] `warned` 产物可以发布，且提示在 Publish Review 与 References 列表中可见。
+- [ ] W3 adoption Preview 显示已发布产物携带的 warning。
+- [x] Technique Projection 保持现有抽象合同。
+- [x] Story Material Track 拥有独立 Preview、Chapter Findings、Aggregate 和 Projection，并可以保留有 evidence 的具体原作设定、角色和剧情材料。
+- [x] `materials/*` 与同名 `deconstruction/*` 技法文件已明确区分并分区展示。
+- [x] custom both 在一个 deconstruction run 中执行两条 track，不复制第二套 controller。
 - [ ] 用户可以显式选择 materials，生成 workspace 修改候选。
 - [ ] materials 只有 Accept 后才成为当前小说文件。
 - [x] 正式 Writing 不读取 reference 原文或未采用 materials。
-- [ ] 界面提供简短内容提示，不新增法律或内容 hard gate。
-- [ ] Profile、prompt、projection、adoption 和 Desktop 旅程测试通过。
+- [x] Reference deconstruction、Publish Review 与 References 界面提供简短内容提示，不新增法律或内容 hard gate。
+- [ ] W3 adoption Preview 提供对应内容提示，且不新增法律或内容 hard gate。
+- [x] Profile、prompt、Technique / Story Material projection 与 W2 Desktop 拆书旅程测试通过。
+- [ ] W3 adoption 与 Accept 后 Desktop 闭环测试通过。
 - [x] `FILESYSTEM_SPEC.md`（含 `config.yaml`）、`docs/README.md` 索引、对应 task 和 W0 / W1 Implementation Notes 同步更新。
-- [x] `0900` 的状态标记已对齐，Implementation Notes 已记录后续 W2 对 quality gate 与 publish 契约的修改边界。
+- [x] `0900` 的状态标记已对齐，Implementation Notes 已记录 W2 对 quality gate、per-track publish / manifest、provenance 与 context 契约的修改。
 
 ## 15. 推荐任务拆分
 
-`1200` 与 `1205` 已创建并完成；`1210` / `1220` 尚未创建。
+`1200`、`1205` 与 `1210` 已创建并完成；`1220` 尚未创建。
 
 | Slice | 推荐任务 | 状态 |
 | --- | --- | --- |
 | W0 + W1 | `1200 Writing Profile Configuration And Prompt Reminders` | Completed |
 | W2 前半 | `1205 Reference Quality Gate Warning Degradation` | Completed |
-| W2 后半 | `1210 Reference Story Material Analysis Track` | Planned，尚未创建 |
+| W2 后半 | `1210 Reference Story Material Analysis Track` | Completed |
 | W3 | `1220 Reference Material Adoption And Desktop Closure` | Planned，尚未创建 |
 
 W2 建议拆成两个 task。`1205` 只做 quality gate 降级与相关 publish 完成性判定的松绑，它对现有 `commercialWriting` 流程立即有价值（作者不再因为一条内容提示而无法发布），并且可以独立验证；`1210` 再在已经松绑的框架上增加 Story Material track。把两者塞进一个 task 会让“修改 0900 契约”和“新增 track”的失败原因混在一起，回滚粒度也过粗。
 
 `1205` 需要在 `Related Plans` 中同时链接本计划与 `REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md`，因为它修改的是后者交付的契约。
 
-1200 与 1205 已完成。用户已经能使用两个内置 Profile 和自定义组合，且
-Technique Track 的内容质量提示不再阻断发布；后续按 1210 → 1220 推进。
+1200、1205 与 1210 已完成。用户已经能使用两个内置 Profile 和自定义组合，
+Technique Track 的内容质量提示不再阻断发布，Story Material Track 也已支持
+material-only / custom both、证据闭包、部分发布与分组审阅；后续从 1220 推进
+selected material adoption 与 Accept 后 Desktop 闭环。
 不要复制第二套 controller，也不要为了将来可能需要的原作绑定、
 source-canon selector 或复杂 Profile 能力提前扩展范围。

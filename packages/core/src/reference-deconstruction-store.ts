@@ -39,6 +39,7 @@ import {
   createReferenceStructureFingerprint,
   formatReferenceQuickPreviewMarkdown,
   normalizeReferenceQuickPreviewModelOutput,
+  requiredReferenceDeconstructionStageIds,
 } from './reference-deconstruction.js';
 import type {
   ReferenceDeconstructionDiagnostic,
@@ -63,6 +64,7 @@ import {
   collectReferenceAnalysisFindings,
   createReferenceDeconstructionStageInputFingerprint,
   createReferenceDeconstructionWorkPlan,
+  normalizeReferenceDeconstructionOutputs,
   parseReferenceAggregateAnalysisResult,
   parseReferenceChapterAnalysisResult,
   parseReferenceStyleProfileResult,
@@ -75,12 +77,19 @@ import type {
   ReferenceDeconstructionFinding,
   ReferenceDeconstructionWorkPlan,
   ReferenceDeconstructionWorkUnit,
+  ReferenceDeconstructionTrackId,
+  ReferenceStoryMaterialKind,
   ReferenceRollingContext,
   ReferenceStyleProfileResult,
 } from './reference-deconstruction-full.js';
 import {
+  DEFAULT_WRITING_PROFILE_ID,
+} from './writing-profile.js';
+import type { WritingProfileOutput } from './writing-profile.js';
+import {
   assertReferenceContextIndex,
   collectReferenceDistillationFindings,
+  createEmptyReferenceContextIndex,
   createReferenceContextIndex,
   formatReferenceDistilledCategoryMarkdown,
   parseReferenceDistillationResult,
@@ -98,17 +107,41 @@ import {
 import type {
   ReferenceDeconstructionAnalysisOutput,
   ReferenceDeconstructionAnalysisQualityReport,
-  ReferenceDeconstructionQualitySelectedAttempt,
 } from './reference-deconstruction-quality.js';
 import {
   assertReferenceDeconstructionPublicationCandidate,
   candidateTargetPath,
   createReferenceDeconstructionPublicationCandidate,
 } from './reference-deconstruction-publication.js';
+import {
+  REFERENCE_STORY_MATERIAL_KINDS,
+  collectReferenceStoryMaterialFindings,
+  detectReferenceStoryMaterialCoverageExactOverlap,
+  evaluateReferenceStoryMaterialQuality,
+  formatReferenceStoryMaterialCoveragePreviewMarkdown,
+  formatReferenceStoryMaterialAggregateMarkdown,
+  formatReferenceStoryMaterialChapterMarkdown,
+  formatReferenceStoryMaterialProjectionYaml,
+  parseReferenceStoryMaterialAggregateResult,
+  parseReferenceStoryMaterialChapterResult,
+  parseReferenceStoryMaterialCoveragePreview,
+  parseReferenceStoryMaterialProjectionResult,
+  parseReferenceStoryMaterialQualityReport,
+} from './reference-story-material.js';
+import type {
+  ReferenceStoryMaterialAggregateResult,
+  ReferenceStoryMaterialChapterResult,
+  ReferenceStoryMaterialCoveragePreview,
+  ReferenceStoryMaterialFinding,
+  ReferenceStoryMaterialProjectionResult,
+  ReferenceStoryMaterialQualityReport,
+  ReferenceStoryMaterialQualitySelectedAttempt,
+} from './reference-story-material.js';
 import type {
   ReferenceDeconstructionPublicationCandidate,
   ReferenceDeconstructionPublicationCandidateFile,
   ReferenceDeconstructionPublicationEntryInventoryItem,
+  ReferenceDeconstructionPublicationMaterialInventoryItem,
 } from './reference-deconstruction-publication.js';
 
 export type ReferenceReadinessReason =
@@ -119,7 +152,8 @@ export type ReferenceReadinessReason =
   | 'qualityFailed'
   | 'needsRebuild'
   | 'missingContextSummary'
-  | 'invalidContextIndex';
+  | 'invalidContextIndex'
+  | 'techniqueTrackNotPublished';
 
 export interface ReferenceReadinessInspection {
   status: ReferencePublishedDeconstructionStatus;
@@ -227,6 +261,7 @@ export interface ReferenceQuickPreviewEvidence {
 
 export interface ReferenceQuickPreviewReservation {
   kind: 'preview';
+  track: ReferenceDeconstructionTrackId;
   id: string;
   idempotencyKey: string;
   startedAt: string;
@@ -276,7 +311,10 @@ export interface ReferenceFullDeconstructionState {
   plan: ReferenceDeconstructionWorkPlan;
   units: ReferenceDeconstructionStoredUnit[];
   attempts: ReferenceDeconstructionAttemptSummary[];
-  analysisQuality?: ReferenceDeconstructionAnalysisQualitySummary;
+  analysisQuality: Partial<Record<
+    ReferenceDeconstructionTrackId,
+    ReferenceDeconstructionAnalysisQualitySummary
+  >>;
 }
 
 export interface ReferenceDeconstructionPublicationState {
@@ -284,6 +322,7 @@ export interface ReferenceDeconstructionPublicationState {
   pendingActionId: string;
   files: Array<Omit<ReferenceDeconstructionPublicationCandidateFile, 'content'>>;
   entryInventory: ReferenceDeconstructionPublicationEntryInventoryItem[];
+  materialInventory?: ReferenceDeconstructionPublicationMaterialInventoryItem[];
   preparedAt: string;
 }
 
@@ -306,13 +345,28 @@ export type ReferenceFullDeconstructionOutput =
   | ReferenceAggregateAnalysisResult
   | ReferenceStyleProfileResult
   | ReferenceDistillationResult
-  | ReferenceDeconstructionAnalysisQualityReport;
+  | ReferenceStoryMaterialChapterResult
+  | ReferenceStoryMaterialAggregateResult
+  | ReferenceStoryMaterialProjectionResult
+  | ReferenceDeconstructionAnalysisQualityReport
+  | ReferenceStoryMaterialQualityReport;
+
+type ReferenceFullDeconstructionQualityReport =
+  | ReferenceDeconstructionAnalysisQualityReport
+  | ReferenceStoryMaterialQualityReport;
+
+type ReferenceFullDeconstructionStageOutput = Exclude<
+  ReferenceFullDeconstructionOutput,
+  ReferenceFullDeconstructionQualityReport
+>;
 
 export interface ReferenceFullDeconstructionExecution {
   unit: ReferenceDeconstructionWorkUnit;
   sourceWindows?: ReferenceChapterWorkUnitWindow[];
   rollingContext?: ReferenceRollingContext;
   verifiedSourceFindings?: ReferenceDeconstructionFinding[];
+  materialKinds?: ReferenceStoryMaterialKind[];
+  verifiedStoryMaterialFindings?: ReferenceStoryMaterialFinding[];
   coveredUnitIds?: string[];
   coveredChapterIds?: string[];
 }
@@ -336,11 +390,14 @@ export interface ReferenceDeconstructionRun {
   revision: number;
   status: ReferenceDeconstructionRunStatus;
   mode: 'quickPreview';
+  profileId: string;
+  outputs: WritingProfileOutput[];
   sourceChecksumSha256: string;
   structureFingerprint: string;
   selection: ReferenceQuickPreviewSelectionSummary;
   evidence: ReferenceQuickPreviewEvidence[];
   preview?: ReferenceQuickPreview;
+  materialPreview?: ReferenceStoryMaterialCoveragePreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   full?: ReferenceFullDeconstructionState;
@@ -363,9 +420,12 @@ export interface ReferenceDeconstructionRunTransport {
   structureFingerprint: string;
   pipelineVersion: typeof REFERENCE_DECONSTRUCTION_PIPELINE_VERSION;
   capabilityVersion: typeof REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION;
+  profileId: string;
+  outputs: WritingProfileOutput[];
   selectedChapterIds: string[];
   evidence: ReferenceQuickPreviewEvidence[];
   preview?: ReferenceQuickPreview;
+  materialPreview?: ReferenceStoryMaterialCoveragePreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   receiptCount: number;
@@ -377,12 +437,16 @@ export interface ReferenceDeconstructionRunTransport {
 }
 
 export interface ReferenceFullDeconstructionStageSummary {
+  track: ReferenceDeconstructionTrackId;
   stageId: Extract<
     ReferenceDeconstructionStageId,
     | 'chapterAnalysis'
     | 'aggregateAnalysis'
     | 'styleProfile'
     | 'distillForOan'
+    | 'materialChapterAnalysis'
+    | 'materialAggregateAnalysis'
+    | 'materialProjection'
     | 'qualityGate'
   >;
   status: 'notStarted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale';
@@ -406,12 +470,16 @@ export interface ReferenceFullDeconstructionTransport {
   failedUnit?: ReferenceDeconstructionUnitTransport;
   recentUnits: ReferenceDeconstructionUnitTransport[];
   recentAttempts: ReferenceDeconstructionAttemptTransport[];
-  analysisQuality?: ReferenceDeconstructionAnalysisQualitySummary;
+  analysisQuality: Partial<Record<
+    ReferenceDeconstructionTrackId,
+    ReferenceDeconstructionAnalysisQualitySummary
+  >>;
 }
 
 export interface ReferenceDeconstructionUnitTransport {
   id: string;
   ordinal: number;
+  track: ReferenceDeconstructionTrackId;
   stageId: ReferenceDeconstructionWorkUnit['stageId'];
   kind: ReferenceDeconstructionWorkUnit['kind'];
   chapterId?: string;
@@ -431,6 +499,8 @@ export interface ReferenceDeconstructionRunRequest {
   runId: string;
   referenceId: string;
   mode: 'quickPreview';
+  profileId: string;
+  outputs: WritingProfileOutput[];
   sourceChecksumSha256: string;
   structureFingerprint: string;
   structureConfidence: ReferenceSourceManifest['detectedStructure']['confidence'];
@@ -453,6 +523,9 @@ export interface ReferenceDeconstructionMutationResult {
 export interface CreateReferenceDeconstructionRunInput {
   workspaceRoot: string;
   referenceId: string;
+  /** Backend callers freeze the active profile here. Defaults preserve direct API compatibility. */
+  profileId?: string;
+  outputs?: readonly WritingProfileOutput[];
   sourceChecksumSha256: string;
   structureFingerprint: string;
   structureConfidence: ReferenceSourceManifest['detectedStructure']['confidence'];
@@ -479,7 +552,7 @@ export interface CompleteReferenceQuickPreviewInput {
   runId: string;
   baseRunRevision: number;
   reservationId: string;
-  preview: ReferenceQuickPreview;
+  preview: ReferenceQuickPreview | ReferenceStoryMaterialCoveragePreview;
   now?: string;
 }
 
@@ -613,6 +686,18 @@ export async function createReferenceDeconstructionRun(
       );
     }
     const referenceId = assertSafeIdentifier(input.referenceId, 'referenceId');
+    const profileId = assertSafeIdentifier(
+      input.profileId ?? DEFAULT_WRITING_PROFILE_ID,
+      'profileId',
+    );
+    let outputs: WritingProfileOutput[];
+    try {
+      outputs = normalizeReferenceDeconstructionOutputs(
+        input.outputs ?? ['techniques'],
+      );
+    } catch (error) {
+      throw validationFrom(error, 'Reference deconstruction outputs are invalid.');
+    }
     const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
     const sourceChecksumSha256 = assertSha256(
       input.sourceChecksumSha256,
@@ -645,6 +730,8 @@ export async function createReferenceDeconstructionRun(
     });
     const requestFingerprint = fingerprintCreateRequest({
       referenceId,
+      profileId,
+      outputs,
       sourceChecksumSha256,
       structureFingerprint,
       structureConfidence,
@@ -710,6 +797,8 @@ export async function createReferenceDeconstructionRun(
       runId,
       referenceId,
       mode: 'quickPreview',
+      profileId,
+      outputs,
       sourceChecksumSha256,
       structureFingerprint,
       structureConfidence,
@@ -724,6 +813,8 @@ export async function createReferenceDeconstructionRun(
       revision: 0,
       status: 'created',
       mode: 'quickPreview',
+      profileId,
+      outputs,
       sourceChecksumSha256,
       structureFingerprint,
       selection: summarizeSelection(selection),
@@ -810,6 +901,13 @@ export async function reserveReferenceQuickPreview(
   input: MutateReferenceDeconstructionRunInput,
 ): Promise<ReferenceDeconstructionMutationResult> {
   return mutateWithReceipt(input, 'advance', ['created', 'interrupted'], (run, receipt, now) => {
+    const track = nextPreviewTrack(run);
+    if (!track) {
+      throw new ReferenceDeconstructionConflictError(
+        'All selected reference preview tracks are already complete.',
+        'invalidTransition',
+      );
+    }
     const reservationId = `preview-reservation-${run.revision + 1}-${randomUUID()}`;
     return {
       ...run,
@@ -817,6 +915,7 @@ export async function reserveReferenceQuickPreview(
       status: 'previewRunning',
       activeReservation: {
         kind: 'preview',
+        track,
         id: reservationId,
         idempotencyKey: receipt.idempotencyKey,
         startedAt: now,
@@ -845,24 +944,95 @@ export async function completeReferenceQuickPreview(
         false,
       );
     }
-    await assertPreviewMatchesRun(input.workspaceRoot, input.preview, run, false);
+    if (reservation.track === 'technique') {
+      if (!isTechniquePreview(input.preview)) {
+        throw new ReferenceDeconstructionValidationError(
+          'Technique preview reservation received a Story Material preview.',
+        );
+      }
+      await assertPreviewMatchesRun(input.workspaceRoot, input.preview, run, false);
+    } else {
+      if (isTechniquePreview(input.preview)) {
+        throw new ReferenceDeconstructionValidationError(
+          'Story Material preview reservation received a Technique preview.',
+        );
+      }
+      const request = await readRunRequestArtifact(
+        input.workspaceRoot,
+        run.referenceId,
+        run.runId,
+        false,
+      );
+      try {
+        parseReferenceStoryMaterialCoveragePreview(input.preview, {
+          runId: run.runId,
+          selection: request.selection,
+          materialKinds: selectedMaterialKinds(run.outputs),
+        });
+      } catch (error) {
+        throw validationFrom(error, 'Story Material coverage preview is invalid.');
+      }
+    }
     const now = normalizeNow(input.now);
+    const techniquePreview = reservation.track === 'technique'
+      ? input.preview as ReferenceQuickPreview
+      : run.preview;
+    const materialPreview = reservation.track === 'storyMaterial'
+      ? input.preview as ReferenceStoryMaterialCoveragePreview
+      : run.materialPreview;
+    const complete = previewTracksComplete(run.outputs, techniquePreview, materialPreview);
+    const materialDiagnostics = materialPreview
+      ? detectReferenceStoryMaterialCoverageExactOverlap(
+          materialPreview,
+          (await readRunRequestArtifact(
+            input.workspaceRoot,
+            run.referenceId,
+            run.runId,
+            false,
+          )).selection,
+        )
+      : [];
+    const previewDiagnostics = [
+      ...(techniquePreview?.diagnostics ?? []),
+      ...materialDiagnostics,
+    ];
+    if (previewDiagnostics.length > MAX_REFERENCE_DECONSTRUCTION_DIAGNOSTICS) {
+      throw new ReferenceDeconstructionValidationError(
+        'Combined reference preview diagnostics exceed the transport limit.',
+      );
+    }
+    const status: ReferenceDeconstructionRunStatus = complete
+      ? 'awaitingFullApproval'
+      : 'created';
     const next: ReferenceDeconstructionRun = {
       ...run,
-      status: 'awaitingFullApproval',
-      preview: input.preview,
-      diagnostics: [...input.preview.diagnostics],
+      status,
+      ...(techniquePreview ? { preview: techniquePreview } : {}),
+      ...(materialPreview ? { materialPreview } : {}),
+      diagnostics: previewDiagnostics,
       mutationReceipts: updateReceiptStatus(
         run.mutationReceipts,
         reservation.idempotencyKey,
         run.revision,
-        'awaitingFullApproval',
+        status,
       ),
       activeReservation: undefined,
       failure: undefined,
       updatedAt: now,
     };
-    await writePreviewArtifacts(input.workspaceRoot, next, input.preview);
+    if (reservation.track === 'technique') {
+      await writePreviewArtifacts(
+        input.workspaceRoot,
+        next,
+        input.preview as ReferenceQuickPreview,
+      );
+    } else {
+      await writeMaterialPreviewArtifacts(
+        input.workspaceRoot,
+        next,
+        input.preview as ReferenceStoryMaterialCoveragePreview,
+      );
+    }
     await writeRunState(input.workspaceRoot, next);
     await writeRunDiagnostics(input.workspaceRoot, next);
     return next;
@@ -952,7 +1122,10 @@ export async function approveReferenceFullDeconstruction(
       return { run, receipt: previousReceipt, replayed: true };
     }
     assertRevision(run, input.baseRunRevision);
-    if (run.status !== 'awaitingFullApproval' || !run.preview) {
+    if (
+      run.status !== 'awaitingFullApproval'
+      || !previewTracksComplete(run.outputs, run.preview, run.materialPreview)
+    ) {
       throw invalidTransition(run.status, 'fullApproved');
     }
     if (run.diagnostics.some((diagnostic) => diagnostic.blocking)) {
@@ -979,6 +1152,7 @@ export async function approveReferenceFullDeconstruction(
         structureFingerprint: run.structureFingerprint,
         sourceText: source.sourceText,
         chapters: source.sourceManifest.detectedStructure.chapters,
+        outputs: run.outputs,
       });
     } catch (error) {
       throw validationFrom(error, 'Reference full work plan is invalid.');
@@ -999,12 +1173,9 @@ export async function approveReferenceFullDeconstruction(
         attemptIds: [],
       })),
       attempts: [],
-      analysisQuality: {
-        status: 'notEvaluated',
-        coveragePercent: 0,
-        blockingDiagnosticCount: 0,
-        outputHashes: [],
-      },
+      analysisQuality: Object.fromEntries(
+        Object.keys(plan.tracks).map((track) => [track, emptyQualitySummary()]),
+      ) as ReferenceFullDeconstructionState['analysisQuality'],
     };
     const next: ReferenceDeconstructionRun = {
       ...run,
@@ -1255,23 +1426,20 @@ export async function completeReferenceFullDeconstructionUnit(
       );
     }
     const qualityReport = unit.kind === 'analysisQuality'
-      ? output as ReferenceDeconstructionAnalysisQualityReport
+      ? output as ReferenceFullDeconstructionQualityReport
       : undefined;
     const diagnostics = qualityReport
       ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
       : run.diagnostics;
     const quality = qualityReport
       ? {
-          status: effectiveQualityStatus(qualityReport.status, diagnostics),
+          status: effectiveQualityStatus(qualityReport.status, qualityReport.diagnostics),
           coveragePercent: qualityReport.coverage.percent,
           blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
             item.blocking).length,
           outputHashes: [...qualityReport.outputHashes],
         } satisfies ReferenceDeconstructionAnalysisQualitySummary
-      : full.analysisQuality;
-    const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
-      ? quality?.status === 'failed' ? 'failed' : 'reviewReady'
-      : 'fullRunning';
+      : undefined;
     const nextFull: ReferenceFullDeconstructionState = {
       ...full,
       units: full.units.map((candidate) => candidate.id === unit.id
@@ -1280,8 +1448,16 @@ export async function completeReferenceFullDeconstructionUnit(
       attempts: full.attempts.map((candidate) => candidate.id === attempt.id
         ? { ...candidate, status: 'completed', outputHash, completedAt: now }
         : candidate),
-      ...(quality ? { analysisQuality: quality } : {}),
+      analysisQuality: quality
+        ? { ...full.analysisQuality, [unit.track]: quality }
+        : full.analysisQuality,
     };
+    const resultStatus: ReferenceDeconstructionRunStatus = quality?.status === 'failed'
+      ? 'failed'
+      : quality && allTrackQualitiesPublishable(nextFull)
+        && nextFull.units.every((candidate) => candidate.status === 'completed')
+        ? 'reviewReady'
+        : 'fullRunning';
     const next: ReferenceDeconstructionRun = {
       ...run,
       status: resultStatus,
@@ -1448,6 +1624,9 @@ export async function retryReferenceDeconstructionUnit(
         );
       }
       const invalidated = collectDependentUnitIds(run.full, unitId);
+      const invalidatedQualityTracks = new Set(run.full.units
+        .filter((unit) => invalidated.has(unit.id) && unit.kind === 'analysisQuality')
+        .map((unit) => unit.track));
       return {
         ...run,
         full: {
@@ -1455,12 +1634,14 @@ export async function retryReferenceDeconstructionUnit(
           units: run.full.units.map((unit) => invalidated.has(unit.id)
             ? { ...unit, status: 'queued', selectedAttemptId: undefined }
             : unit),
-          analysisQuality: {
-            status: 'notEvaluated',
-            coveragePercent: 0,
-            blockingDiagnosticCount: 0,
-            outputHashes: [],
-          },
+          analysisQuality: Object.fromEntries(
+            Object.entries(run.full.analysisQuality).map(([track, quality]) => [
+              track,
+              invalidatedQualityTracks.has(track as ReferenceDeconstructionTrackId)
+                ? emptyQualitySummary()
+                : quality,
+            ]),
+          ) as ReferenceFullDeconstructionState['analysisQuality'],
         },
         diagnostics: run.diagnostics.filter((diagnostic) =>
           !diagnostic.code.startsWith('quality.')
@@ -1648,36 +1829,42 @@ async function tryAdoptTerminalFullAttempt(
       createStoredOutputValidationContext(),
     );
     const qualityReport = unit.kind === 'analysisQuality'
-      ? output as ReferenceDeconstructionAnalysisQualityReport
+      ? output as ReferenceFullDeconstructionQualityReport
       : undefined;
     const diagnostics = qualityReport
       ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
       : run.diagnostics;
     const quality = qualityReport
       ? {
-          status: effectiveQualityStatus(qualityReport.status, diagnostics),
+          status: effectiveQualityStatus(qualityReport.status, qualityReport.diagnostics),
           coveragePercent: qualityReport.coverage.percent,
           blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
             item.blocking).length,
           outputHashes: [...qualityReport.outputHashes],
         } satisfies ReferenceDeconstructionAnalysisQualitySummary
-      : run.full.analysisQuality;
-    const resultStatus: ReferenceDeconstructionRunStatus = unit.kind === 'analysisQuality'
-      ? quality?.status === 'failed' ? 'failed' : 'reviewReady'
-      : 'fullRunning';
+      : undefined;
+    const nextFull: ReferenceFullDeconstructionState = {
+      ...run.full,
+      units: run.full.units.map((candidate) => candidate.id === unit.id
+        ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
+        : candidate),
+      attempts: run.full.attempts.map((candidate) => candidate.id === attempt.id
+        ? { ...candidate, status: 'completed', outputHash, completedAt }
+        : candidate),
+      analysisQuality: quality
+        ? { ...run.full.analysisQuality, [unit.track]: quality }
+        : run.full.analysisQuality,
+    };
+    const resultStatus: ReferenceDeconstructionRunStatus = quality?.status === 'failed'
+      ? 'failed'
+      : quality && allTrackQualitiesPublishable(nextFull)
+        && nextFull.units.every((candidate) => candidate.status === 'completed')
+        ? 'reviewReady'
+        : 'fullRunning';
     const next: ReferenceDeconstructionRun = {
       ...run,
       status: resultStatus,
-      full: {
-        ...run.full,
-        units: run.full.units.map((candidate) => candidate.id === unit.id
-          ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
-          : candidate),
-        attempts: run.full.attempts.map((candidate) => candidate.id === attempt.id
-          ? { ...candidate, status: 'completed', outputHash, completedAt }
-          : candidate),
-        ...(quality ? { analysisQuality: quality } : {}),
-      },
+      full: nextFull,
       diagnostics,
       mutationReceipts: updateReceiptStatus(
         run.mutationReceipts,
@@ -1737,14 +1924,7 @@ async function adoptFailedFullAttempt(
       attempts: run.full!.attempts.map((candidate) => candidate.id === attempt.id
         ? { ...candidate, status: 'failed', completedAt, failure }
         : candidate),
-      analysisQuality: {
-        ...(run.full!.analysisQuality ?? {
-          status: 'notEvaluated',
-          coveragePercent: 0,
-          outputHashes: [],
-        }),
-        blockingDiagnosticCount: diagnostics.filter((item) => item.blocking).length,
-      },
+      analysisQuality: run.full!.analysisQuality,
     },
     diagnostics,
     mutationReceipts: updateReceiptStatus(
@@ -1782,12 +1962,15 @@ export function projectReferenceDeconstructionRunForTransport(
     structureFingerprint: run.structureFingerprint,
     pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
+    profileId: run.profileId,
+    outputs: [...run.outputs],
     selectedChapterIds: [...run.selection.selectedChapterIds],
     evidence: run.evidence.map((item) => ({
       id: item.id,
       pointer: { ...item.pointer },
     })),
     ...(run.preview ? { preview: run.preview } : {}),
+    ...(run.materialPreview ? { materialPreview: run.materialPreview } : {}),
     diagnostics: [...run.diagnostics],
     mutationReceipts: run.mutationReceipts.slice(
       -MAX_REFERENCE_DECONSTRUCTION_TRANSPORT_RECEIPTS,
@@ -1800,6 +1983,11 @@ export function projectReferenceDeconstructionRunForTransport(
             ...run.publication,
             files: run.publication.files.map((file) => ({ ...file })),
             entryInventory: run.publication.entryInventory.map((entry) => ({ ...entry })),
+            ...(run.publication.materialInventory
+              ? {
+                  materialInventory: run.publication.materialInventory.map((entry) => ({ ...entry })),
+                }
+              : {}),
           },
         }
       : {}),
@@ -1812,15 +2000,14 @@ export function projectReferenceDeconstructionRunForTransport(
 function projectReferenceFullDeconstruction(
   full: ReferenceFullDeconstructionState,
 ): ReferenceFullDeconstructionTransport {
-  const stageIds: ReferenceFullDeconstructionStageSummary['stageId'][] = [
-    'chapterAnalysis',
-    'aggregateAnalysis',
-    'styleProfile',
-    'distillForOan',
-    'qualityGate',
-  ];
-  const stages = stageIds.map((stageId): ReferenceFullDeconstructionStageSummary => {
-    const units = full.units.filter((unit) => unit.stageId === stageId);
+  const stageKeys = uniqueStrings(full.units.map((unit) =>
+    `${unit.track}:${unit.stageId}`));
+  const stages = stageKeys.map((stageKey): ReferenceFullDeconstructionStageSummary => {
+    const [trackValue, stageValue] = stageKey.split(':');
+    const track = trackValue as ReferenceDeconstructionTrackId;
+    const stageId = stageValue as ReferenceFullDeconstructionStageSummary['stageId'];
+    const units = full.units.filter((unit) =>
+      unit.track === track && unit.stageId === stageId);
     const completedUnits = units.filter((unit) => unit.status === 'completed').length;
     const failedUnits = units.filter((unit) =>
       unit.status === 'failed' || unit.status === 'interrupted').length;
@@ -1837,6 +2024,7 @@ function projectReferenceFullDeconstruction(
               ? 'running'
               : 'queued';
     return {
+      track,
       stageId,
       status,
       plannedUnits: units.length,
@@ -1886,7 +2074,7 @@ function projectReferenceFullDeconstruction(
       startedAt: attempt.startedAt,
       ...(attempt.completedAt ? { completedAt: attempt.completedAt } : {}),
     })),
-    ...(full.analysisQuality ? { analysisQuality: { ...full.analysisQuality } } : {}),
+    analysisQuality: { ...full.analysisQuality },
   };
 }
 
@@ -1896,6 +2084,7 @@ function projectReferenceFullUnit(
   return {
     id: unit.id,
     ordinal: unit.ordinal,
+    track: unit.track,
     stageId: unit.stageId,
     kind: unit.kind,
     ...(unit.chapterId ? { chapterId: unit.chapterId } : {}),
@@ -2124,7 +2313,7 @@ async function inspectReferenceWorkReadinessInternal(
       || progress.referenceId !== safeReferenceId
       || stableJson(progress) !== stableJson(expectedProgress)
       || REFERENCE_DECONSTRUCTION_STAGE_IDS.some((stageId) =>
-        progress.stages[stageId] !== deconstructionManifest.stages[stageId].status)
+        progress.stages[stageId] !== deconstructionManifest.stages[stageId]?.status)
     ) {
       throw new ReferenceDeconstructionValidationError(
         'Reference projections do not match bundle identity.',
@@ -2188,7 +2377,7 @@ async function inspectReferenceWorkReadinessInternal(
     output.kind === 'context' && output.path === 'context/reference-summary.md');
   const contextIndexOutput = deconstructionManifest.outputs.find((output) =>
     output.kind === 'context' && output.path === 'context/index.yaml');
-  if (!summaryOutput || !contextIndexOutput) {
+  if (!summaryOutput || !contextIndexOutput || summaryOutput.stale || contextIndexOutput.stale) {
     return {
       status: 'needsRebuild',
       contextEligible: false,
@@ -2236,8 +2425,8 @@ async function inspectReferenceWorkReadinessInternal(
       parse(contextIndexContent) as unknown,
       {
         referenceId: safeReferenceId,
-        publishedRunId: deconstructionManifest.publishedRunId,
-        sourceChecksumSha256: deconstructionManifest.sourceChecksumSha256,
+        publishedRunId: contextIndexOutput.sourceRunId,
+        sourceChecksumSha256: contextIndexOutput.sourceChecksumSha256,
         structureFingerprint: deconstructionManifest.structureFingerprint,
       },
     );
@@ -2254,7 +2443,7 @@ async function inspectReferenceWorkReadinessInternal(
       return matches[0]!;
     });
     const outputsToVerify = verifyOriginalSource
-      ? deconstructionManifest.outputs
+      ? deconstructionManifest.outputs.filter((output) => !output.stale)
       : distilledOutputs;
     const verifiedOutputs = verifyOriginalSource
       ? await Promise.all(outputsToVerify.map(readVerifiedOutput))
@@ -2285,8 +2474,12 @@ async function inspectReferenceWorkReadinessInternal(
     ) as Record<ReferenceDistilledCategory, number>;
     return {
       status: 'completed',
-      contextEligible: metadata.enabled,
-      reason: metadata.enabled ? 'ready' : 'disabled',
+      contextEligible: metadata.enabled && contextIndex.contextEligible,
+      reason: !metadata.enabled
+        ? 'disabled'
+        : contextIndex.contextEligible
+          ? 'ready'
+          : 'techniqueTrackNotPublished',
       diagnostics: persistedDiagnostics.items,
       summaryPath: `examples/references/${safeReferenceId}/${summaryOutput.path}`,
       summaryContent,
@@ -2741,14 +2934,7 @@ async function persistStaleRun(
                 && attempt.id === run.activeReservation.attemptId
                 ? { ...attempt, status: 'stale' as const, completedAt: now }
                 : attempt),
-            analysisQuality: {
-              ...(run.full.analysisQuality ?? {
-                status: 'notEvaluated',
-                coveragePercent: 0,
-                outputHashes: [],
-              }),
-              blockingDiagnosticCount: diagnostics.filter((item) => item.blocking).length,
-            },
+            analysisQuality: run.full.analysisQuality,
           },
         }
       : {}),
@@ -2899,7 +3085,7 @@ function mergeRunDiagnostics(
 }
 
 function effectiveQualityStatus(
-  reportStatus: ReferenceDeconstructionAnalysisQualityReport['status'],
+  reportStatus: ReferenceFullDeconstructionQualityReport['status'],
   diagnostics: readonly ReferenceDeconstructionDiagnostic[],
 ): Exclude<ReferenceDeconstructionAnalysisQualitySummary['status'], 'notEvaluated'> {
   if (
@@ -2911,6 +3097,30 @@ function effectiveQualityStatus(
 
 function isPublishableQualityStatus(value: unknown): value is 'passed' | 'warned' {
   return value === 'passed' || value === 'warned';
+}
+
+function emptyQualitySummary(): ReferenceDeconstructionAnalysisQualitySummary {
+  return {
+    status: 'notEvaluated',
+    coveragePercent: 0,
+    blockingDiagnosticCount: 0,
+    outputHashes: [],
+  };
+}
+
+function allTrackQualitiesPublishable(
+  full: ReferenceFullDeconstructionState,
+): boolean {
+  const tracks = Object.keys(full.plan.tracks) as ReferenceDeconstructionTrackId[];
+  return tracks.length > 0 && tracks.every((track) => {
+    const quality = full.analysisQuality[track];
+    return Boolean(
+      quality
+      && isPublishableQualityStatus(quality.status)
+      && quality.coveragePercent === 100
+      && quality.blockingDiagnosticCount === 0,
+    );
+  });
 }
 
 function summarizeWarningDiagnostics(
@@ -3016,6 +3226,27 @@ function assertFullOutputMatchesUnit(
       'Reference analysis quality output is invalid.',
     );
   }
+  if (unit.track === 'storyMaterial') {
+    const candidate = output as
+      | ReferenceStoryMaterialChapterResult
+      | ReferenceStoryMaterialAggregateResult
+      | ReferenceStoryMaterialProjectionResult;
+    const matchesKind = candidate.track === 'storyMaterial'
+      && candidate.unitId === unit.id
+      && (unit.kind === 'chapterChunk'
+        ? 'chapterId' in candidate && 'findings' in candidate
+        : unit.kind === 'aggregate'
+          ? 'summary' in candidate && 'findings' in candidate && !('chapterId' in candidate)
+          : unit.kind === 'materialProjection'
+            ? 'entries' in candidate
+            : false);
+    if (!matchesKind) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material output kind does not match its reserved work unit.',
+      );
+    }
+    return;
+  }
   const candidate = output as ReferenceDeconstructionAnalysisOutput;
   if (candidate.unitId !== unit.id) {
     throw new ReferenceDeconstructionValidationError(
@@ -3036,6 +3267,12 @@ function assertFullOutputMatchesUnit(
       'Reference full output kind does not match its reserved work unit.',
     );
   }
+}
+
+function isTechniqueAnalysisOutput(
+  output: ReferenceFullDeconstructionOutput,
+): output is ReferenceDeconstructionAnalysisOutput {
+  return !('track' in output) && !('planId' in output);
 }
 
 interface StoredOutputValidationContext {
@@ -3059,6 +3296,86 @@ async function parseStoredFullOutput(
   context: StoredOutputValidationContext,
 ): Promise<ReferenceFullDeconstructionOutput> {
   assertFullOutputMatchesUnit(value as ReferenceFullDeconstructionOutput, unit);
+  if (unit.track === 'storyMaterial' && unit.kind !== 'analysisQuality') {
+    const materialKinds = run.full?.plan.tracks.storyMaterial?.materialKinds;
+    if (!materialKinds?.length) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material work plan kinds are missing.',
+      );
+    }
+    if (unit.kind === 'chapterChunk') {
+      if (!unit.pointerId || !unit.pointer) {
+        throw new ReferenceDeconstructionValidationError(
+          'Story Material chapter pointer is missing.',
+        );
+      }
+      try {
+        return parseReferenceStoryMaterialChapterResult(value, {
+          runId: run.runId,
+          unit,
+          materialKinds,
+          allowedPointers: { [unit.pointerId]: unit.pointer },
+        });
+      } catch (error) {
+        throw validationFrom(error, 'Stored Story Material chapter analysis is invalid.');
+      }
+    }
+    if (unit.kind === 'aggregate' || unit.kind === 'materialProjection') {
+      const predecessorOutputs: ReferenceFullDeconstructionOutput[] = [];
+      for (const predecessorUnitId of unit.predecessorUnitIds) {
+        predecessorOutputs.push(await readReferenceAttemptOutputFromRun(
+          workspaceRoot,
+          run,
+          requireSelectedAttempt(run.full!, predecessorUnitId),
+          context,
+        ));
+      }
+      const materialOutputs = predecessorOutputs.filter(
+        (output): output is
+          | ReferenceStoryMaterialChapterResult
+          | ReferenceStoryMaterialAggregateResult
+          | ReferenceStoryMaterialProjectionResult =>
+          'track' in output && output.track === 'storyMaterial' && 'unitId' in output,
+      );
+      if (materialOutputs.length !== predecessorOutputs.length) {
+        throw new ReferenceDeconstructionValidationError(
+          'Story Material reduction received a Technique predecessor.',
+        );
+      }
+      const verifiedStoryMaterialFindings = materialOutputs.flatMap((output) =>
+        collectReferenceStoryMaterialFindings(output));
+      const verifiedFindings = Object.fromEntries(
+        verifiedStoryMaterialFindings.map((finding) => [finding.id, finding]),
+      );
+      const coveredUnitIds = [...unit.predecessorUnitIds];
+      const coveredChapterIds = uniqueStrings(materialOutputs.flatMap((output) =>
+        output.coveredChapterIds));
+      try {
+        return unit.kind === 'aggregate'
+          ? parseReferenceStoryMaterialAggregateResult(value, {
+              runId: run.runId,
+              unit,
+              materialKinds,
+              verifiedFindings,
+              coveredUnitIds,
+              coveredChapterIds,
+            })
+          : parseReferenceStoryMaterialProjectionResult(value, {
+              runId: run.runId,
+              unit,
+              materialKinds,
+              verifiedFindings,
+              coveredUnitIds,
+              coveredChapterIds,
+            });
+      } catch (error) {
+        throw validationFrom(error, `Stored Story Material ${unit.kind} output is invalid.`);
+      }
+    }
+    throw new ReferenceDeconstructionValidationError(
+      'Story Material work unit kind is not executable by its output parser.',
+    );
+  }
   if (unit.kind === 'chapterChunk') {
     if (!unit.pointerId || !unit.pointer) {
       throw new ReferenceDeconstructionValidationError(
@@ -3081,9 +3398,8 @@ async function parseStoredFullOutput(
     return output;
   }
   if (
-    unit.kind === 'aggregate'
-    || unit.kind === 'style'
-    || unit.kind === 'distill'
+    unit.track === 'technique'
+    && (unit.kind === 'aggregate' || unit.kind === 'style' || unit.kind === 'distill')
   ) {
     const predecessorOutputs: ReferenceFullDeconstructionOutput[] = [];
     for (const predecessorUnitId of unit.predecessorUnitIds) {
@@ -3094,11 +3410,17 @@ async function parseStoredFullOutput(
         context,
       ));
     }
-    const aggregateOutput = predecessorOutputs.find(
+    const techniqueOutputs = predecessorOutputs.filter(isTechniqueAnalysisOutput);
+    if (techniqueOutputs.length !== predecessorOutputs.length) {
+      throw new ReferenceDeconstructionValidationError(
+        'Technique reduction received a Story Material predecessor.',
+      );
+    }
+    const aggregateOutput = techniqueOutputs.find(
       (output): output is ReferenceAggregateAnalysisResult =>
         'findings' in output && !('unitSummary' in output),
     );
-    const styleOutput = predecessorOutputs.find(
+    const styleOutput = techniqueOutputs.find(
       (output): output is ReferenceStyleProfileResult => 'dimensions' in output,
     );
     const verifiedSourceFindings = unit.kind === 'distill'
@@ -3106,7 +3428,7 @@ async function parseStoredFullOutput(
       && styleOutput
       ? collectReferenceDistillationFindings(aggregateOutput.findings, styleOutput)
       : selectBoundedVerifiedFindings(
-          predecessorOutputs.map((output) =>
+          techniqueOutputs.map((output) =>
             'dimensions' in output || 'entries' in output
               ? []
               : collectReferenceAnalysisFindings(output)),
@@ -3114,9 +3436,9 @@ async function parseStoredFullOutput(
     const verifiedFindings = Object.fromEntries(
       verifiedSourceFindings.map((finding) => [finding.id, finding]),
     );
-    const coveredUnitIds = uniqueStrings(predecessorOutputs.flatMap((output) =>
+    const coveredUnitIds = uniqueStrings(techniqueOutputs.flatMap((output) =>
       output.coveredUnitIds));
-    const coveredChapterIds = uniqueStrings(predecessorOutputs.flatMap((output) =>
+    const coveredChapterIds = uniqueStrings(techniqueOutputs.flatMap((output) =>
       output.coveredChapterIds));
     try {
       if (unit.kind === 'aggregate') {
@@ -3168,13 +3490,15 @@ async function parseStoredFullOutput(
       throw validationFrom(error, `Stored reference ${unit.kind} analysis is invalid.`);
     }
   }
-  let report: ReferenceDeconstructionAnalysisQualityReport;
+  let report: ReferenceFullDeconstructionQualityReport;
   try {
-    report = parseReferenceDeconstructionAnalysisQualityReport(value);
+    report = unit.track === 'storyMaterial'
+      ? parseReferenceStoryMaterialQualityReport(value)
+      : parseReferenceDeconstructionAnalysisQualityReport(value);
   } catch (error) {
     throw validationFrom(error, 'Stored reference analysis quality report is invalid.');
   }
-  assertQualityReportMatchesRun(report, run);
+  assertQualityReportMatchesRun(report, run, unit);
   return report;
 }
 
@@ -3213,25 +3537,31 @@ function assertNoCopyRisk(
 }
 
 function assertQualityReportMatchesRun(
-  report: ReferenceDeconstructionAnalysisQualityReport,
+  report: ReferenceFullDeconstructionQualityReport,
   run: ReferenceDeconstructionRun,
+  qualityUnit: ReferenceDeconstructionStoredUnit,
 ): void {
   if (!run.full) {
     throw new ReferenceDeconstructionValidationError('Reference full state is missing.');
   }
-  const requiredUnits = run.full.units.filter((unit) => unit.kind !== 'analysisQuality');
+  const requiredUnits = run.full.units.filter((unit) =>
+    unit.track === qualityUnit.track && unit.kind !== 'analysisQuality');
   const selectedAttempts = requiredUnits.map((unit) =>
     requireSelectedAttempt(run.full!, unit.id));
+  const reportAttemptIds = 'attemptIds' in report
+    ? report.attemptIds
+    : report.selectedAttemptIds;
   if (
     report.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION
     || report.runId !== run.runId
     || report.planId !== run.full.plan.id
     || report.referenceId !== run.referenceId
     || report.sourceChecksumSha256 !== run.sourceChecksumSha256
+    || ('track' in report) !== (qualityUnit.track === 'storyMaterial')
     || report.coverage.plannedUnitCount !== requiredUnits.length
     || report.coverage.checkedUnitCount !== report.checkedUnitIds.length
     || stableJson(report.checkedUnitIds) !== stableJson(requiredUnits.map((unit) => unit.id))
-    || stableJson(report.selectedAttemptIds)
+    || stableJson(reportAttemptIds)
       !== stableJson(selectedAttempts.map((attempt) => attempt.id))
     || stableJson(report.outputHashes)
       !== stableJson(selectedAttempts.map(requireAttemptOutputHash))
@@ -3301,13 +3631,15 @@ async function prepareReferenceFullExecution(
     return {
       unit,
       sourceWindows: [sourceWindow],
+      ...(unit.track === 'storyMaterial'
+        ? { materialKinds: [...full.plan.tracks.storyMaterial!.materialKinds] }
+        : {}),
       ...(rollingContext ? { rollingContext } : {}),
     };
   }
   if (
-    unit.kind === 'aggregate'
-    || unit.kind === 'style'
-    || unit.kind === 'distill'
+    unit.track === 'storyMaterial'
+    && (unit.kind === 'aggregate' || unit.kind === 'materialProjection')
   ) {
     const outputs = await Promise.all(unit.predecessorUnitIds.map((predecessorId) =>
       readReferenceAttemptOutput(
@@ -3315,24 +3647,62 @@ async function prepareReferenceFullExecution(
         run.runId,
         requireSelectedAttempt(full, predecessorId),
       )));
-    const aggregateOutput = outputs.find(
+    const materialOutputs = outputs.filter(
+      (output): output is
+        | ReferenceStoryMaterialChapterResult
+        | ReferenceStoryMaterialAggregateResult
+        | ReferenceStoryMaterialProjectionResult =>
+        'track' in output && output.track === 'storyMaterial' && 'unitId' in output,
+    );
+    if (materialOutputs.length !== outputs.length) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material execution received a Technique predecessor.',
+      );
+    }
+    return {
+      unit,
+      materialKinds: [...full.plan.tracks.storyMaterial!.materialKinds],
+      verifiedStoryMaterialFindings: materialOutputs.flatMap((output) =>
+        collectReferenceStoryMaterialFindings(output)),
+      coveredUnitIds: [...unit.predecessorUnitIds],
+      coveredChapterIds: uniqueStrings(materialOutputs.flatMap((output) =>
+        output.coveredChapterIds)),
+    };
+  }
+  if (
+    unit.track === 'technique'
+    && (unit.kind === 'aggregate' || unit.kind === 'style' || unit.kind === 'distill')
+  ) {
+    const outputs = await Promise.all(unit.predecessorUnitIds.map((predecessorId) =>
+      readReferenceAttemptOutput(
+        workspaceRoot,
+        run.runId,
+        requireSelectedAttempt(full, predecessorId),
+      )));
+    const techniqueOutputs = outputs.filter(isTechniqueAnalysisOutput);
+    if (techniqueOutputs.length !== outputs.length) {
+      throw new ReferenceDeconstructionValidationError(
+        'Technique execution received a Story Material predecessor.',
+      );
+    }
+    const aggregateOutput = techniqueOutputs.find(
       (output): output is ReferenceAggregateAnalysisResult =>
         'findings' in output && !('unitSummary' in output),
     );
-    const styleOutput = outputs.find(
+    const styleOutput = techniqueOutputs.find(
       (output): output is ReferenceStyleProfileResult => 'dimensions' in output,
     );
     const verifiedSourceFindings = unit.kind === 'distill'
       && aggregateOutput
       && styleOutput
       ? collectReferenceDistillationFindings(aggregateOutput.findings, styleOutput)
-      : selectBoundedVerifiedFindings(outputs.map((output) =>
+      : selectBoundedVerifiedFindings(techniqueOutputs.map((output) =>
           'dimensions' in output || 'entries' in output
             ? []
             : collectReferenceAnalysisFindings(output)));
-    const coveredUnitIds = uniqueStrings(outputs.flatMap((output) =>
+    const coveredUnitIds = uniqueStrings(techniqueOutputs.flatMap((output) =>
       'coveredUnitIds' in output ? output.coveredUnitIds : []));
-    const coveredChapterIds = uniqueStrings(outputs.flatMap((output) =>
+    const coveredChapterIds = uniqueStrings(techniqueOutputs.flatMap((output) =>
       'coveredChapterIds' in output ? output.coveredChapterIds : []));
     return {
       unit,
@@ -3383,7 +3753,7 @@ export async function evaluateReservedReferenceFullDeconstructionQuality(
   runId: string,
   reservationId: string,
   evaluatedAt?: string,
-): Promise<ReferenceDeconstructionAnalysisQualityReport> {
+): Promise<ReferenceFullDeconstructionQualityReport> {
   const run = await readReferenceDeconstructionRun(workspaceRoot, referenceId, runId);
   const reservation = assertFullReservation(run, reservationId);
   const qualityUnit = requireStoredUnit(run.full!, reservation.unitId);
@@ -3392,7 +3762,8 @@ export async function evaluateReservedReferenceFullDeconstructionQuality(
       'Reserved work unit is not the analysis quality gate.',
     );
   }
-  const requiredUnits = run.full!.units.filter((unit) => unit.kind !== 'analysisQuality');
+  const requiredUnits = run.full!.units.filter((unit) =>
+    unit.track === qualityUnit.track && unit.kind !== 'analysisQuality');
   const selectedAttempts = await Promise.all(requiredUnits.map(async (unit) => {
     const attempt = requireSelectedAttempt(run.full!, unit.id);
     return {
@@ -3407,7 +3778,7 @@ export async function evaluateReservedReferenceFullDeconstructionQuality(
       ),
       predecessorOutputHashes: [...attempt.predecessorOutputHashes],
       outputHash: requireAttemptOutputHash(attempt),
-    } satisfies ReferenceDeconstructionQualitySelectedAttempt;
+    };
   }));
   const outputs = await Promise.all(requiredUnits.map((unit) =>
     readReferenceAttemptOutput(
@@ -3419,11 +3790,39 @@ export async function evaluateReservedReferenceFullDeconstructionQuality(
   const sourceWindows = requiredUnits
     .filter((unit) => unit.kind === 'chapterChunk')
     .map((unit) => resolveReferenceChapterWorkUnitWindow(source.sourceText, unit));
+  const techniqueOutputs = outputs.filter(isTechniqueAnalysisOutput);
+  if (qualityUnit.track === 'storyMaterial') {
+    const materialOutputs = outputs.filter(
+      (output): output is
+        | ReferenceStoryMaterialChapterResult
+        | ReferenceStoryMaterialAggregateResult
+        | ReferenceStoryMaterialProjectionResult =>
+        'track' in output && output.track === 'storyMaterial' && 'unitId' in output,
+    );
+    if (materialOutputs.length !== outputs.length) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material quality received a Technique output.',
+      );
+    }
+    return evaluateReferenceStoryMaterialQuality({
+      runId,
+      plan: run.full!.plan,
+      selectedAttempts: selectedAttempts as ReferenceStoryMaterialQualitySelectedAttempt[],
+      outputs: materialOutputs,
+      sourceWindows,
+      evaluatedAt,
+    });
+  }
+  if (techniqueOutputs.length !== outputs.length) {
+    throw new ReferenceDeconstructionValidationError(
+      'Technique quality received a Story Material output.',
+    );
+  }
   return evaluateReferenceDeconstructionAnalysisQuality({
     runId,
     plan: run.full!.plan,
     selectedAttempts,
-    outputs,
+    outputs: techniqueOutputs,
     sourceWindows,
     evaluatedAt,
   });
@@ -3526,6 +3925,9 @@ export async function beginReferenceDeconstructionPublish(
         pendingActionId,
         files: candidate.files.map(({ content: _content, ...file }) => file),
         entryInventory: candidate.entryInventory.map((entry) => ({ ...entry })),
+        ...(candidate.materialInventory
+          ? { materialInventory: candidate.materialInventory.map((entry) => ({ ...entry })) }
+          : {}),
         preparedAt: candidate.preparedAt,
       },
       mutationReceipts: [...run.mutationReceipts, receipt],
@@ -3614,8 +4016,11 @@ export async function completeReferenceDeconstructionPublish(
         readiness.deconstructionManifest.qualityStatus,
       )
       || readiness.deconstructionManifest.publishedRunId !== run.runId
-      || readiness.publishedContext?.runId !== run.runId
-      || (!readiness.contextEligible && readiness.reason !== 'disabled')
+      || run.outputs.includes('techniques')
+        && readiness.publishedContext?.runId !== run.runId
+      || !readiness.contextEligible
+        && readiness.reason !== 'disabled'
+        && readiness.reason !== 'techniqueTrackNotPublished'
     ) {
       throw new ReferenceDeconstructionValidationError(
         'Accepted reference publication is not current or valid.',
@@ -3765,45 +4170,72 @@ async function buildPublicationCandidate(
       ),
     );
   }
-  const aggregate = selectedOutputs.get(full.plan.aggregateRootUnitId);
-  const style = selectedOutputs.get(full.plan.styleUnitId);
-  const distillation = selectedOutputs.get(full.plan.distillUnitId);
-  const quality = selectedOutputs.get(full.plan.analysisQualityUnitId);
+  const techniqueTrack = full.plan.tracks.technique;
+  const storyTrack = full.plan.tracks.storyMaterial;
+  const techniqueAggregate = techniqueTrack
+    ? selectedOutputs.get(techniqueTrack.aggregateRootUnitId)
+    : undefined;
+  const style = techniqueTrack ? selectedOutputs.get(techniqueTrack.styleUnitId) : undefined;
+  const distillation = techniqueTrack
+    ? selectedOutputs.get(techniqueTrack.distillUnitId)
+    : undefined;
+  const materialAggregate = storyTrack
+    ? selectedOutputs.get(storyTrack.aggregateRootUnitId)
+    : undefined;
+  const materialProjection = storyTrack
+    ? selectedOutputs.get(storyTrack.projectionUnitId)
+    : undefined;
   if (
-    !aggregate
-    || !('findings' in aggregate)
-    || 'unitSummary' in aggregate
-    || !style
-    || !('dimensions' in style)
-    || !distillation
-    || !('entries' in distillation)
-    || !quality
-    || !('planId' in quality)
-    || !isPublishableQualityStatus(quality.status)
+    techniqueTrack && (
+      !techniqueAggregate
+      || !isTechniqueAnalysisOutput(techniqueAggregate)
+      || !('findings' in techniqueAggregate)
+      || 'unitSummary' in techniqueAggregate
+      || !style
+      || !isTechniqueAnalysisOutput(style)
+      || !('dimensions' in style)
+      || !distillation
+      || !isTechniqueAnalysisOutput(distillation)
+      || !('entries' in distillation)
+    )
+    || storyTrack && (
+      !materialAggregate
+      || !('track' in materialAggregate)
+      || materialAggregate.track !== 'storyMaterial'
+      || !('findings' in materialAggregate)
+      || !materialProjection
+      || !('track' in materialProjection)
+      || materialProjection.track !== 'storyMaterial'
+      || !('entries' in materialProjection)
+    )
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference publication terminal outputs are invalid.',
     );
   }
-  const contextIndex = createReferenceContextIndex({
-    referenceId: run.referenceId,
-    publishedRunId: run.runId,
-    sourceChecksumSha256: run.sourceChecksumSha256,
-    structureFingerprint: run.structureFingerprint,
-    distillation,
+  const techniqueDistillation = distillation as ReferenceDistillationResult | undefined;
+  const storyAggregate = materialAggregate as ReferenceStoryMaterialAggregateResult | undefined;
+  const storyProjection = materialProjection as ReferenceStoryMaterialProjectionResult | undefined;
+  const previous = (await readReferencePreviewSource(workspaceRoot, run.referenceId))
+    .deconstructionManifest;
+  const publicationContext = await resolvePublicationContext({
+    workspaceRoot,
+    run,
+    previous,
+    distillation: techniqueDistillation,
   });
   const bundlePrefix = `examples/references/${run.referenceId}`;
   const outputFiles: Array<{
     path: string;
     content: string;
     kind: ReferenceDeconstructionPublicationCandidateFile['kind'];
-    outputKind: 'deconstruction' | 'distilled' | 'context';
+    outputKind: 'deconstruction' | 'distilled' | 'materials' | 'context';
   }> = [];
   const pushOutput = (
     relativePath: string,
     content: string,
     kind: ReferenceDeconstructionPublicationCandidateFile['kind'],
-    outputKind: 'deconstruction' | 'distilled' | 'context',
+    outputKind: 'deconstruction' | 'distilled' | 'materials' | 'context',
   ) => {
     outputFiles.push({
       path: `${bundlePrefix}/${relativePath}`,
@@ -3813,106 +4245,145 @@ async function buildPublicationCandidate(
     });
   };
 
-  pushOutput(
-    'deconstruction/quick-preview.md',
-    formatReferenceQuickPreviewMarkdown(run.preview!),
-    'deconstruction',
-    'deconstruction',
-  );
-  for (const chapterId of full.plan.chapterIds) {
-    const chapterOutputs = full.units
-      .filter((unit) => unit.kind === 'chapterChunk' && unit.chapterId === chapterId)
-      .map((unit) => selectedOutputs.get(unit.id))
-      .filter((output): output is ReferenceChapterAnalysisResult =>
-        Boolean(output && 'unitSummary' in output));
+  if (techniqueTrack) {
     pushOutput(
-      `deconstruction/chapters/${chapterId}-summary.md`,
-      formatPublishedChapterAnalysis(chapterId, chapterOutputs),
+      'deconstruction/quick-preview.md',
+      formatReferenceQuickPreviewMarkdown(run.preview!),
       'deconstruction',
       'deconstruction',
     );
+    for (const chapterId of full.plan.chapterIds) {
+      const chapterOutputs = full.units
+        .filter((unit) =>
+          unit.track === 'technique'
+          && unit.kind === 'chapterChunk'
+          && unit.chapterId === chapterId)
+        .map((unit) => selectedOutputs.get(unit.id))
+        .filter((output): output is ReferenceChapterAnalysisResult =>
+          Boolean(output && isTechniqueAnalysisOutput(output) && 'unitSummary' in output));
+      pushOutput(
+        `deconstruction/chapters/${chapterId}-summary.md`,
+        formatPublishedChapterAnalysis(chapterId, chapterOutputs),
+        'deconstruction',
+        'deconstruction',
+      );
+    }
+    const aggregate = techniqueAggregate as ReferenceAggregateAnalysisResult;
+    const techniqueStyle = style as ReferenceStyleProfileResult;
+    const aggregateFiles: Array<{
+      path: string;
+      title: string;
+      kinds: ReferenceDeconstructionFinding['kind'][];
+    }> = [
+      { path: 'plotlines.md', title: 'Plotlines', kinds: ['plotline', 'pacing', 'hook'] },
+      { path: 'characters.md', title: 'Character Techniques', kinds: ['characterTechnique'] },
+      { path: 'relationships.md', title: 'Relationship Techniques', kinds: ['relationshipTechnique'] },
+      { path: 'worldbuilding.md', title: 'Worldbuilding Techniques', kinds: ['worldbuildingTechnique'] },
+      { path: 'timeline.md', title: 'Timeline Observations', kinds: ['timelineObservation'] },
+      { path: 'tropes.md', title: 'Trope Observations', kinds: ['trope', 'sceneTechnique'] },
+    ];
+    aggregateFiles.forEach((file) => pushOutput(
+      `deconstruction/${file.path}`,
+      formatPublishedFindings(file.title, aggregate.findings.filter((finding) =>
+        file.kinds.includes(finding.kind))),
+      'deconstruction',
+      'deconstruction',
+    ));
+    pushOutput(
+      'deconstruction/style-profile.md',
+      formatPublishedStyleProfile(techniqueStyle),
+      'deconstruction',
+      'deconstruction',
+    );
+    const categoryFiles: Array<{ category: ReferenceDistilledCategory; path: string }> = [
+      { category: 'writingStyle', path: 'distilled/writing-style.md' },
+      { category: 'pacing', path: 'distilled/pacing.md' },
+      { category: 'hooks', path: 'distilled/hooks.md' },
+      { category: 'scene', path: 'distilled/scene-techniques.md' },
+      { category: 'character', path: 'distilled/character-techniques.md' },
+    ];
+    categoryFiles.forEach(({ category, path }) => pushOutput(
+      path,
+      formatReferenceDistilledCategoryMarkdown(category, techniqueDistillation!.entries),
+      'distilled',
+      'distilled',
+    ));
+    pushOutput(
+      'distilled/do-not-copy.md',
+      formatPublishedDoNotCopy(techniqueDistillation!),
+      'distilled',
+      'distilled',
+    );
   }
-  const aggregateFiles: Array<{
-    path: string;
-    title: string;
-    kinds: ReferenceDeconstructionFinding['kind'][];
-  }> = [
-    { path: 'plotlines.md', title: 'Plotlines', kinds: ['plotline', 'pacing', 'hook'] },
-    { path: 'characters.md', title: 'Character Techniques', kinds: ['characterTechnique'] },
-    {
-      path: 'relationships.md',
-      title: 'Relationship Techniques',
-      kinds: ['relationshipTechnique'],
-    },
-    {
-      path: 'worldbuilding.md',
-      title: 'Worldbuilding Techniques',
-      kinds: ['worldbuildingTechnique'],
-    },
-    {
-      path: 'timeline.md',
-      title: 'Timeline Observations',
-      kinds: ['timelineObservation'],
-    },
-    { path: 'tropes.md', title: 'Trope Observations', kinds: ['trope', 'sceneTechnique'] },
-  ];
-  aggregateFiles.forEach((file) => pushOutput(
-    `deconstruction/${file.path}`,
-    formatPublishedFindings(file.title, aggregate.findings.filter((finding) =>
-      file.kinds.includes(finding.kind))),
-    'deconstruction',
-    'deconstruction',
-  ));
-  pushOutput(
-    'deconstruction/style-profile.md',
-    formatPublishedStyleProfile(style),
-    'deconstruction',
-    'deconstruction',
-  );
+  if (storyTrack) {
+    pushOutput(
+      'deconstruction/material-coverage.md',
+      formatReferenceStoryMaterialCoveragePreviewMarkdown(run.materialPreview!),
+      'deconstruction',
+      'deconstruction',
+    );
+    for (const chapterId of full.plan.chapterIds) {
+      const materialChapterOutputs = full.units
+        .filter((unit) =>
+          unit.track === 'storyMaterial'
+          && unit.kind === 'chapterChunk'
+          && unit.chapterId === chapterId)
+        .map((unit) => selectedOutputs.get(unit.id))
+        .filter((output): output is ReferenceStoryMaterialChapterResult =>
+          Boolean(output && 'track' in output && output.track === 'storyMaterial'
+            && 'chapterId' in output));
+      materialChapterOutputs.forEach((output, index) => pushOutput(
+        `deconstruction/material-chapters/${chapterId}-${String(index + 1).padStart(3, '0')}.md`,
+        formatReferenceStoryMaterialChapterMarkdown(output),
+        'deconstruction',
+        'deconstruction',
+      ));
+    }
+    pushOutput(
+      'deconstruction/material-aggregate.md',
+      formatReferenceStoryMaterialAggregateMarkdown(storyAggregate!),
+      'deconstruction',
+      'deconstruction',
+    );
+    storyTrack.materialKinds.forEach((materialKind) => pushOutput(
+      `materials/${materialKind}.yaml`,
+      formatReferenceStoryMaterialProjectionYaml(storyProjection!, materialKind),
+      'materials',
+      'materials',
+    ));
+  }
+  if (publicationContext.replace) {
+    pushOutput('context/index.yaml', publicationContext.indexContent, 'context', 'context');
+    pushOutput(
+      'context/reference-summary.md',
+      publicationContext.summaryContent!,
+      'context',
+      'context',
+    );
+  }
 
-  const categoryFiles: Array<{
-    category: ReferenceDistilledCategory;
-    path: string;
-  }> = [
-    { category: 'writingStyle', path: 'distilled/writing-style.md' },
-    { category: 'pacing', path: 'distilled/pacing.md' },
-    { category: 'hooks', path: 'distilled/hooks.md' },
-    { category: 'scene', path: 'distilled/scene-techniques.md' },
-    { category: 'character', path: 'distilled/character-techniques.md' },
-  ];
-  categoryFiles.forEach(({ category, path }) => pushOutput(
-    path,
-    formatReferenceDistilledCategoryMarkdown(category, distillation.entries),
-    'distilled',
-    'distilled',
-  ));
-  pushOutput(
-    'distilled/do-not-copy.md',
-    formatPublishedDoNotCopy(distillation),
-    'distilled',
-    'distilled',
-  );
-  const contextIndexContent = stringify(contextIndex);
-  pushOutput(
-    'context/index.yaml',
-    contextIndexContent,
-    'context',
-    'context',
-  );
-  pushOutput(
-    'context/reference-summary.md',
-    formatPublishedReferenceSummary(run, distillation),
-    'context',
-    'context',
-  );
-
-  const outputs = outputFiles.map((file) => ({
+  const producedOutputs = outputFiles.map((file) => ({
     kind: file.outputKind,
     path: file.path.slice(bundlePrefix.length + 1),
     checksumSha256: sha256(ensureTrailingNewline(file.content)),
+    sourceRunId: run.runId,
+    sourceChecksumSha256: run.sourceChecksumSha256,
+    stale: false,
   }));
-  const previous = (await readReferencePreviewSource(workspaceRoot, run.referenceId))
-    .deconstructionManifest;
+  const producedPaths = new Set(producedOutputs.map((output) => output.path));
+  const retainedOutputs = previous.outputs
+    .filter((output) => !producedPaths.has(output.path))
+    .filter((output) => shouldRetainUnselectedOutput(output.path, run.outputs))
+    .map((output) => ({
+      ...output,
+      stale: output.stale
+        || output.sourceChecksumSha256 !== run.sourceChecksumSha256
+        || previous.structureFingerprint !== run.structureFingerprint,
+    }));
+  const outputs = [...producedOutputs, ...retainedOutputs]
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const warningSummary = summarizeWarningDiagnostics(run.diagnostics);
+  const qualityStatus = combinedQualityStatus(full, warningSummary.count);
   const manifest = assertReferenceDeconstructionManifest({
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
     referenceId: run.referenceId,
@@ -3922,8 +4393,10 @@ async function buildPublicationCandidate(
     pipelineVersion: REFERENCE_DECONSTRUCTION_PIPELINE_VERSION,
     capabilityVersion: REFERENCE_DECONSTRUCTION_CAPABILITY_VERSION,
     status: 'completed',
-    qualityStatus: full.analysisQuality!.status,
-    warningSummary: summarizeWarningDiagnostics(run.diagnostics),
+    qualityStatus,
+    warningSummary,
+    profileId: run.profileId,
+    selectedOutputs: run.outputs,
     publishedRunId: run.runId,
     publishedAt: preparedAt,
     stages: createPublishedManifestStages(run),
@@ -3941,8 +4414,8 @@ async function buildPublicationCandidate(
     workspaceRoot,
     run,
     progress,
-    contextIndex,
-    sha256(ensureTrailingNewline(contextIndexContent)),
+    publicationContext.index,
+    publicationContext.fingerprint,
   );
   const files = [
     ...outputFiles.map(({ outputKind: _outputKind, ...file }) => file),
@@ -3972,9 +4445,148 @@ async function buildPublicationCandidate(
     runId: run.runId,
     runRevision: run.revision,
     files,
-    entries: distillation.entries,
+    entries: techniqueDistillation?.entries ?? [],
+    materialEntries: storyProjection?.entries ?? [],
     preparedAt,
   });
+}
+
+async function resolvePublicationContext(input: {
+  workspaceRoot: string;
+  run: ReferenceDeconstructionRun;
+  previous: ReferenceDeconstructionManifest;
+  distillation?: ReferenceDistillationResult;
+}): Promise<{
+  index: ReferenceContextIndex;
+  indexContent: string;
+  summaryContent?: string;
+  fingerprint: string;
+  replace: boolean;
+}> {
+  if (input.distillation) {
+    const index = createReferenceContextIndex({
+      referenceId: input.run.referenceId,
+      publishedRunId: input.run.runId,
+      sourceChecksumSha256: input.run.sourceChecksumSha256,
+      structureFingerprint: input.run.structureFingerprint,
+      distillation: input.distillation,
+    });
+    const indexContent = stringify(index);
+    return {
+      index,
+      indexContent,
+      summaryContent: formatPublishedReferenceSummary(input.run, input.distillation),
+      fingerprint: sha256(ensureTrailingNewline(indexContent)),
+      replace: true,
+    };
+  }
+
+  const previousDistilled = input.previous.outputs.some((output) =>
+    output.kind === 'distilled'
+    && !output.stale
+    && output.sourceChecksumSha256 === input.run.sourceChecksumSha256
+    && input.previous.structureFingerprint === input.run.structureFingerprint);
+  const previousIndexOutput = input.previous.outputs.find((output) =>
+    output.kind === 'context' && output.path === 'context/index.yaml'
+    && !output.stale
+    && output.sourceChecksumSha256 === input.run.sourceChecksumSha256);
+  const previousSummaryOutput = input.previous.outputs.find((output) =>
+    output.kind === 'context' && output.path === 'context/reference-summary.md'
+    && !output.stale
+    && output.sourceChecksumSha256 === input.run.sourceChecksumSha256);
+  if (previousDistilled && previousIndexOutput && previousSummaryOutput) {
+    try {
+      const bundleRoot = resolveReferenceBundleRoot(
+        input.workspaceRoot,
+        input.run.referenceId,
+      );
+      const [indexPath, summaryPath] = await Promise.all([
+        resolveContainedExistingPath(bundleRoot, previousIndexOutput.path),
+        resolveContainedExistingPath(bundleRoot, previousSummaryOutput.path),
+      ]);
+      const [indexContent, summaryContent] = await Promise.all([
+        readFile(indexPath, 'utf-8'),
+        readFile(summaryPath, 'utf-8'),
+      ]);
+      if (
+        sha256(indexContent) !== previousIndexOutput.checksumSha256
+        || sha256(summaryContent) !== previousSummaryOutput.checksumSha256
+      ) {
+        throw new ReferenceDeconstructionValidationError(
+          'Preserved Technique context checksum is stale.',
+        );
+      }
+      const index = assertReferenceContextIndex(parse(indexContent) as unknown, {
+        referenceId: input.run.referenceId,
+        publishedRunId: previousIndexOutput.sourceRunId,
+        sourceChecksumSha256: previousIndexOutput.sourceChecksumSha256,
+        structureFingerprint: input.previous.structureFingerprint,
+      });
+      return {
+        index,
+        indexContent,
+        summaryContent,
+        fingerprint: previousIndexOutput.checksumSha256,
+        replace: false,
+      };
+    } catch (error) {
+      throw validationFrom(error, 'Preserved Technique context is invalid.');
+    }
+  }
+
+  const index = createEmptyReferenceContextIndex({
+    referenceId: input.run.referenceId,
+    publishedRunId: input.run.runId,
+    sourceChecksumSha256: input.run.sourceChecksumSha256,
+    structureFingerprint: input.run.structureFingerprint,
+  });
+  const indexContent = stringify(index);
+  return {
+    index,
+    indexContent,
+    summaryContent: formatPublishedMaterialOnlyReferenceSummary(input.run),
+    fingerprint: sha256(ensureTrailingNewline(indexContent)),
+    replace: true,
+  };
+}
+
+function shouldRetainUnselectedOutput(
+  path: string,
+  selectedOutputs: readonly WritingProfileOutput[],
+): boolean {
+  const techniqueSelected = selectedOutputs.includes('techniques');
+  const materialKinds = selectedMaterialKinds(selectedOutputs);
+  if (path.startsWith('distilled/')) return !techniqueSelected;
+  if (path.startsWith('context/')) return !techniqueSelected;
+  if (path.startsWith('materials/')) {
+    const materialKind = basename(path, '.yaml') as ReferenceStoryMaterialKind;
+    return !materialKinds.includes(materialKind);
+  }
+  if (path.startsWith('deconstruction/')) {
+    const materialOwned = path === 'deconstruction/material-coverage.md'
+      || path === 'deconstruction/material-aggregate.md'
+      || path.startsWith('deconstruction/material-chapters/');
+    return materialOwned ? materialKinds.length === 0 : !techniqueSelected;
+  }
+  return true;
+}
+
+function combinedQualityStatus(
+  full: ReferenceFullDeconstructionState,
+  warningCount: number,
+): 'passed' | 'warned' {
+  const qualities = Object.values(full.analysisQuality);
+  if (
+    !qualities.length
+    || qualities.some((quality) => !isPublishableQualityStatus(quality.status))
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication requires every selected track quality result.',
+    );
+  }
+  return warningCount > 0 || qualities.some((quality) => quality.status === 'warned')
+    ? 'warned'
+    : 'passed';
 }
 
 function createPublishedManifestStages(
@@ -3986,14 +4598,17 @@ function createPublishedManifestStages(
     .map((unit) => requireSelectedAttempt(full, unit.id));
   const stage = (
     stageId: ReferenceDeconstructionStageId,
-  ): ReferenceDeconstructionManifest['stages'][ReferenceDeconstructionStageId] => {
+  ): NonNullable<ReferenceDeconstructionManifest['stages'][ReferenceDeconstructionStageId]> => {
     if (stageId === 'detectStructure') {
       return { status: 'completed', outputHashes: [run.structureFingerprint] };
     }
     if (stageId === 'quickPreview') {
       return {
         status: 'completed',
-        outputHashes: [sha256(stableJson(run.preview))],
+        outputHashes: [
+          ...(run.preview ? [sha256(stableJson(run.preview))] : []),
+          ...(run.materialPreview ? [sha256(stableJson(run.materialPreview))] : []),
+        ],
       };
     }
     const attempts = stageAttempts(stageId);
@@ -4005,14 +4620,15 @@ function createPublishedManifestStages(
             inputFingerprint: attempts.at(-1)!.inputFingerprint,
           }
         : {}),
-      ...(stageId === 'chapterAnalysis'
+      ...(stageId === 'chapterAnalysis' || stageId === 'materialChapterAnalysis'
         ? { completedChapterIds: [...full.plan.chapterIds] }
         : {}),
       outputHashes: attempts.map(requireAttemptOutputHash),
     };
   };
+  const requiredStageIds = requiredReferenceDeconstructionStageIds(run.outputs);
   return Object.fromEntries(
-    REFERENCE_DECONSTRUCTION_STAGE_IDS.map((stageId) => [stageId, stage(stageId)]),
+    requiredStageIds.map((stageId) => [stageId, stage(stageId)]),
   ) as ReferenceDeconstructionManifest['stages'];
 }
 
@@ -4040,26 +4656,35 @@ async function createPublishedReferencesIndex(
   const references = projectIndex.references.map((entry) => {
     if (entry.id !== run.referenceId) return entry;
     matched = true;
+    const contextEligible = entry.enabled !== false
+      && contextIndex.contextEligible
+      && progress.contextEligible;
     return {
       ...entry,
       summaryPath: `examples/references/${run.referenceId}/context/reference-summary.md`,
-      distilledPaths: [
-        'writing-style.md',
-        'pacing.md',
-        'hooks.md',
-        'scene-techniques.md',
-        'character-techniques.md',
-        'do-not-copy.md',
-      ].map((file) => `examples/references/${run.referenceId}/distilled/${file}`),
+      distilledPaths: contextIndex.contextEligible
+        ? [
+            'writing-style.md',
+            'pacing.md',
+            'hooks.md',
+            'scene-techniques.md',
+            'character-techniques.md',
+            'do-not-copy.md',
+          ].map((file) => `examples/references/${run.referenceId}/distilled/${file}`)
+        : [],
       deconstructionStatus: 'completed',
-      contextEligible: entry.enabled !== false,
-      readinessReason: entry.enabled === false ? 'disabled' : 'ready',
+      contextEligible,
+      readinessReason: entry.enabled === false
+        ? 'disabled'
+        : contextIndex.contextEligible
+          ? 'ready'
+          : 'techniqueTrackNotPublished',
       progress: {
         ...progress,
-        contextEligible: entry.enabled !== false,
+        contextEligible,
       },
       publishedContext: {
-        runId: run.runId,
+        runId: contextIndex.publishedRunId,
         fingerprint: contextFingerprint,
         entryCount: contextIndex.entries.length,
         categoryCounts: Object.fromEntries(
@@ -4094,6 +4719,8 @@ function formatPublishedChapterAnalysis(
   return [
     `# Chapter ${chapterId} Analysis`,
     '',
+    '> Technique observations only; no adoptable source-story facts.',
+    '',
     '## Summary',
     '',
     summary?.observation ?? outputs.at(-1)!.unitSummary.observation,
@@ -4111,6 +4738,8 @@ function formatPublishedFindings(
 ): string {
   return [
     `# ${title}`,
+    '',
+    '> Technique observations only; no adoptable source-story facts.',
     '',
     ...(findings.length ? formatFindingList(findings) : ['- No verified finding in this category.']),
     '',
@@ -4138,6 +4767,8 @@ function formatFindingList(
 function formatPublishedStyleProfile(style: ReferenceStyleProfileResult): string {
   return [
     '# Style Profile',
+    '',
+    '> Technique observations only; no adoptable source-story facts.',
     '',
     style.summary,
     '',
@@ -4207,13 +4838,27 @@ function formatPublishedReferenceSummary(
   ].join('\n');
 }
 
+function formatPublishedMaterialOnlyReferenceSummary(
+  run: ReferenceDeconstructionRun,
+): string {
+  return [
+    '# Reference Summary',
+    '',
+    `Published run: ${run.runId}`,
+    `Source checksum: ${run.sourceChecksumSha256}`,
+    'Context eligible: no (Technique Track was not published)',
+    'Story Materials are review artifacts and are not read by the writing selector.',
+    'Original source read by writing selector: no',
+    '',
+  ].join('\n');
+}
+
 function assertReviewReadyForPublication(run: ReferenceDeconstructionRun): void {
   if (
     run.status !== 'reviewReady'
     || !run.full
     || run.full.units.some((unit) => unit.status !== 'completed')
-    || !isPublishableQualityStatus(run.full.analysisQuality?.status)
-    || run.full.analysisQuality.coveragePercent !== 100
+    || !allTrackQualitiesPublishable(run.full)
     || run.diagnostics.some((diagnostic) => diagnostic.blocking)
   ) {
     throw new ReferenceDeconstructionValidationError(
@@ -4339,6 +4984,9 @@ async function assertPublicationStateMaterialized(
     runRevision: run.revision - 1,
     files: publication.files,
     entryInventory: publication.entryInventory,
+    ...(publication.materialInventory
+      ? { materialInventory: publication.materialInventory }
+      : {}),
   }));
   if (expectedFingerprint !== publication.candidateFingerprint) {
     throw new ReferenceDeconstructionValidationError(
@@ -4404,7 +5052,11 @@ async function assertPublicationStateMaterialized(
     manifest.referenceId !== run.referenceId
     || manifest.status !== 'completed'
     || !isPublishableQualityStatus(manifest.qualityStatus)
-    || manifest.qualityStatus !== run.full?.analysisQuality?.status
+    || !run.full
+    || manifest.qualityStatus !== combinedQualityStatus(
+      run.full,
+      summarizeWarningDiagnostics(run.diagnostics).count,
+    )
     || stableJson(manifest.warningSummary)
       !== stableJson(summarizeWarningDiagnostics(run.diagnostics))
     || manifest.publishedRunId !== run.runId
@@ -4450,8 +5102,7 @@ async function assertPublicationStateMaterialized(
     ] as const),
   ]);
   if (
-    expectedPaths.size !== publication.files.length
-    || publication.files.some((file) => {
+    publication.files.some((file) => {
       const expected = expectedPaths.get(file.path);
       return !expected
         || expected.checksumSha256 !== file.checksumSha256
@@ -4461,6 +5112,29 @@ async function assertPublicationStateMaterialized(
     throw new ReferenceDeconstructionValidationError(
       'Accepted reference publication file closure is invalid.',
     );
+  }
+  for (const output of manifest.outputs) {
+    const path = `${bundlePrefix}/${output.path}`;
+    if (materialized.has(path)) continue;
+    const target = resolve(realWorkspaceRoot, path);
+    const realTarget = await realpath(target).catch(() => undefined);
+    if (!realTarget) {
+      throw new ReferenceDeconstructionValidationError(
+        `Retained reference publication is missing ${path}.`,
+      );
+    }
+    assertContained(
+      realWorkspaceRoot,
+      realTarget,
+      'Retained reference publication escaped the workspace.',
+    );
+    const content = await readFile(realTarget, 'utf-8');
+    if (sha256(content) !== output.checksumSha256) {
+      throw new ReferenceDeconstructionValidationError(
+        `Retained reference publication is stale: ${path}.`,
+      );
+    }
+    materialized.set(path, content);
   }
 
   let referencesIndex: ReturnType<typeof assertReferencesIndexValue>;
@@ -4476,10 +5150,13 @@ async function assertPublicationStateMaterialized(
     reference.id === run.referenceId);
   const contextIndexPath = `${bundlePrefix}/context/index.yaml`;
   const contextIndexContent = materialized.get(contextIndexPath);
+  const contextIndexOutput = manifest.outputs.find((output) =>
+    output.kind === 'context' && output.path === 'context/index.yaml');
   if (
     !publishedReference
     || publishedReference.deconstructionStatus !== 'completed'
-    || publishedReference.publishedContext?.runId !== run.runId
+    || !contextIndexOutput
+    || publishedReference.publishedContext?.runId !== contextIndexOutput.sourceRunId
     || !contextIndexContent
     || publishedReference.publishedContext.fingerprint
       !== sha256(contextIndexContent)
@@ -4492,12 +5169,14 @@ async function assertPublicationStateMaterialized(
     parse(contextIndexContent) as unknown,
     {
       referenceId: run.referenceId,
-      publishedRunId: run.runId,
-      sourceChecksumSha256: run.sourceChecksumSha256,
+      publishedRunId: contextIndexOutput.sourceRunId,
+      sourceChecksumSha256: contextIndexOutput.sourceChecksumSha256,
       structureFingerprint: run.structureFingerprint,
     },
   );
-  if (
+  const publishesTechniqueProjection = publication.files.some((file) =>
+    file.kind === 'distilled');
+  if (publishesTechniqueProjection && (
     contextIndex.entries.length !== publication.entryInventory.length
     || contextIndex.entries.some((entry) => {
       const inventory = publication.entryInventory.find((item) =>
@@ -4507,7 +5186,7 @@ async function assertPublicationStateMaterialized(
         || inventory.title !== entry.title
         || inventory.estimatedTokens !== entry.estimatedTokens;
     })
-  ) {
+  )) {
     throw new ReferenceDeconstructionValidationError(
       'Accepted reference publication inventory is stale.',
     );
@@ -4525,6 +5204,8 @@ function publicationFileKindForPath(
   if (relativePath === 'progress.yaml') return 'progress';
   if (relativePath.startsWith('deconstruction/')) return 'deconstruction';
   if (relativePath.startsWith('distilled/')) return 'distilled';
+  if (REFERENCE_STORY_MATERIAL_KINDS.some((kind) =>
+    relativePath === `materials/${kind}.yaml`)) return 'materials';
   if (relativePath.startsWith('context/')) return 'context';
   throw new ReferenceDeconstructionValidationError(
     `Accepted reference publication path is invalid: ${path}.`,
@@ -4880,6 +5561,23 @@ async function readRunState(
   if (run.preview) {
     await assertPreviewMatchesRun(workspaceRoot, run.preview, run, true);
   }
+  if (run.materialPreview) {
+    const materialPreviewPath = await resolveReferenceDeconstructionRunArtifactPath(
+      workspaceRoot,
+      run.runId,
+      'material-preview.yaml',
+      { requireExistingArtifact: true },
+    );
+    const materialPreview = await readYamlOrValidation(
+      materialPreviewPath,
+      'Stored Story Material coverage preview artifact is invalid.',
+    );
+    if (stableJson(materialPreview) !== stableJson(run.materialPreview)) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material coverage preview artifact does not match run state.',
+      );
+    }
+  }
   if (run.full) {
     const planPath = await resolveReferenceDeconstructionRunArtifactPath(
       workspaceRoot,
@@ -4996,11 +5694,14 @@ function assertRunState(
     'revision',
     'status',
     'mode',
+    'profileId',
+    'outputs',
     'sourceChecksumSha256',
     'structureFingerprint',
     'selection',
     'evidence',
     'preview',
+    'materialPreview',
     'diagnostics',
     'mutationReceipts',
     'full',
@@ -5048,6 +5749,26 @@ function assertRunState(
     1,
     MAX_REFERENCE_DECONSTRUCTION_MUTATION_RECEIPTS,
   ).map((item) => assertMutationReceipt(item));
+  const outputs = assertStoredOutputs(record.outputs);
+  const sourceChecksumSha256 = assertSha256(
+    record.sourceChecksumSha256,
+    'sourceChecksumSha256',
+  );
+  const structureFingerprint = assertSha256(
+    record.structureFingerprint,
+    'structureFingerprint',
+  );
+  const materialPreview = record.materialPreview === undefined
+    ? undefined
+    : assertStoredMaterialPreview(record.materialPreview, {
+        runId,
+        referenceId,
+        sourceChecksumSha256,
+        structureFingerprint,
+        selection,
+        evidence,
+        materialKinds: selectedMaterialKinds(outputs),
+      });
   const run: ReferenceDeconstructionRun = {
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
     runId,
@@ -5055,19 +5776,16 @@ function assertRunState(
     revision: safeInteger(record.revision, 'run revision', 0),
     status: requireEnum(record.status, RUN_STATUS_VALUES, 'run status'),
     mode: requireLiteral(record.mode, 'quickPreview', 'run mode'),
-    sourceChecksumSha256: assertSha256(
-      record.sourceChecksumSha256,
-      'sourceChecksumSha256',
-    ),
-    structureFingerprint: assertSha256(
-      record.structureFingerprint,
-      'structureFingerprint',
-    ),
+    profileId: assertSafeIdentifier(record.profileId, 'profileId'),
+    outputs,
+    sourceChecksumSha256,
+    structureFingerprint,
     selection,
     evidence,
     ...(record.preview === undefined
       ? {}
       : { preview: assertStoredPreview(record.preview, runId, referenceId) }),
+    ...(materialPreview ? { materialPreview } : {}),
     diagnostics,
     mutationReceipts,
     ...(record.full === undefined
@@ -5104,6 +5822,18 @@ function assertRunState(
     );
   }
   if (
+    run.activeReservation?.kind === 'preview'
+    && (
+      run.activeReservation.track === 'technique'
+        ? !run.outputs.includes('techniques') || Boolean(run.preview)
+        : !selectedMaterialKinds(run.outputs).length || Boolean(run.materialPreview)
+    )
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference preview reservation does not match its pending track.',
+    );
+  }
+  if (
     Boolean(run.full) !== Boolean(run.fullApprovedAt)
     || run.full
       && ['created', 'previewRunning', 'awaitingFullApproval'].includes(run.status)
@@ -5114,10 +5844,10 @@ function assertRunState(
   }
   if (
     (run.status === 'awaitingFullApproval' || Boolean(run.full))
-      && !run.preview
-    || run.preview
-      && !run.full
-      && ['created', 'previewRunning', 'interrupted', 'failed'].includes(run.status)
+      && !previewTracksComplete(run.outputs, run.preview, run.materialPreview)
+    || Boolean(run.preview) && !run.outputs.includes('techniques')
+    || Boolean(run.materialPreview)
+      && !run.outputs.some((output) => output !== 'techniques')
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference run preview does not match status.',
@@ -5190,24 +5920,18 @@ function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
   const full = run.full!;
   const blockingDiagnosticCount = run.diagnostics.filter((diagnostic) =>
     diagnostic.blocking).length;
-  const warningDiagnosticCount = run.diagnostics.length - blockingDiagnosticCount;
   if (
     full.plan.referenceId !== run.referenceId
     || full.plan.sourceChecksumSha256 !== run.sourceChecksumSha256
     || full.plan.structureFingerprint !== run.structureFingerprint
+    || stableJson(full.plan.outputs) !== stableJson(run.outputs)
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference full state does not match the run source identity.',
     );
   }
-  if (
-    full.analysisQuality?.blockingDiagnosticCount
-      !== blockingDiagnosticCount
-    || full.analysisQuality?.status === 'passed'
-      && run.diagnostics.length !== 0
-    || full.analysisQuality?.status === 'warned'
-      && (blockingDiagnosticCount !== 0 || warningDiagnosticCount === 0)
-  ) {
+  if (Object.values(full.analysisQuality).some((quality) =>
+    quality.blockingDiagnosticCount > blockingDiagnosticCount)) {
     throw new ReferenceDeconstructionValidationError(
       'Reference analysis quality summary does not match run diagnostics.',
     );
@@ -5238,16 +5962,14 @@ function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
     || run.status === 'reviewReady'
       && (
         full.units.some((unit) => unit.status !== 'completed')
-        || !isPublishableQualityStatus(full.analysisQuality?.status)
-        || full.analysisQuality.coveragePercent !== 100
-        || full.analysisQuality.blockingDiagnosticCount !== 0
+        || !allTrackQualitiesPublishable(full)
         || run.diagnostics.some((diagnostic) => diagnostic.blocking)
       )
     || run.status === 'failed'
       && !full.units.some((unit) => unit.status === 'failed' || (
         unit.kind === 'analysisQuality'
         && unit.status === 'completed'
-        && full.analysisQuality?.status === 'failed'
+        && full.analysisQuality[unit.track]?.status === 'failed'
       ))
     || run.status === 'interrupted'
       && !full.units.some((unit) => unit.status === 'interrupted')
@@ -5269,6 +5991,8 @@ function assertRunRequest(
     'runId',
     'referenceId',
     'mode',
+    'profileId',
+    'outputs',
     'sourceChecksumSha256',
     'structureFingerprint',
     'structureConfidence',
@@ -5322,6 +6046,8 @@ function assertRunRequest(
     runId,
     referenceId,
     mode: requireLiteral(record.mode, 'quickPreview', 'run mode'),
+    profileId: assertSafeIdentifier(record.profileId, 'profileId'),
+    outputs: assertStoredOutputs(record.outputs),
     sourceChecksumSha256,
     structureFingerprint,
     structureConfidence,
@@ -5413,6 +6139,8 @@ function assertRunRequestMatchesAuthoritativeRun(
   const expectedFingerprint = fingerprintCreateRequest(request);
   if (
     request.createdAt !== run.createdAt
+    || request.profileId !== run.profileId
+    || stableJson(request.outputs) !== stableJson(run.outputs)
     || stableJson(summarizeSelection(request.selection)) !== stableJson(run.selection)
     || stableJson(expectedEvidence) !== stableJson(run.evidence)
     || !createReceipt
@@ -5453,6 +6181,21 @@ function assertSelectionSummary(value: unknown): ReferenceQuickPreviewSelectionS
     maxChapters: safeInteger(record.maxChapters, 'maxChapters', 1, 3),
     maxChars: safeInteger(record.maxChars, 'maxChars', 1, 48_000),
   };
+}
+
+function assertStoredOutputs(value: unknown): WritingProfileOutput[] {
+  if (!Array.isArray(value)) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference deconstruction outputs must be an array.',
+    );
+  }
+  try {
+    return normalizeReferenceDeconstructionOutputs(
+      value as readonly WritingProfileOutput[],
+    );
+  } catch (error) {
+    throw validationFrom(error, 'Reference deconstruction outputs are invalid.');
+  }
 }
 
 function assertMutationReceipt(value: unknown): ReferenceDeconstructionMutationReceipt {
@@ -5536,7 +6279,22 @@ function assertStoredFullState(
       'Reference full analysis quality summary is missing.',
     );
   }
-  const analysisQuality = assertStoredAnalysisQuality(record.analysisQuality);
+  const qualityRecord = requireRecord(record.analysisQuality, 'analysis quality tracks');
+  assertOnlyKnownFields(qualityRecord, ['technique', 'storyMaterial']);
+  const analysisQuality: ReferenceFullDeconstructionState['analysisQuality'] = {};
+  for (const track of Object.keys(plan.tracks) as ReferenceDeconstructionTrackId[]) {
+    if (qualityRecord[track] === undefined) {
+      throw new ReferenceDeconstructionValidationError(
+        `Reference ${track} analysis quality summary is missing.`,
+      );
+    }
+    analysisQuality[track] = assertStoredAnalysisQuality(qualityRecord[track]);
+  }
+  if (Object.keys(qualityRecord).some((track) => !(track in plan.tracks))) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference analysis quality contains an unplanned track.',
+    );
+  }
   return {
     plan,
     units,
@@ -5557,11 +6315,9 @@ function assertStoredWorkPlan(
     'sourceChecksumSha256',
     'structureFingerprint',
     'chapterIds',
+    'outputs',
     'units',
-    'aggregateRootUnitId',
-    'styleUnitId',
-    'distillUnitId',
-    'analysisQualityUnitId',
+    'tracks',
   ]);
   if (record.version !== REFERENCE_DECONSTRUCTION_SCHEMA_VERSION) {
     throw new ReferenceDeconstructionValidationError('Unsupported full work plan version.');
@@ -5592,21 +6348,98 @@ function assertStoredWorkPlan(
     );
   }
   const chapterIds = identifierArray(record.chapterIds, 'plan chapterIds', 1, 100_000);
-  const aggregateRootUnitId = assertSafeIdentifier(
-    record.aggregateRootUnitId,
-    'aggregateRootUnitId',
-  );
-  const styleUnitId = assertSafeIdentifier(record.styleUnitId, 'styleUnitId');
-  const distillUnitId = assertSafeIdentifier(record.distillUnitId, 'distillUnitId');
-  const analysisQualityUnitId = assertSafeIdentifier(
-    record.analysisQualityUnitId,
-    'analysisQualityUnitId',
-  );
+  const outputs = assertStoredOutputs(record.outputs);
+  const trackRecord = requireRecord(record.tracks, 'plan tracks');
+  assertOnlyKnownFields(trackRecord, ['technique', 'storyMaterial']);
+  const tracks: ReferenceDeconstructionWorkPlan['tracks'] = {};
+  if (trackRecord.technique !== undefined) {
+    const technique = requireRecord(trackRecord.technique, 'technique plan track');
+    assertOnlyKnownFields(technique, [
+      'aggregateRootUnitId', 'styleUnitId', 'distillUnitId', 'analysisQualityUnitId',
+    ]);
+    tracks.technique = {
+      aggregateRootUnitId: assertSafeIdentifier(
+        technique.aggregateRootUnitId,
+        'technique aggregateRootUnitId',
+      ),
+      styleUnitId: assertSafeIdentifier(technique.styleUnitId, 'technique styleUnitId'),
+      distillUnitId: assertSafeIdentifier(technique.distillUnitId, 'technique distillUnitId'),
+      analysisQualityUnitId: assertSafeIdentifier(
+        technique.analysisQualityUnitId,
+        'technique analysisQualityUnitId',
+      ),
+    };
+  }
+  if (trackRecord.storyMaterial !== undefined) {
+    const material = requireRecord(trackRecord.storyMaterial, 'Story Material plan track');
+    assertOnlyKnownFields(material, [
+      'aggregateRootUnitId', 'projectionUnitId', 'analysisQualityUnitId', 'materialKinds',
+    ]);
+    const materialKinds = assertStoredOutputs(material.materialKinds).filter(
+      (output): output is Exclude<WritingProfileOutput, 'techniques'> => output !== 'techniques',
+    );
+    if (
+      materialKinds.length !== (material.materialKinds as unknown[]).length
+      || stableJson(materialKinds) !== stableJson(outputs.filter((item) => item !== 'techniques'))
+    ) {
+      throw new ReferenceDeconstructionValidationError(
+        'Story Material plan kinds do not match the selected outputs.',
+      );
+    }
+    tracks.storyMaterial = {
+      aggregateRootUnitId: assertSafeIdentifier(
+        material.aggregateRootUnitId,
+        'Story Material aggregateRootUnitId',
+      ),
+      projectionUnitId: assertSafeIdentifier(
+        material.projectionUnitId,
+        'Story Material projectionUnitId',
+      ),
+      analysisQualityUnitId: assertSafeIdentifier(
+        material.analysisQualityUnitId,
+        'Story Material analysisQualityUnitId',
+      ),
+      materialKinds,
+    };
+  }
   if (
-    units.find((unit) => unit.id === aggregateRootUnitId)?.kind !== 'aggregate'
-    || units.find((unit) => unit.id === styleUnitId)?.kind !== 'style'
-    || units.find((unit) => unit.id === distillUnitId)?.kind !== 'distill'
-    || units.find((unit) => unit.id === analysisQualityUnitId)?.kind !== 'analysisQuality'
+    Boolean(tracks.technique) !== outputs.includes('techniques')
+    || Boolean(tracks.storyMaterial) !== outputs.some((output) => output !== 'techniques')
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference full work plan tracks do not match selected outputs.',
+    );
+  }
+  const assertTerminal = (
+    id: string,
+    track: ReferenceDeconstructionTrackId,
+    kind: ReferenceDeconstructionWorkUnit['kind'],
+  ) => units.find((unit) => unit.id === id)?.track === track
+    && units.find((unit) => unit.id === id)?.kind === kind;
+  if (
+    tracks.technique && (
+      !assertTerminal(tracks.technique.aggregateRootUnitId, 'technique', 'aggregate')
+      || !assertTerminal(tracks.technique.styleUnitId, 'technique', 'style')
+      || !assertTerminal(tracks.technique.distillUnitId, 'technique', 'distill')
+      || !assertTerminal(
+        tracks.technique.analysisQualityUnitId,
+        'technique',
+        'analysisQuality',
+      )
+    )
+    || tracks.storyMaterial && (
+      !assertTerminal(tracks.storyMaterial.aggregateRootUnitId, 'storyMaterial', 'aggregate')
+      || !assertTerminal(
+        tracks.storyMaterial.projectionUnitId,
+        'storyMaterial',
+        'materialProjection',
+      )
+      || !assertTerminal(
+        tracks.storyMaterial.analysisQualityUnitId,
+        'storyMaterial',
+        'analysisQuality',
+      )
+    )
   ) {
     throw new ReferenceDeconstructionValidationError(
       'Reference full work plan terminal units are invalid.',
@@ -5619,11 +6452,9 @@ function assertStoredWorkPlan(
     sourceChecksumSha256: assertSha256(record.sourceChecksumSha256, 'plan sourceChecksumSha256'),
     structureFingerprint: assertSha256(record.structureFingerprint, 'plan structureFingerprint'),
     chapterIds,
+    outputs,
     units,
-    aggregateRootUnitId,
-    styleUnitId,
-    distillUnitId,
-    analysisQualityUnitId,
+    tracks,
   };
 }
 
@@ -5632,6 +6463,7 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
   assertOnlyKnownFields(record, [
     'id',
     'ordinal',
+    'track',
     'stageId',
     'kind',
     'predecessorUnitIds',
@@ -5649,25 +6481,44 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
     'aggregate',
     'style',
     'distill',
+    'materialProjection',
     'analysisQuality',
   ] as const, 'work unit kind');
+  const track = requireEnum(
+    record.track,
+    ['technique', 'storyMaterial'] as const,
+    'work unit track',
+  );
   const stageId = requireEnum(record.stageId, [
     'chapterAnalysis',
     'aggregateAnalysis',
     'styleProfile',
     'distillForOan',
+    'materialChapterAnalysis',
+    'materialAggregateAnalysis',
+    'materialProjection',
     'qualityGate',
   ] as const, 'work unit stageId');
-  const expectedStage = kind === 'chapterChunk'
-    ? 'chapterAnalysis'
-    : kind === 'aggregate'
-      ? 'aggregateAnalysis'
-      : kind === 'style'
-        ? 'styleProfile'
-        : kind === 'distill'
-          ? 'distillForOan'
-          : 'qualityGate';
-  if (stageId !== expectedStage) {
+  const expectedStage = kind === 'analysisQuality'
+    ? 'qualityGate'
+    : track === 'technique'
+      ? kind === 'chapterChunk'
+        ? 'chapterAnalysis'
+        : kind === 'aggregate'
+          ? 'aggregateAnalysis'
+          : kind === 'style'
+            ? 'styleProfile'
+            : kind === 'distill'
+              ? 'distillForOan'
+              : undefined
+      : kind === 'chapterChunk'
+        ? 'materialChapterAnalysis'
+        : kind === 'aggregate'
+          ? 'materialAggregateAnalysis'
+          : kind === 'materialProjection'
+            ? 'materialProjection'
+            : undefined;
+  if (!expectedStage || stageId !== expectedStage) {
     throw new ReferenceDeconstructionValidationError(
       'Reference full work unit kind and stage do not match.',
     );
@@ -5675,6 +6526,7 @@ function assertPlannedWorkUnit(value: unknown): ReferenceDeconstructionWorkUnit 
   const base: ReferenceDeconstructionWorkUnit = {
     id: assertSafeIdentifier(record.id, 'unit id'),
     ordinal: safeInteger(record.ordinal, 'unit ordinal', 1, 2_048),
+    track,
     stageId,
     kind,
     predecessorUnitIds: identifierArray(
@@ -5784,7 +6636,7 @@ function assertStoredWorkUnit(value: unknown): ReferenceDeconstructionStoredUnit
     ].includes(key)),
   ));
   const allowed = new Set([
-    'id', 'ordinal', 'stageId', 'kind', 'predecessorUnitIds', 'chapterId', 'chunkId',
+    'id', 'ordinal', 'track', 'stageId', 'kind', 'predecessorUnitIds', 'chapterId', 'chunkId',
     'pointerId', 'pointer', 'isLastChunkInChapter', 'lineCharStart', 'lineCharEnd',
     'aggregateLevel', 'status',
     'attemptIds', 'selectedAttemptId',
@@ -5923,6 +6775,7 @@ function assertStoredPublication(
     'pendingActionId',
     'files',
     'entryInventory',
+    'materialInventory',
     'preparedAt',
   ]);
   const files = requireArray(record.files, 'publication files', 1, 10_000)
@@ -5936,6 +6789,7 @@ function assertStoredPublication(
         'progress',
         'deconstruction',
         'distilled',
+        'materials',
         'context',
       ] as const, 'publication file kind');
       return {
@@ -5955,7 +6809,7 @@ function assertStoredPublication(
   const entryInventory = requireArray(
     record.entryInventory,
     'publication entry inventory',
-    1,
+    0,
     50,
   ).map((value): ReferenceDeconstructionPublicationEntryInventoryItem => {
     const entry = requireRecord(value, 'publication entry inventory item');
@@ -5983,6 +6837,47 @@ function assertStoredPublication(
       'Reference publication entry ids must be unique.',
     );
   }
+  const materialInventory = record.materialInventory === undefined
+    ? undefined
+    : requireArray(
+        record.materialInventory,
+        'publication material inventory',
+        1,
+        320,
+      ).map((value): ReferenceDeconstructionPublicationMaterialInventoryItem => {
+        const entry = requireRecord(value, 'publication material inventory item');
+        assertOnlyKnownFields(entry, [
+          'id', 'materialKind', 'title', 'assertionType', 'confidence', 'path',
+        ]);
+        const materialKind = requireEnum(entry.materialKind, [
+          'world', 'characters', 'relationships', 'outline', 'timeline',
+        ] as const, 'publication material kind');
+        if (entry.path !== `materials/${materialKind}.yaml`) {
+          throw new ReferenceDeconstructionValidationError(
+            'Reference publication material inventory path is invalid.',
+          );
+        }
+        return {
+          id: assertSafeIdentifier(entry.id, 'publication material entry id'),
+          materialKind,
+          title: boundedText(entry.title, 'publication material title', 300),
+          assertionType: requireEnum(entry.assertionType, [
+            'fact', 'interpretation', 'uncertain',
+          ] as const, 'publication material assertion type'),
+          confidence: requireEnum(entry.confidence, [
+            'low', 'medium', 'high',
+          ] as const, 'publication material confidence'),
+          path: entry.path,
+        };
+      });
+  if (
+    materialInventory
+    && new Set(materialInventory.map((entry) => entry.id)).size !== materialInventory.length
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication material entry ids must be unique.',
+    );
+  }
   return {
     candidateFingerprint: assertSha256(
       record.candidateFingerprint,
@@ -5991,6 +6886,7 @@ function assertStoredPublication(
     pendingActionId: assertSafeIdentifier(record.pendingActionId, 'pendingActionId'),
     files,
     entryInventory,
+    ...(materialInventory ? { materialInventory } : {}),
     preparedAt: assertIsoDate(record.preparedAt, 'publication preparedAt'),
   };
 }
@@ -5999,9 +6895,14 @@ function assertStoredReservation(value: unknown): ReferenceDeconstructionReserva
   const record = requireRecord(value, 'active reservation');
   const kind = requireEnum(record.kind, ['preview', 'fullUnit'] as const, 'reservation kind');
   if (kind === 'preview') {
-    assertOnlyKnownFields(record, ['kind', 'id', 'idempotencyKey', 'startedAt']);
+    assertOnlyKnownFields(record, ['kind', 'track', 'id', 'idempotencyKey', 'startedAt']);
     return {
       kind,
+      track: requireEnum(
+        record.track,
+        ['technique', 'storyMaterial'] as const,
+        'preview reservation track',
+      ),
       id: assertSafeIdentifier(record.id, 'reservation id'),
       idempotencyKey: assertIdempotencyKey(record.idempotencyKey),
       startedAt: assertIsoDate(record.startedAt, 'reservation startedAt'),
@@ -6071,6 +6972,73 @@ function assertStoredPreview(
     throw new ReferenceDeconstructionValidationError('Stored reference preview is invalid.');
   }
   return value as ReferenceQuickPreview;
+}
+
+function assertStoredMaterialPreview(
+  value: unknown,
+  input: {
+    runId: string;
+    referenceId: string;
+    sourceChecksumSha256: string;
+    structureFingerprint: string;
+    selection: ReferenceQuickPreviewSelectionSummary;
+    evidence: readonly ReferenceQuickPreviewEvidence[];
+    materialKinds: readonly ReferenceStoryMaterialKind[];
+  },
+): ReferenceStoryMaterialCoveragePreview {
+  try {
+    return parseReferenceStoryMaterialCoveragePreview(value, {
+      runId: input.runId,
+      materialKinds: input.materialKinds,
+      selection: {
+        referenceId: input.referenceId,
+        sourceChecksumSha256: input.sourceChecksumSha256,
+        structureFingerprint: input.structureFingerprint,
+        selectedChapterIds: [...input.selection.selectedChapterIds],
+        omittedChapterIds: [...input.selection.omittedChapterIds],
+        windows: input.evidence.map((item) => ({
+          pointerId: item.id,
+          pointer: item.pointer,
+          content: 'stored-evidence-window',
+          charLength: 22,
+        })),
+        totalChars: input.selection.selectedCharacterCount,
+        maxChapters: input.selection.maxChapters,
+        maxChars: input.selection.maxChars,
+      },
+    });
+  } catch (error) {
+    throw validationFrom(error, 'Stored Story Material coverage preview is invalid.');
+  }
+}
+
+function isTechniquePreview(
+  value: ReferenceQuickPreview | ReferenceStoryMaterialCoveragePreview,
+): value is ReferenceQuickPreview {
+  return 'diagnostics' in value && 'chapterPreviews' in value;
+}
+
+function selectedMaterialKinds(
+  outputs: readonly WritingProfileOutput[],
+): ReferenceStoryMaterialKind[] {
+  return outputs.filter(
+    (output): output is ReferenceStoryMaterialKind => output !== 'techniques',
+  );
+}
+
+function previewTracksComplete(
+  outputs: readonly WritingProfileOutput[],
+  techniquePreview: ReferenceQuickPreview | undefined,
+  materialPreview: ReferenceStoryMaterialCoveragePreview | undefined,
+): boolean {
+  return (!outputs.includes('techniques') || Boolean(techniquePreview))
+    && (!selectedMaterialKinds(outputs).length || Boolean(materialPreview));
+}
+
+function nextPreviewTrack(run: ReferenceDeconstructionRun): ReferenceDeconstructionTrackId | undefined {
+  if (run.outputs.includes('techniques') && !run.preview) return 'technique';
+  if (selectedMaterialKinds(run.outputs).length && !run.materialPreview) return 'storyMaterial';
+  return undefined;
 }
 
 function normalizeStoreDiagnostic(
@@ -6150,6 +7118,27 @@ async function writePreviewArtifacts(
       run.runId,
       'preview.md',
       formatReferenceQuickPreviewMarkdown(preview),
+    ),
+  ]);
+}
+
+async function writeMaterialPreviewArtifacts(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  preview: ReferenceStoryMaterialCoveragePreview,
+): Promise<void> {
+  await Promise.all([
+    writeRunYamlAtomic(
+      workspaceRoot,
+      run.runId,
+      'material-preview.yaml',
+      preview,
+    ),
+    writeRunTextAtomic(
+      workspaceRoot,
+      run.runId,
+      'material-preview.md',
+      formatReferenceStoryMaterialCoveragePreviewMarkdown(preview),
     ),
   ]);
 }
@@ -6413,7 +7402,7 @@ async function readReferenceAttemptOutput(
   workspaceRoot: string,
   runId: string,
   attempt: ReferenceDeconstructionAttemptSummary,
-): Promise<ReferenceDeconstructionAnalysisOutput> {
+): Promise<ReferenceFullDeconstructionStageOutput> {
   const run = await readRunStateArtifact(workspaceRoot, undefined, runId);
   const output = await readReferenceAttemptOutputFromRun(
     workspaceRoot,
@@ -6426,7 +7415,7 @@ async function readReferenceAttemptOutput(
       'Reference analysis-quality output cannot be used as a stage predecessor.',
     );
   }
-  return output;
+  return output as ReferenceFullDeconstructionStageOutput;
 }
 
 async function readReferenceAttemptOutputFromRun(
@@ -6780,6 +7769,8 @@ function fingerprintMutation(value: unknown): string {
 function fingerprintCreateRequest(input: Pick<
   ReferenceDeconstructionRunRequest,
   | 'referenceId'
+  | 'profileId'
+  | 'outputs'
   | 'sourceChecksumSha256'
   | 'structureFingerprint'
   | 'structureConfidence'
@@ -6789,6 +7780,8 @@ function fingerprintCreateRequest(input: Pick<
   return fingerprintMutation({
     command: 'create',
     referenceId: input.referenceId,
+    profileId: input.profileId,
+    outputs: input.outputs,
     baseRunRevision: 0,
     sourceChecksumSha256: input.sourceChecksumSha256,
     structureFingerprint: input.structureFingerprint,

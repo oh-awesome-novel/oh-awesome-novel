@@ -19,8 +19,16 @@ const stageLabels: Record<ReferenceDeconstructionStageId, string> = {
   aggregateAnalysis: 'Aggregate analysis',
   styleProfile: 'Style Profile',
   distillForOan: 'Distill for OAN',
+  materialChapterAnalysis: 'Material chapter analysis',
+  materialAggregateAnalysis: 'Material aggregate analysis',
+  materialProjection: 'Story Material projection',
   qualityGate: 'Analysis quality',
 };
+
+const trackLabels = {
+  technique: 'Technique',
+  storyMaterial: 'Story Materials',
+} as const;
 
 const progressSummary = computed(() => {
   const progress = props.full.progress;
@@ -34,7 +42,7 @@ function stageLabel(stageId: ReferenceDeconstructionStageId): string {
 
 function unitLabel(unit: ReferenceDeconstructionUnitSummary): string {
   const chapter = unit.chapterId ? ` · Chapter ${unit.chapterId}` : '';
-  return `Unit ${unit.ordinal + 1}${chapter} · ${stageLabel(unit.stageId)}`;
+  return `Unit ${unit.ordinal}${chapter} · ${trackLabels[unit.track]} · ${stageLabel(unit.stageId)}`;
 }
 </script>
 
@@ -55,11 +63,11 @@ function unitLabel(unit: ReferenceDeconstructionUnitSummary): string {
   <ul class="reference-stage-list">
     <li
       v-for="stage in full.stages"
-      :key="stage.stageId"
+      :key="`${stage.track}:${stage.stageId}`"
       class="reference-stage-card"
     >
       <div>
-        <strong>{{ stageLabel(stage.stageId) }}</strong>
+        <strong>{{ trackLabels[stage.track] }} · {{ stageLabel(stage.stageId) }}</strong>
         <span>{{ stage.status }}</span>
       </div>
       <small>

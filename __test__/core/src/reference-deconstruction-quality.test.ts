@@ -62,10 +62,11 @@ describe('reference deconstruction analysis quality', () => {
 
   it('fails closed on missing attempts, hash drift, and predecessor drift', () => {
     const fixture = createQualityFixture();
+    const techniqueTrack = fixture.plan.tracks.technique!;
     const styleAttempt = fixture.attempts.find((attempt) =>
-      attempt.unitId === fixture.plan.styleUnitId)!;
+      attempt.unitId === techniqueTrack.styleUnitId)!;
     const attempts = fixture.attempts
-      .filter((attempt) => attempt.unitId !== fixture.plan.aggregateRootUnitId)
+      .filter((attempt) => attempt.unitId !== techniqueTrack.aggregateRootUnitId)
       .map((attempt) => attempt === styleAttempt
         ? {
             ...attempt,

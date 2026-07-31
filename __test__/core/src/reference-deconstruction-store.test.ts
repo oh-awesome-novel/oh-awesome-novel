@@ -131,11 +131,11 @@ describe('reference deconstruction run store', () => {
 
     const transport = projectReferenceDeconstructionRunForTransport(completed);
     expect(transport).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: created.run.runId,
       runRevision: 1,
-      pipelineVersion: 1,
-      capabilityVersion: 'novel.deconstruct_reference@1',
+      pipelineVersion: 2,
+      capabilityVersion: 'novel.deconstruct_reference@2',
       selectedChapterIds: fixture.selection.selectedChapterIds,
     });
     expect(transport).not.toHaveProperty('selection');
@@ -704,7 +704,7 @@ describe('reference readiness gate', () => {
     const summary = await readFile(join(bundleRoot, 'context', 'reference-summary.md'), 'utf-8');
     const aggregate = 'aggregate: ready\n';
     await mkdir(join(bundleRoot, 'deconstruction'));
-    await writeFile(join(bundleRoot, 'deconstruction', 'aggregate.yaml'), aggregate, 'utf-8');
+    await writeFile(join(bundleRoot, 'deconstruction', 'aggregate.md'), aggregate, 'utf-8');
     const doNotCopy = await readFile(join(bundleRoot, 'distilled', 'do-not-copy.md'), 'utf-8');
     const sourceFinding: ReferenceDeconstructionFinding = {
       id: 'verified-finding-001',
@@ -775,30 +775,60 @@ describe('reference readiness gate', () => {
     }
     manifest.status = 'completed';
     manifest.qualityStatus = 'passed';
+    manifest.profileId = 'commercialWriting';
+    manifest.selectedOutputs = ['techniques'];
     manifest.publishedRunId = 'published-run-001';
     manifest.publishedAt = '2026-07-22T02:00:00.000Z';
-    for (const stage of Object.values(manifest.stages)) stage.status = 'completed';
+    manifest.stages = Object.fromEntries([
+      'detectStructure',
+      'quickPreview',
+      'chapterAnalysis',
+      'aggregateAnalysis',
+      'styleProfile',
+      'distillForOan',
+      'qualityGate',
+    ].map((stageId) => [
+      stageId,
+      { status: 'completed', outputHashes: [] },
+    ])) as typeof manifest.stages;
     manifest.outputs = [
       {
         kind: 'deconstruction',
-        path: 'deconstruction/aggregate.yaml',
+        path: 'deconstruction/aggregate.md',
         checksumSha256: sha256(aggregate),
+        sourceRunId: 'published-run-001',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
       },
       {
         kind: 'distilled',
         path: 'distilled/do-not-copy.md',
         checksumSha256: sha256(doNotCopy),
+        sourceRunId: 'published-run-001',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
       },
-      ...distilledOutputs,
+      ...distilledOutputs.map((output) => ({
+        ...output,
+        sourceRunId: 'published-run-001',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
+      })),
       {
         kind: 'context',
         path: 'context/reference-summary.md',
         checksumSha256: sha256(summary),
+        sourceRunId: 'published-run-001',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
       },
       {
         kind: 'context',
         path: 'context/index.yaml',
         checksumSha256: sha256(contextIndexContent),
+        sourceRunId: 'published-run-001',
+        sourceChecksumSha256: manifest.sourceChecksumSha256,
+        stale: false,
       },
     ];
     await writeFile(manifestPath, stringify(manifest), 'utf-8');
@@ -808,10 +838,12 @@ describe('reference readiness gate', () => {
       'utf-8',
     );
 
-    await expect(inspectReferenceWorkReadiness(
+    const readiness = await inspectReferenceWorkReadiness(
       fixture.workspaceRoot,
       fixture.referenceId,
-    )).resolves.toMatchObject({
+    );
+    expect(readiness.diagnostics).toEqual([]);
+    expect(readiness).toMatchObject({
       status: 'completed',
       contextEligible: true,
       reason: 'ready',

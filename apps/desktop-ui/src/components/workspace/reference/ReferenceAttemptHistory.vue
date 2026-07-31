@@ -17,14 +17,22 @@ const stageLabels: Record<ReferenceDeconstructionStageId, string> = {
   aggregateAnalysis: 'Aggregate analysis',
   styleProfile: 'Style Profile',
   distillForOan: 'Distill for OAN',
+  materialChapterAnalysis: 'Material chapter analysis',
+  materialAggregateAnalysis: 'Material aggregate analysis',
+  materialProjection: 'Story Material projection',
   qualityGate: 'Analysis quality',
 };
+
+const trackLabels = {
+  technique: 'Technique',
+  storyMaterial: 'Story Materials',
+} as const;
 
 function attemptUnitLabel(attempt: ReferenceDeconstructionAttemptSummary): string {
   const unit = props.units.find((candidate) => candidate.id === attempt.unitId);
   if (!unit) return attempt.unitId;
   const chapter = unit.chapterId ? ` · Chapter ${unit.chapterId}` : '';
-  return `Unit ${unit.ordinal + 1}${chapter} · ${stageLabels[unit.stageId]}`;
+  return `Unit ${unit.ordinal}${chapter} · ${trackLabels[unit.track]} · ${stageLabels[unit.stageId]}`;
 }
 
 function completedLabel(attempt: ReferenceDeconstructionAttemptSummary): string {

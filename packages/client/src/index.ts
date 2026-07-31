@@ -135,6 +135,7 @@ export type {
   ReferenceDeconstructionPublicationEntry,
   ReferenceDeconstructionPublicationFile,
   ReferenceDeconstructionPublicationFileKind,
+  ReferenceDeconstructionPublicationMaterialInventoryItem,
   ReferenceDeconstructionPublishPendingAction,
   ReferenceDeconstructionPublishPendingActionOrigin,
   ReferenceDeconstructionPublishResult,
@@ -145,6 +146,7 @@ export type {
   ReferenceDeconstructionRunMutationResult,
   ReferenceDeconstructionRunReadResult,
   ReferenceDeconstructionRunStatus,
+  ReferenceDeconstructionTrackId,
   ReferenceDeconstructionUnitKind,
   ReferenceDeconstructionUnitStatus,
   ReferenceDeconstructionUnitSummary,
@@ -155,6 +157,11 @@ export type {
   ReferenceQuickPreviewCoverage,
   ReferenceQuickPreviewFinding,
   ReferenceQuickPreviewFindingKind,
+  ReferenceStoryMaterialCoverageItem,
+  ReferenceStoryMaterialCoverageLevel,
+  ReferenceStoryMaterialCoveragePreview,
+  ReferenceStoryMaterialAssertionType,
+  ReferenceStoryMaterialKind,
   ReferenceSourcePointer,
   ReferenceDistilledCategory,
   RetryReferenceDeconstructionRunInput,
@@ -342,6 +349,9 @@ export type ReferenceDeconstructionStageId =
   | 'aggregateAnalysis'
   | 'styleProfile'
   | 'distillForOan'
+  | 'materialChapterAnalysis'
+  | 'materialAggregateAnalysis'
+  | 'materialProjection'
   | 'qualityGate';
 
 export type ReferenceDeconstructionStageStatus =
@@ -368,7 +378,8 @@ export type ReferenceReadinessReason =
   | 'qualityFailed'
   | 'needsRebuild'
   | 'missingContextSummary'
-  | 'invalidContextIndex';
+  | 'invalidContextIndex'
+  | 'techniqueTrackNotPublished';
 
 export type ReferenceContextOmissionReason =
   | 'disabled'
@@ -381,13 +392,14 @@ export type ReferenceContextOmissionReason =
   | 'missingContextSummary'
   | 'invalidContextPath'
   | 'invalidContextIndex'
+  | 'techniqueTrackNotPublished'
   | 'capabilityMismatch'
   | 'taskMismatch'
   | 'maxEntryCountReached'
   | 'tokenBudgetExceeded';
 
 export interface ReferenceProgress {
-  version: 1;
+  version: 2;
   referenceId: string;
   status: ReferencePublishedDeconstructionStatus;
   currentStage: ReferenceDeconstructionStageId | null;
@@ -398,7 +410,10 @@ export interface ReferenceProgress {
     message: string;
     failedAt: string;
   }>;
-  stages: Record<ReferenceDeconstructionStageId, ReferenceDeconstructionStageStatus>;
+  stages: Partial<Record<
+    ReferenceDeconstructionStageId,
+    ReferenceDeconstructionStageStatus
+  >>;
   resumable: boolean;
   contextEligible: boolean;
   updatedAt: string;

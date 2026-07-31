@@ -64,7 +64,7 @@ describe('Reference deconstruction Quick Preview runner', () => {
     expect(result.status).toBe('completed');
     if (result.status !== 'completed') return;
     expect(result.preview).toMatchObject({
-      version: 1,
+      version: 2,
       runId: 'reference-run-001',
       referenceId: selection.referenceId,
       sourceChecksumSha256: selection.sourceChecksumSha256,

@@ -6,6 +6,14 @@ import { stringify as stringifyYaml } from 'yaml';
 import { parseFrontmatter, parseSections } from './markdown';
 import { yamlAppendDraft, yamlDeleteDraft, yamlGet, yamlSetDraft } from './yaml-engine';
 
+const REFERENCE_STORY_MATERIAL_FILES = new Set([
+  join('materials', 'world.yaml'),
+  join('materials', 'characters.yaml'),
+  join('materials', 'relationships.yaml'),
+  join('materials', 'outline.yaml'),
+  join('materials', 'timeline.yaml'),
+]);
+
 export type SemanticPatch =
   | ObjectPatch
   | CollectionPatch
@@ -488,6 +496,7 @@ function validateReferenceArtifactFile(value: string): string {
   ) {
     return file;
   }
+  if (REFERENCE_STORY_MATERIAL_FILES.has(file)) return file;
   throw new Error(`Reference artifact target is not publishable: ${value}`);
 }
 

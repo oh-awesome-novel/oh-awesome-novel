@@ -10,6 +10,14 @@ import type {
 import {
   REFERENCE_DISTILLED_CATEGORIES,
 } from './reference-deconstruction-distill.js';
+import type {
+  ReferenceStoryMaterialAssertionType,
+  ReferenceStoryMaterialFinding,
+} from './reference-story-material.js';
+import {
+  REFERENCE_STORY_MATERIAL_KINDS,
+} from './reference-story-material.js';
+import type { ReferenceStoryMaterialKind } from './reference-deconstruction-full.js';
 
 export type ReferenceDeconstructionPublicationCandidateFileKind =
   | 'index'
@@ -18,6 +26,7 @@ export type ReferenceDeconstructionPublicationCandidateFileKind =
   | 'progress'
   | 'deconstruction'
   | 'distilled'
+  | 'materials'
   | 'context';
 
 export interface ReferenceDeconstructionPublicationCandidateFile {
@@ -34,6 +43,15 @@ export interface ReferenceDeconstructionPublicationEntryInventoryItem {
   estimatedTokens: number;
 }
 
+export interface ReferenceDeconstructionPublicationMaterialInventoryItem {
+  id: string;
+  materialKind: ReferenceStoryMaterialKind;
+  title: string;
+  assertionType: ReferenceStoryMaterialAssertionType;
+  confidence: 'low' | 'medium' | 'high';
+  path: string;
+}
+
 export interface ReferenceDeconstructionPublicationCandidate {
   version: typeof REFERENCE_DECONSTRUCTION_SCHEMA_VERSION;
   referenceId: string;
@@ -42,6 +60,7 @@ export interface ReferenceDeconstructionPublicationCandidate {
   candidateFingerprint: string;
   files: ReferenceDeconstructionPublicationCandidateFile[];
   entryInventory: ReferenceDeconstructionPublicationEntryInventoryItem[];
+  materialInventory?: ReferenceDeconstructionPublicationMaterialInventoryItem[];
   preparedAt: string;
 }
 
@@ -55,6 +74,7 @@ export interface CreateReferenceDeconstructionPublicationCandidateInput {
     kind: ReferenceDeconstructionPublicationCandidateFileKind;
   }>;
   entries: readonly ReferenceDistilledEntry[];
+  materialEntries?: readonly ReferenceStoryMaterialFinding[];
   preparedAt: string;
 }
 
@@ -96,11 +116,18 @@ export function createReferenceDeconstructionPublicationCandidate(
     `examples/references/${referenceId}/deconstruction-manifest.yaml`,
     `examples/references/${referenceId}/diagnostics.yaml`,
     `examples/references/${referenceId}/progress.yaml`,
-    `examples/references/${referenceId}/context/index.yaml`,
-    `examples/references/${referenceId}/context/reference-summary.md`,
   ];
   if (requiredPaths.some((path) => !files.some((file) => file.path === path))) {
     throw new Error('Reference publication candidate is missing a required file.');
+  }
+  const contextPaths = [
+    `examples/references/${referenceId}/context/index.yaml`,
+    `examples/references/${referenceId}/context/reference-summary.md`,
+  ];
+  const contextFileCount = contextPaths.filter((path) =>
+    files.some((file) => file.path === path)).length;
+  if (contextFileCount !== 0 && contextFileCount !== contextPaths.length) {
+    throw new Error('Reference publication candidate contains a partial context projection.');
   }
   const entryInventory = [...input.entries].map((entry) => ({
     id: safeId(entry.id, 'entry id'),
@@ -118,11 +145,46 @@ export function createReferenceDeconstructionPublicationCandidate(
     ),
   })).sort((left, right) =>
     left.category.localeCompare(right.category) || left.id.localeCompare(right.id));
+  const publishesTechniques = files.some((file) => file.kind === 'distilled');
   if (
-    !entryInventory.length
-    || new Set(entryInventory.map((entry) => entry.id)).size !== entryInventory.length
+    new Set(entryInventory.map((entry) => entry.id)).size !== entryInventory.length
+    || publishesTechniques !== Boolean(entryInventory.length)
+    || publishesTechniques && REFERENCE_DISTILLED_CATEGORIES.some((category) =>
+      !entryInventory.some((entry) => entry.category === category))
   ) {
     throw new Error('Reference publication entry inventory is invalid.');
+  }
+  const materialInventory = (input.materialEntries ?? []).map((entry) => ({
+    id: safeId(entry.id, 'material entry id'),
+    materialKind: requireEnum(
+      entry.materialKind,
+      ['world', 'characters', 'relationships', 'outline', 'timeline'] as const,
+      'material kind',
+    ),
+    title: boundedText(entry.title, 'material entry title', 300),
+    assertionType: requireEnum(
+      entry.assertionType,
+      ['fact', 'interpretation', 'uncertain'] as const,
+      'material assertion type',
+    ),
+    confidence: requireEnum(
+      entry.confidence,
+      ['low', 'medium', 'high'] as const,
+      'material confidence',
+    ),
+    path: `materials/${entry.materialKind}.yaml`,
+  })).sort((left, right) =>
+    left.materialKind.localeCompare(right.materialKind) || left.id.localeCompare(right.id));
+  const publishesMaterials = files.some((file) => file.kind === 'materials');
+  if (
+    new Set(materialInventory.map((entry) => entry.id)).size !== materialInventory.length
+    || materialInventory.length > 0 && !publishesMaterials
+    || materialInventory.some((entry) =>
+      !files.some((file) =>
+        file.kind === 'materials'
+        && file.path === `examples/references/${referenceId}/${entry.path}`))
+  ) {
+    throw new Error('Reference publication material inventory is invalid.');
   }
   const fingerprintPayload = {
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
@@ -135,6 +197,7 @@ export function createReferenceDeconstructionPublicationCandidate(
       kind,
     })),
     entryInventory,
+    ...(materialInventory.length ? { materialInventory } : {}),
   };
   return {
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
@@ -144,6 +207,7 @@ export function createReferenceDeconstructionPublicationCandidate(
     candidateFingerprint: sha256(stableJson(fingerprintPayload)),
     files,
     entryInventory,
+    ...(materialInventory.length ? { materialInventory } : {}),
     preparedAt,
   };
 }
@@ -162,6 +226,7 @@ export function assertReferenceDeconstructionPublicationCandidate(
     'candidateFingerprint',
     'files',
     'entryInventory',
+    'materialInventory',
     'preparedAt',
   ]);
   if (Object.keys(value).some((field) => !allowed.has(field))) {
@@ -195,6 +260,26 @@ export function assertReferenceDeconstructionPublicationCandidate(
         estimatedTokens: entry.estimatedTokens,
       } as ReferenceDistilledEntry;
     }),
+    materialEntries: value.materialInventory === undefined
+      ? []
+      : (value.materialInventory as unknown[]).map((entry) => {
+          if (!isRecord(entry)) {
+            throw new Error('Reference publication material inventory is invalid.');
+          }
+          return {
+            id: entry.id,
+            unitId: 'publication-material-inventory',
+            track: 'storyMaterial',
+            materialKind: entry.materialKind,
+            title: entry.title,
+            content: 'inventory-placeholder',
+            details: [],
+            assertionType: entry.assertionType,
+            confidence: entry.confidence,
+            evidenceRefs: ['publication-evidence'],
+            sourceFindingRefs: [],
+          } as ReferenceStoryMaterialFinding;
+        }),
     preparedAt: isoDate(value.preparedAt, 'preparedAt'),
   });
   if (
@@ -237,6 +322,8 @@ function canonicalCandidateFileKind(
   if (relativePath === 'progress.yaml') return 'progress';
   if (relativePath.startsWith('deconstruction/')) return 'deconstruction';
   if (relativePath.startsWith('distilled/')) return 'distilled';
+  if (REFERENCE_STORY_MATERIAL_KINDS.some((kind) =>
+    relativePath === `materials/${kind}.yaml`)) return 'materials';
   if (relativePath.startsWith('context/')) return 'context';
   throw new Error(`Reference publication candidate target is not allowed: ${path}.`);
 }
@@ -250,6 +337,7 @@ function isCandidateFileKind(
     || value === 'progress'
     || value === 'deconstruction'
     || value === 'distilled'
+    || value === 'materials'
     || value === 'context';
 }
 

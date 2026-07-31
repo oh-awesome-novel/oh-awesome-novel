@@ -7,18 +7,22 @@ import ReferencePublishReview from './ReferencePublishReview.vue';
 import ReferencePublishedContextSummary from './ReferencePublishedContextSummary.vue';
 import ReferenceQualityWarnings from './ReferenceQualityWarnings.vue';
 import ReferenceQuickPreview from './ReferenceQuickPreview.vue';
+import ReferenceStoryMaterialCoveragePreview from './ReferenceStoryMaterialCoveragePreview.vue';
 import type {
   ReferenceDeconstructionPublicationView,
 } from '../../../composables/useReferenceDeconstruction';
 import type {
   ReferenceDeconstructionRun,
+  ReferenceDeconstructionAnalysisQualityStatus,
   ReferenceDeconstructionRunStatus,
   ReferenceWorkSummary,
+  WritingProfile,
 } from '../../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   reference?: ReferenceWorkSummary;
   run?: ReferenceDeconstructionRun;
+  writingProfile?: WritingProfile;
   loadingActiveRun: boolean;
   creating: boolean;
   advancing: boolean;
@@ -81,6 +85,14 @@ const blockingDiagnosticCount = computed(() =>
   props.run?.diagnostics.filter((diagnostic) => diagnostic.blocking).length ?? 0,
 );
 const publishedContext = computed(() => props.reference?.publishedContext);
+const storyMaterialOnlyBundle = computed(() =>
+  props.reference?.deconstructionStatus === 'completed'
+  && props.reference.readinessReason === 'techniqueTrackNotPublished',
+);
+const writingContextLabel = computed(() => {
+  if (props.reference?.contextEligible) return 'Eligible';
+  return storyMaterialOnlyBundle.value ? 'Not generated' : 'Not eligible';
+});
 const detectedPreviewChapterCount = computed(() =>
   Math.min(props.reference?.chapterCount ?? 0, 3),
 );
@@ -89,6 +101,29 @@ const hasLowBoundaryConfidence = computed(() =>
 );
 const nonBlockingDiagnosticCount = computed(() =>
   props.run?.diagnostics.filter((diagnostic) => !diagnostic.blocking).length ?? 0,
+);
+const selectedOutputs = computed(() =>
+  props.run?.outputs ?? props.writingProfile?.deconstruction.outputs ?? [],
+);
+const includesStoryMaterials = computed(() =>
+  selectedOutputs.value.some((output) => output !== 'techniques'),
+);
+const qualitySummaries = computed(() =>
+  props.run?.full
+    ? Object.values(props.run.full.analysisQuality).filter((quality) => quality !== undefined)
+    : [],
+);
+const qualityStatus = computed<ReferenceDeconstructionAnalysisQualityStatus>(() => {
+  const statuses = qualitySummaries.value.map((quality) => quality.status);
+  if (statuses.includes('failed')) return 'failed';
+  if (statuses.includes('warned')) return 'warned';
+  if (statuses.length && statuses.every((status) => status === 'passed')) return 'passed';
+  return 'notEvaluated';
+});
+const qualityCoveragePercent = computed(() =>
+  qualitySummaries.value.length
+    ? Math.min(...qualitySummaries.value.map((quality) => quality.coveragePercent))
+    : 0,
 );
 const canCreatePublishAction = computed(() =>
   props.canPublish
@@ -148,16 +183,31 @@ function requestFullApproval(): void {
           {{ reference.title }} · enabled preference {{ reference.enabled ? 'on' : 'off' }} ·
           boundary confidence {{ reference.structureConfidence }}
         </p>
+        <p v-if="run" class="empty-copy">
+          Profile snapshot {{ run.profileId }} · outputs {{ run.outputs.join(', ') }}
+        </p>
+        <p v-else-if="writingProfile" class="empty-copy">
+          Current Profile: {{ writingProfile.displayName }} ({{ writingProfile.id }}) ·
+          will generate {{ writingProfile.deconstruction.outputs.join(', ') }}
+        </p>
       </div>
       <span class="status-pill">{{ statusLabel }}</span>
     </div>
 
     <p v-if="!reference" class="empty-copy">Select an imported reference to inspect or analyze.</p>
     <template v-else>
+      <p v-if="includesStoryMaterials" class="reference-material-notice">
+        Content notice: Story Materials may contain source settings, characters, relationships,
+        plot events, and chronology. Review them before publication; this notice adds no hard gate.
+      </p>
       <div class="reference-readiness-row">
         <span>Writing context</span>
-        <strong>{{ reference.contextEligible ? 'Eligible' : 'Not eligible' }}</strong>
-        <small>{{ reference.readinessReason }}</small>
+        <strong>{{ writingContextLabel }}</strong>
+        <small>
+          {{ storyMaterialOnlyBundle
+            ? 'Story Materials published; Technique context was not selected.'
+            : reference.readinessReason }}
+        </small>
       </div>
       <ReferencePublishedContextSummary
         v-if="publishedContext"
@@ -223,6 +273,11 @@ function requestFullApproval(): void {
         :preview="run.preview"
         :evidence="run.evidence"
       />
+      <ReferenceStoryMaterialCoveragePreview
+        v-if="run?.materialPreview"
+        :preview="run.materialPreview"
+        :evidence="run.evidence"
+      />
       <ReferenceFullDeconstructionProgress
         v-if="run?.full"
         :full="run.full"
@@ -255,7 +310,7 @@ function requestFullApproval(): void {
           The published reference bundle remains unchanged until that action is accepted.
         </p>
         <ReferenceQualityWarnings
-          :status="run.full?.analysisQuality?.status ?? 'notEvaluated'"
+          :status="qualityStatus"
           :diagnostics="run.diagnostics"
           :require-expansion="nonBlockingDiagnosticCount > 0"
           @reviewed="qualityWarningsReviewed = true"
@@ -282,8 +337,8 @@ function requestFullApproval(): void {
         :source-checksum-sha256="run.sourceChecksumSha256"
         :pipeline-version="run.pipelineVersion"
         :capability-version="run.capabilityVersion"
-        :coverage-percent="run.full?.analysisQuality?.coveragePercent ?? 0"
-        :quality-status="run.full?.analysisQuality?.status ?? 'notEvaluated'"
+        :coverage-percent="qualityCoveragePercent"
+        :quality-status="qualityStatus"
         :diagnostics="run.diagnostics"
         :publishing="publishing"
         :can-publish="canPublish"
@@ -366,6 +421,21 @@ function requestFullApproval(): void {
   border: 1px solid rgb(37 99 235);
   border-radius: 8px;
   background: rgb(239 246 255);
+}
+
+.reference-material-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgb(216 180 254);
+  border-radius: 8px;
+  color: rgb(88 28 135);
+  background: rgb(250 245 255);
+}
+
+:global([data-theme="dark"]) .reference-material-notice {
+  border-color: rgb(107 33 168);
+  color: rgb(216 180 254);
+  background: rgb(59 7 100 / 22%);
 }
 
 .reference-range-warning {

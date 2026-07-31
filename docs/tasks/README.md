@@ -66,6 +66,7 @@
 - [1190 Advanced Director Controls And Long-session Rehearsal](1190.md)
 - [1200 Writing Profile Configuration And Prompt Reminders](1200.md)
 - [1205 Reference Quality Gate Warning Degradation](1205.md)
+- [1210 Reference Story Material Analysis Track](1210.md)
 
 ## Needs Review Tasks
 

@@ -13,7 +13,12 @@ import type {
   ReferenceImportInput,
   ReferenceImportResult,
   ReferenceWorkSummary,
+  WritingProfileState,
 } from '../../composables/useWorkspaceApi';
+
+const props = defineProps<{
+  writingProfileState?: WritingProfileState;
+}>();
 
 const emit = defineEmits<{
   reviewPendingAction: [pendingActionId: string];
@@ -129,6 +134,7 @@ async function createPublishPendingAction(): Promise<void> {
     <ReferenceDeconstructionPanel
       :reference="deconstruction.selectedReference.value"
       :run="deconstruction.run.value"
+      :writing-profile="props.writingProfileState?.activeProfile"
       :loading-active-run="deconstruction.loadingActiveRun.value"
       :creating="deconstruction.creating.value"
       :advancing="deconstruction.advancing.value"

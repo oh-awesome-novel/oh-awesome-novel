@@ -109,7 +109,7 @@ describe('References product D0-D5 journey', () => {
 
     expect(api.approveFullReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('Full analysis approved');
-    expect(wrapper.text()).toContain('0/5 units');
+    expect(wrapper.text()).toContain('0/6 units');
     expect(wrapper.text()).toContain('Run next unit');
     expect(wrapper.text()).not.toContain('chunk-0001-0001');
     wrapper.unmount();
@@ -216,7 +216,7 @@ describe('References product D0-D5 journey', () => {
     await button(wrapper, 'Run next unit').trigger('click');
     await flushPromises();
     expect(api.advanceReferenceDeconstructionRun).toHaveBeenCalledTimes(1);
-    expect(wrapper.text()).toContain('1/5 units');
+    expect(wrapper.text()).toContain('1/6 units');
     expect(wrapper.text()).toContain('Attempt 1 · completed');
 
     await button(wrapper, 'Pause between units').trigger('click');

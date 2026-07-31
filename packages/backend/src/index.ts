@@ -107,6 +107,10 @@ import type {
   LlmProviderConfigState,
   LlmProviderKind,
   NovelCopilotCapabilityId,
+  ReferenceStoryMaterialAggregateResult,
+  ReferenceStoryMaterialChapterResult,
+  ReferenceStoryMaterialCoveragePreview,
+  ReferenceStoryMaterialProjectionResult,
   ThemePreference,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
@@ -156,6 +160,10 @@ import type {
   GenerateReferenceAggregateAnalysisInput,
   GenerateReferenceChapterAnalysisInput,
   GenerateReferenceDistillationInput,
+  GenerateReferenceMaterialAggregateInput,
+  GenerateReferenceMaterialChapterInput,
+  GenerateReferenceMaterialCoverageInput,
+  GenerateReferenceMaterialProjectionInput,
   GenerateReferenceQuickPreviewInput,
   GenerateReferenceStyleProfileInput,
   ReferenceAggregateAnalysisOutput,
@@ -163,6 +171,7 @@ import type {
   ReferenceDistillationOutput,
   ReferenceFullDeconstructionGenerationResult,
   ReferenceQuickPreviewGenerationResult,
+  ReferenceStoryMaterialGenerationResult,
   ReferenceStyleProfileOutput,
 } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
@@ -252,6 +261,9 @@ export interface NovelBackendOptions {
   runReferenceQuickPreview?: (
     input: GenerateReferenceQuickPreviewInput,
   ) => Promise<ReferenceQuickPreviewGenerationResult>;
+  runReferenceMaterialCoverage?: (
+    input: GenerateReferenceMaterialCoverageInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialCoveragePreview>>;
   runReferenceChapterAnalysis?: (
     input: GenerateReferenceChapterAnalysisInput,
   ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceChapterAnalysisOutput>>;
@@ -264,6 +276,15 @@ export interface NovelBackendOptions {
   runReferenceDistillation?: (
     input: GenerateReferenceDistillationInput,
   ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceDistillationOutput>>;
+  runReferenceMaterialChapter?: (
+    input: GenerateReferenceMaterialChapterInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialChapterResult>>;
+  runReferenceMaterialAggregate?: (
+    input: GenerateReferenceMaterialAggregateInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialAggregateResult>>;
+  runReferenceMaterialProjection?: (
+    input: GenerateReferenceMaterialProjectionInput,
+  ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialProjectionResult>>;
 }
 
 export interface NovelBackendAgentInput {
@@ -419,6 +440,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ...(options.runReferenceQuickPreview
       ? { runQuickPreview: options.runReferenceQuickPreview }
       : {}),
+    ...(options.runReferenceMaterialCoverage
+      ? { runMaterialCoverage: options.runReferenceMaterialCoverage }
+      : {}),
     ...(options.runReferenceChapterAnalysis
       ? { runChapterAnalysis: options.runReferenceChapterAnalysis }
       : {}),
@@ -430,6 +454,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       : {}),
     ...(options.runReferenceDistillation
       ? { runDistillation: options.runReferenceDistillation }
+      : {}),
+    ...(options.runReferenceMaterialChapter
+      ? { runMaterialChapter: options.runReferenceMaterialChapter }
+      : {}),
+    ...(options.runReferenceMaterialAggregate
+      ? { runMaterialAggregate: options.runReferenceMaterialAggregate }
+      : {}),
+    ...(options.runReferenceMaterialProjection
+      ? { runMaterialProjection: options.runReferenceMaterialProjection }
       : {}),
   });
   state.referenceDeconstruction = referenceDeconstruction;

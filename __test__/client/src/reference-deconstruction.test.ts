@@ -316,7 +316,7 @@ describe('reference deconstruction client', () => {
   it('fails closed on unknown schema/status, broken evidence closure, and conflicting receipts', async () => {
     const valid = previewRun();
     const malformed = [
-      { ...valid, schemaVersion: 2 },
+      { ...valid, schemaVersion: 1 },
       { ...valid, status: 'futureStatus' },
       {
         ...valid,
@@ -406,20 +406,26 @@ describe('reference deconstruction client', () => {
     unknownUnitKind.full!.recentUnits[0]!.kind = 'futureUnit' as never;
     cases.push(unknownUnitKind);
 
+    const zeroBasedUnitOrdinal = reviewReadyRun();
+    zeroBasedUnitOrdinal.full!.recentUnits[0]!.ordinal = 0;
+    cases.push(zeroBasedUnitOrdinal);
+
     const unknownAttemptStatus = reviewReadyRun();
     unknownAttemptStatus.full!.recentAttempts[0]!.status = 'futureAttempt' as never;
     cases.push(unknownAttemptStatus);
 
     const unknownQualityStatus = reviewReadyRun();
-    unknownQualityStatus.full!.analysisQuality!.status = 'futureQuality' as never;
+    unknownQualityStatus.full!.analysisQuality.technique!.status = 'futureQuality' as never;
     cases.push(unknownQualityStatus);
 
     const failedQualityAtReview = reviewReadyRun();
     failedQualityAtReview.full!.analysisQuality = {
-      status: 'failed',
-      coveragePercent: 100,
-      blockingDiagnosticCount: 0,
-      outputHashes: ['1'.repeat(64)],
+      technique: {
+        status: 'failed',
+        coveragePercent: 100,
+        blockingDiagnosticCount: 0,
+        outputHashes: ['1'.repeat(64)],
+      },
     };
     cases.push(failedQualityAtReview);
 
@@ -542,6 +548,120 @@ describe('reference deconstruction client', () => {
     await expect(client.selectReferenceContext()).resolves.toEqual({ selection });
   });
 
+  it('accepts a material-only preview and rejects unknown or unselected material kinds', async () => {
+    const valid = materialPreviewRun();
+    const unknownKind = structuredClone(valid);
+    unknownKind.materialPreview!.items[0]!.materialKind = 'locations' as never;
+    const techniqueOnly = structuredClone(valid);
+    techniqueOnly.profileId = 'commercialWriting';
+    techniqueOnly.outputs = ['techniques'];
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { run: valid },
+        { run: unknownKind },
+        { run: techniqueOnly },
+      ]),
+    });
+
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: valid });
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .rejects.toThrow('invalid payload');
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .rejects.toThrow('invalid payload');
+  });
+
+  it('strictly closes material stages, unit kinds, tracks, and per-track quality', async () => {
+    const valid = materialReviewReadyRun();
+    const wrongProjectionKind = structuredClone(valid);
+    wrongProjectionKind.full!.recentUnits[2]!.kind = 'distill';
+    const missingTrackQuality = structuredClone(valid);
+    missingTrackQuality.full!.analysisQuality = {};
+    const wrongStageTrack = structuredClone(valid);
+    wrongStageTrack.full!.stages[0]!.track = 'technique';
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { run: valid },
+        { run: wrongProjectionKind },
+        { run: missingTrackQuality },
+        { run: wrongStageTrack },
+      ]),
+    });
+
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: valid });
+    for (let index = 0; index < 3; index += 1) {
+      await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+        .rejects.toThrow('invalid payload');
+    }
+  });
+
+  it('strictly validates the selected Story Material publication inventory', async () => {
+    const valid = materialPublishingRun();
+    const emptyInventory = structuredClone(valid);
+    delete emptyInventory.publication!.materialInventory;
+    const unselectedKind = structuredClone(valid);
+    unselectedKind.publication!.materialInventory![0]!.materialKind = 'outline';
+    unselectedKind.publication!.materialInventory![0]!.path = 'materials/outline.yaml';
+    const wrongInventoryPath = structuredClone(valid);
+    wrongInventoryPath.publication!.materialInventory![0]!.path =
+      'materials/characters.yaml';
+    const missingSelectedFile = structuredClone(valid);
+    missingSelectedFile.publication!.files = missingSelectedFile.publication!.files
+      .filter((file) => !file.path.endsWith('/materials/characters.yaml'));
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { run: valid },
+        { run: emptyInventory },
+        { run: unselectedKind },
+        { run: wrongInventoryPath },
+        { run: missingSelectedFile },
+      ]),
+    });
+
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: valid });
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: emptyInventory });
+    for (let index = 0; index < 3; index += 1) {
+      await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+        .rejects.toThrow('invalid payload');
+    }
+  });
+
+  it('accepts both tracks with independent quality conclusions', async () => {
+    const valid = combinedFailedRun();
+    const missingStoryQuality = structuredClone(valid);
+    delete missingStoryQuality.full!.analysisQuality.storyMaterial;
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([
+        { run: valid },
+        { run: missingStoryQuality },
+      ]),
+    });
+
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .resolves.toEqual({ run: valid });
+    await expect(client.getReferenceDeconstructionRun('reference-1', 'run-1'))
+      .rejects.toThrow('invalid payload');
+  });
+
+  it('accepts a completed material-only bundle without Technique context', async () => {
+    const materialOnly = materialOnlyReferenceSummary();
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: sequenceFetch([{ references: [materialOnly] }]),
+    });
+
+    await expect(client.listReferences()).resolves.toEqual({
+      references: [materialOnly],
+    });
+  });
+
   it('rejects unsafe request identities before calling fetch', async () => {
     const fetcher = vi.fn() as unknown as typeof fetch;
     const client = createOanClient({ backendBaseUrl: 'http://backend.test', fetch: fetcher });
@@ -608,7 +728,7 @@ function referenceSummary(
     chapterCount: 2,
     structureConfidence: 'high',
     progress: {
-      version: 1,
+      version: 2,
       referenceId: 'reference-1',
       status: 'notAnalyzed',
       currentStage: null,
@@ -669,6 +789,51 @@ function publishedReferenceSummary(
         character: 1,
       },
       ...publishedContextOverrides,
+    },
+  });
+}
+
+function materialOnlyReferenceSummary(): ReferenceWorkSummary {
+  const base = referenceSummary();
+  return referenceSummary({
+    progress: {
+      ...base.progress,
+      status: 'completed',
+      currentStage: null,
+      nextStage: null,
+      completedStages: [
+        'detectStructure',
+        'quickPreview',
+        'materialChapterAnalysis',
+        'materialAggregateAnalysis',
+        'materialProjection',
+        'qualityGate',
+      ],
+      stages: {
+        detectStructure: 'completed',
+        quickPreview: 'completed',
+        materialChapterAnalysis: 'completed',
+        materialAggregateAnalysis: 'completed',
+        materialProjection: 'completed',
+        qualityGate: 'completed',
+      },
+      resumable: false,
+      contextEligible: false,
+    },
+    deconstructionStatus: 'completed',
+    contextEligible: false,
+    readinessReason: 'techniqueTrackNotPublished',
+    publishedContext: {
+      runId: 'run-material-published-1',
+      fingerprint: 'e'.repeat(64),
+      entryCount: 0,
+      categoryCounts: {
+        writingStyle: 0,
+        pacing: 0,
+        hooks: 0,
+        scene: 0,
+        character: 0,
+      },
     },
   });
 }
@@ -741,15 +906,17 @@ function run(status: ReferenceDeconstructionRun['status']): ReferenceDeconstruct
     resultStatus: 'created',
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'run-1',
     referenceId: 'reference-1',
     runRevision: 0,
     status,
     sourceChecksumSha256: 'a'.repeat(64),
     structureFingerprint: 'b'.repeat(64),
-    pipelineVersion: 1,
-    capabilityVersion: 'novel.deconstruct_reference@1',
+    pipelineVersion: 2,
+    capabilityVersion: 'novel.deconstruct_reference@2',
+    profileId: 'commercialWriting',
+    outputs: ['techniques'],
     selectedChapterIds: ['0001'],
     evidence: [{
       id: 'pointer-1',
@@ -809,7 +976,7 @@ function previewRun(): ReferenceDeconstructionRun {
     receiptCount: 2,
     updatedAt: '2026-07-22T00:01:00.000Z',
     preview: {
-      version: 1,
+      version: 2,
       runId: 'run-1',
       referenceId: 'reference-1',
       sourceChecksumSha256: 'a'.repeat(64),
@@ -877,6 +1044,320 @@ function terminalRun(
   };
 }
 
+function materialPreviewRun(): ReferenceDeconstructionRun {
+  const base = run('created');
+  const advanceReceipt: ReferenceDeconstructionMutationReceipt = {
+    idempotencyKey: 'material-preview-1',
+    requestFingerprint: 'e'.repeat(64),
+    resultingRunRevision: 1,
+    resultStatus: 'awaitingFullApproval',
+  };
+  return {
+    ...base,
+    profileId: 'fanfictionWriting',
+    outputs: ['world', 'characters'],
+    runRevision: 1,
+    status: 'awaitingFullApproval',
+    mutationReceipts: [...base.mutationReceipts, advanceReceipt],
+    receiptCount: 2,
+    materialPreview: {
+      version: 2,
+      runId: base.id,
+      referenceId: base.referenceId,
+      sourceChecksumSha256: base.sourceChecksumSha256,
+      track: 'storyMaterial',
+      materialKinds: ['world', 'characters'],
+      items: [{
+        id: 'material-coverage-world',
+        materialKind: 'world',
+        coverage: 'substantial',
+        summary: 'The preview contains explicit world rules and constraints.',
+        confidence: 'high',
+        evidenceRefs: ['pointer-1'],
+      }, {
+        id: 'material-coverage-characters',
+        materialKind: 'characters',
+        coverage: 'partial',
+        summary: 'The preview introduces one central character goal.',
+        confidence: 'medium',
+        evidenceRefs: ['pointer-1'],
+        uncertainty: 'Later chapters may revise the apparent goal.',
+      }],
+      uncertainties: ['Only the selected opening window was inspected.'],
+    },
+    updatedAt: '2026-07-22T00:01:00.000Z',
+  };
+}
+
+function materialReviewReadyRun(): ReferenceDeconstructionRun {
+  const preview = materialPreviewRun();
+  const units: ReferenceDeconstructionFullRun['recentUnits'] = [
+    {
+      id: 'material-chapter-0001',
+      ordinal: 1,
+      track: 'storyMaterial',
+      stageId: 'materialChapterAnalysis',
+      kind: 'chapterChunk',
+      chapterId: '0001',
+      chunkId: '0001-chunk-001',
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'material-chapter-0001-attempt-1',
+    },
+    {
+      id: 'material-aggregate-final',
+      ordinal: 2,
+      track: 'storyMaterial',
+      stageId: 'materialAggregateAnalysis',
+      kind: 'aggregate',
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'material-aggregate-final-attempt-1',
+    },
+    {
+      id: 'material-projection-final',
+      ordinal: 3,
+      track: 'storyMaterial',
+      stageId: 'materialProjection',
+      kind: 'materialProjection',
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'material-projection-final-attempt-1',
+    },
+    {
+      id: 'material-quality-final',
+      ordinal: 4,
+      track: 'storyMaterial',
+      stageId: 'qualityGate',
+      kind: 'analysisQuality',
+      status: 'completed',
+      attemptCount: 1,
+      selectedAttemptId: 'material-quality-final-attempt-1',
+    },
+  ];
+  const attempts = units.map((unit, index) => ({
+    id: unit.selectedAttemptId!,
+    unitId: unit.id,
+    attemptNumber: 1,
+    status: 'completed' as const,
+    inputFingerprint: (index + 1).toString(16).repeat(64),
+    outputHash: (index + 8).toString(16).repeat(64),
+    startedAt: `2026-07-22T00:0${index + 2}:00.000Z`,
+    completedAt: `2026-07-22T00:0${index + 2}:30.000Z`,
+  }));
+  const receipts: ReferenceDeconstructionMutationReceipt[] = Array.from(
+    { length: 7 },
+    (_, revision) => ({
+      idempotencyKey: `material-history-${revision}`,
+      requestFingerprint: (revision % 16).toString(16).repeat(64),
+      resultingRunRevision: revision,
+      resultStatus: revision === 0
+        ? 'created'
+        : revision === 1
+          ? 'awaitingFullApproval'
+          : revision === 2
+            ? 'fullApproved'
+            : revision === 6
+              ? 'reviewReady'
+              : 'fullRunning',
+    }),
+  );
+  return {
+    ...preview,
+    runRevision: 6,
+    status: 'reviewReady',
+    mutationReceipts: receipts,
+    receiptCount: 7,
+    fullApprovedAt: '2026-07-22T00:02:00.000Z',
+    full: {
+      stages: [
+        materialStage('materialChapterAnalysis', 1),
+        materialStage('materialAggregateAnalysis', 1),
+        materialStage('materialProjection', 1),
+        materialStage('qualityGate', 1),
+      ],
+      progress: {
+        plannedUnits: 4,
+        completedUnits: 4,
+        failedUnits: 0,
+        completedChapters: 1,
+        totalChapters: 1,
+        percent: 100,
+      },
+      recentUnits: units,
+      recentAttempts: attempts,
+      analysisQuality: {
+        storyMaterial: {
+          status: 'passed',
+          coveragePercent: 100,
+          blockingDiagnosticCount: 0,
+          outputHashes: attempts.map((attempt) => attempt.outputHash),
+        },
+      },
+    },
+    updatedAt: '2026-07-22T00:06:30.000Z',
+  };
+}
+
+function materialStage(
+  stageId:
+    | 'materialChapterAnalysis'
+    | 'materialAggregateAnalysis'
+    | 'materialProjection'
+    | 'qualityGate',
+  plannedUnits: number,
+): ReferenceDeconstructionFullRun['stages'][number] {
+  return {
+    track: 'storyMaterial',
+    stageId,
+    status: 'completed',
+    plannedUnits,
+    completedUnits: plannedUnits,
+    failedUnits: 0,
+  };
+}
+
+function materialPublishingRun(): ReferenceDeconstructionRun {
+  const base = materialReviewReadyRun();
+  const receipt: ReferenceDeconstructionMutationReceipt = {
+    idempotencyKey: 'material-publish-1',
+    requestFingerprint: 'd'.repeat(64),
+    resultingRunRevision: 7,
+    resultStatus: 'publishing',
+  };
+  return {
+    ...base,
+    runRevision: 7,
+    status: 'publishing',
+    mutationReceipts: [...base.mutationReceipts, receipt],
+    receiptCount: 8,
+    publication: {
+      candidateFingerprint: 'f'.repeat(64),
+      pendingActionId: `pa_${'b'.repeat(64)}`,
+      files: [{
+        path: 'examples/references.yaml',
+        checksumSha256: '1'.repeat(64),
+        kind: 'index',
+      }, {
+        path: 'examples/references/reference-1/materials/world.yaml',
+        checksumSha256: '2'.repeat(64),
+        kind: 'materials',
+      }, {
+        path: 'examples/references/reference-1/materials/characters.yaml',
+        checksumSha256: '3'.repeat(64),
+        kind: 'materials',
+      }],
+      entryInventory: [],
+      materialInventory: [{
+        id: 'material-world-rule',
+        materialKind: 'world',
+        title: 'The gate opens only during the winter solstice',
+        assertionType: 'fact',
+        confidence: 'high',
+        path: 'materials/world.yaml',
+      }, {
+        id: 'material-character-goal',
+        materialKind: 'characters',
+        title: 'The courier wants to expose the hidden council',
+        assertionType: 'interpretation',
+        confidence: 'medium',
+        path: 'materials/characters.yaml',
+      }],
+      preparedAt: '2026-07-22T00:07:00.000Z',
+    },
+    updatedAt: '2026-07-22T00:07:00.000Z',
+  };
+}
+
+function combinedFailedRun(): ReferenceDeconstructionRun {
+  const base = reviewReadyRun();
+  const materialPreview = materialPreviewRun().materialPreview!;
+  const blockingDiagnostic = {
+    id: 'material-structure-blocked',
+    severity: 'error' as const,
+    code: 'material.evidence_closure_failed',
+    message: 'A Story Material finding does not close to verified evidence.',
+    blocking: true,
+    evidenceRefs: ['pointer-1'],
+    stageId: 'materialChapterAnalysis' as const,
+    chapterId: '0001',
+    pointerId: 'pointer-1',
+  };
+  const receipt: ReferenceDeconstructionMutationReceipt = {
+    idempotencyKey: 'combined-material-failed',
+    requestFingerprint: 'e'.repeat(64),
+    resultingRunRevision: 8,
+    resultStatus: 'failed',
+  };
+  return {
+    ...base,
+    profileId: 'combinedWriting',
+    outputs: ['techniques', 'world', 'characters'],
+    materialPreview,
+    runRevision: 8,
+    status: 'failed',
+    diagnostics: [...base.diagnostics, blockingDiagnostic],
+    mutationReceipts: [...base.mutationReceipts, receipt],
+    receiptCount: 9,
+    full: {
+      ...base.full!,
+      stages: [
+        ...base.full!.stages,
+        {
+          track: 'storyMaterial',
+          stageId: 'materialChapterAnalysis',
+          status: 'failed',
+          plannedUnits: 2,
+          completedUnits: 0,
+          failedUnits: 1,
+        },
+        {
+          track: 'storyMaterial',
+          stageId: 'materialAggregateAnalysis',
+          status: 'queued',
+          plannedUnits: 1,
+          completedUnits: 0,
+          failedUnits: 0,
+        },
+        {
+          track: 'storyMaterial',
+          stageId: 'materialProjection',
+          status: 'queued',
+          plannedUnits: 1,
+          completedUnits: 0,
+          failedUnits: 0,
+        },
+        {
+          track: 'storyMaterial',
+          stageId: 'qualityGate',
+          status: 'queued',
+          plannedUnits: 1,
+          completedUnits: 0,
+          failedUnits: 0,
+        },
+      ],
+      progress: {
+        plannedUnits: 11,
+        completedUnits: 6,
+        failedUnits: 1,
+        completedChapters: 2,
+        totalChapters: 2,
+        percent: 55,
+      },
+      analysisQuality: {
+        technique: base.full!.analysisQuality.technique!,
+        storyMaterial: {
+          status: 'failed',
+          coveragePercent: 0,
+          blockingDiagnosticCount: 1,
+          outputHashes: [],
+        },
+      },
+    },
+    updatedAt: '2026-07-22T00:09:00.000Z',
+  };
+}
+
 function approvedRun(idempotencyKey: string): ReferenceDeconstructionRun {
   const base = previewRun();
   const receipt: ReferenceDeconstructionMutationReceipt = {
@@ -936,6 +1417,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
   const nextUnit = {
     id: 'chapter-0001-chunk-001',
     ordinal: 1,
+    track: 'technique' as const,
     stageId: 'chapterAnalysis' as const,
     kind: 'chapterChunk' as const,
     chapterId: '0001',
@@ -946,6 +1428,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
   return {
     stages: [
       {
+        track: 'technique',
         stageId: 'chapterAnalysis',
         status: 'queued',
         plannedUnits: 2,
@@ -953,6 +1436,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
         failedUnits: 0,
       },
       {
+        track: 'technique',
         stageId: 'aggregateAnalysis',
         status: 'notStarted',
         plannedUnits: 1,
@@ -960,6 +1444,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
         failedUnits: 0,
       },
       {
+        track: 'technique',
         stageId: 'styleProfile',
         status: 'notStarted',
         plannedUnits: 1,
@@ -967,6 +1452,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
         failedUnits: 0,
       },
       {
+        track: 'technique',
         stageId: 'distillForOan',
         status: 'notStarted',
         plannedUnits: 1,
@@ -974,6 +1460,7 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
         failedUnits: 0,
       },
       {
+        track: 'technique',
         stageId: 'qualityGate',
         status: 'notStarted',
         plannedUnits: 1,
@@ -992,6 +1479,14 @@ function initialFullRun(): ReferenceDeconstructionFullRun {
     nextUnit,
     recentUnits: [nextUnit],
     recentAttempts: [],
+    analysisQuality: {
+      technique: {
+        status: 'notEvaluated',
+        coveragePercent: 0,
+        blockingDiagnosticCount: 0,
+        outputHashes: [],
+      },
+    },
   };
 }
 
@@ -1065,6 +1560,7 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
     full: {
       stages: [
         {
+          track: 'technique',
           stageId: 'chapterAnalysis',
           status: 'completed',
           plannedUnits: 2,
@@ -1072,6 +1568,7 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
           failedUnits: 0,
         },
         {
+          track: 'technique',
           stageId: 'aggregateAnalysis',
           status: 'completed',
           plannedUnits: 1,
@@ -1079,6 +1576,7 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
           failedUnits: 0,
         },
         {
+          track: 'technique',
           stageId: 'styleProfile',
           status: 'completed',
           plannedUnits: 1,
@@ -1086,6 +1584,7 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
           failedUnits: 0,
         },
         {
+          track: 'technique',
           stageId: 'distillForOan',
           status: 'completed',
           plannedUnits: 1,
@@ -1093,6 +1592,7 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
           failedUnits: 0,
         },
         {
+          track: 'technique',
           stageId: 'qualityGate',
           status: 'completed',
           plannedUnits: 1,
@@ -1111,10 +1611,12 @@ function reviewReadyRun(runRevision = 7): ReferenceDeconstructionRun {
       recentUnits: units,
       recentAttempts: attempts,
       analysisQuality: {
-        status: 'warned',
-        coveragePercent: 100,
-        blockingDiagnosticCount: 0,
-        outputHashes: attempts.map((attempt) => attempt.outputHash),
+        technique: {
+          status: 'warned',
+          coveragePercent: 100,
+          blockingDiagnosticCount: 0,
+          outputHashes: attempts.map((attempt) => attempt.outputHash),
+        },
       },
     },
     updatedAt: '2026-07-22T00:08:00.000Z',
@@ -1136,6 +1638,7 @@ function completedUnit(
   return {
     id,
     ordinal,
+    track: 'technique' as const,
     stageId,
     kind,
     ...(location ?? {}),

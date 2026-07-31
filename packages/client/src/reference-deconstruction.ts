@@ -7,6 +7,8 @@ import type {
   ReferenceSourceManifest,
   ReferenceWorkSummary,
 } from './index.js';
+import { WRITING_PROFILE_OUTPUTS } from './writing-profile.js';
+import type { WritingProfileOutput } from './writing-profile.js';
 
 export type NovelCopilotCapabilityId =
   | 'novel.generate_character_card'
@@ -118,7 +120,7 @@ export interface ReferenceQuickPreviewCoverage {
 }
 
 export interface ReferenceQuickPreview {
-  version: 1;
+  version: 2;
   runId: string;
   referenceId: string;
   sourceChecksumSha256: string;
@@ -136,6 +138,39 @@ export interface ReferenceQuickPreview {
   diagnostics: ReferenceDeconstructionDiagnostic[];
 }
 
+export type ReferenceDeconstructionTrackId = 'technique' | 'storyMaterial';
+
+export type ReferenceStoryMaterialKind = Exclude<
+  WritingProfileOutput,
+  'techniques'
+>;
+
+export type ReferenceStoryMaterialCoverageLevel =
+  | 'none'
+  | 'partial'
+  | 'substantial';
+
+export interface ReferenceStoryMaterialCoverageItem {
+  id: string;
+  materialKind: ReferenceStoryMaterialKind;
+  coverage: ReferenceStoryMaterialCoverageLevel;
+  summary: string;
+  confidence: ReferenceDeconstructionConfidence;
+  evidenceRefs: string[];
+  uncertainty?: string;
+}
+
+export interface ReferenceStoryMaterialCoveragePreview {
+  version: 2;
+  runId: string;
+  referenceId: string;
+  sourceChecksumSha256: string;
+  track: 'storyMaterial';
+  materialKinds: ReferenceStoryMaterialKind[];
+  items: ReferenceStoryMaterialCoverageItem[];
+  uncertainties: string[];
+}
+
 export interface ReferenceDeconstructionMutationReceipt {
   idempotencyKey: string;
   requestFingerprint: string;
@@ -148,6 +183,7 @@ export type ReferenceDeconstructionUnitKind =
   | 'aggregate'
   | 'style'
   | 'distill'
+  | 'materialProjection'
   | 'analysisQuality';
 
 export type ReferenceDeconstructionUnitStatus =
@@ -163,6 +199,7 @@ export type ReferenceDeconstructionAttemptStatus =
   Exclude<ReferenceDeconstructionUnitStatus, 'queued'>;
 
 export interface ReferenceDeconstructionFullStageSummary {
+  track: ReferenceDeconstructionTrackId;
   stageId: ReferenceDeconstructionStageId;
   status: ReferenceDeconstructionStageStatus;
   plannedUnits: number;
@@ -182,6 +219,7 @@ export interface ReferenceDeconstructionFullProgress {
 export interface ReferenceDeconstructionUnitSummary {
   id: string;
   ordinal: number;
+  track: ReferenceDeconstructionTrackId;
   stageId: ReferenceDeconstructionStageId;
   kind: ReferenceDeconstructionUnitKind;
   chapterId?: string;
@@ -223,7 +261,10 @@ export interface ReferenceDeconstructionFullRun {
   failedUnit?: ReferenceDeconstructionUnitSummary;
   recentUnits: ReferenceDeconstructionUnitSummary[];
   recentAttempts: ReferenceDeconstructionAttemptSummary[];
-  analysisQuality?: ReferenceDeconstructionAnalysisQuality;
+  analysisQuality: Partial<Record<
+    ReferenceDeconstructionTrackId,
+    ReferenceDeconstructionAnalysisQuality
+  >>;
 }
 
 export type ReferenceDistilledCategory =
@@ -240,6 +281,7 @@ export type ReferenceDeconstructionPublicationFileKind =
   | 'progress'
   | 'deconstruction'
   | 'distilled'
+  | 'materials'
   | 'context';
 
 export interface ReferenceDeconstructionPublicationFile {
@@ -255,27 +297,45 @@ export interface ReferenceDeconstructionPublicationEntry {
   estimatedTokens: number;
 }
 
+export type ReferenceStoryMaterialAssertionType =
+  | 'fact'
+  | 'interpretation'
+  | 'uncertain';
+
+export interface ReferenceDeconstructionPublicationMaterialInventoryItem {
+  id: string;
+  materialKind: ReferenceStoryMaterialKind;
+  title: string;
+  assertionType: ReferenceStoryMaterialAssertionType;
+  confidence: ReferenceDeconstructionConfidence;
+  path: string;
+}
+
 export interface ReferenceDeconstructionPublication {
   candidateFingerprint: string;
   pendingActionId?: string;
   files: ReferenceDeconstructionPublicationFile[];
   entryInventory: ReferenceDeconstructionPublicationEntry[];
+  materialInventory?: ReferenceDeconstructionPublicationMaterialInventoryItem[];
   preparedAt: string;
 }
 
 export interface ReferenceDeconstructionRun {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   referenceId: string;
   runRevision: number;
   status: ReferenceDeconstructionRunStatus;
   sourceChecksumSha256: string;
   structureFingerprint: string;
-  pipelineVersion: 1;
-  capabilityVersion: string;
+  pipelineVersion: 2;
+  capabilityVersion: 'novel.deconstruct_reference@2';
+  profileId: string;
+  outputs: WritingProfileOutput[];
   selectedChapterIds: string[];
   evidence: ReferencePreviewEvidence[];
   preview?: ReferenceQuickPreview;
+  materialPreview?: ReferenceStoryMaterialCoveragePreview;
   diagnostics: ReferenceDeconstructionDiagnostic[];
   mutationReceipts: ReferenceDeconstructionMutationReceipt[];
   receiptCount: number;
@@ -385,18 +445,38 @@ const FINDING_KINDS: ReadonlySet<string> = new Set([
   'characterTechnique',
   'worldbuildingTechnique',
 ]);
-const FULL_STAGE_IDS: readonly ReferenceDeconstructionStageId[] = [
+const TECHNIQUE_FULL_STAGES = [
   'chapterAnalysis',
   'aggregateAnalysis',
   'styleProfile',
   'distillForOan',
   'qualityGate',
+] as const satisfies readonly ReferenceDeconstructionStageId[];
+const STORY_MATERIAL_FULL_STAGES = [
+  'materialChapterAnalysis',
+  'materialAggregateAnalysis',
+  'materialProjection',
+  'qualityGate',
+] as const satisfies readonly ReferenceDeconstructionStageId[];
+const FULL_STAGE_IDS: readonly ReferenceDeconstructionStageId[] = [
+  ...TECHNIQUE_FULL_STAGES,
+  ...STORY_MATERIAL_FULL_STAGES.filter((stageId) => stageId !== 'qualityGate'),
 ];
+const TRACK_IDS = ['technique', 'storyMaterial'] as const;
+const STORY_MATERIAL_KINDS = WRITING_PROFILE_OUTPUTS.filter(
+  (output): output is ReferenceStoryMaterialKind => output !== 'techniques',
+);
+const STORY_MATERIAL_COVERAGE_LEVELS: ReadonlySet<string> = new Set([
+  'none',
+  'partial',
+  'substantial',
+]);
 const UNIT_KINDS: ReadonlySet<string> = new Set([
   'chapterChunk',
   'aggregate',
   'style',
   'distill',
+  'materialProjection',
   'analysisQuality',
 ]);
 const DISTILLED_CATEGORIES: ReadonlySet<string> = new Set([
@@ -414,6 +494,7 @@ const PUBLICATION_FILE_KINDS: ReadonlySet<string> = new Set([
   'progress',
   'deconstruction',
   'distilled',
+  'materials',
   'context',
 ]);
 const UNIT_STATUSES: ReadonlySet<string> = new Set([
@@ -787,9 +868,12 @@ export function isReferenceDeconstructionRun(
       'structureFingerprint',
       'pipelineVersion',
       'capabilityVersion',
+      'profileId',
+      'outputs',
       'selectedChapterIds',
       'evidence',
       'preview',
+      'materialPreview',
       'diagnostics',
       'mutationReceipts',
       'receiptCount',
@@ -799,15 +883,17 @@ export function isReferenceDeconstructionRun(
       'updatedAt',
       'fullApprovedAt',
     ]) ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     !isSafeId(value.id) ||
     !isSafeId(value.referenceId) ||
     !isNonNegativeSafeInteger(value.runRevision) ||
     !isRunStatus(value.status) ||
     !isSha256(value.sourceChecksumSha256) ||
     !isSha256(value.structureFingerprint) ||
-    value.pipelineVersion !== 1 ||
-    value.capabilityVersion !== 'novel.deconstruct_reference@1' ||
+    value.pipelineVersion !== 2 ||
+    value.capabilityVersion !== 'novel.deconstruct_reference@2' ||
+    !isWritingProfileId(value.profileId) ||
+    !isCanonicalWritingProfileOutputs(value.outputs) ||
     !isUniqueSafeIdArray(value.selectedChapterIds, 3) ||
     value.selectedChapterIds.length === 0 ||
     !Array.isArray(value.evidence) ||
@@ -830,6 +916,7 @@ export function isReferenceDeconstructionRun(
         value.evidence as ReferencePreviewEvidence[],
         value.full,
         value.diagnostics,
+        value.outputs,
       )) ||
     !Array.isArray(value.mutationReceipts) ||
     value.mutationReceipts.length === 0 ||
@@ -847,10 +934,14 @@ export function isReferenceDeconstructionRun(
     (value.fullApprovedAt !== undefined &&
       isPreApprovalRunStatus(value.status)) ||
     (value.full !== undefined &&
-      !isReferenceDeconstructionFullRun(value.full, value.diagnostics)) ||
+      !isReferenceDeconstructionFullRun(value.full, value.diagnostics, value.outputs)) ||
     ((value.full === undefined) !== (value.fullApprovedAt === undefined)) ||
     (value.publication !== undefined &&
-      !isReferenceDeconstructionPublication(value.publication, value.referenceId)) ||
+      !isReferenceDeconstructionPublication(
+        value.publication,
+        value.referenceId,
+        value.outputs,
+      )) ||
     ((value.status === 'publishing' || value.status === 'completed') !==
       (value.publication !== undefined)) ||
     ((value.status === 'publishing' || value.status === 'completed') &&
@@ -865,14 +956,27 @@ export function isReferenceDeconstructionRun(
       new Set((value.evidence as ReferencePreviewEvidence[]).map((item) => item.id)),
       value.selectedChapterIds as string[],
     )) ||
+    (value.materialPreview !== undefined && !isStoryMaterialCoveragePreview(
+      value.materialPreview,
+      value.id as string,
+      value.referenceId as string,
+      value.sourceChecksumSha256 as string,
+      new Set((value.evidence as ReferencePreviewEvidence[]).map((item) => item.id)),
+      materialKindsFromOutputs(value.outputs),
+    )) ||
     (value.preview !== undefined && !arePreviewDiagnosticsConsistent(
       value.preview,
       value.diagnostics as ReferenceDeconstructionDiagnostic[],
       value.full !== undefined,
     )) ||
-    (requiresPreview(value.status, value.fullApprovedAt) && value.preview === undefined) ||
+    (requiresPreview(value.status, value.fullApprovedAt) && (
+      outputsIncludeTechnique(value.outputs) && value.preview === undefined
+      || outputsIncludeStoryMaterial(value.outputs) && value.materialPreview === undefined
+    )) ||
+    (!outputsIncludeTechnique(value.outputs) && value.preview !== undefined) ||
+    (!outputsIncludeStoryMaterial(value.outputs) && value.materialPreview !== undefined) ||
     (['reviewReady', 'publishing', 'completed'].includes(value.status as string) &&
-      !isReviewReadyFullRun(value.full, value.diagnostics)) ||
+      !isReviewReadyFullRun(value.full, value.diagnostics, value.outputs)) ||
     value.mutationReceipts.some((receipt) =>
       receipt.resultingRunRevision > (value.runRevision as number))
   ) {
@@ -892,8 +996,13 @@ export function isReferenceDeconstructionRun(
 function isReferenceDeconstructionFullRun(
   value: unknown,
   diagnostics: unknown,
+  outputs: unknown,
 ): value is ReferenceDeconstructionFullRun {
+  const expectedStages = expectedFullStagePairs(outputs);
+  const selectedTracks = trackIdsFromOutputs(outputs);
   if (
+    !expectedStages.length ||
+    !selectedTracks.length ||
     !isRecord(value) ||
     !hasOnlyKnownFields(value, [
       'stages',
@@ -906,27 +1015,34 @@ function isReferenceDeconstructionFullRun(
       'analysisQuality',
     ]) ||
     !Array.isArray(value.stages) ||
-    value.stages.length !== FULL_STAGE_IDS.length ||
+    value.stages.length !== expectedStages.length ||
     !value.stages.every(isFullStageSummary) ||
     !value.stages.every((stage, index) =>
-      (stage as ReferenceDeconstructionFullStageSummary).stageId ===
-        FULL_STAGE_IDS[index]) ||
+      (stage as ReferenceDeconstructionFullStageSummary).track ===
+        expectedStages[index]?.track
+      && (stage as ReferenceDeconstructionFullStageSummary).stageId ===
+        expectedStages[index]?.stageId) ||
     !isFullProgress(value.progress) ||
     (value.nextUnit !== undefined && (
       !isUnitSummary(value.nextUnit) ||
+      !selectedTracks.includes(value.nextUnit.track) ||
       value.nextUnit.status !== 'queued'
     )) ||
     (value.currentUnit !== undefined && (
       !isUnitSummary(value.currentUnit) ||
+      !selectedTracks.includes(value.currentUnit.track) ||
       value.currentUnit.status !== 'running'
     )) ||
     (value.failedUnit !== undefined && (
       !isUnitSummary(value.failedUnit) ||
+      !selectedTracks.includes(value.failedUnit.track) ||
       !['failed', 'interrupted'].includes(value.failedUnit.status)
     )) ||
     !Array.isArray(value.recentUnits) ||
     value.recentUnits.length > MAX_FULL_DECONSTRUCTION_RECENT_ITEMS ||
     !value.recentUnits.every(isUnitSummary) ||
+    !(value.recentUnits as ReferenceDeconstructionUnitSummary[]).every((unit) =>
+      selectedTracks.includes(unit.track)) ||
     !hasUniqueIds(value.recentUnits) ||
     !hasUniqueOrdinals(value.recentUnits) ||
     !Array.isArray(value.recentAttempts) ||
@@ -934,8 +1050,11 @@ function isReferenceDeconstructionFullRun(
     !value.recentAttempts.every(isAttemptSummary) ||
     !hasUniqueIds(value.recentAttempts) ||
     !hasUniqueAttemptNumbers(value.recentAttempts) ||
-    (value.analysisQuality !== undefined &&
-      !isAnalysisQuality(value.analysisQuality, diagnostics)) ||
+    !isAnalysisQualityByTrack(
+      value.analysisQuality,
+      diagnostics,
+      selectedTracks,
+    ) ||
     !areSpecialUnitsConsistentWithRecent(value) ||
     !isFullProgressConsistentWithStages(value.progress, value.stages)
   ) {
@@ -954,6 +1073,7 @@ function isReferenceDeconstructionFullRun(
 function isReferenceDeconstructionPublication(
   value: unknown,
   referenceId: unknown,
+  outputs: unknown,
 ): value is ReferenceDeconstructionPublication {
   if (
     !isRecord(value)
@@ -962,6 +1082,7 @@ function isReferenceDeconstructionPublication(
       'pendingActionId',
       'files',
       'entryInventory',
+      'materialInventory',
       'preparedAt',
     ])
     || !isSha256(value.candidateFingerprint)
@@ -973,19 +1094,82 @@ function isReferenceDeconstructionPublication(
       isReferenceDeconstructionPublicationFile(file, referenceId))
     || !hasUniqueStringField(value.files, 'path')
     || !Array.isArray(value.entryInventory)
-    || value.entryInventory.length < 5
     || value.entryInventory.length > 50
     || !value.entryInventory.every(isReferenceDeconstructionPublicationEntry)
     || !hasUniqueIds(value.entryInventory)
+    || (value.materialInventory !== undefined && (
+      !Array.isArray(value.materialInventory)
+      || value.materialInventory.length < 1
+      || value.materialInventory.length > 320
+      || !value.materialInventory.every(isReferenceDeconstructionPublicationMaterialEntry)
+      || !hasUniqueIds(value.materialInventory)
+    ))
     || !isTimestamp(value.preparedAt)
   ) {
     return false;
   }
   const entries = value.entryInventory as ReferenceDeconstructionPublicationEntry[];
-  return [...DISTILLED_CATEGORIES].every((category) => {
+  const techniqueInventoryValid = [...DISTILLED_CATEGORIES].every((category) => {
     const count = entries.filter((entry) => entry.category === category).length;
     return count >= 1 && count <= 12;
   });
+  if (outputsIncludeTechnique(outputs) !== techniqueInventoryValid) return false;
+  if (!outputsIncludeTechnique(outputs) && entries.length !== 0) return false;
+  const files = value.files as ReferenceDeconstructionPublicationFile[];
+  const selectedMaterialKinds = materialKindsFromOutputs(outputs);
+  const publishedMaterialKinds = files
+    .filter((file) => file.kind === 'materials')
+    .map((file) => publicationMaterialKind(file.path, referenceId));
+  const materialInventory = (value.materialInventory ?? []) as
+    ReferenceDeconstructionPublicationMaterialInventoryItem[];
+  if (
+    !outputsIncludeStoryMaterial(outputs)
+    && (value.materialInventory !== undefined || files.some((file) => file.kind === 'materials'))
+  ) {
+    return false;
+  }
+  return !outputsIncludeStoryMaterial(outputs) || (
+    publishedMaterialKinds.length === selectedMaterialKinds.length
+    && publishedMaterialKinds.every((kind) =>
+      kind !== undefined && selectedMaterialKinds.includes(kind))
+    && materialInventory.every((entry) =>
+      selectedMaterialKinds.includes(entry.materialKind))
+  );
+}
+
+function publicationMaterialKind(
+  path: string,
+  referenceId: unknown,
+): ReferenceStoryMaterialKind | undefined {
+  if (!isSafeId(referenceId)) return undefined;
+  const prefix = `examples/references/${referenceId}/materials/`;
+  if (!path.startsWith(prefix) || !path.endsWith('.yaml')) return undefined;
+  const kind = path.slice(prefix.length, -'.yaml'.length);
+  return isStoryMaterialKind(kind) ? kind : undefined;
+}
+
+function isReferenceDeconstructionPublicationMaterialEntry(
+  value: unknown,
+): value is ReferenceDeconstructionPublicationMaterialInventoryItem {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'id',
+      'materialKind',
+      'title',
+      'assertionType',
+      'confidence',
+      'path',
+    ])
+    && isSafeId(value.id)
+    && isStoryMaterialKind(value.materialKind)
+    && isBoundedText(value.title, 300)
+    && (
+      value.assertionType === 'fact'
+      || value.assertionType === 'interpretation'
+      || value.assertionType === 'uncertain'
+    )
+    && isConfidence(value.confidence)
+    && value.path === `materials/${value.materialKind}.yaml`;
 }
 
 function isReferenceDeconstructionPublicationFile(
@@ -1021,6 +1205,9 @@ function isReferenceDeconstructionPublicationFile(
     case 'distilled':
       return relativePath.startsWith('distilled/')
         && relativePath.endsWith('.md');
+    case 'materials':
+      return relativePath.startsWith('materials/')
+        && relativePath.endsWith('.yaml');
     case 'context':
       return relativePath.startsWith('context/')
         && (relativePath.endsWith('.md') || relativePath.endsWith('.yaml'));
@@ -1108,13 +1295,16 @@ function isFullStageSummary(
   if (
     !isRecord(value) ||
     !hasOnlyKnownFields(value, [
+      'track',
       'stageId',
       'status',
       'plannedUnits',
       'completedUnits',
       'failedUnits',
     ]) ||
+    !isTrackId(value.track) ||
     !FULL_STAGE_IDS.includes(value.stageId as ReferenceDeconstructionStageId) ||
+    !isStageOwnedByTrack(value.stageId, value.track) ||
     !isReferenceStageStatus(value.status) ||
     !isBoundedUnitCount(value.plannedUnits) ||
     !isBoundedUnitCount(value.completedUnits) ||
@@ -1179,6 +1369,7 @@ function isUnitSummary(
     !hasOnlyKnownFields(value, [
       'id',
       'ordinal',
+      'track',
       'stageId',
       'kind',
       'chapterId',
@@ -1188,9 +1379,11 @@ function isUnitSummary(
       'selectedAttemptId',
     ]) ||
     !isSafeId(value.id) ||
-    !isNonNegativeSafeInteger(value.ordinal) ||
+    !isPositiveSafeInteger(value.ordinal) ||
     (value.ordinal as number) > MAX_FULL_DECONSTRUCTION_UNITS ||
+    !isTrackId(value.track) ||
     !FULL_STAGE_IDS.includes(value.stageId as ReferenceDeconstructionStageId) ||
+    !isStageOwnedByTrack(value.stageId, value.track) ||
     typeof value.kind !== 'string' ||
     !UNIT_KINDS.has(value.kind) ||
     typeof value.status !== 'string' ||
@@ -1205,7 +1398,10 @@ function isUnitSummary(
   const isChapterChunk = value.kind === 'chapterChunk';
   if (
     isChapterChunk !== (
-      value.stageId === 'chapterAnalysis' &&
+      (
+        value.stageId === 'chapterAnalysis'
+        || value.stageId === 'materialChapterAnalysis'
+      ) &&
       isSafeId(value.chapterId) &&
       isSafeId(value.chunkId)
     )
@@ -1215,9 +1411,14 @@ function isUnitSummary(
     (value.chapterId !== undefined || value.chunkId !== undefined)
   ) return false;
   if (
-    (value.kind === 'aggregate') !== (value.stageId === 'aggregateAnalysis') ||
+    (value.kind === 'aggregate') !== (
+      value.stageId === 'aggregateAnalysis'
+      || value.stageId === 'materialAggregateAnalysis'
+    ) ||
     (value.kind === 'style') !== (value.stageId === 'styleProfile') ||
     (value.kind === 'distill') !== (value.stageId === 'distillForOan') ||
+    (value.kind === 'materialProjection') !==
+      (value.stageId === 'materialProjection') ||
     (value.kind === 'analysisQuality') !== (value.stageId === 'qualityGate')
   ) return false;
   if (
@@ -1292,7 +1493,7 @@ function isAnalysisQuality(
     !value.outputHashes.every(isSha256) ||
     new Set(value.outputHashes).size !== value.outputHashes.length ||
     !Array.isArray(diagnostics) ||
-    value.blockingDiagnosticCount !== diagnostics.filter((diagnostic) =>
+    (value.blockingDiagnosticCount as number) > diagnostics.filter((diagnostic) =>
       isRecord(diagnostic) && diagnostic.blocking === true).length
   ) {
     return false;
@@ -1300,18 +1501,32 @@ function isAnalysisQuality(
   if (value.status === 'passed') {
     return value.coveragePercent === 100 &&
       value.blockingDiagnosticCount === 0 &&
-      value.outputHashes.length > 0 &&
-      diagnostics.length === 0;
+      value.outputHashes.length > 0;
   }
   if (value.status === 'warned') {
     return value.coveragePercent === 100 &&
       value.blockingDiagnosticCount === 0 &&
       value.outputHashes.length > 0 &&
       diagnostics.length > 0 &&
-      !diagnostics.some((diagnostic) =>
-        isRecord(diagnostic) && diagnostic.blocking === true);
+      diagnostics.some((diagnostic) =>
+        isRecord(diagnostic) && diagnostic.blocking === false);
   }
-  return value.status !== 'failed' || (value.blockingDiagnosticCount as number) > 0;
+  if (value.status === 'notEvaluated') {
+    return value.coveragePercent === 0 && value.outputHashes.length === 0;
+  }
+  return (value.blockingDiagnosticCount as number) > 0;
+}
+
+function isAnalysisQualityByTrack(
+  value: unknown,
+  diagnostics: unknown,
+  selectedTracks: readonly ReferenceDeconstructionTrackId[],
+): value is ReferenceDeconstructionFullRun['analysisQuality'] {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === selectedTracks.length
+    && keys.every((key) => isTrackId(key) && selectedTracks.includes(key))
+    && selectedTracks.every((track) => isAnalysisQuality(value[track], diagnostics));
 }
 
 function isFullProgressConsistentWithStages(
@@ -1372,8 +1587,10 @@ function sum(values: readonly number[]): number {
 function isReviewReadyFullRun(
   value: unknown,
   diagnostics: unknown,
+  outputs: unknown,
 ): boolean {
-  if (!isReferenceDeconstructionFullRun(value, diagnostics)) return false;
+  if (!isReferenceDeconstructionFullRun(value, diagnostics, outputs)) return false;
+  const selectedTracks = trackIdsFromOutputs(outputs);
   return value.progress.completedUnits === value.progress.plannedUnits &&
     value.progress.failedUnits === 0 &&
     value.progress.completedChapters === value.progress.totalChapters &&
@@ -1382,12 +1599,15 @@ function isReviewReadyFullRun(
     value.currentUnit === undefined &&
     value.failedUnit === undefined &&
     value.stages.every((stage) => stage.status === 'completed') &&
-    (
-      value.analysisQuality?.status === 'passed'
-      || value.analysisQuality?.status === 'warned'
-    ) &&
-    value.analysisQuality.coveragePercent === 100 &&
-    value.analysisQuality.blockingDiagnosticCount === 0 &&
+    selectedTracks.every((track) => {
+      const quality = value.analysisQuality[track];
+      return Boolean(
+        quality
+        && (quality.status === 'passed' || quality.status === 'warned')
+        && quality.coveragePercent === 100
+        && quality.blockingDiagnosticCount === 0,
+      );
+    }) &&
     Array.isArray(diagnostics) &&
     !diagnostics.some((diagnostic) =>
       isRecord(diagnostic) && diagnostic.blocking === true);
@@ -1398,10 +1618,11 @@ function isRunDiagnosticClosed(
   evidence: readonly ReferencePreviewEvidence[],
   full: unknown,
   diagnostics: unknown,
+  outputs: unknown,
 ): boolean {
   const fullRun = full === undefined
     ? undefined
-    : isReferenceDeconstructionFullRun(full, diagnostics)
+    : isReferenceDeconstructionFullRun(full, diagnostics, outputs)
       ? full
       : undefined;
   if (diagnostic.unitId !== undefined && !fullRun) return false;
@@ -1454,7 +1675,7 @@ function isQuickPreview(
       'coverage',
       'diagnostics',
     ]) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     value.runId !== runId ||
     value.referenceId !== referenceId ||
     value.sourceChecksumSha256 !== checksum ||
@@ -1496,6 +1717,81 @@ function isQuickPreview(
     return false;
   }
   return allEvidenceRefs(value, evidenceIds) && coverageCitationsMatch(value);
+}
+
+function isStoryMaterialCoveragePreview(
+  value: unknown,
+  runId: string,
+  referenceId: string,
+  checksum: string,
+  evidenceIds: ReadonlySet<string>,
+  selectedMaterialKinds: readonly ReferenceStoryMaterialKind[],
+): value is ReferenceStoryMaterialCoveragePreview {
+  if (
+    !selectedMaterialKinds.length
+    || !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'version',
+      'runId',
+      'referenceId',
+      'sourceChecksumSha256',
+      'track',
+      'materialKinds',
+      'items',
+      'uncertainties',
+    ])
+    || value.version !== 2
+    || value.runId !== runId
+    || value.referenceId !== referenceId
+    || value.sourceChecksumSha256 !== checksum
+    || value.track !== 'storyMaterial'
+    || !Array.isArray(value.materialKinds)
+    || !arraysEqual(value.materialKinds, selectedMaterialKinds)
+    || !value.materialKinds.every(isStoryMaterialKind)
+    || !Array.isArray(value.items)
+    || value.items.length !== selectedMaterialKinds.length
+    || !value.items.every((item) => isStoryMaterialCoverageItem(item, evidenceIds))
+    || !hasUniqueIds(value.items)
+    || !isBoundedStringArray(value.uncertainties, 32, 2_000)
+  ) {
+    return false;
+  }
+  return (value.items as ReferenceStoryMaterialCoverageItem[]).every((item, index) =>
+    item.materialKind === selectedMaterialKinds[index]);
+}
+
+function isStoryMaterialCoverageItem(
+  value: unknown,
+  evidenceIds: ReadonlySet<string>,
+): value is ReferenceStoryMaterialCoverageItem {
+  if (
+    !isRecord(value)
+    || !hasOnlyKnownFields(value, [
+      'id',
+      'materialKind',
+      'coverage',
+      'summary',
+      'confidence',
+      'evidenceRefs',
+      'uncertainty',
+    ])
+    || !isSafeId(value.id)
+    || !isStoryMaterialKind(value.materialKind)
+    || typeof value.coverage !== 'string'
+    || !STORY_MATERIAL_COVERAGE_LEVELS.has(value.coverage)
+    || !isBoundedText(value.summary, 4_000)
+    || !isConfidence(value.confidence)
+    || !isEvidenceRefArray(
+      value.evidenceRefs,
+      evidenceIds,
+      16,
+      value.coverage !== 'none',
+    )
+    || (value.uncertainty !== undefined && !isBoundedText(value.uncertainty, 2_000))
+  ) {
+    return false;
+  }
+  return value.coverage !== 'none' || value.uncertainty !== undefined;
 }
 
 function isChapterPreview(
@@ -1744,13 +2040,12 @@ function isPublishedReferenceContext(value: unknown): boolean {
     ])
     || !isSafeId(value.runId)
     || !isSha256(value.fingerprint)
-    || !isPositiveSafeInteger(value.entryCount)
-    || value.entryCount < DISTILLED_CATEGORIES.size
+    || !isNonNegativeSafeInteger(value.entryCount)
     || value.entryCount > 50
     || !isRecord(value.categoryCounts)
     || Object.keys(value.categoryCounts).length !== DISTILLED_CATEGORIES.size
     || ![...DISTILLED_CATEGORIES].every((category) =>
-      isPositiveSafeInteger(
+      isNonNegativeSafeInteger(
         (value.categoryCounts as Record<string, unknown>)[category],
       )
       && Number((value.categoryCounts as Record<string, unknown>)[category]) <= 12)
@@ -1758,8 +2053,13 @@ function isPublishedReferenceContext(value: unknown): boolean {
     return false;
   }
   const categoryCounts = value.categoryCounts as Record<string, unknown>;
+  const entryCount = value.entryCount as number;
   return Object.values(categoryCounts)
-    .reduce<number>((total, count) => total + Number(count), 0) === value.entryCount;
+    .reduce<number>((total, count) => total + Number(count), 0) === entryCount
+    && (
+      entryCount === 0
+      || [...DISTILLED_CATEGORIES].every((category) => Number(categoryCounts[category]) > 0)
+    );
 }
 
 function isReferenceSummaryReadinessConsistent(
@@ -1772,6 +2072,13 @@ function isReferenceSummaryReadinessConsistent(
   }
   if (value.readinessReason === 'ready') return false;
   if (value.readinessReason === 'disabled') return value.enabled === false;
+  if (value.deconstructionStatus === 'completed') {
+    const publishedContext = value.publishedContext;
+    return value.enabled === true
+      && value.readinessReason === 'techniqueTrackNotPublished'
+      && isRecord(publishedContext)
+      && publishedContext.entryCount === 0;
+  }
   if (value.deconstructionStatus === 'notAnalyzed') {
     return value.readinessReason === 'notAnalyzed';
   }
@@ -1804,17 +2111,17 @@ function isReferenceProgress(value: unknown): boolean {
     'contextEligible',
     'updatedAt',
   ]) &&
-    value.version === 1 &&
+    value.version === 2 &&
     isSafeId(value.referenceId) &&
     isPublishedDeconstructionStatus(value.status) &&
     (value.currentStage === null || isReferenceStage(value.currentStage)) &&
     (value.nextStage === null || isReferenceStage(value.nextStage)) &&
     Array.isArray(value.completedStages) &&
-    value.completedStages.length <= 7 &&
+    value.completedStages.length <= 10 &&
     value.completedStages.every(isReferenceStage) &&
     new Set(value.completedStages).size === value.completedStages.length &&
     Array.isArray(value.failedStages) &&
-    value.failedStages.length <= 7 &&
+    value.failedStages.length <= 10 &&
     value.failedStages.every((item) =>
       isRecord(item) &&
       hasOnlyKnownFields(item, ['stage', 'message', 'failedAt']) &&
@@ -2140,7 +2447,8 @@ function isReferenceReadinessReason(value: unknown): boolean {
     value === 'qualityFailed' ||
     value === 'needsRebuild' ||
     value === 'missingContextSummary' ||
-    value === 'invalidContextIndex';
+    value === 'invalidContextIndex' ||
+    value === 'techniqueTrackNotPublished';
 }
 
 function isReferenceContextOmissionReason(value: unknown): boolean {
@@ -2154,6 +2462,7 @@ function isReferenceContextOmissionReason(value: unknown): boolean {
     value === 'missingContextSummary' ||
     value === 'invalidContextPath' ||
     value === 'invalidContextIndex' ||
+    value === 'techniqueTrackNotPublished' ||
     value === 'capabilityMismatch' ||
     value === 'taskMismatch' ||
     value === 'maxEntryCountReached' ||
@@ -2162,17 +2471,13 @@ function isReferenceContextOmissionReason(value: unknown): boolean {
 
 function isReferenceStageStatusRecord(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  const stages = [
-    'detectStructure',
-    'quickPreview',
-    'chapterAnalysis',
-    'aggregateAnalysis',
-    'styleProfile',
-    'distillForOan',
-    'qualityGate',
-  ];
-  return Object.keys(value).length === stages.length &&
-    stages.every((stage) => isReferenceStageStatus(value[stage]));
+  const stages = Object.keys(value);
+  return stages.length >= 2
+    && stages.length <= 10
+    && stages.includes('detectStructure')
+    && stages.includes('quickPreview')
+    && stages.every((stage) =>
+      isReferenceStage(stage) && isReferenceStageStatus(value[stage]));
 }
 
 function isReferenceStageStatus(value: unknown): boolean {
@@ -2187,6 +2492,9 @@ function isReferenceStage(value: unknown): boolean {
     value === 'aggregateAnalysis' ||
     value === 'styleProfile' ||
     value === 'distillForOan' ||
+    value === 'materialChapterAnalysis' ||
+    value === 'materialAggregateAnalysis' ||
+    value === 'materialProjection' ||
     value === 'qualityGate';
 }
 
@@ -2211,6 +2519,84 @@ function isBudgetLayer(value: unknown): boolean {
 
 function isRunStatus(value: unknown): value is ReferenceDeconstructionRunStatus {
   return typeof value === 'string' && RUN_STATUSES.has(value);
+}
+
+function isWritingProfileId(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[A-Za-z][A-Za-z0-9-]{0,63}$/u.test(value);
+}
+
+function isCanonicalWritingProfileOutputs(
+  value: unknown,
+): value is WritingProfileOutput[] {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || value.length > WRITING_PROFILE_OUTPUTS.length
+    || !value.every((output): output is WritingProfileOutput =>
+      typeof output === 'string' && WRITING_PROFILE_OUTPUTS.includes(output as WritingProfileOutput))
+    || new Set(value).size !== value.length
+  ) {
+    return false;
+  }
+  return arraysEqual(
+    value,
+    WRITING_PROFILE_OUTPUTS.filter((output) => value.includes(output)),
+  );
+}
+
+function outputsIncludeTechnique(outputs: unknown): boolean {
+  return isCanonicalWritingProfileOutputs(outputs) && outputs.includes('techniques');
+}
+
+function outputsIncludeStoryMaterial(outputs: unknown): boolean {
+  return materialKindsFromOutputs(outputs).length > 0;
+}
+
+function materialKindsFromOutputs(
+  outputs: unknown,
+): ReferenceStoryMaterialKind[] {
+  if (!isCanonicalWritingProfileOutputs(outputs)) return [];
+  return outputs.filter(isStoryMaterialKind);
+}
+
+function trackIdsFromOutputs(outputs: unknown): ReferenceDeconstructionTrackId[] {
+  if (!isCanonicalWritingProfileOutputs(outputs)) return [];
+  return [
+    ...(outputs.includes('techniques') ? ['technique' as const] : []),
+    ...(outputs.some(isStoryMaterialKind) ? ['storyMaterial' as const] : []),
+  ];
+}
+
+function expectedFullStagePairs(outputs: unknown): Array<{
+  track: ReferenceDeconstructionTrackId;
+  stageId: ReferenceDeconstructionStageId;
+}> {
+  return trackIdsFromOutputs(outputs).flatMap((track) =>
+    (track === 'technique' ? TECHNIQUE_FULL_STAGES : STORY_MATERIAL_FULL_STAGES)
+      .map((stageId) => ({ track, stageId })));
+}
+
+function isTrackId(value: unknown): value is ReferenceDeconstructionTrackId {
+  return typeof value === 'string'
+    && TRACK_IDS.includes(value as ReferenceDeconstructionTrackId);
+}
+
+function isStoryMaterialKind(value: unknown): value is ReferenceStoryMaterialKind {
+  return typeof value === 'string'
+    && STORY_MATERIAL_KINDS.includes(value as ReferenceStoryMaterialKind);
+}
+
+function isStageOwnedByTrack(
+  stageId: unknown,
+  track: unknown,
+): boolean {
+  if (!isTrackId(track)) return false;
+  return track === 'technique'
+    ? TECHNIQUE_FULL_STAGES.includes(stageId as typeof TECHNIQUE_FULL_STAGES[number])
+    : STORY_MATERIAL_FULL_STAGES.includes(
+        stageId as typeof STORY_MATERIAL_FULL_STAGES[number],
+      );
 }
 
 function isConfidence(value: unknown): value is ReferenceDeconstructionConfidence {

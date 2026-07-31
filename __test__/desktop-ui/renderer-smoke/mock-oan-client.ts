@@ -111,6 +111,7 @@ const methods = {
     }
     const pendingActionId = 'pending-reference-renderer';
     const publication = referencePublicationCandidate();
+    const publishedRunRevision = activeReferenceRun.runRevision;
     activeReferenceRun = {
       ...activeReferenceRun,
       status: 'publishing',
@@ -147,7 +148,7 @@ const methods = {
           kind: 'referenceDeconstructionPublish',
           referenceId,
           runId,
-          runRevision: activeReferenceRun.runRevision,
+          runRevision: publishedRunRevision,
           candidateFingerprint: activeReferenceRun.publication!.candidateFingerprint,
         },
       },
@@ -387,7 +388,7 @@ function publishedReferenceSummary(): ReferenceWorkSummary {
     chapterCount: 1,
     structureConfidence: 'high',
     progress: {
-      version: 1,
+      version: 2,
       referenceId: 'reference-renderer',
       status: 'completed',
       currentStage: null,
@@ -505,36 +506,103 @@ function referenceContextSelection(): ReferenceContextSelection {
 }
 
 function referenceReviewReadyRun(): ReferenceDeconstructionRun {
+  const evidence = [{
+    id: 'pointer-renderer-warning',
+    pointer: {
+      referenceId: 'reference-renderer',
+      sourceChecksumSha256: 'a'.repeat(64),
+      chapterId: '0001',
+      chunkId: 'chapter-0001-0001',
+      lineStart: 3,
+      lineEnd: 18,
+    },
+  }];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: 'run-reference-renderer',
     referenceId: 'reference-renderer',
     runRevision: 7,
     status: 'reviewReady',
     sourceChecksumSha256: 'a'.repeat(64),
     structureFingerprint: 'c'.repeat(64),
-    pipelineVersion: 1,
-    capabilityVersion: 'novel.deconstruct_reference@1',
+    pipelineVersion: 2,
+    capabilityVersion: 'novel.deconstruct_reference@2',
+    profileId: 'commercialWriting',
+    outputs: ['techniques'],
     selectedChapterIds: ['0001'],
-    evidence: [],
+    evidence,
+    preview: {
+      version: 2,
+      runId: 'run-reference-renderer',
+      referenceId: 'reference-renderer',
+      sourceChecksumSha256: 'a'.repeat(64),
+      sourceOverview: 'A bounded opening preview with immediate consequence pressure.',
+      chapterPreviews: [{
+        id: 'chapter-preview-renderer',
+        chapterId: '0001',
+        summary: 'The opening forces a consequential choice before exposition broadens.',
+        evidenceRefs: ['pointer-renderer-warning'],
+        confidence: 'high',
+      }],
+      findings: [{
+        id: 'finding-renderer',
+        kind: 'hook',
+        observation: 'A consequence arrives before the broader situation is explained.',
+        technique: 'Open with a bounded consequence that requires an immediate choice.',
+        whenUseful: 'When a chapter opening needs forward pressure.',
+        avoid: 'Do not copy the source situation, names, or phrasing.',
+        confidence: 'high',
+        evidenceRefs: ['pointer-renderer-warning'],
+        generalInference: false,
+      }],
+      borrowablePatterns: [{
+        id: 'pattern-renderer',
+        title: 'Consequence before explanation',
+        technique: 'Establish an actionable consequence before layering context.',
+        whenUseful: 'Opening a chapter around a forced decision.',
+        evidenceRefs: ['pointer-renderer-warning'],
+        confidence: 'high',
+      }],
+      doNotCopy: ['Do not copy source prose, names, dialogue, or scene arrangement.'],
+      differentiationRequirements: ['Change setting, causality, roles, and imagery.'],
+      differentiationPrompts: ['What consequence can arise only from the current novel canon?'],
+      canonContaminationWarnings: ['Reference facts are evidence, never current novel canon.'],
+      confidence: 'high',
+      uncertainties: [],
+      coverage: {
+        selectedChapterIds: ['0001'],
+        analyzedChapterIds: ['0001'],
+        selectedPointerCount: 1,
+        citedPointerCount: 1,
+        chapterCoveragePercent: 100,
+      },
+      diagnostics: [],
+    },
     diagnostics: [{
       id: 'candidate-copy-check',
       severity: 'warning',
       code: 'quality.copyRisk.exactOverlap',
       message: 'A candidate output contains an exact overlap that needs author review.',
       blocking: false,
-      evidenceRefs: [],
+      evidenceRefs: ['pointer-renderer-warning'],
       stageId: 'qualityGate',
-      unitId: 'quality-gate',
       pointerId: 'pointer-renderer-warning',
     }],
-    mutationReceipts: [{
-      idempotencyKey: 'review-ready-renderer',
-      requestFingerprint: 'd'.repeat(64),
-      resultingRunRevision: 7,
-      resultStatus: 'reviewReady',
-    }],
-    receiptCount: 1,
+    mutationReceipts: Array.from({ length: 8 }, (_, revision) => ({
+      idempotencyKey: `renderer-run-${revision}`,
+      requestFingerprint: (revision + 1).toString(16).repeat(64),
+      resultingRunRevision: revision,
+      resultStatus: revision === 0
+        ? 'created' as const
+        : revision === 1
+          ? 'awaitingFullApproval' as const
+          : revision === 2
+            ? 'fullApproved' as const
+            : revision === 7
+              ? 'reviewReady' as const
+              : 'fullRunning' as const,
+    })),
+    receiptCount: 8,
     full: {
       stages: [
         completedReferenceStage('chapterAnalysis'),
@@ -554,10 +622,12 @@ function referenceReviewReadyRun(): ReferenceDeconstructionRun {
       recentUnits: [],
       recentAttempts: [],
       analysisQuality: {
-        status: 'warned',
-        coveragePercent: 100,
-        blockingDiagnosticCount: 0,
-        outputHashes: ['e'.repeat(64)],
+        technique: {
+          status: 'warned',
+          coveragePercent: 100,
+          blockingDiagnosticCount: 0,
+          outputHashes: ['e'.repeat(64)],
+        },
       },
     },
     createdAt: '2026-07-26T07:50:00.000Z',
@@ -606,6 +676,7 @@ function completedReferenceStage(
     : never,
 ) {
   return {
+    track: 'technique' as const,
     stageId,
     status: 'completed' as const,
     plannedUnits: 1,
