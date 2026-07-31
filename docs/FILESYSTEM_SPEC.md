@@ -83,6 +83,10 @@ my-novel/
 │       ├── 0001.md
 │       ├── 0002.md
 │       └── 0003.md
+├── outline/
+│   ├── main.md
+│   └── volumes/
+│       └── 0001.md
 │
 ├── state/
 │   ├── characters.yaml
@@ -177,12 +181,17 @@ Git-visible 的原子配置操作。
 
 - Chapter
 - Summary
+- Outline
 
 特点：
 
 - 文本连续。
 - 有场景、段落、chunk。
 - 修改时不能全文重写。
+
+Outline 也是当前小说的 Project Truth。W3a 材料采用第一版只允许对
+`outline/**/*.md` 生成整文件候选，仍必须经过 diff / PendingAction / Accept；
+后续局部 scene / beat patch 由 `0800` 收敛。
 
 ## Character Format
 

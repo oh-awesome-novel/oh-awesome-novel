@@ -408,6 +408,18 @@ export {
   generateReferenceMaterialCoverage,
   generateReferenceMaterialProjection,
 } from './reference-story-material.js';
+export {
+  MAX_REFERENCE_MATERIAL_ADOPTION_INPUT_CHARACTERS,
+  MAX_REFERENCE_MATERIAL_ADOPTION_OUTPUT_TOKENS,
+  REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+  formatReferenceMaterialAdoptionPrompt,
+  generateReferenceMaterialAdoption,
+} from './reference-material-adoption.js';
+export type {
+  GenerateReferenceMaterialAdoptionInput,
+  ReferenceMaterialAdoptionGenerationError,
+  ReferenceMaterialAdoptionGenerationResult,
+} from './reference-material-adoption.js';
 export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
   AgentSessionMetadata,

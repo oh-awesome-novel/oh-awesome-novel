@@ -67,6 +67,7 @@
 - [1200 Writing Profile Configuration And Prompt Reminders](1200.md)
 - [1205 Reference Quality Gate Warning Degradation](1205.md)
 - [1210 Reference Story Material Analysis Track](1210.md)
+- [1220 Reference Material Adoption And Desktop Closure](1220.md)
 
 ## Needs Review Tasks
 

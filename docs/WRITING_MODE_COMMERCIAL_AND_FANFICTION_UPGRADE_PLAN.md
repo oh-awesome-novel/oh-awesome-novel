@@ -1,6 +1,7 @@
 # OAN Writing Profile 与拆书材料升级计划
 
-> 计划状态：In Progress（W0 + W1 + W2 已于 2026-07-31 完成；W3 仍为 Planned）。
+> 计划状态：In Progress（W0 + W1 + W2 已于 2026-07-31 完成；必须的 W3a
+> adoption 闭环已于 2026-08-01 完成；W3b 体验增强延后）。
 >
 > 计划日期：2026-07-26。
 >
@@ -18,7 +19,10 @@
 > 的 D5 Profile gate、1205 的 quality gate warning 语义，以及 1210 已完成的
 > per-track publish / manifest v2、provenance 与纯 material context 契约。
 >
-> 依赖提醒：W3 的材料采用依赖 SemanticPatch 的 `object` / `collection` domain 覆盖，而 `docs/tasks/0800.md`（SemanticPatch Apply Engine）仍为 `Planned`，且现有 domain 枚举不包含 relationships 与 outline。详见 §8.2。
+> W3a 收敛结果：材料采用复用已落地的 Apply Engine；`relationships` 使用角色对象
+> `relationships.yaml` 整文件候选，`outline` 登记受限的
+> `NarrativePatch{domain:'outline', operation:'replaceFile'}`。细粒度 patch 仍留给
+> `docs/tasks/0800.md`，详见 §8.2。
 >
 > 产品阶段说明：OAN 仍处于未发布的早期开发阶段。本计划不处理旧 endpoint、旧 workspace / reference bundle migration 或系统化无障碍支持；开发期旧数据可以重建，未知 schema 明确报错。
 
@@ -818,20 +822,22 @@ References 页面为已发布的 `materials/*` 提供：
 
 现有 `SemanticPatch` 的 domain 是闭合枚举：`ObjectPatch.domain` 为 `character | world | constitution`，`CollectionPatch.domain` 为 `state | timeline | foreshadow`，`NarrativePatch.domain` 为 `chapter | summary`。对照后有两个 material kind 没有落点：
 
-| Story Material | Workspace 候选目标 | 现有 patch 支持 |
+| Story Material | Workspace 候选目标 | W3a 落法 |
 | --- | --- | --- |
 | `world` | `world/` 下的新文件或 `ObjectPatch{domain:'world'}` | 已支持 |
 | `characters` | `characters/<id>/` 角色卡候选，`ObjectPatch{domain:'character'}` | 已支持 |
-| `relationships` | 角色关系文件候选 | **无对应 domain** |
-| `outline` | 当前大纲 / 卷章规划候选 | **无对应 domain** |
+| `relationships` | `characters/<id>/relationships.yaml` | 角色 ObjectPatch 整文件候选 |
+| `outline` | `outline/**/*.md` | 受限 NarrativePatch `outline + replaceFile` |
 | `timeline` | `timeline/` 候选，`CollectionPatch{domain:'timeline'}` | 已支持 |
 
-因此 W3 必须先决定 `relationships` 与 `outline` 的落法，二选一：
+W3a 已选择“先闭环、后细化”：
 
-- 扩展 apply engine 的 domain 枚举（改动 `packages/tools/src/apply-engine.ts`，与 `docs/tasks/0800.md` 范围重叠，0800 目前是 `Planned`）；或
-- 第一版把这两类材料降级为整文件候选，走已有的 narrative / 整文件替换路径，不引入新 domain。
+- `relationships` 不新增平行 domain，继续落在角色对象树的确定文件中；
+- `outline` 只增加一个与 filesystem spec 对齐的受限整文件 Narrative domain，不支持
+  scene / beat 局部操作。
 
-推荐后者：W3 的价值在于打通“审阅 → 采用 → diff → accept”闭环，不在于 patch 粒度。若选前者，必须先与 0800 对齐，避免两个 task 各自扩同一个枚举。
+这项决策已登记到 `0800`，避免后续另建同义 domain。W3a 的价值是打通
+“审阅 → 采用 → diff → accept”闭环，不扩张为通用 patch 引擎。
 
 执行 task 必须对照现有 filesystem spec 选择真实 target；本计划不通过 reference id 创建新的正式小说目录。
 
@@ -1093,7 +1099,7 @@ fanfiction 与 custom both 分别覆盖 Technique-only、material-only 和双轨
 Desktop 已完成 Preview / Publish Review / References 分区展示。selected material
 adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实现。
 
-### W3：材料采用与 Desktop 闭环
+### W3：材料采用与 Desktop 闭环（W3a Completed 2026-08-01）
 
 交付：
 
@@ -1113,6 +1119,16 @@ adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实�
 - 没有原作 binding、多 source manifest 或 Story Material selector。
 - 若选择新增 patch domain，已与 `0800` 对齐范围，不出现两个 task 各自扩同一枚举。
 - 界面提供简短提示，但没有新增法律 / 内容 hard gate。
+
+实现结果：task `1220` 已落地单 reference、selected entries 的受控 adoption。
+Catalog 只接受 current、checksum 闭合的已发布 `materials/*`；模型输入只包含选中
+entry、对应材料文件身份和当前 target baseline。逐目标 `create | update | skip`
+结果转换为受限 SemanticPatch，prepare preview 与 PendingAction promotion 分离，确认
+和 Accept 前都会复核 reference identity、catalog fingerprint 与 target baseline。
+Desktop 已提供选择、目标映射、warning、decision 与 diff 审阅入口，并复用全局
+Review 完成 Accept。Accept 前真实文件不变，Accept 后成为普通 Project Truth；后续
+reference 变化不会自动同步。批量筛选、搜索、拖拽映射、历史与细粒度 patch 属于
+可选 W3b，未纳入本次必须闭环。
 
 ## 12. 测试矩阵
 
@@ -1258,39 +1274,41 @@ adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实�
 - [x] work plan 终端单元、stage id 与 manifest output kind 已完成 track 化改造，且旧 schema 缺失时明确报错。
 - [x] quality gate 的内容质量判断为非阻断 warning，结构完整性判断仍然阻断。
 - [x] `warned` 产物可以发布，且提示在 Publish Review 与 References 列表中可见。
-- [ ] W3 adoption Preview 显示已发布产物携带的 warning。
+- [x] W3 adoption Preview 显示已发布产物携带的 warning。
 - [x] Technique Projection 保持现有抽象合同。
 - [x] Story Material Track 拥有独立 Preview、Chapter Findings、Aggregate 和 Projection，并可以保留有 evidence 的具体原作设定、角色和剧情材料。
 - [x] `materials/*` 与同名 `deconstruction/*` 技法文件已明确区分并分区展示。
 - [x] custom both 在一个 deconstruction run 中执行两条 track，不复制第二套 controller。
-- [ ] 用户可以显式选择 materials，生成 workspace 修改候选。
-- [ ] materials 只有 Accept 后才成为当前小说文件。
+- [x] 用户可以显式选择 materials，生成 workspace 修改候选。
+- [x] materials 只有 Accept 后才成为当前小说文件。
 - [x] 正式 Writing 不读取 reference 原文或未采用 materials。
 - [x] Reference deconstruction、Publish Review 与 References 界面提供简短内容提示，不新增法律或内容 hard gate。
-- [ ] W3 adoption Preview 提供对应内容提示，且不新增法律或内容 hard gate。
+- [x] W3 adoption Preview 提供对应内容提示，且不新增法律或内容 hard gate。
 - [x] Profile、prompt、Technique / Story Material projection 与 W2 Desktop 拆书旅程测试通过。
-- [ ] W3 adoption 与 Accept 后 Desktop 闭环测试通过。
+- [x] W3 adoption 与 Accept 后 Desktop 闭环测试通过。
 - [x] `FILESYSTEM_SPEC.md`（含 `config.yaml`）、`docs/README.md` 索引、对应 task 和 W0 / W1 Implementation Notes 同步更新。
 - [x] `0900` 的状态标记已对齐，Implementation Notes 已记录 W2 对 quality gate、per-track publish / manifest、provenance 与 context 契约的修改。
 
 ## 15. 推荐任务拆分
 
-`1200`、`1205` 与 `1210` 已创建并完成；`1220` 尚未创建。
+`1200`、`1205`、`1210` 与必须的 W3a `1220` 已创建并完成；W3b 体验增强延后。
 
 | Slice | 推荐任务 | 状态 |
 | --- | --- | --- |
 | W0 + W1 | `1200 Writing Profile Configuration And Prompt Reminders` | Completed |
 | W2 前半 | `1205 Reference Quality Gate Warning Degradation` | Completed |
 | W2 后半 | `1210 Reference Story Material Analysis Track` | Completed |
-| W3 | `1220 Reference Material Adoption And Desktop Closure` | Planned，尚未创建 |
+| W3a | `1220 Reference Material Adoption And Desktop Closure` | Completed |
+| W3b | Material adoption UX polish | Deferred，按真实使用反馈再拆 task |
 
 W2 建议拆成两个 task。`1205` 只做 quality gate 降级与相关 publish 完成性判定的松绑，它对现有 `commercialWriting` 流程立即有价值（作者不再因为一条内容提示而无法发布），并且可以独立验证；`1210` 再在已经松绑的框架上增加 Story Material track。把两者塞进一个 task 会让“修改 0900 契约”和“新增 track”的失败原因混在一起，回滚粒度也过粗。
 
 `1205` 需要在 `Related Plans` 中同时链接本计划与 `REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md`，因为它修改的是后者交付的契约。
 
-1200、1205 与 1210 已完成。用户已经能使用两个内置 Profile 和自定义组合，
+1200、1205、1210 与 1220 W3a 已完成。用户已经能使用两个内置 Profile 和自定义组合，
 Technique Track 的内容质量提示不再阻断发布，Story Material Track 也已支持
-material-only / custom both、证据闭包、部分发布与分组审阅；后续从 1220 推进
-selected material adoption 与 Accept 后 Desktop 闭环。
+material-only / custom both、证据闭包、部分发布与分组审阅；selected material
+adoption 已通过 diff / PendingAction / Accept 接入 Project Truth。W3b 只保留批量
+筛选、搜索、映射和历史等体验增强。
 不要复制第二套 controller，也不要为了将来可能需要的原作绑定、
 source-canon selector 或复杂 Profile 能力提前扩展范围。

@@ -82,6 +82,14 @@ const methods = {
     return { references: [publishedReferenceSummary()] };
   },
 
+  async getReferenceMaterialAdoptionCatalog(referenceId: string) {
+    record('getReferenceMaterialAdoptionCatalog', [referenceId]);
+    throw Object.assign(
+      new Error(`Reference ${referenceId} has no current Story Materials.`),
+      { status: 422 },
+    );
+  },
+
   async selectReferenceContext(input: unknown) {
     record('selectReferenceContext', [input]);
     return { selection: referenceContextSelection() };

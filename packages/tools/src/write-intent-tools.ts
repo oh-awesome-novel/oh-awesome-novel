@@ -57,7 +57,8 @@ export type PreviewableWriteIntentToolName =
   | 'chapter.createDraft'
   | 'state.set'
   | 'timeline.add'
-  | 'foreshadow.create';
+  | 'foreshadow.create'
+  | 'reference.adoptMaterials';
 
 export interface PreparedWriteIntentPreview {
   schemaVersion: typeof WRITE_INTENT_PREVIEW_SCHEMA_VERSION;
@@ -83,6 +84,7 @@ export interface PrepareWriteIntentPreviewInput {
 export interface PromoteWriteIntentPreviewInput {
   workspaceRoot: string;
   preview: PreparedWriteIntentPreview;
+  origin?: PendingActionOrigin;
 }
 
 export type ValidateWriteIntentPreviewInput = PromoteWriteIntentPreviewInput;
@@ -123,8 +125,19 @@ export interface ReferenceDeconstructionPublishPendingActionOrigin {
   candidateFingerprint: string;
 }
 
+export interface ReferenceMaterialAdoptionPendingActionOrigin {
+  kind: 'referenceMaterialAdoption';
+  referenceId: string;
+  manifestRevision: number;
+  sourceChecksumSha256: string;
+  catalogFingerprint: string;
+  contextFingerprint: string;
+  previewFingerprint: string;
+}
+
 export type PendingActionOrigin =
-  ReferenceDeconstructionPublishPendingActionOrigin;
+  | ReferenceDeconstructionPublishPendingActionOrigin
+  | ReferenceMaterialAdoptionPendingActionOrigin;
 
 export interface CreatePendingActionInput {
   id?: string;
@@ -331,6 +344,9 @@ async function validateWriteIntentPreviewForPromotion(
     createdAt: new Date().toISOString(),
     status: 'pending',
     shadowWrites: structuredClone(preview.shadowWrites),
+    ...(input.origin
+      ? { origin: normalizePendingActionOrigin(input.origin) }
+      : {}),
   };
   await preflightShadowWrites(workspaceRealpath, action);
   return { workspaceRealpath, action };
@@ -1478,9 +1494,55 @@ function normalizeWriteIntentPlan(
         defaultPath: 'active',
         valueArg: 'item',
       });
+    case 'reference.adoptMaterials':
+      return normalizeReferenceAdoptMaterialsPlan(args);
     default:
       throw new Error(`Unsupported previewable write-intent tool: ${String(toolName)}.`);
   }
+}
+
+function normalizeReferenceAdoptMaterialsPlan(args: unknown): NormalizedWriteIntentPlan {
+  const values = expectToolArgs(args, ['title', 'description', 'patches']);
+  const title = expectStringArg(values, 'title').trim();
+  const description = expectStringArg(values, 'description').trim();
+  const rawPatches = expectArg(values, 'patches');
+  if (
+    title.length > 1_000
+    || description.length > 4_000
+    || !Array.isArray(rawPatches)
+    || rawPatches.length < 1
+    || rawPatches.length > 32
+  ) {
+    throw new Error('Reference Material adoption write-intent arguments are invalid.');
+  }
+  const patches = rawPatches.map((raw): SemanticPatch => {
+    validateSemanticPatch(raw as SemanticPatch);
+    const patch = structuredClone(raw) as SemanticPatch;
+    const allowed = patch.kind === 'object'
+      && patch.operation === 'replaceFile'
+      && (patch.domain === 'world' || patch.domain === 'character')
+      || patch.kind === 'collection'
+      && patch.domain === 'timeline'
+      && patch.operation === 'yamlSet'
+      || patch.kind === 'narrative'
+      && patch.domain === 'outline'
+      && patch.operation === 'replaceFile';
+    if (!allowed) {
+      throw new Error('Reference Material adoption contains an unsupported workspace patch.');
+    }
+    return patch;
+  });
+  const touchedFiles = patches.map(resolvePatchTargetFile);
+  if (new Set(touchedFiles).size !== touchedFiles.length) {
+    throw new Error('Reference Material adoption patch targets must be unique.');
+  }
+  return {
+    toolName: 'reference.adoptMaterials',
+    args: { title, description, patches },
+    title,
+    description,
+    patches,
+  };
 }
 
 function normalizeChapterCreateDraftPlan(args: unknown): NormalizedWriteIntentPlan {
@@ -1631,6 +1693,30 @@ export async function createPendingAction(
 function normalizePendingActionOrigin(
   value: PendingActionOrigin,
 ): PendingActionOrigin {
+  if (
+    isRecord(value)
+    && hasOnlyKnownFields(value, [
+      'kind',
+      'referenceId',
+      'manifestRevision',
+      'sourceChecksumSha256',
+      'catalogFingerprint',
+      'contextFingerprint',
+      'previewFingerprint',
+    ])
+    && value.kind === 'referenceMaterialAdoption'
+    && typeof value.referenceId === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
+    && !value.referenceId.includes('..')
+    && Number.isSafeInteger(value.manifestRevision)
+    && value.manifestRevision >= 0
+    && isSha256(value.sourceChecksumSha256)
+    && isSha256(value.catalogFingerprint)
+    && isSha256(value.contextFingerprint)
+    && isSha256(value.previewFingerprint)
+  ) {
+    return structuredClone(value) as ReferenceMaterialAdoptionPendingActionOrigin;
+  }
   if (
     !isRecord(value)
     || !hasOnlyKnownFields(value, [
@@ -2206,7 +2292,8 @@ function isPreviewableWriteIntentToolName(
   return value === 'chapter.createDraft' ||
     value === 'state.set' ||
     value === 'timeline.add' ||
-    value === 'foreshadow.create';
+    value === 'foreshadow.create' ||
+    value === 'reference.adoptMaterials';
 }
 
 function isStrictShadowWriteWithBaseline(value: unknown): boolean {

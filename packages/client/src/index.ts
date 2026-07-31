@@ -43,6 +43,19 @@ import type {
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
 import {
+  assertReferenceMaterialAdoptionPreviewInput,
+  parseReferenceMaterialAdoptionCatalogEnvelope,
+  parseReferenceMaterialAdoptionPendingActionResult,
+  parseReferenceMaterialAdoptionPreviewResult,
+} from './reference-material-adoption.js';
+import type {
+  ReferenceMaterialAdoptionCatalog,
+  ReferenceMaterialAdoptionPendingActionOrigin,
+  ReferenceMaterialAdoptionPendingActionResult,
+  ReferenceMaterialAdoptionPreviewResult,
+  ReferenceMaterialAdoptionSelection,
+} from './reference-material-adoption.js';
+import {
   assertCloneWritingProfileInput,
   assertWritingProfile,
   assertWritingProfileId,
@@ -166,6 +179,22 @@ export type {
   ReferenceDistilledCategory,
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
+export type {
+  ReferenceMaterialAdoptionCatalog,
+  ReferenceMaterialAdoptionDecision,
+  ReferenceMaterialAdoptionEntry,
+  ReferenceMaterialAdoptionPendingActionOrigin,
+  ReferenceMaterialAdoptionPendingActionResult,
+  ReferenceMaterialAdoptionPreview,
+  ReferenceMaterialAdoptionPreviewResult,
+  ReferenceMaterialAdoptionSelection,
+} from './reference-material-adoption.js';
+export {
+  assertReferenceMaterialAdoptionPreviewInput,
+  parseReferenceMaterialAdoptionCatalogEnvelope,
+  parseReferenceMaterialAdoptionPendingActionResult,
+  parseReferenceMaterialAdoptionPreviewResult,
+} from './reference-material-adoption.js';
 
 export type ThemeMode = 'light' | 'dark';
 export type ComposerSubmitShortcutPreference = 'enter' | 'meta-enter' | 'ctrl-enter';
@@ -1671,7 +1700,9 @@ export interface PendingAction {
   diff: string;
   createdAt: string;
   status: 'pending';
-  origin?: ReferenceDeconstructionPublishPendingActionOrigin;
+  origin?:
+    | ReferenceDeconstructionPublishPendingActionOrigin
+    | ReferenceMaterialAdoptionPendingActionOrigin;
   shadowWrites?: Array<{
     targetFile: string;
     shadowFile: string;
@@ -1848,6 +1879,21 @@ export interface OanClient extends PlayRehearsalClientMethods {
     runId: string,
     input: MutateReferenceDeconstructionRunInput,
   ): Promise<ReferenceDeconstructionPublishResult>;
+  getReferenceMaterialAdoptionCatalog(
+    referenceId: string,
+  ): Promise<{ catalog: ReferenceMaterialAdoptionCatalog }>;
+  createReferenceMaterialAdoptionPreview(
+    referenceId: string,
+    input: {
+      catalogFingerprint: string;
+      selections: ReferenceMaterialAdoptionSelection[];
+    },
+  ): Promise<ReferenceMaterialAdoptionPreviewResult>;
+  createReferenceMaterialAdoptionPendingAction(
+    referenceId: string,
+    previewId: string,
+    input: { fingerprint: string },
+  ): Promise<ReferenceMaterialAdoptionPendingActionResult>;
   getGitStatus(): Promise<GitWorkspaceStatus>;
   getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
   getGitCommit(hash: string): Promise<GitCommitDetail>;
@@ -2226,6 +2272,50 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         method: 'POST',
         body: input,
       }).then(parseReferenceContextEnvelope);
+    },
+    getReferenceMaterialAdoptionCatalog: (referenceIdValue) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}/materials`,
+      ).then((value) => parseReferenceMaterialAdoptionCatalogEnvelope(
+        value,
+        referenceId,
+      ));
+    },
+    createReferenceMaterialAdoptionPreview: (referenceIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      assertReferenceMaterialAdoptionPreviewInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        '/material-adoption-previews',
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceMaterialAdoptionPreviewResult(
+        value,
+        referenceId,
+      ));
+    },
+    createReferenceMaterialAdoptionPendingAction: (
+      referenceIdValue,
+      previewIdValue,
+      input,
+    ) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      if (typeof previewIdValue !== 'string' || !/^pa_[0-9a-f-]+$/iu.test(previewIdValue)) {
+        throw new Error('Reference Material adoption preview id is invalid.');
+      }
+      if (
+        !input
+        || Object.keys(input).some((key) => key !== 'fingerprint')
+        || typeof input.fingerprint !== 'string'
+        || !/^[a-f0-9]{64}$/u.test(input.fingerprint)
+      ) {
+        throw new Error('Reference Material adoption preview fingerprint is invalid.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        `/material-adoption-previews/${encodeURIComponent(previewIdValue)}/pending-action`,
+        { method: 'POST', body: input },
+      ).then(parseReferenceMaterialAdoptionPendingActionResult);
     },
     createReferenceDeconstructionRun: (referenceIdValue, input) => {
       const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');

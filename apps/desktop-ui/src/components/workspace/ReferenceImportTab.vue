@@ -6,7 +6,9 @@ import ReferenceList from './ReferenceList.vue';
 import ReferenceContextSelectionPanel from './reference/ReferenceContextSelectionPanel.vue';
 import ReferenceDeconstructionPanel from './reference/ReferenceDeconstructionPanel.vue';
 import ReferenceImportResultCard from './reference/ReferenceImportResultCard.vue';
+import ReferenceMaterialAdoptionPanel from './reference/ReferenceMaterialAdoptionPanel.vue';
 import { useReferenceDeconstruction } from '../../composables/useReferenceDeconstruction';
+import { useReferenceMaterialAdoption } from '../../composables/useReferenceMaterialAdoption';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type {
   ReferenceContextSelection,
@@ -33,6 +35,7 @@ const importing = shallowRef(false);
 const updatingId = shallowRef('');
 const error = shallowRef('');
 const deconstruction = useReferenceDeconstruction({ client: api });
+const adoption = useReferenceMaterialAdoption({ client: api });
 
 const enabledCount = computed(() =>
   references.value.filter((reference) => reference.enabled).length,
@@ -53,6 +56,7 @@ async function refreshReferences(): Promise<void> {
     const listed = await api.listReferences();
     references.value = listed.references;
     await deconstruction.syncReferences(listed.references);
+    await adoption.load(deconstruction.selectedReference.value?.id ?? '');
     selection.value = (await api.selectReferenceContext({
       tokenBudget: 1500,
       maxReferences: 3,
@@ -93,6 +97,11 @@ async function toggleReference(reference: ReferenceWorkSummary): Promise<void> {
   } finally {
     updatingId.value = '';
   }
+}
+
+async function selectReference(reference: ReferenceWorkSummary): Promise<void> {
+  await deconstruction.selectReference(reference);
+  await adoption.load(reference.id);
 }
 
 async function createPublishPendingAction(): Promise<void> {
@@ -171,12 +180,27 @@ async function createPublishPendingAction(): Promise<void> {
       @review-pending-action="emit('reviewPendingAction', $event)"
     />
 
+    <ReferenceMaterialAdoptionPanel
+      :catalog="adoption.catalog.value"
+      :preview="adoption.preview.value"
+      :no-change-decisions="adoption.noChangeDecisions.value"
+      :pending-action="adoption.pendingAction.value"
+      :loading="adoption.loading.value"
+      :previewing="adoption.previewing.value"
+      :confirming="adoption.confirming.value"
+      :error="adoption.error.value"
+      @preview="adoption.requestPreview($event)"
+      @confirm="adoption.confirm()"
+      @review="emit('reviewPendingAction', $event)"
+      @clear="adoption.clearPreview()"
+    />
+
     <ReferenceList
       :references="references"
       :updating-id="updatingId"
       :selected-id="deconstruction.selectedReference.value?.id ?? ''"
       :selection-disabled="deconstruction.busy.value"
-      @select="deconstruction.selectReference($event)"
+      @select="selectReference($event)"
       @toggle-enabled="toggleReference"
     />
   </section>

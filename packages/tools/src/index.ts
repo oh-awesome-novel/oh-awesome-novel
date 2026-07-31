@@ -77,6 +77,7 @@ export type {
   ReadPendingActionInput,
   RejectedPendingAction,
   ReferenceDeconstructionPublishPendingActionOrigin,
+  ReferenceMaterialAdoptionPendingActionOrigin,
   RejectPendingActionInput,
   StoredWriteIntentAction,
   ValidateWriteIntentPreviewInput,
@@ -88,6 +89,10 @@ export {
   resolvePatchTargetFile,
   validateSemanticPatch,
 } from './apply-engine';
+
+export {
+  createReferenceMaterialAdoptionPatches,
+} from './reference-material-adoption';
 export type {
   ApplyPreviewCandidate,
   ApplyPreviewResult,

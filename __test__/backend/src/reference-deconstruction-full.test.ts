@@ -8,6 +8,7 @@ import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import {
   beginReferenceDeconstructionPublish,
   createReferenceEvidencePointerMap,
+  createReferenceMaterialAdoptionPlan,
   inspectPublishedReferenceWorkReadiness,
   normalizeReferenceAggregateAnalysisModelOutput,
   normalizeReferenceChapterAnalysisModelOutput,
@@ -1639,6 +1640,122 @@ describe('reference full deconstruction backend', () => {
       referencePublish: { run: { status: 'reviewReady' } },
     });
   });
+
+  it('closes published Story Material adoption through diff, PendingAction, Accept, and stale-target rejection', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startCompleteReferenceBackend(workspaceRoot, {
+      runReferenceMaterialAdoption: async (input) => ({
+        status: 'completed',
+        finishReason: 'stop',
+        plan: createReferenceMaterialAdoptionPlan(input.context, {
+          targets: input.context.targets.map((target) => ({
+            targetId: target.id,
+            decision: target.targetExisted ? 'update' : 'create',
+            reason: 'Adopt the explicitly selected bounded entry into its controlled target.',
+            draft: target.targetExisted
+              ? `${target.baseline.trimEnd()}\n\nBounded adoption update.\n`
+              : [
+                  '# Adopted Rain Gate',
+                  '',
+                  `Selected entries: ${target.entries.map((entry) => entry.id).join(', ')}`,
+                  '',
+                ].join('\n'),
+          })),
+        }),
+      }),
+    });
+    servers.push(backend);
+    await activateWritingProfile(backend.url, 'fanfictionWriting');
+    const referenceId = await importReference(backend.url, 'Adoption Source');
+    const ready = await createReviewReadyRunForReference(
+      backend.url,
+      referenceId,
+      'adoption-source',
+    );
+    await publishAndAcceptReferenceRun({
+      workspaceRoot,
+      backendUrl: backend.url,
+      referenceId,
+      run: ready,
+      idempotencyKey: 'publish-adoption-source',
+    });
+
+    const catalogEnvelope = await fetchJson<{
+      catalog: {
+        fingerprint: string;
+        entries: Array<{ id: string; materialKind: string }>;
+      };
+    }>(`${backend.url}/api/workspace/references/${referenceId}/materials`);
+    const selected = catalogEnvelope.catalog.entries.find((entry) =>
+      entry.materialKind === 'world');
+    expect(selected).toBeDefined();
+    const targetFile = 'world/adopted/reference-rain.md';
+    const targetPath = join(workspaceRoot, targetFile);
+    const createPreview = () => fetchJson<{
+      status: 'ready';
+      preview: {
+        id: string;
+        fingerprint: string;
+        touchedFiles: string[];
+        canonicalUnchanged: true;
+      };
+    }>(`${backend.url}/api/workspace/references/${referenceId}/material-adoption-previews`, {
+      method: 'POST',
+      body: JSON.stringify({
+        catalogFingerprint: catalogEnvelope.catalog.fingerprint,
+        selections: [{ entryId: selected!.id, targetFile }],
+      }),
+    });
+
+    const preview = await createPreview();
+    expect(preview).toMatchObject({
+      status: 'ready',
+      preview: { touchedFiles: [targetFile], canonicalUnchanged: true },
+    });
+    await expect(readOptionalFile(targetPath)).resolves.toBeUndefined();
+    const pending = await fetchJson<{
+      pendingAction: { id: string; status: 'pending'; touchedFiles: string[] };
+    }>(
+      `${backend.url}/api/workspace/references/${referenceId}`
+        + `/material-adoption-previews/${preview.preview.id}/pending-action`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ fingerprint: preview.preview.fingerprint }),
+      },
+    );
+    expect(pending.pendingAction).toMatchObject({
+      status: 'pending',
+      touchedFiles: [targetFile],
+    });
+    await expect(readOptionalFile(targetPath)).resolves.toBeUndefined();
+
+    await expect(fetchJson<{ status: string }>(
+      `${backend.url}/api/workspace/pending-actions/${pending.pendingAction.id}/accept`,
+      { method: 'POST' },
+    )).resolves.toMatchObject({ status: 'accepted' });
+    await expect(readFile(targetPath, 'utf8')).resolves.toContain('# Adopted Rain Gate');
+
+    const updatePreview = await createPreview();
+    const updatePending = await fetchJson<{
+      pendingAction: { id: string; status: 'pending' };
+    }>(
+      `${backend.url}/api/workspace/references/${referenceId}`
+        + `/material-adoption-previews/${updatePreview.preview.id}/pending-action`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ fingerprint: updatePreview.preview.fingerprint }),
+      },
+    );
+    const externalContent = '# User edit after PendingAction\n';
+    await writeFile(targetPath, externalContent, 'utf8');
+    const staleAccept = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${updatePending.pendingAction.id}/accept`,
+      { method: 'POST' },
+    );
+    expect(staleAccept.status).toBe(409);
+    await expect(staleAccept.json()).resolves.toMatchObject({ code: 'stalePreview' });
+    await expect(readFile(targetPath, 'utf8')).resolves.toBe(externalContent);
+  });
 });
 
 interface RunProjection {
@@ -1685,7 +1802,12 @@ interface PendingActionDecisionEnvelope {
 
 async function startCompleteReferenceBackend(
   workspaceRoot: string,
-  options: { withQualityWarning?: boolean } = {},
+  options: {
+    withQualityWarning?: boolean;
+    runReferenceMaterialAdoption?: NonNullable<
+      Parameters<typeof startNovelHttpBackend>[0]['runReferenceMaterialAdoption']
+    >;
+  } = {},
 ) {
   return startNovelHttpBackend({
     workspaceRoot,
@@ -1766,6 +1888,9 @@ async function startCompleteReferenceBackend(
         coveredChapterIds: input.coveredChapterIds,
       }),
     }),
+    ...(options.runReferenceMaterialAdoption
+      ? { runReferenceMaterialAdoption: options.runReferenceMaterialAdoption }
+      : {}),
   });
 }
 
@@ -2445,4 +2570,13 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const data = await response.json() as T;
   if (!response.ok) throw new Error(JSON.stringify(data));
   return data;
+}
+
+async function readOptionalFile(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
 }

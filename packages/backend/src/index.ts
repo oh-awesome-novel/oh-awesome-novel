@@ -111,6 +111,7 @@ import type {
   ReferenceStoryMaterialChapterResult,
   ReferenceStoryMaterialCoveragePreview,
   ReferenceStoryMaterialProjectionResult,
+  ReferenceMaterialAdoptionSelection,
   ThemePreference,
 } from '@oh-awesome-novel/core';
 import type { LlmProviderModel } from '@oh-awesome-novel/core';
@@ -172,6 +173,7 @@ import type {
   ReferenceFullDeconstructionGenerationResult,
   ReferenceQuickPreviewGenerationResult,
   ReferenceStoryMaterialGenerationResult,
+  ReferenceMaterialAdoptionGenerationResult,
   ReferenceStyleProfileOutput,
 } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
@@ -216,6 +218,7 @@ import {
 import type {
   PreviewableWriteIntentToolName,
   ReferenceDeconstructionPublishPendingActionOrigin,
+  ReferenceMaterialAdoptionPendingActionOrigin,
   WriteIntentPendingAction,
 } from '@oh-awesome-novel/tools';
 import {
@@ -229,6 +232,13 @@ import type {
   PlayAdoptionProjection,
   StoredPlayAdoptionPreview,
 } from './play-adoption-preview.js';
+import {
+  createReferenceMaterialAdoptionController,
+  toReferenceMaterialAdoptionErrorResponse,
+} from './reference-material-adoption.js';
+import type {
+  ReferenceMaterialAdoptionController,
+} from './reference-material-adoption.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
@@ -285,6 +295,9 @@ export interface NovelBackendOptions {
   runReferenceMaterialProjection?: (
     input: GenerateReferenceMaterialProjectionInput,
   ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialProjectionResult>>;
+  runReferenceMaterialAdoption?: (
+    input: import('@oh-awesome-novel/agent').GenerateReferenceMaterialAdoptionInput,
+  ) => Promise<ReferenceMaterialAdoptionGenerationResult>;
 }
 
 export interface NovelBackendAgentInput {
@@ -321,6 +334,7 @@ interface BackendState {
   playTurnRuns: Map<string, PlayTurnRunRecord>;
   playRehearsal?: PlayRehearsalBackendController;
   referenceDeconstruction?: ReferenceDeconstructionBackendController;
+  referenceMaterialAdoption?: ReferenceMaterialAdoptionController;
 }
 
 type PlayTurnRunStatus =
@@ -466,6 +480,25 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       : {}),
   });
   state.referenceDeconstruction = referenceDeconstruction;
+  const referenceMaterialAdoption = createReferenceMaterialAdoptionController({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    async getModelRuntime() {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig
+        ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) {
+        throw new Error('Reference Material adoption requires model mode with provider config.');
+      }
+      return {
+        providerConfig,
+        resolveModel: options.resolveModel ?? createAiSdkProviderResolver(),
+      };
+    },
+    ...(options.runReferenceMaterialAdoption
+      ? { runAdoption: options.runReferenceMaterialAdoption }
+      : {}),
+  });
+  state.referenceMaterialAdoption = referenceMaterialAdoption;
 
   app.use('*', cors({
     origin: '*',
@@ -541,6 +574,24 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleUpdateReferenceWork(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/references/context', (context) =>
     handleSelectReferenceContext(options, state, context));
+  app.get('/api/workspace/references/:referenceId/materials', (context) =>
+    handleReferenceMaterialAdoptionRequest(context, () =>
+      referenceMaterialAdoption.readCatalog(
+        context.req.param('referenceId') ?? '',
+      )));
+  app.post('/api/workspace/references/:referenceId/material-adoption-previews', (context) =>
+    handleCreateReferenceMaterialAdoptionPreview(
+      referenceMaterialAdoption,
+      context.req.param('referenceId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/material-adoption-previews/:previewId/pending-action', (context) =>
+    handleCreateReferenceMaterialAdoptionPendingAction(
+      referenceMaterialAdoption,
+      context.req.param('referenceId') ?? '',
+      context.req.param('previewId') ?? '',
+      context,
+    ));
   app.post('/api/workspace/references/:referenceId/deconstruction-runs', (context) =>
     handleCreateReferenceDeconstructionRun(
       referenceDeconstruction,
@@ -2011,6 +2062,65 @@ async function handlePublishReferenceDeconstructionRun(
       context,
     );
     return controller.publishRun(referenceId, runId, input);
+  });
+}
+
+async function handleCreateReferenceMaterialAdoptionPreview(
+  controller: ReferenceMaterialAdoptionController,
+  referenceId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceMaterialAdoptionRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, ['catalogFingerprint', 'selections']);
+    const catalogFingerprint = getOptionalString(body, 'catalogFingerprint') ?? '';
+    if (!/^[a-f0-9]{64}$/u.test(catalogFingerprint)) {
+      throw new InvalidJsonBodyError('catalogFingerprint must be a sha256 value.');
+    }
+    if (!Array.isArray(body.selections) || !body.selections.length) {
+      throw new InvalidJsonBodyError('selections must be a non-empty array.');
+    }
+    const selections = body.selections.map((value, index): ReferenceMaterialAdoptionSelection => {
+      if (!isRecord(value)) {
+        throw new InvalidJsonBodyError(`selections[${index}] must be an object.`);
+      }
+      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath']);
+      const entryId = getOptionalString(value, 'entryId');
+      const targetFile = getOptionalString(value, 'targetFile');
+      const targetPath = getOptionalString(value, 'targetPath');
+      if (!entryId || !targetFile) {
+        throw new InvalidJsonBodyError(
+          `selections[${index}] requires entryId and targetFile.`,
+        );
+      }
+      return { entryId, targetFile, ...(targetPath ? { targetPath } : {}) };
+    });
+    return controller.createPreview(referenceId, {
+      catalogFingerprint,
+      selections,
+    });
+  });
+}
+
+async function handleCreateReferenceMaterialAdoptionPendingAction(
+  controller: ReferenceMaterialAdoptionController,
+  referenceId: string,
+  previewId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceMaterialAdoptionRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    if (!/^pa_[0-9a-f-]+$/iu.test(previewId)) {
+      throw new InvalidJsonBodyError('previewId is invalid.');
+    }
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, ['fingerprint']);
+    const fingerprint = getOptionalString(body, 'fingerprint') ?? '';
+    if (!/^[a-f0-9]{64}$/u.test(fingerprint)) {
+      throw new InvalidJsonBodyError('fingerprint must be a sha256 value.');
+    }
+    return controller.createPendingAction(referenceId, previewId, { fingerprint });
   });
 }
 
@@ -5311,6 +5421,9 @@ async function handlePendingActionDecision(
   const referenceOrigin = readReferencePublishPendingActionOrigin(
     storedAction.origin,
   );
+  const materialAdoptionOrigin = readReferenceMaterialAdoptionPendingActionOrigin(
+    storedAction.origin,
+  );
   const hasReferenceArtifactPatch = storedAction.patches.some((patch) =>
     isRecord(patch) && patch.kind === 'referenceArtifact');
   if (hasReferenceArtifactPatch && !referenceOrigin) {
@@ -5339,6 +5452,21 @@ async function handlePendingActionDecision(
       );
       result = decided.action;
       referencePublish = decided.referencePublish;
+    } else if (materialAdoptionOrigin) {
+      const controller = state.referenceMaterialAdoption;
+      if (!controller) {
+        throw new Error('Reference Material adoption controller is unavailable.');
+      }
+      if (decision === 'accept') {
+        await controller.assertPendingActionCurrent(id, materialAdoptionOrigin);
+        result = await acceptPendingAction({
+          workspaceRoot,
+          id,
+          autoCommitOnAccept: gitConfig.autoCommitOnAccept,
+        });
+      } else {
+        result = await rejectPendingAction({ workspaceRoot, id });
+      }
     } else {
       result = decision === 'accept'
         ? await acceptPendingActionWithPlayAdoptionValidation({
@@ -5364,6 +5492,10 @@ async function handlePendingActionDecision(
     }
     if (referenceOrigin) {
       const response = toReferenceDeconstructionErrorResponse(error);
+      return jsonResponse(context, response.status, response.body);
+    }
+    if (materialAdoptionOrigin) {
+      const response = toReferenceMaterialAdoptionErrorResponse(error);
       return jsonResponse(context, response.status, response.body);
     }
     throw error;
@@ -5397,6 +5529,32 @@ function readReferencePublishPendingActionOrigin(
     return undefined;
   }
   return value as unknown as ReferenceDeconstructionPublishPendingActionOrigin;
+}
+
+function readReferenceMaterialAdoptionPendingActionOrigin(
+  value: unknown,
+): ReferenceMaterialAdoptionPendingActionOrigin | undefined {
+  if (
+    !isRecord(value)
+    || Object.keys(value).length !== 7
+    || value.kind !== 'referenceMaterialAdoption'
+    || typeof value.referenceId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
+    || value.referenceId.includes('..')
+    || !Number.isSafeInteger(value.manifestRevision)
+    || (value.manifestRevision as number) < 0
+    || typeof value.sourceChecksumSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.sourceChecksumSha256)
+    || typeof value.catalogFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.catalogFingerprint)
+    || typeof value.contextFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.contextFingerprint)
+    || typeof value.previewFingerprint !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(value.previewFingerprint)
+  ) {
+    return undefined;
+  }
+  return value as unknown as ReferenceMaterialAdoptionPendingActionOrigin;
 }
 
 async function acceptPendingActionWithPlayAdoptionValidation(input: {
@@ -7610,6 +7768,24 @@ async function handleReferenceDeconstructionJsonRequest(
   }
 }
 
+async function handleReferenceMaterialAdoptionRequest(
+  context: NovelBackendContext,
+  operation: () => Promise<unknown>,
+): Promise<Response> {
+  try {
+    return jsonResponse(context, 200, await operation());
+  } catch (error) {
+    if (error instanceof InvalidJsonBodyError) {
+      return jsonResponse(context, 400, {
+        error: error.message,
+        code: 'invalidRequest',
+      });
+    }
+    const response = toReferenceMaterialAdoptionErrorResponse(error);
+    return jsonResponse(context, response.status, response.body);
+  }
+}
+
 function requireReferenceWireId(value: string, label: string): string {
   if (!/^[\p{L}\p{N}_:-]{1,128}$/u.test(value)) {
     throw new ReferenceDeconstructionRequestError(
@@ -7696,3 +7872,20 @@ export type {
   NovelBackendPlayRehearsalRefereeInput,
   PlayRehearsalStructuredError,
 } from './play-rehearsal.js';
+export {
+  ReferenceMaterialAdoptionRequestError,
+  createReferenceMaterialAdoptionController,
+  toReferenceMaterialAdoptionErrorResponse,
+} from './reference-material-adoption.js';
+export type {
+  CreateReferenceMaterialAdoptionControllerOptions,
+  ReferenceMaterialAdoptionController,
+  ReferenceMaterialAdoptionModelRuntime,
+  ReferenceMaterialAdoptionNoChanges,
+  ReferenceMaterialAdoptionPendingActionResult,
+  ReferenceMaterialAdoptionPreviewResult,
+} from './reference-material-adoption.js';
+export type {
+  ReferenceMaterialAdoptionPreviewEnvelope,
+  StoredReferenceMaterialAdoptionPreview,
+} from './reference-material-adoption-preview.js';

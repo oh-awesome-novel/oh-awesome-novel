@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 import { parseFrontmatter, parseSections } from './markdown';
 import { yamlAppendDraft, yamlDeleteDraft, yamlGet, yamlSetDraft } from './yaml-engine';
@@ -53,7 +53,7 @@ export interface CollectionPatch {
 
 export interface NarrativePatch {
   kind: 'narrative';
-  domain: 'chapter' | 'summary';
+  domain: 'chapter' | 'summary' | 'outline';
   file: string;
   operation:
     | 'replaceFile'
@@ -299,10 +299,14 @@ function validateCollectionPatch(patch: CollectionPatch): void {
 }
 
 function validateNarrativePatch(patch: NarrativePatch): void {
-  if (!['chapter', 'summary'].includes(patch.domain)) {
+  if (!['chapter', 'summary', 'outline'].includes(patch.domain)) {
     throw new Error(`Unsupported NarrativePatch domain: ${String(patch.domain)}`);
   }
   safeRelativePath(requireString(patch.file, 'NarrativePatch file is required.'));
+
+  if (patch.domain === 'outline' && patch.operation !== 'replaceFile') {
+    throw new Error('Outline NarrativePatch only supports replaceFile.');
+  }
 
   switch (patch.operation) {
     case 'replaceFile':
@@ -346,16 +350,29 @@ async function applyPatchToContent(input: {
   targetPath: string;
   original: string;
 }): Promise<string> {
+  let draft: string;
   switch (input.patch.kind) {
     case 'object':
-      return applyObjectPatch(input.patch, input.original);
+      draft = await applyObjectPatch(input.patch, input.original);
+      break;
     case 'collection':
-      return applyCollectionPatch(input.workspaceRoot, input.patch, input.original);
+      draft = await applyCollectionPatch(input.workspaceRoot, input.patch, input.original);
+      break;
     case 'narrative':
-      return applyNarrativePatch(input.patch, input.original);
+      draft = applyNarrativePatch(input.patch, input.original);
+      break;
     case 'referenceArtifact':
-      return input.patch.value;
+      draft = input.patch.value;
+      break;
   }
+  if (input.targetPath.endsWith('.yaml')) {
+    try {
+      parseYaml(draft);
+    } catch {
+      throw new Error(`SemanticPatch produced invalid YAML: ${resolvePatchTargetFile(input.patch)}.`);
+    }
+  }
+  return draft;
 }
 
 async function applyObjectPatch(
@@ -392,7 +409,10 @@ async function applyCollectionPatch(
   patch: CollectionPatch,
   original: string,
 ): Promise<string> {
-  const tempPath = await writeInternalTempFile(workspaceRealpath, original);
+  const source = patch.operation === 'yamlSet' && !original.trim()
+    ? '{}\n'
+    : original;
+  const tempPath = await writeInternalTempFile(workspaceRealpath, source);
   try {
     switch (patch.operation) {
       case 'yamlSet':
@@ -458,6 +478,10 @@ function resolveNarrativePatchTarget(patch: NarrativePatch): string {
 
   if (patch.domain === 'chapter') {
     return file.startsWith(`chapters${sep}`) ? file : safeRelativePath(join('chapters', file));
+  }
+
+  if (patch.domain === 'outline') {
+    return file.startsWith(`outline${sep}`) ? file : safeRelativePath(join('outline', file));
   }
 
   return file.startsWith(`summaries${sep}`) ? file : safeRelativePath(join('summaries', file));

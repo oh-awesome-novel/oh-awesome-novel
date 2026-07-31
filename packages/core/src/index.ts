@@ -949,6 +949,27 @@ export type {
   ReferenceStoryMaterialVerifiedFindingMap,
 } from './reference-story-material.js';
 export {
+  MAX_REFERENCE_MATERIAL_ADOPTION_BASELINE_CHARS,
+  MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS,
+  MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS,
+  REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION,
+  createReferenceMaterialAdoptionPlan,
+  fingerprintReferenceMaterialAdoptionContext,
+  prepareReferenceMaterialAdoptionContext,
+  readReferenceMaterialAdoptionCatalog,
+} from './reference-material-adoption.js';
+export type {
+  ReferenceMaterialAdoptionCatalog,
+  ReferenceMaterialAdoptionContext,
+  ReferenceMaterialAdoptionDecision,
+  ReferenceMaterialAdoptionEntry,
+  ReferenceMaterialAdoptionModelOutput,
+  ReferenceMaterialAdoptionModelTarget,
+  ReferenceMaterialAdoptionPlan,
+  ReferenceMaterialAdoptionSelection,
+  ReferenceMaterialAdoptionTargetGroup,
+} from './reference-material-adoption.js';
+export {
   MAX_REFERENCE_DISTILLATION_INPUT_CHARS,
   MAX_REFERENCE_DISTILLATION_INPUTS,
   MAX_REFERENCE_DISTILLED_ENTRIES,
