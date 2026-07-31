@@ -1,219 +1,416 @@
-# InkOS Reference Lessons
+# InkOS 参考项目可借鉴经验
 
-本文档列出 InkOS 中值得 `oh-awesome-novel` 学习和吸纳的设计点。所有建议都以 OAN 当前稳定边界为前提：filesystem-first、AI 是 Copilot、写入需 PendingAction / diff / Human Approval、Runtime 保持 Aider-style 极简循环。
+> 参考基准：`reference-only/inkos@b0cc9a54`（`master`，2026-07-28，与 `origin/master` 一致）。
+>
+> InkOS 应用版本：`1.7.2`；当前 HEAD 是 `v1.7.2` 之后 3 个文档提交，最新代码提交为 `6e4ce005`。
+>
+> 现状证据与完整对比见 [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md)。本文只记录可迁移的设计经验、边界和优先级，不自动创建实现任务，也不改变 OAN 既有架构决策。
+
+## 总结判断
+
+InkOS 最值得 OAN 学习的不是功能数量，也不是多阶段 Agent 流水线，而是几个局部工程纪律：动作参数自包含、上下文来源可追溯、结构化变化由确定性代码应用、非 Canon 候选明确失效、长任务状态可恢复，以及 Skill 不得扩大运行时权限。
+
+这些经验必须先翻译成 OAN 语义：
+
+```text
+InkOS 的局部机制
+  → 提取不依赖其产品架构的约束
+  → 映射到 Object File Tree / AI SDK ToolSet
+  → 生成 SemanticPatch / PendingAction
+  → Git diff Human Approval
+```
+
+不能从“InkOS 已验证某个工作流”推出“OAN 应采用同样的直接写入、自动修订或多 Agent Runtime”。两者的产品权力边界不同。
+
+## 本轮分析修正了什么
+
+上一版 Lessons 的方向大体正确，但对当前 InkOS 和 OAN 的描述已经不够精确。本轮作出以下修正：
+
+1. **记录可复查的提交基准**
+   旧文档没有记录 InkOS SHA。本轮以 `b0cc9a54` 为当前基准，以旧文档进入 OAN 前可达的 `3f9b4e80` 作为推定对比基准；版本差异结论不再只来自 README。
+
+2. **Skill 已经更换协议**
+   InkOS v1.7.2 已删除旧的私有 capability / skill 体系，改为标准 AgentSkills / OpenClaw `SKILL.md` 发现和按需加载。OAN 也已经有 built-in `novel-copilot`、workspace override 和 `allowedTools` 过滤，因此建议是复核兼容边界，不是从零建设 Skill loader。
+
+3. **确认卡不是最终写入审批**
+   InkOS 的确认卡确认“开始执行重动作”；确认后 pipeline / tool 可以直接写正式文件。OAN 的 PendingAction 确认“是否应用已经可见的具体 diff”。这两个 gate 可以同时存在，但不能合并成一个。
+
+4. **InkOS 不是 Markdown 单一事实源**
+   长篇运行状态以 `story/state/*.json` 为权威结构化层，Markdown 是投影，`memory.db` 是可重建索引；基础设定和控制文件仍是 Markdown。不同产品域还有独立 manifest、JSONL、snapshot 和 store。
+
+5. **Play 的落盘不是完整跨文件事务**
+   InkOS 会先 render，再执行图状态事务；但图状态提交后的 event、current state、projection 和 transcript 仍是顺序写入。它降低了半状态概率，却不能保证所有文件原子提交。OAN 不应把这一实现当作多文件 Apply Engine 的事务证明。
+
+6. **新增长任务和候选域**
+   当前 InkOS 已有剧情推演、材料库、联网研究、翻译、互动影游、后台任务、Prompt Pack、备份恢复和标准 Skill。这些能力提供了新的局部参考，但不自动成为 Novel IDE 的范围。
+
+7. **测试数量不能替代可复现性**
+   当前源码中有 292 个测试源文件。核心 Skill、Context、Forecast、State、Research 等 11 个定向 suite、108 个 assertion 可通过；完整测试受本地依赖缺失和 workspace 构建产物不同步影响。Lesson 是保持单命令可复现验证，而不是把测试文件数量当作质量结论。
 
 ## 吸纳原则
 
-### 可以学模式，不照搬架构
+### 学机制，不扩产品边界
 
-InkOS 的价值在于它对小说创作 workflow 的产品化、上下文治理、状态投影、provider 配置和互动世界建模。OAN 不应照搬它的自主多 Agent runtime、自动写入链路或 SQLite 事实源。
+每项借鉴都要回答三个问题：
 
-### 以文件树和 Git 为最终解释层
+- 它解决的是 OAN 已有问题，还是只服务于 InkOS 的额外产品域？
+- 它能否由现有单一 Runtime、ToolSet 和文件协议表达？
+- 它是否保持 AI 提议、作者审阅、Git 记录的权力顺序？
 
-InkOS 的 `story/state/*.json + Markdown projections + memory.db` 可以启发 OAN 的“结构化事实 + 人类可读投影”设计。但 OAN 的事实源仍应是 Markdown / YAML / Object File Tree；任何索引或缓存都必须可由文件树重建。
+如果答案要求新增隐藏 planner、常驻 daemon、自主修稿循环或另一套事实源，就不应进入 OAN 核心。
 
-### 先做可审阅，再做自动化
+### 先区分执行同意与内容批准
 
-InkOS 有较强自动生产倾向。OAN 可以吸收其阶段拆分和 UI 反馈，但所有正式写入仍要进入 PendingAction 和 diff preview。
-
-## 值得参考的设计
-
-### 1. 统一 action surface
-
-InkOS 将 Studio Chat、TUI、CLI 和外部 Agent 入口收敛到同一套 action surface。普通聊天直接回答，重动作生成确认卡，确认后进入专门 session。
-
-OAN 可以学习：
-
-- 将 `/写下一章`、`/整理本章`、`/更新状态`、`/补伏笔` 等快捷指令和自然语言请求统一成 `ActionIntent`。
-- 让 Copilot 先生成“将要执行什么”的可确认 action，而不是直接进入长工具链。
-- 将 action 的结果绑定到 PendingAction、Tool Log 和文件 diff，避免模型口头声明完成。
-
-适合落点：
-
-- `packages/agent`：请求分类和 session metadata。
-- `packages/runtime`：保持极简 tool loop，不承载 planner。
-- `apps/desktop-ui`：确认卡、操作入口和结果状态。
-
-### 2. 重动作确认卡
-
-InkOS 的 `propose_action` 工具要求 instruction 自包含，并把结构化参数写入 `createBook`、`shortRun`、`playStart`、`generateCover` 等字段。
-
-OAN 可以学习：
-
-- PendingAction 之外增加“执行前确认卡”，用于建书、写下一章、批量更新状态等高成本动作。
-- confirmation payload 必须包含目标文件、动作类型、用户意图摘要、预期产物和风险提示。
-- 不让后续 session 依赖上一轮聊天上下文猜测参数。
-
-注意：执行前确认卡不能替代 PendingAction。确认“开始生成”之后，真实文件写入仍必须由 PendingAction 审批。
-
-### 3. 上下文分层：protected / compressible
-
-InkOS 把上下文分成 protected 和 compressible：作者意图、当前 focus、世界规则、事实状态等要保护；历史聊天、旧摘要和可压缩材料可在预算紧张时压缩。
-
-OAN 可以吸纳为：
-
-- protected：`.oan/constitution/*`、`.oan/workflow.yaml`、当前章节目标、明确用户约束、关键角色状态、未回收伏笔。
-- compressible：旧章节摘要、历史聊天、远期背景材料、低相关世界设定。
-- excluded：与当前任务无关且可能污染模型的旧草稿或未确认候选内容。
-
-落地形态可以是一个 `ContextPackage`，但它应作为 agent 组装层产物，不进入 runtime 架构核心。
-
-### 4. plan / compose / trace 中间产物
-
-InkOS 长篇写作有 `planChapter` 和 `composeChapter`，会产生章节意图、上下文包、规则栈和 trace。
-
-OAN 可以借鉴“写正文前先生成可审阅输入包”：
-
-- `chapter-intent.md`：下一章目标、冲突、必须推进的状态、禁止事项。
-- `context-package.yaml`：本轮读取了哪些文件、为何相关、哪些材料被压缩或排除。
-- `rule-stack.yaml`：constitution、workflow、用户临时要求和 genre rules 的优先级。
-- `trace.json` 或 Markdown trace：工具读取、上下文选择和生成原因。
-
-这些产物可以先放在 `.workspace` shadow 区域或 `.oan/sessions/`，不要直接污染小说事实源。
-
-### 5. 结构化状态的人类可读投影
-
-InkOS 将 hooks、chapter summaries、current state 渲染成 Markdown projection。这个设计非常适合 OAN。
-
-OAN 可以学习：
-
-- 从 `state/*.yaml` 生成 `state/projections/current.md` 或 `.oan/indexes/state.md`。
-- 从 `foreshadow/*.yaml` 生成“伏笔池”可读表。
-- 从 `timeline/events.yaml` 生成按章节排序的时间线视图。
-- projection 是派生物，不是事实源；应能重新生成。
-
-价值：
-
-- 作者能快速审阅状态。
-- Copilot 读取上下文更稳定。
-- Git diff 更容易看懂。
-
-### 6. Genre Profile 作为可维护规则资产
-
-InkOS 的 `packages/core/genres/*.md` 把题材规则、疲劳词、节奏规则、满足感类型和审稿维度写成 Markdown + frontmatter。
-
-OAN 可以吸收为 `.oan/skills/` 或 `.oan/genre/` 下的文件型规则包：
+高成本动作可以有两个不同的确认点：
 
 ```text
-my-novel/
-  .oan/
-    genre/
-      xuanhuan.yaml
-      xuanhuan.md
+Execution Consent
+  确认模型、预算、输入范围、预计产物和是否启动
+
+Apply Approval
+  确认 SemanticPatch 产生的具体文件 diff 是否成为真实项目状态
 ```
 
-规则应服务于 Copilot 审稿、章节规划和“去 AI 味”，而不是变成隐藏 prompt。作者应该能打开、修改和 Git diff。
+第一层适合建书、长时间参考分析、批量规划和大材料导入；第二层是所有 AI 写入的硬边界。取消第一层不应产生正式写入，确认第一层也不能绕过第二层。
 
-### 7. Provider bank 与配置诊断
+### 所有派生层都必须可解释
 
-InkOS 的服务配置把 Studio 配置、secrets、CLI env、进程 env 和命令行覆盖分层处理，并提供模型归属校验、模型列表探测和 doctor。
+OAN 可以有 summary、projection、search index、session artifact 和缓存，但必须明确：
 
-OAN 已有 provider gate 和 provider config，可以进一步学习：
+- 来源文件是什么。
+- 生成版本和 fingerprint 是什么。
+- Canon 变化后如何标记 stale。
+- 删除后如何重建。
+- 哪一层可以被用户直接编辑。
 
-- provider preset：常用服务商的 baseUrl、模型列表、兼容策略。
-- API Key 存储与配置分离：公开配置不含密钥。
-- provider check 显示来源：来自 app config、env、workspace，还是临时覆盖。
-- 模型归属校验：避免把 A 服务模型发到 B 服务 baseUrl。
-- 错误分类：配置错误、provider 错误、系统执行错误分开展示。
+这比简单规定“都存成文件”更重要。
 
-### 8. Studio SSE 事件分类
+### Skill 约束模型，不授权模型
 
-InkOS Studio 有较细的事件类型：book、write、draft、audit、revise、style、import、fanfic、agent、log、llm progress 等。
+Skill 可以提供 prompt guidance、允许工具集合、静态参考和 quick command；它不能：
 
-OAN 可以学习：
+- 向当前 ToolSet 增加原本不可用的能力。
+- 绕过路径、session kind、PendingAction 或 provider gate。
+- 自动执行附带脚本。
+- 把业务状态藏进 Skill 文件或运行时记忆。
 
-- 将 `RuntimeEvent` 到 UI event 的映射做成清晰 taxonomy。
-- Tool Log 不只展示工具名，还展示阶段、目标文件、进度、失败类型和是否产生 PendingAction。
-- 长任务中输出 `llm:progress` 类事件，让用户知道是模型慢、工具慢还是等待审批。
+运行时实际权限应该是宿主能力、session policy 和 Skill allowlist 的交集，而不是并集。
 
-### 9. Play 的事务式提交思路
+## P0：应在现有任务中优先复核
 
-InkOS Play 的一次回合先生成场景，再提交状态、图谱、事件、projection 和 transcript。失败时不留下半推进状态。
+P0 表示值得对照现有实现和关联 task 查缺，不表示立即新增功能或扩大 scope。
 
-OAN 当前不以互动世界为核心，但这个模式对任何“多文件写入”都有启发：
+### 1. 保持两阶段确认语义
 
-- 多文件 PendingAction 应先完整生成 diff。
-- 只有全部 preview 和 validation 成功，才进入用户可接受状态。
-- Accept 后写入失败要可见，并能定位哪些文件已 materialize。
-- 对章节 + state + timeline + foreshadow 的联动修改，可借鉴“先构建完整 mutation，再提交”的思想。
+InkOS 的 `ActionEnvelope` / `RequestedIntent` 强制重动作 payload 自包含，并验证确认来源与 intent 匹配。这可以改善 OAN 高成本任务启动前的可理解性。
 
-### 10. Import / continuation / style workflow
+OAN 可吸收：
 
-InkOS 支持导入已有章节、反推 truth files、生成 style guide，再续写。
+- 用 typed `ActionIntent` 描述动作类型、输入来源、目标范围、预计产物、成本和外部数据流向。
+- 让后续执行只依赖确认过的 payload，不从聊天历史猜参数。
+- 用 execution id / fingerprint 防止按钮重放、重复任务或把旧确认用于新输入。
+- 把执行结果绑定到 session artifact、Tool Log 和 PendingAction，而不是模型口头“已完成”。
 
-OAN 可以学习：
+硬边界：正式文件变化仍必须进入 `SemanticPatch → PendingAction → diff → Accept`。不应增加 InkOS 式 `write_truth_file` 直写入口。
 
-- “导入现有小说项目”不仅是复制文件，还应生成初始 summary、state、timeline、foreshadow 和 style profile 的候选 PendingAction。
-- 风格分析输出应成为可审阅文件，例如 `.oan/style/profile.md`。
-- 续写前先生成“当前连续性报告”，让作者确认 AI 对已有文本的理解。
+### 2. 复核 ContextPackage 的 protected / compressible 语义
 
-### 11. 测试分层和回归意识
+InkOS Composer 会区分不可静默压缩的作者意图、当前焦点和硬状态，以及可压缩的历史摘要和低相关背景；protected 自身超预算时明确失败，并记录选择、压缩和预算 trace。
 
-InkOS 测试覆盖 core、CLI、Studio、TUI、Play、provider、state 等很多边界。
+OAN 已有 `ContextPackage` 和 trace 基础，后续应在 `1010`、`1070`、`1080` 的边界内复核：
 
-OAN 可以吸收：
+- source 是否带路径、revision / hash、选择原因和层级。
+- 作者明确约束、constitution、workflow、当前章节目标和关键 continuity 是否可声明 protected。
+- protected overflow 是否可见失败，而不是静默截断。
+- 压缩结果是否保留原来源映射。
+- 未确认候选和旧草稿是否默认排除，避免把非 Canon 当事实。
 
-- 对每个写入工具测试“不会越权写文件”。
-- 对 provider config 测试“密钥不泄露、模型归属校验、错误消息可读”。
-- 对 PendingAction 测试 accept/reject、partial failure、Git dirty 文件隔离。
-- 对 context package 测试 protected materials 不被压缩掉。
-- 对章节索引、状态投影、伏笔表生成做快照测试。
+这应继续是 agent 组装层能力，不应把 planner、composer 或语义压缩循环塞进 `packages/runtime`。
 
-## 不建议直接照搬
+### 3. 固化 Skill 的权限不扩张规则
 
-### 1. 自主多 Agent 生产平台
+InkOS 最新 Skill 实现验证了一个适合 OAN 的安全不变量：模型先看到 name / description，需要时加载 guidance，但 Skill 本身不获得新工具或脚本执行权。
 
-InkOS 的多 agent pipeline 对它自身定位成立，但 OAN 文档明确禁止重型 multi-agent runtime。OAN 应保持 Aider-style loop，通过工具和文件产物表达阶段，而不是把 runtime 做成 planner / reviewer / reviser 编排平台。
+OAN 当前已经实现 `novel-copilot` loader、workspace override 和 `allowedTools` filter。对 `0700` 的合理复核项是：
 
-### 2. 自动写入真实目标文件
+- active tools 始终等于宿主 ToolSet 与 `skill.allowedTools` 的交集。
+- workspace Skill 不能覆盖写入审批、绝对路径读取和 provider gate。
+- Skill 内容进入 prompt provenance，并能在 session 中看见来源。
+- Skill activation 有明确生命周期，旧 guidance 不永久污染后续请求。
+- 若未来兼容标准 `SKILL.md`，只实现项目需要的最小静态子集，并验证路径、symlink、大小和文件数量。
 
-InkOS 的很多流程直接落盘。OAN 不能照搬。OAN 的 AI 发起写入必须先变成 PendingAction / diff，作者接受后才写真实目标文件。
+不应把 InkOS 的用户全局目录扫描、OpenClaw 兼容或 `@skill-id` UI 直接视为 OAN 必需功能。
 
-### 3. SQLite 作为事实源
+### 4. 把 Skill、Prompt Pack 和 Workflow Template 分开
 
-InkOS 的 `memory.db` 适合作为时间事实索引，但 OAN 的事实源必须是 Markdown / YAML / Object File Tree。未来即使用索引，也应是派生缓存，可删除后重建。
+InkOS v1.7.2 把 Prompt Pack 从 Skill 协议剥离，这个方向与 OAN `0700` 剩余 scope 一致。
 
-### 4. 后台 daemon 自动写作
+建议保持三个概念：
 
-InkOS 有 daemon schedule。OAN 当前边界是不做后台自主 agent。后续即使做提醒或自动扫描，也不应自动生产和写入小说正文。
+| 资产 | 负责什么 | 不负责什么 |
+| --- | --- | --- |
+| Skill | 工作纪律、prompt guidance、allowed tools | 业务实现、权限扩张 |
+| Prompt Pack | 可见、可覆盖、可版本化的模型指令 | 工具注册、项目状态 |
+| Workflow Template | 推荐步骤与产物协议 | 隐藏 planner、自动执行 |
 
-### 5. AGPL 代码级复制
+三者都应记录来源、优先级和 fingerprint；workspace 覆盖必须在 trace 中可见。
 
-InkOS 使用 AGPL-3.0-only。OAN 可以学习产品模式和抽象思路，但不应复制其实现代码或 prompt 文本到本项目。
+### 5. 结构化变化使用 typed delta + deterministic reducer
 
-## 建议吸纳优先级
+InkOS 章节结算不是让模型重写整份 current state，而是产生 typed delta，再由 immutable reducer 和 validator 应用。这与 OAN 的 SettlementBundle、SemanticPatch 和 Object File Tree 很相容。
 
-### 近期
+可迁移约束：
 
-- 统一 Copilot action intent 和确认卡。
-- 增强 provider preset、模型归属校验和 doctor 诊断。
-- 为章节规划增加可审阅 `chapter-intent` / `context-package` shadow 产物。
-- 生成状态、伏笔、时间线的 Markdown projection。
+- 模型只能提出闭集操作和带 evidence 的变化。
+- 代码验证 ID、枚举、引用、状态迁移和旧值前提。
+- reducer 负责确定性计算新状态，模型不能同时定义规则并裁决自己合格。
+- 多个对象变化先形成完整候选，再生成逐文件 diff。
+- projection 在 Accept 后由真实对象文件重建，不成为反向事实源。
 
-### 中期
+这应补强现有 `1030` settlement 与 `1100` projection 工作，不应复制 InkOS Settler Agent 或 JSON state 目录。
 
-- 建立 genre profile / skill pack 文件格式。
-- 导入已有小说时生成 summary/state/style 候选 PendingAction。
-- 将 Tool Log / RuntimeEvent taxonomy 做细，改善长任务可观测性。
-- 为 PendingAction 多文件事务和失败恢复补测试。
+### 6. 把部分落盘当作一等失败场景
 
-### 远期
+InkOS Play 的边界提醒 OAN：先 render、单 store transaction 和多文件原子提交是三件不同的事。
 
-- 可选封面/视觉资产生成工作流。
-- 可选互动世界或角色状态模拟，但应作为独立 domain，不影响长篇小说事实源。
-- 可删除重建的 memory / search index，用于加速检索，而不是替代文件树。
+对 PendingAction / Apply Engine 应持续验证：
 
-## 参考文件
+- preview 阶段不修改真实目标。
+- Accept 前重新检查 source hash、Git dirty 状态和所有路径。
+- materialize 过程中任一文件失败时，有明确 receipt、已写文件列表和恢复策略。
+- projection / index 刷新失败不伪装成 Canon 写入失败，也不能静默丢失。
+- 自动 Git commit 失败时保留已接受变化和可操作错误，不重复应用 patch。
+- crash recovery 能区分 prepared、accepted、partially materialized、committed。
 
-- InkOS 产品与功能说明：`reference-only/inkos/README.md`、`reference-only/inkos/README.en.md`
-- Skill 与 action surface：`reference-only/inkos/skills/SKILL.md`
-- CLI 命令面：`reference-only/inkos/packages/cli/src/program.ts`
-- Core 导出面：`reference-only/inkos/packages/core/src/index.ts`
-- 长篇流水线：`reference-only/inkos/packages/core/src/pipeline/runner.ts`
-- Agent session / prompt / tools：`reference-only/inkos/packages/core/src/agent/agent-session.ts`、`reference-only/inkos/packages/core/src/agent/agent-system-prompt.ts`、`reference-only/inkos/packages/core/src/agent/agent-tools.ts`
-- Interaction runtime：`reference-only/inkos/packages/core/src/interaction/runtime.ts`
-- 状态投影与记忆：`reference-only/inkos/packages/core/src/state/state-projections.ts`、`reference-only/inkos/packages/core/src/state/memory-db.ts`
-- Play：`reference-only/inkos/packages/core/src/play/play-runner.ts`
-- Provider 配置：`reference-only/inkos/packages/core/src/utils/effective-llm-config.ts`、`reference-only/inkos/packages/core/src/llm/providers/index.ts`
-- Studio API / SSE：`reference-only/inkos/packages/studio/src/api/server.ts`、`reference-only/inkos/packages/studio/src/hooks/use-sse.ts`
-- Genre profile：`reference-only/inkos/packages/core/genres/litrpg.md`
+InkOS 的 backup、task snapshot 和 lock 可作为失败案例来源，但 OAN 的恢复事实应由 PendingAction receipt、shadow state、Object File Tree 和 Git 共同解释。
+
+## P1：适合做局部产品与协议参考
+
+### 7. 非 Canon 剧情推演采用 fingerprint / stale / adoption
+
+InkOS Narrative Forecast 将 2–5 条未来分支保存在 `story/runtime/narrative-forecasts`，绑定输入 content fingerprint；Canon 变化后标记 stale，选择分支只生成 `selected-branch-plan.md`，不会直接修改正文、大纲或状态。
+
+如果 OAN 增加多线推演，可直接采用更严格的三段式：
+
+```text
+Forecast Artifact（non-Canon）
+  → 用户选择分支
+  → Adoption Preview / SemanticPatch
+  → PendingAction Accept
+```
+
+候选必须记录源 revision、假设、风险、影响对象和失效原因。选中只代表“进入采纳预览”，不代表成为 Canon。OAN 现有 Play adoption / reference publish 边界应继续作为实现模板。
+
+### 8. 长任务要有可恢复 task card，同时收窄写工具
+
+InkOS 后台生产任务为每个 session 保存 task snapshot、execution id、进度和恢复信息；任务运行时 host 会抑制冲突写工具，并提供 abort、删除、僵尸清理和 book lock。
+
+OAN 可以将其用于长时间参考分析、导入、健康检查或大规模只读审阅：
+
+- 每个 workspace / mutation domain 保持明确单槽或冲突矩阵。
+- task card 展示输入 fingerprint、阶段、provider、外部数据流、产物和错误。
+- 用户可以继续对话，但冲突写工具临时不可用。
+- abort 只终止运行，不自动撤销已经接受的正式变化。
+- restart 后从持久化 checkpoint 证明状态，而不是仅靠内存 promise。
+
+这不授权 daemon 自动写章，也不要求增加多 Agent scheduler。
+
+### 9. 材料召回先建立透明的词项基线
+
+InkOS 材料库保留 source、MIME、purpose、字符范围、excerpt 和匹配分数，用词项召回而不是先引入向量数据库。
+
+这适合 OAN filesystem-first 路线：
+
+- 原始材料、清洗文本和 manifest 分层保存。
+- 每个 context excerpt 都能回到具体文件和字符范围。
+- 检索分数与用途可见，用户可以判断为何被选中。
+- 派生索引可删除重建，不能成为小说 truth。
+- embedding 只有在透明基线不足且有明确评测后再考虑。
+
+同时应比 InkOS 更早补齐 URL 安全：DNS / 私网地址、重定向链、下载大小、MIME、超时、credential forwarding 和审计日志。
+
+### 10. 研究报告必须与 Canon 隔离
+
+InkOS 会保存来源、query log、失败、unknowns 和 confidence，并明确 Research 不是 Canon。这个产品边界值得保留。
+
+OAN 的研究产物应：
+
+- 记录可访问来源、查询时间、摘录位置和未验证项。
+- 区分“来源声称”“模型推断”“作者决定”。
+- 不把搜索摘要第一句当作已验证 claim。
+- 只有经作者选择并进入 SemanticPatch 的内容才可修改世界设定或章节。
+- 外部服务接收了哪些正文或设定要在 provider / egress UI 中可见。
+
+### 11. 导入已有小说应支持重放和 source drift
+
+InkOS 能从已有章节反推 summary、state、style 和 truth files，并维护导入恢复路径。OAN 可以吸收其工作流拆分，但要保留候选语义：
+
+- 先登记原稿来源、文件顺序、encoding 和 fingerprint。
+- 解析章节与生成事实候选分开。
+- summary、timeline、foreshadow、state 和 style profile 都先进入 shadow / session artifact。
+- 用户按文件或批次审阅 PendingAction 后才写 Object File Tree。
+- 原稿变化时标记 source drift，并支持从最近已确认 checkpoint 重放。
+
+这应与外部参考作品 deconstruction 分离：自有原稿可以成为本项目事实候选，外部参考只能进入 reference layer。
+
+### 12. Provider 配置要显示来源、凭据和数据外发
+
+InkOS 将 provider preset、模型测试、doctor、secret 和配置层级做成完整产品面。OAN 可继续吸收：
+
+- 显示配置来自全局、workspace、env 还是本轮覆盖。
+- API key 与可提交配置分开，日志和错误不得泄露凭据。
+- 对模型、base URL 和 provider compatibility 做显式验证。
+- 在执行前说明哪些文件片段会发送给哪个服务。
+- 将配置错误、上游错误、限流、内容策略和本地执行错误分类展示。
+
+Provider 诊断只提升可解释性，不能成为绝对路径读取或隐式大范围上传的理由。
+
+### 13. 事件与运行产物要以真实完成态为准
+
+InkOS 的 transcript / SSE 会区分 request started、tool event、committed 和 failed。OAN 可继续统一 RuntimeEvent taxonomy：
+
+- 事件带 execution id、session id、阶段和目标 artifact。
+- Tool Log 显示读了什么、为何读取、是否产生 PendingAction。
+- `completed` 必须由 durable artifact、receipt 或 commit 证明。
+- provider 慢、tool 慢、等待用户审批和后台排队应是不同状态。
+- 重连后从持久化事件或任务快照恢复，不根据最后一条自然语言猜状态。
+
+## P2：仅在产品范围明确后参考
+
+### 14. Translation 应是隔离的派生产品域
+
+InkOS 的翻译流水线有 source、segment、glossary、batch state、review 和 export，适合参考长文批处理与断点恢复。但 OAN 当前定位不是通用翻译平台。
+
+只有明确进入产品计划时才应考虑，并保持：
+
+- `translations/` 与小说 Canon 隔离。
+- glossary 和译文是目标语言派生资产，不反向修改原稿。
+- manifest 使用严格 schema，不依赖宽松 TypeScript cast。
+- 每批结果可恢复、可复审、可重新导出。
+
+### 15. 互动影游只参考图协议和 validator
+
+InkOS 的互动影游包含 story graph、condition / effect evaluator、typed delta、immutable apply、snapshot、路径枚举和导出。这些可为 OAN Play 或未来互动叙事提供局部参考：
+
+- 节点和边使用稳定 ID。
+- condition / effect 使用闭集表达式，禁止运行任意代码。
+- 图变更先验证 dangling edge、不可达节点、终局和路径上限。
+- 大图枚举必须有 max paths / depth，不能无界搜索。
+- export 是派生物，不成为编辑事实源。
+
+不应因此把互动影游、分镜、视频或资产生成纳入 Novel IDE 核心。
+
+### 16. Play 只吸收 OAN 尚缺的局部，不回退现有边界
+
+InkOS Play 值得参考的局部包括 render-before-commit、确定性 condition / effect、checkpoint、variant、run lock 和图验证。
+
+OAN 已有更适合自身架构的 world referee、branch-local knowledge、typed settlement 和 adoption flow，因此：
+
+- 不以 InkOS 的 `play.db` / JSON fallback 替代 Object File Tree。
+- 不让一回合直接成为小说 Canon。
+- 不把顺序多文件写误称为原子事务。
+- Play 结果进入小说仍走 adoption preview 和 PendingAction。
+
+## 不建议吸收
+
+### Runtime 与自动化
+
+- Architect / Writer / Auditor / Reviser 多 Agent 编排进入 `packages/runtime`。
+- 默认自动审稿、自动修订或多轮 repair loop。
+- daemon 定时写章、无人值守批量生产或隐藏重试。
+- 让后台任务扩大原 session 的可写工具集合。
+
+### 写入与事实源
+
+- `write_truth_file` 式整文件直接覆盖。
+- 确认“开始执行”后跳过最终 diff approval。
+- SQLite、transcript、task snapshot、projection 或 search index 成为小说事实源。
+- 每个新增产品域建立一套互不兼容的 truth / history 协议。
+- 用 snapshot / backup 取代 Git 历史。
+
+### Skill 与扩展
+
+- Skill 自动执行脚本、安装依赖或注册任意工具。
+- Skill 的 allowed tools 与宿主权限取并集。
+- 默认扫描所有用户全局 Skill 并让项目无感继承。
+- 引入 extension marketplace 或复杂依赖解析器。
+- 把业务逻辑和持久状态塞进 prompt / Skill。
+
+### 产品范围与外部边界
+
+- 为追平 InkOS 功能表而加入翻译、互动影游、封面或视频生产。
+- 未做 SSRF 防护的任意 URL 摄取。
+- 把搜索 snippet 或模型整理的“claim”直接写入 Canon。
+- 隐式将整本小说发送给外部 provider。
+
+### 许可证
+
+InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思路，不应复制其源码、prompt、Skill 正文、测试或 UI 文案。若未来需要代码级复用，必须单独完成许可证兼容评估。
+
+## 可作为 OAN 规范候选的约束语句
+
+以下文本可以在关联 task 复核时作为候选，不代表本次分析已修改正式规范：
+
+1. Skill may narrow the active ToolSet, but must never expand host permissions.
+2. Confirming execution does not approve any resulting file change.
+3. Every AI-authored real-file mutation must end in a reviewable PendingAction diff.
+4. Non-Canon artifacts must carry source revisions and become stale when their inputs change.
+5. Protected context must fail visibly when it cannot fit; it must not be silently truncated.
+6. Model output proposes typed deltas; deterministic code validates and applies them.
+7. Derived indexes and projections must be rebuildable from the Object File Tree.
+8. Durable receipts, not assistant prose, determine whether an action completed.
+9. Background execution may suppress conflicting tools, but may not gain new authority.
+10. External research remains evidence until the author explicitly adopts it into Canon.
+
+## 与现有 OAN 任务的建议映射
+
+| 经验 | 优先对照位置 | 处理方式 |
+| --- | --- | --- |
+| Skill 权限不扩张、Prompt Pack 分离 | `0700`、`1000` | 复核现有 loader / filter；只保留轻量 registration |
+| protected / compressible、source trace | `1010`、`1070`、`1080` | 补 trace 与失败语义，不新增 planner |
+| typed delta、evidence、projection | `1030`、`1050`、`1100` | 加强 validator、Accept 后刷新和失败测试 |
+| 非 Canon fingerprint / adoption | Play adoption、reference publish 现有链路 | 复用统一 preview / PendingAction 语义 |
+| 导入已有小说 | `0700` 与 `0900` 边界 | 自有原稿导入和外部 reference 严格分离 |
+| 多文件部分落盘与 Git receipt | `0800` 及 PendingAction / Git task | 补 source drift、partial materialization、commit failure 测试 |
+| 后台任务、task card、恢复 | 仅在具体长任务需要时 | 先做单 domain、单槽和只读任务，不建通用 scheduler |
+| 材料 / 研究 provenance | reference 与 context selection 相关 task | 先透明词项检索，再用评测决定是否需要 embedding |
+
+任何条目正式进入实现前，仍应以对应 `docs/tasks/*.md` 的 scope、constraints、Related Plans 和 Done Criteria 为准。
+
+## 主要证据路径
+
+- 版本与产品范围：
+  - `reference-only/inkos/README.md`
+  - `reference-only/inkos/CHANGELOG.md`
+  - `reference-only/inkos/package.json`
+- Agent 与动作确认：
+  - `reference-only/inkos/packages/core/src/agent/agent-session.ts`
+  - `reference-only/inkos/packages/core/src/agent/agent-tools.ts`
+  - `reference-only/inkos/packages/core/src/interaction/action-envelope.ts`
+  - `reference-only/inkos/packages/core/src/interaction/edit-controller.ts`
+- Skill 与 Prompt：
+  - `reference-only/inkos/packages/core/src/skills/external-loader.ts`
+  - `reference-only/inkos/packages/core/src/agent/skill-tool.ts`
+  - `reference-only/inkos/packages/core/src/prompts/prompt-pack.ts`
+- 长篇 Context 与 State：
+  - `reference-only/inkos/packages/core/src/agents/composer.ts`
+  - `reference-only/inkos/packages/core/src/pipeline/chapter-review-cycle.ts`
+  - `reference-only/inkos/packages/core/src/state/runtime-state-store.ts`
+  - `reference-only/inkos/packages/core/src/state/memory-db.ts`
+- 材料、研究与推演：
+  - `reference-only/inkos/packages/core/src/materials/ingest.ts`
+  - `reference-only/inkos/packages/core/src/materials/retrieve.ts`
+  - `reference-only/inkos/packages/core/src/agents/researcher.ts`
+  - `reference-only/inkos/packages/core/src/forecast/runner.ts`
+- 独立产品域与后台任务：
+  - `reference-only/inkos/packages/core/src/translation/runner.ts`
+  - `reference-only/inkos/packages/core/src/interactive-film/validation.ts`
+  - `reference-only/inkos/packages/core/src/play/play-runner.ts`
+  - `reference-only/inkos/packages/studio/src/api/task-store.ts`
+- OAN 当前边界：
+  - `docs/ARCHITECTURE.md`
+  - `docs/APPLY_ENGINE.md`
+  - `docs/AGENT_OPERATING_MANUAL.md`
+  - `docs/tasks/0700.md`
+
+本文只更新参考判断。OAN 的正式方案仍由自身稳定设计文档、task、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 决定。
