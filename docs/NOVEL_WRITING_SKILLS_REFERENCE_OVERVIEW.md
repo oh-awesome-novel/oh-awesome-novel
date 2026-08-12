@@ -1,14 +1,18 @@
-# Novel Writing Skills 参考项目现状分析
+# Novel Writing Skills 参考项目历史横向分析
 
-> 范围：本文合并分析 `reference-only/awesome-novel-skill`、`reference-only/novel-writer-skills`、`reference-only/oh-awesome-novel-skill`、`reference-only/oh-story-claudecode` 当前本地内容。
+> 状态：2026-08-01 历史快照。本文保留当时四个写作 Skill 的横向比较；文中的“当前”均指当日基准，不代表 2026-08-12 最新主线。
+>
+> 最新专题分析：`awesome-novel-skill` 见 [AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md](AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md)；`oh-story-claudecode` 见 [OH_STORY_CLAUDECODE_REFERENCE_OVERVIEW.md](OH_STORY_CLAUDECODE_REFERENCE_OVERVIEW.md)。`novel-writer-skills` 与单文件 `oh-awesome-novel-skill` 不在本轮更新范围。
+
+> 范围：本文合并分析 `reference-only/awesome-novel-skill`、`reference-only/novel-writer-skills`、`reference-only/oh-awesome-novel-skill`、`reference-only/oh-story-claudecode` 在 2026-08-01 的本地内容。
 >
 > 目的：这些参考项目更接近“写作 Skill、Agent 指引或写作工作台”，不是 OAN 的目标架构。本文关注它们如何组织写前读取、规划产物、正文上下文、写后结算、审稿与去 AI 味，以及当前版本相对上一轮发生了什么变化。
 >
 > 分析日期：2026-08-01。三个独立 Git 仓库的当前分支均已与各自 upstream 对齐；单文件 `oh-awesome-novel-skill` 没有独立 Git 历史，本文记录文件指纹以供后续比较。
 
-## 基准信息
+## 历史基准信息
 
-| 项目 | 当前基准 | 上一版文档基准 | 许可证观察 |
+| 项目 | 2026-08-01 基准 | 上一版文档基准 | 许可证观察 |
 | --- | --- | --- | --- |
 | `awesome-novel-skill` | `main@b9af6835`，与 upstream 一致；发行版本 `v4.8.4`，`git describe` 为 `v4.8.4-1-gb9af683` | `d4891c6`，2026-06-17 | 仓库 `LICENSE` 与集中声明为 GPL-3.0；README 另有商业使用联系说明，代码级复用需单独审查 |
 | `novel-writer-skills` | `main@5bc9b373`，与 upstream 一致；npm 版本 `1.1.1` | `5bc9b37` | MIT |

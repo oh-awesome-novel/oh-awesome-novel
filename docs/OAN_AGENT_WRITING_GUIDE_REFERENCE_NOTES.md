@@ -31,6 +31,19 @@ Status: Reference Notes
 - 不能复制参考项目的实现代码、prompt 原文或 UI 文案；对于 AGPL 或许可证未明确允许的项目，只能吸收产品模式和抽象方法。
 - 如果同一个建议来自多个参考项目，应列出多个来源，而不是只保留最后一次阅读的项目。
 
+## Current Reference Baselines
+
+本轮重新拉取并复核了四个主要参考项目。当前分析基准为：
+
+| Reference | Current baseline | Version / note | Dedicated analysis |
+| --- | --- | --- | --- |
+| StoryForge | `d78a7371cb4c8bcd6db9bcd59bc7c15cf16f7e45`（2026-08-12） | package `3.9.1`；最新提交为流量归档 | [STORYFORGE_REFERENCE_OVERVIEW.md](STORYFORGE_REFERENCE_OVERVIEW.md) |
+| InkOS | `a6e05d4d4567df0efd5825e9b0037146a16e4f3e`（2026-08-03） | package `1.7.2` | [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md) |
+| oh-story-claudecode | `1eae178058ce41962de0d465147965af891479dc`（2026-08-11） | `0.7.5` 后 4 commits；agents contract v25 | [OH_STORY_CLAUDECODE_REFERENCE_OVERVIEW.md](OH_STORY_CLAUDECODE_REFERENCE_OVERVIEW.md) |
+| awesome-novel-skill | `e7d19936bac10e165ab42cb744f7d5c549c19f77`（2026-08-11） | `v4.12.3` 后 4 commits | [AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md](AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md) |
+
+该表只声明参考快照，不把参考项目的功能状态转换成 OAN 已实现状态。专题计划仍应保留其原始基准，避免改写历史决策上下文。
+
 ## Current OAN Writing Guide State
 
 ### Product Boundary
@@ -498,6 +511,17 @@ OAN 角色卡可吸收 SillyTavern 的互动字段：
 以下内容来自 `awesome-novel-skill`、`novel-writer-skills`、`oh-awesome-novel-skill`、`oh-story-claudecode` 和 `webnovel-writer` 的写作 skill / 写作插件参考观察，尚不是 OAN 当前行为，除非另有标注。[AwesomeNovelSkill-reference][NovelWriterSkills-reference][OhAwesomeNovelSkill-reference][OhStoryClaudeCode-reference][WebnovelWriter-reference]
 
 这些项目与 InkOS、StoryForge 的启发有大量重叠。因此本节只合并增量：写作 skill 里的具体 agent 指引、单章推进纪律、单 agent harness、去 AI 味保护和参考拆解 workflow。
+
+### 2026-08-12 Current Delta
+
+本轮最新代码复核补充以下判断：
+
+- `oh-story-claudecode` 已把动态连续性收敛为 schema v4 tracking authority；模型提交 semantic delta，脚本以 `expected_state_revision` 做 CAS、确定性生成投影，并最后替换 authority 作为 commit point。OAN 应将这一纪律分域映射到 Object File Tree / SettlementBundle，不能把全部小说状态集中到单一 JSON，也不能跳过 PendingAction。[OhStoryClaudeCode-reference][OAN-adaptation]
+- `oh-story-claudecode` 对 7 段热上下文、活跃角色 / 伏笔 / 最近章节和 Skill 文档本身设置 byte budget，并用 CI 检查。OAN 可对 ContextPackage 固定入口、built-in guide 和派生 adapter 增加回归预算。[OhStoryClaudeCode-reference][OAN-adaptation]
+- `awesome-novel-skill` v4.12 已加入 writer partial、归档 checkpoint、章节 rollback 和 canonical-source 平台 adapter；适合参考 resumable artifact 与 drift test，不适合引入固定 1 + 7 Agent 拓扑。[AwesomeNovelSkill-reference][OAN-adaptation]
+- `awesome-novel-skill` 的 Codex adapter 因无工具白名单字段而注入文本禁止规则，这只能约束模型行为，不能替代 ToolSet / path / approval 的强制边界。[AwesomeNovelSkill-reference][OAN-constraint]
+- 角色推演当前强调只输出可观察言行、环境和状态变化，不暴露 hidden reasoning；这可用于复核 OAN Play 的 public event 与 private knowledge 分离。[AwesomeNovelSkill-reference][OAN-adaptation]
+- `style-distiller` 当前只有已批准设计稿，没有第 9 个子 Agent 实现；不得把它计入参考项目已交付能力。[AwesomeNovelSkill-reference]
 
 ### Concept Conflict Resolution
 
@@ -992,6 +1016,8 @@ Notes:
 - `docs/INKOS_REFERENCE_LESSONS.md`
 - `docs/STORYFORGE_REFERENCE_OVERVIEW.md`
 - `docs/STORYFORGE_REFERENCE_LESSONS.md`
+- `docs/OH_STORY_CLAUDECODE_REFERENCE_OVERVIEW.md`
+- `docs/AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md`
 - `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`
 - `docs/WEBNOVEL_WRITER_REFERENCE_OVERVIEW.md`
 - `docs/WEBNOVEL_WRITER_REFERENCE_LESSONS.md`

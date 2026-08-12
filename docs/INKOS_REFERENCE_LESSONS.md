@@ -1,8 +1,8 @@
 # InkOS 参考项目可借鉴经验
 
-> 参考基准：`reference-only/inkos@b0cc9a54`（`master`，2026-07-28，与 `origin/master` 一致）。
+> 参考基准：`reference-only/inkos@a6e05d4`（`master`，2026-08-03，与 `origin/master` 一致）。
 >
-> InkOS 应用版本：`1.7.2`；当前 HEAD 是 `v1.7.2` 之后 3 个文档提交，最新代码提交为 `6e4ce005`。
+> InkOS 应用版本：`1.7.2`。相对上一轮 `b0cc9a54`，当前增加 10 个提交、53 个变化文件，应用版本号未变化。
 >
 > 现状证据与完整对比见 [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md)。本文只记录可迁移的设计经验、边界和优先级，不自动创建实现任务，也不改变 OAN 既有架构决策。
 
@@ -26,8 +26,8 @@ InkOS 的局部机制
 
 上一版 Lessons 的方向大体正确，但对当前 InkOS 和 OAN 的描述已经不够精确。本轮作出以下修正：
 
-1. **记录可复查的提交基准**
-   旧文档没有记录 InkOS SHA。本轮以 `b0cc9a54` 为当前基准，以旧文档进入 OAN 前可达的 `3f9b4e80` 作为推定对比基准；版本差异结论不再只来自 README。
+1. **更新可复查的提交基准**
+   本轮从 `b0cc9a54` 更新到 `a6e05d4`。更早的 `3f9b4e80` 只保留为长期变化的推定起点，不再用于描述当前实现。
 
 2. **Skill 已经更换协议**
    InkOS v1.7.2 已删除旧的私有 capability / skill 体系，改为标准 AgentSkills / OpenClaw `SKILL.md` 发现和按需加载。OAN 也已经有 built-in `novel-copilot`、workspace override 和 `allowedTools` 过滤，因此建议是复核兼容边界，不是从零建设 Skill loader。
@@ -44,8 +44,17 @@ InkOS 的局部机制
 6. **新增长任务和候选域**
    当前 InkOS 已有剧情推演、材料库、联网研究、翻译、互动影游、后台任务、Prompt Pack、备份恢复和标准 Skill。这些能力提供了新的局部参考，但不自动成为 Novel IDE 的范围。
 
-7. **测试数量不能替代可复现性**
-   当前源码中有 292 个测试源文件。核心 Skill、Context、Forecast、State、Research 等 11 个定向 suite、108 个 assertion 可通过；完整测试受本地依赖缺失和 workspace 构建产物不同步影响。Lesson 是保持单命令可复现验证，而不是把测试文件数量当作质量结论。
+7. **主要章节落盘已增加 staged commit / rollback**
+   `saveChapter()` 现在将章节、主要 runtime JSON 与 Markdown projection 作为一组提交；但后续 truth、legacy sync、index、snapshot 和 revision 路径仍不在同一事务。Lesson 是明确事务覆盖面，不能把局部原子性推广到完整 pipeline。
+
+8. **旧章改写已有版本谱系和下游失效**
+   Studio 会归档原版本、执行 revision gate，并对受影响的后续章节标记 `needs-revision`；它仍直接应用正式文件，不是 OAN PendingAction。
+
+9. **批量写作是有界顺序任务，不是批量批准**
+   一次最多 20 章、单 book lock、遇到非 ready 状态即停止。OAN 可参考任务边界，但每章的内容批准不能被一次 execution consent 取代。
+
+10. **测试数量不能替代可复现性**
+   当前源码中有 295 个测试源文件。本轮依赖恢复受 registry 与非 TTY 清理保护阻断，没有测试执行。Lesson 是保持单命令可复现验证，而不是把测试文件数量或上一轮通过结果当作当前质量结论。
 
 ## 吸纳原则
 
@@ -171,7 +180,7 @@ InkOS 章节结算不是让模型重写整份 current state，而是产生 typed
 
 ### 6. 把部分落盘当作一等失败场景
 
-InkOS Play 的边界提醒 OAN：先 render、单 store transaction 和多文件原子提交是三件不同的事。
+InkOS 当前同时提供正反两类证据：Writer 的主要 chapter settlement 已使用 staging、backup、rename 和 rollback 形成多文件原子集合；Play 和长篇后续 truth / index / snapshot 仍有顺序写入。先 render、局部 atomic file set、单 store transaction 和完整 pipeline transaction 是四件不同的事。
 
 对 PendingAction / Apply Engine 应持续验证：
 
@@ -275,9 +284,25 @@ InkOS 的 transcript / SSE 会区分 request started、tool event、committed �
 - provider 慢、tool 慢、等待用户审批和后台排队应是不同状态。
 - 重连后从持久化事件或任务快照恢复，不根据最后一条自然语言猜状态。
 
+### 14. 历史章节改写要保留版本谱系并失效下游
+
+InkOS chapter workspace 在改写前归档原版本，并将历史章节变更影响到的后续章节标记为 `needs-revision`。OAN 可以采用更严格的对象依赖语义：
+
+- 修订候选绑定原 chapter blob / source hash。
+- Accept 后记录 previous / current commit identity。
+- 依赖该章的 summary、state、timeline、foreshadow、reference 和后续写作 context 标为 stale / needs-review。
+- 只自动重建确定性 projection；任何 AI 生成的下游修复继续形成独立 PendingAction。
+- 恢复旧版本仍走 Git / SemanticPatch，不由 Agent 直接覆盖并手工补状态。
+
+### 15. 批量写作只复用任务边界，不复用授权边界
+
+InkOS 将 1–20 章放在单一 book lock 下顺序执行，并在中间状态异常时停止。OAN 若提供批量能力，可以吸收：有界数量、顺序执行、逐章 artifact、遇错停止和可恢复 task card。
+
+不能吸收的是“一次开始确认等于多章内容批准”。批量任务应该只生成候选；每章或用户明确选择的一组 diff 仍需 Apply Approval。
+
 ## P2：仅在产品范围明确后参考
 
-### 14. Translation 应是隔离的派生产品域
+### 16. Translation 应是隔离的派生产品域
 
 InkOS 的翻译流水线有 source、segment、glossary、batch state、review 和 export，适合参考长文批处理与断点恢复。但 OAN 当前定位不是通用翻译平台。
 
@@ -288,7 +313,7 @@ InkOS 的翻译流水线有 source、segment、glossary、batch state、review �
 - manifest 使用严格 schema，不依赖宽松 TypeScript cast。
 - 每批结果可恢复、可复审、可重新导出。
 
-### 15. 互动影游只参考图协议和 validator
+### 17. 互动影游只参考图协议和 validator
 
 InkOS 的互动影游包含 story graph、condition / effect evaluator、typed delta、immutable apply、snapshot、路径枚举和导出。这些可为 OAN Play 或未来互动叙事提供局部参考：
 
@@ -300,7 +325,7 @@ InkOS 的互动影游包含 story graph、condition / effect evaluator、typed d
 
 不应因此把互动影游、分镜、视频或资产生成纳入 Novel IDE 核心。
 
-### 16. Play 只吸收 OAN 尚缺的局部，不回退现有边界
+### 18. Play 只吸收 OAN 尚缺的局部，不回退现有边界
 
 InkOS Play 值得参考的局部包括 render-before-commit、确定性 condition / effect、checkpoint、variant、run lock 和图验证。
 
@@ -369,6 +394,9 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
 | Skill 权限不扩张、Prompt Pack 分离 | `0700`、`1000` | 复核现有 loader / filter；只保留轻量 registration |
 | protected / compressible、source trace | `1010`、`1070`、`1080` | 补 trace 与失败语义，不新增 planner |
 | typed delta、evidence、projection | `1030`、`1050`、`1100` | 加强 validator、Accept 后刷新和失败测试 |
+| atomic file set、partial materialization | `0800` 及 PendingAction / Git task | 对照 staging / rollback，保留 receipt 与 Git 作为最终解释层 |
+| 历史章节版本与下游失效 | chapter revision、summary / state projection | 记录 source commit；确定性重建与 AI 修复分开 |
+| 有界批量写章 | 仅在具体批量生成需求出现时 | 单任务顺序生成候选，逐章或分组 diff approval |
 | 非 Canon fingerprint / adoption | Play adoption、reference publish 现有链路 | 复用统一 preview / PendingAction 语义 |
 | 导入已有小说 | `0700` 与 `0900` 边界 | 自有原稿导入和外部 reference 严格分离 |
 | 多文件部分落盘与 Git receipt | `0800` 及 PendingAction / Git task | 补 source drift、partial materialization、commit failure 测试 |
@@ -394,9 +422,14 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
   - `reference-only/inkos/packages/core/src/prompts/prompt-pack.ts`
 - 长篇 Context 与 State：
   - `reference-only/inkos/packages/core/src/agents/composer.ts`
+  - `reference-only/inkos/packages/core/src/agents/writer.ts`
   - `reference-only/inkos/packages/core/src/pipeline/chapter-review-cycle.ts`
+  - `reference-only/inkos/packages/core/src/pipeline/runner.ts`
   - `reference-only/inkos/packages/core/src/state/runtime-state-store.ts`
   - `reference-only/inkos/packages/core/src/state/memory-db.ts`
+  - `reference-only/inkos/packages/core/src/state/chapter-workspace.ts`
+  - `reference-only/inkos/packages/core/src/utils/atomic-file-set.ts`
+  - `reference-only/inkos/packages/core/src/llm/providers/endpoints/lmstudio.ts`
 - 材料、研究与推演：
   - `reference-only/inkos/packages/core/src/materials/ingest.ts`
   - `reference-only/inkos/packages/core/src/materials/retrieve.ts`
@@ -407,6 +440,8 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
   - `reference-only/inkos/packages/core/src/interactive-film/validation.ts`
   - `reference-only/inkos/packages/core/src/play/play-runner.ts`
   - `reference-only/inkos/packages/studio/src/api/task-store.ts`
+  - `reference-only/inkos/packages/studio/src/api/server.ts`
+  - `reference-only/inkos/packages/studio/src/components/ChapterWorkspacePanel.tsx`
 - OAN 当前边界：
   - `docs/ARCHITECTURE.md`
   - `docs/APPLY_ENGINE.md`

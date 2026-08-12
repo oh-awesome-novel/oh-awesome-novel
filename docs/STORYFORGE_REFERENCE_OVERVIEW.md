@@ -2,13 +2,13 @@
 
 > 范围：本文分析 `reference-only/storyforge` 当前检出的最新主线，说明 StoryForge 作为 OAN 早期灵感来源在当前阶段的真实形态，并与 OAN 的稳定架构事实进行对照。
 >
-> 旧基准：本文上一版使用 `f0389bb`（2026-06-19，`Merge remote-tracking branch 'origin/main'`）。
+> 旧基准：本文上一版使用 `main@f3316b119175ce1f630f8fc5469cd5cab5a009ca`（2026-07-31）。
 >
-> 新基准：`main@f3316b119175ce1f630f8fc5469cd5cab5a009ca`（2026-07-31），与 `origin/main` 一致。该提交只是流量数据归档；最新功能提交为 `efe8f04`（2026-07-27，`feat: add shared simulation runtime core`）。
+> 新基准：`main@d78a7371cb4c8bcd6db9bcd59bc7c15cf16f7e45`（2026-08-12），与 `origin/main` 一致。该提交只是流量数据归档；本轮最后一个功能提交为 `927b5d0`（2026-08-06，World Engine workspace slice）。
 >
 > 检出状态：参考目录当前已检出最新 `main`，本文所列证据路径均可直接在工作树中阅读。
 >
-> 验证范围：本次对最新主线快照运行了 required tables、AI manual、architecture、source reachability、roadmap、agent context、Canon coverage 和 project metrics 检查；没有成功运行完整 Vitest，原因见“工程治理与验证状态”。
+> 验证范围：本次对最新主线快照运行了 required tables、AI manual、architecture、source reachability、roadmap、agent context、Canon coverage 和 project metrics 检查；19 个本轮新增回归 suite 因本地缺少 `fake-indexeddb/auto` 在 setup 阶段退出，原因见“工程治理与验证状态”。
 
 ## 结论概览
 
@@ -23,7 +23,9 @@ StoryForge 当前仍是一个 **纯前端、local-first、IndexedDB 驱动的小
 - 可持久恢复、可编辑、需作者明确确认的 Agent 候选。
 - 统一“整理本章”六领域结构提取。
 - 保存后零 token 确定性一致性守卫，以及作者主动触发的 Fast / Deep Audit。
-- 可见资料与检索库、独立自由节点模式、共享模拟运行时地基。
+- 可见资料与检索库、可恢复的领域节点创作链。
+- 冻结 Canon 快照的 TTRPG / 战斗 / 长战役 / 单角色聊天模拟。
+- World Engine 领域投影、本地世界包和导入前备份信任检查。
 
 更准确的当前定位是：
 
@@ -40,14 +42,16 @@ Long-form Consistency And Canon Layer
   +
 Visible Retrieval Layer
   +
-Early Simulation Runtime
+Frozen-Canon Interactive Runtime
+  +
+World Projection And Local Package Layer
 ```
 
 它已经不是只有 prompt panel 的工作台，但也不是开放式、并行自治或常驻后台的通用多 Agent 平台。
 
 ## 版本变化规模
 
-从上一版基准 `f0389bb` 到最新主线 `f3316b1`：
+从早期基准 `f0389bb` 到上一轮主线 `f3316b1`：
 
 - 348 个提交。
 - 872 个文件变化。
@@ -56,7 +60,9 @@ Early Simulation Runtime
 - package 版本从旧基准推进到 `3.9.0`。
 - `v3.9.0` tag 位于 `0aa9030`；其后主线还有 9 个非合并功能提交，集中补齐 RAG、Agent 领域、预算、章节整理、一致性和模拟运行时。
 
-这不是一次小幅修补，而是从“小说 AI 工作台”向“本地创作平台”扩张的一轮密集开发。
+本轮从 `f3316b1` 到 `d78a737` 又新增 45 个提交、108 个变化文件，约 17,920 行新增、293 行删除，package 版本推进到 `3.9.1`。增量集中在 Node Authoring FLOW-3、冻结 Canon 的互动运行时、TTRPG 战役、角色聊天、World Engine、本地 world package、导入前备份信任和 AI Harness 设计文档。
+
+其中 World Engine community architecture 与 AI Harness 仍包含大量目标态设计；当前代码只实现本地领域投影 / package 与既有执行器增强，不能把路线图描述成已交付的在线社区或多 harness runtime。
 
 ## 当前技术形态
 
@@ -100,7 +106,7 @@ StoryForge 的三注册表纪律现在更明确：
 
 ## AI 上下文与可见 RAG
 
-最新 `CONTEXT_SOURCES` 有 **45 个命名来源**。除旧有的章节、大纲、世界观、角色、规则、状态和参考资料外，新增或强化了：
+最新 `CONTEXT_SOURCES` 有 **47 个命名来源**。除旧有的章节、大纲、世界观、角色、规则、状态和参考资料外，新增或强化了：
 
 - `projectStatus`：紧凑项目状态。
 - `worldGroups`：世界目录与连接。
@@ -116,6 +122,8 @@ StoryForge 的三注册表纪律现在更明确：
 - `characterDrivenPlan`：当前激活的角色驱动方案。
 - `inspirationWorkspace`：作者明确保存和选择的灵感碎片。
 - `characterFacts` / `characterPassages`：角色反向哺喂证据。
+- `simulationRuntime`：冻结 Canon 上运行的互动状态，L0、protected，预算 8,000 token。
+- `consistencyReport`：当前一致性报告，L1、protected，预算 1,800 token。
 
 `assembleContext()` 仍负责 requirements 检查、单源预算、总窗口预算、L0-L3 优先级裁剪，以及 included / omitted / trimmed / token 元数据。
 
@@ -245,14 +253,16 @@ adopt() 写入 IndexedDB Canon
 - 逐节点冻结配置、上游输入、来源证据、输出、错误与 gate。
 - `nodeFlows / nodeRuns` 可恢复、可导出导入。
 - 输出只有经过明确确认后才能写入 Canon。
+- 节点数据绑定区分 live / snapshot / draft，并记录 source hash。
+- 运行签名覆盖节点配置、上游输出、来源与目标 hash；相同输入可复用最后成功结果。
+- 上游、来源或目标变化会沿依赖关系标记 stale，恢复运行时重新验证。
+- 世界资料到正文的 creation chain 复用既有 Context Source 与 Adoption Schema，不建立第二套 truth。
 
 当前尚未完成：
 
 - 条件和循环。
 - 并行模型调用。
 - 脚本 / 插件节点。
-- 脏下游自动失效。
-- 图模板库。
 - 主 Agent 自动生成节点图。
 
 StoryForge 因此已经同时维护 Panel、PromptWorkflow、NodeFlow、只读 AgentRunner 和主 Agent Orchestrator 多种执行原语。这扩大了产品能力，也显著增加了整体复杂度。
@@ -398,15 +408,15 @@ upload → analyzing → ready ──activate──→ active
 
 ## 模拟运行时现状
 
-StoryForge 最新功能提交建立了共享模拟运行时 `SIM-1A`，用于未来的跑团、NPC 演进和角色聊天冒险。
-
-当前数据包括：
+上一版把共享模拟运行时称为“早期地基”，这一判断已经过时。当前实现仍复用三张表：
 
 - `simulationSessions`
 - `simulationEvents`
 - `simulationCheckpoints`
 
-运行时特征：
+但会话创建前会把作者选择的 Canon 来源冻结为 snapshot：每个来源保存 hash，整个选择集再计算 SHA-256；后续 runtime 读取冻结版本，不随项目 Canon 的即时编辑漂移。
+
+当前共同约束包括：
 
 - 严格 append-only 事件序列。
 - 纯 reducer 回放时间、实体、记忆、随机与叙事事件。
@@ -414,17 +424,40 @@ StoryForge 最新功能提交建立了共享模拟运行时 `SIM-1A`，用于未
 - 检查点保存 state hash，可重新回放验证。
 - 会话可从指定序号分支。
 - 父子会话、事件与检查点进入项目 / 世界删除及导出导入生命周期。
-- 工作区已有沙盒、NPC 演进、跑团和角色聊天四类会话壳。
+- NPC 演进从冻结 runtime context 生成候选，仍需显式 adoption 才能返回 Canon。
 
-但这只是共同运行时地基：
+在共同 runtime 之上已经落地：
 
-- 新会话尚未真正冻结作者选择的世界、角色、地点、物品和规则。
-- 没有完整运行时实体投影。
-- 没有正式 AI 行动候选闭环。
-- 检查点目前用于验证和分支，不等于完整恢复产品。
-- 四类入口不代表 TTRPG 或角色聊天已经完成。
+- solo TTRPG 场景与回合循环。
+- 确定性骰子、战斗 encounter、资源与 condition 状态。
+- 长战役 quest、NPC schedule 与 campaign summary。
+- 单角色聊天的身份、场景、消息和连续状态。
+- 沙盒、NPC 演进、跑团和角色聊天四类工作区入口。
 
-与 OAN 当前 Play Mode 相比，StoryForge 在事件回放与分支存档上提供了可参考的底层模型，但在 branch-local knowledge、world referee、typed intervention、variant、settlement 和 Human Approval 方面仍明显更早期。
+因此它已不再是“空 Canon 快照地基”，但仍需保持边界判断：
+
+- 模拟状态和事件不是 Canon。
+- NPC 演进与互动结果返回创作层时仍是 candidate / adoption。
+- TTRPG 与单角色聊天的产品闭环不等于通用游戏引擎。
+- 当前实现没有证明适合替代 OAN 的 Play 文件协议和 Human Approval。
+
+与 OAN 当前 Play Mode 相比，StoryForge 在冻结来源、确定性战斗 / 战役和单角色聊天产品面更具体；OAN 则已把 branch-local knowledge、world referee、typed intervention、variant、settlement 和 Human Approval 纳入统一文件边界。两者适合交叉验证存档证据，不适合直接迁移 runtime。
+
+## World Engine、本地世界包与备份信任
+
+`PROJECT_TABLES` 没有新增数据库表，而是为现有表补充 `worldDomains` 投影元数据和 `communityShare: 'world'` 标记。World Engine workspace 据此生成领域完成度、可编辑入口和 package 选择，不另建一份世界数据库。
+
+本地 world package v1 包含：
+
+- 明确 license、attribution 和 content warnings。
+- writing / ttrpg / characterChat / textGame 等 allowed uses。
+- 从 `PROJECT_TABLES` 派生的可分享表 allowlist；未登记和私有表默认拒绝。
+- 内容 SHA-256 完整性信息。
+- origin provenance；导入后分配新的本地 world code。
+
+导入前还会经过 backup trust preflight，验证版本、项目名、表数组与结构；旧包缺少新表可以产生 warning，而不是在解析前写库。需要准确区分：这是**本地 JSON package + 本地导入**，不是已实现的在线社区后端；导入通过后最终仍写 IndexedDB。
+
+`docs/WORLD-ENGINE-COMMUNITY-ARCHITECTURE.md` 规划的 World / Work 分离和社区能力是目标态。当前代码仍以 Project 作为兼容存储并派生 world projection。`docs/AI-HARNESS-ARCHITECTURE-20260803.md` 同样只是架构基线，当前没有可据此确认的多 harness 产品实现。
 
 ## 工程治理与验证状态
 
@@ -443,13 +476,13 @@ GOV-1 显著加强了工程约束：
 - 58 张 required tables 与 schema 一致。
 - AI manual 与代码一致。
 - architecture guard。
-- 509 个源码文件从声明入口可达。
+- 538 个源码文件从声明入口可达。
 - roadmap 检查。
 - agent context 检查；固定项目入口相对旧强制链缩小 97.6%。
 - 6 个 Canon 场景全部有可执行测试声明。
 - Blueprint 项目指标检查。
 
-完整 `npm test` 没有形成有效验证：参考目录当前 `node_modules` 使用 Vitest 4.1.8，而 package 声明 Vitest 2.1.9，并缺少 `fake-indexeddb`。169 个 suite 在 setup import 阶段统一失败，实际测试均未执行。这是本地依赖安装状态问题，不能据此判定代码失败，也不能把上游文档声称的测试数量当成本次独立验证结果。
+本轮选择 19 个新增 Node Authoring、Simulation、World Package 与 Backup Trust 回归 suite 运行，但全部在 setup import 阶段因当前本地 `node_modules` 缺少 `fake-indexeddb/auto` 退出，测试断言没有执行。此前完整测试也暴露过 package 声明与已安装 Vitest 版本不一致。它们都是参考目录依赖状态问题，不能据此判定业务代码失败，也不能把上游文档声称的测试数量当成本次独立验证结果。
 
 文档漂移也没有完全消失：最新 `docs/ARCHITECTURE.md` 仍保留 2026-05-14 的旧目录和“39 张表”描述。当前现状应优先以 `docs/roadmap/CAPABILITY-BASELINE.md`、生成指标、注册表与实际代码为准。
 
@@ -505,11 +538,14 @@ GOV-1 显著加强了工程约束：
 8. **RAG 能力分层不均匀**
    章节有混合检索与层级摘要；非章节资料主要靠精确选择和本地搜索。当前边界是诚实的，但不能概括为“所有小说资产都已有语义检索”。
 
-9. **模拟运行时仍是空 Canon 快照地基**
-   还不能承担正式跑团或角色聊天体验，更不能作为成熟产品与 OAN Play Mode 等量比较。
+9. **互动运行时已经扩张为独立产品面**
+   TTRPG、战斗、战役、NPC 演进与角色聊天复用同一事件 runtime，能力比上一版完整，也使 Canon snapshot、候选回流和多入口一致性成本显著上升。
 
 10. **文档事实源仍有分裂**
     `docs/ARCHITECTURE.md` 已明显落后，Capability Baseline、Blueprint、专题设计和代码注册表共同承担现状说明。使用时仍需判断文档权威层级。
+
+11. **World community 与 AI Harness 主要仍是设计目标**
+    本地 world projection / package 已实现，但在线社区、独立 World / Work 存储和多 harness runtime 不能从设计文档直接视为当前能力。
 
 ## 与 OAN 的定位差异
 
@@ -527,7 +563,7 @@ StoryForge 和 OAN 现在都关心：
 - StoryForge：浏览器 local-first；IndexedDB 是数据库；UI、Dexie schema 和多个创作执行器是中心。
 - OAN：filesystem-first；Object File Tree 是数据库；Git 是历史引擎；SemanticPatch、PendingAction 和 Git diff 是正式写入边界。
 
-StoryForge 的最新变化没有推翻 OAN 的架构选择，反而强化了 OAN 保持简单核心的必要性。StoryForge 已增长到 58 张注册表、45 个上下文源和多套 runtime；OAN 不应为了追随功能表面而引入同等复杂度。
+StoryForge 的最新变化没有推翻 OAN 的架构选择，反而强化了 OAN 保持简单核心的必要性。StoryForge 已增长到 58 张注册表、47 个上下文源和多套 runtime；OAN 不应为了追随功能表面而引入同等复杂度。
 
 ## 对 OAN 的具体参考建议
 
@@ -549,7 +585,13 @@ StoryForge 的最新变化没有推翻 OAN 的架构选择，反而强化了 OAN
    OAN 不需要向量数据库，也可以基于对象文件树、reference index 和 ContextPackage trace 提供可见来源清单、启用状态和最近使用证据。
 
 6. **模拟存档的事件连续性与检查点校验**
-   StoryForge 的确定性骰子、严格序号、状态 hash 和分支元数据可以作为 OAN Play 存档底层的反例参考；不应替换 OAN 已完成的 world referee、branch-local knowledge、variant 与 settlement 设计。
+   StoryForge 的冻结 Canon 来源 hash、确定性骰子、严格序号、状态 hash 和分支元数据可以作为 OAN Play 存档底层的交叉验证；不应替换 OAN 已完成的 world referee、branch-local knowledge、variant 与 settlement 设计。
+
+7. **Node Run 的输入签名与 stale 传播**
+   OAN 不需要节点画布，也可以把 capability 配置、上游 artifact、source revision 与 target revision 组合成运行 fingerprint，用于 resume、cache reuse 和候选失效。
+
+8. **导入先 preflight、分享默认 deny**
+   若未来引入 world / template package，share allowlist 应从领域注册信息派生，带 license、allowed uses、attribution、content warnings 与 integrity；preflight 在零写入边界完成。
 
 ### 不建议吸收
 
@@ -596,6 +638,12 @@ StoryForge 目前更适合作为 OAN 的：
 - `docs/REFERENCE-ANALYSIS-EVOLUTION-DESIGN.md`
 - `docs/SIM-RUNTIME-DESIGN.md`
 - `docs/INTERACTIVE-RUNTIME-ROADMAP.md`
+- `docs/TTRPG-CAMPAIGN-DESIGN.md`
+- `docs/CHATGAME-1-SINGLE-CHARACTER-DESIGN.md`
+- `docs/NODE-AUTHORING-MODE-DESIGN.md`
+- `docs/PRODUCT-1-BACKUP-TRUST-DESIGN.md`
+- `docs/WORLD-ENGINE-COMMUNITY-ARCHITECTURE.md`
+- `docs/AI-HARNESS-ARCHITECTURE-20260803.md`
 - `src/lib/agent/runner.ts`
 - `src/lib/agent/tool-registry.ts`
 - `src/lib/agent/orchestrator.ts`
@@ -616,6 +664,16 @@ StoryForge 目前更适合作为 OAN 的：
 - `src/lib/retrieval/rag-library.ts`
 - `src/lib/retrieval/retrieval.ts`
 - `src/lib/simulation/runtime.ts`
+- `src/lib/simulation/canon-snapshot.ts`
+- `src/lib/simulation/ttrpg.ts`
+- `src/lib/simulation/chatgame.ts`
+- `src/lib/simulation/npc-evolution.ts`
 - `src/lib/types/simulation-runtime.ts`
+- `src/lib/node-authoring/contracts.ts`
+- `src/lib/node-authoring/executor.ts`
+- `src/lib/node-authoring/freshness.ts`
+- `src/lib/product/world-package.ts`
+- `src/lib/export/backup-trust.ts`
+- `src/lib/world-engine/domain.ts`
 
 本文只吸收设计与现状判断，不建议直接复制 StoryForge 的源码或 prompt。即使其许可证已明确为 MIT，OAN 仍应遵循自身的独立架构、reference no-copy 约束和人类确认工作流。

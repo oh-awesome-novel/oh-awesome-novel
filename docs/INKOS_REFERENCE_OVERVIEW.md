@@ -2,11 +2,11 @@
 
 > 范围：本文分析 `reference-only/inkos` 当前检出的最新主线，并与 OAN 的稳定架构事实进行对照。
 >
-> 当前基准：`master@b0cc9a54fc7ee2c14664d192c2c9d5f65e09dafd`（2026-07-28），与 `origin/master` 一致。当前 HEAD 位于 `v1.7.2` 之后 3 个文档提交；最新代码提交为 `6e4ce005`（`refactor(skills): replace legacy capability system`）。
+> 当前基准：`master@a6e05d4d4567df0efd5825e9b0037146a16e4f3e`（2026-08-03），与 `origin/master` 一致。应用版本仍为 `1.7.2`。
 >
-> 旧基准：上一版文档于 2026-06-19 进入 OAN，但没有记录 InkOS SHA。按当时可达提交时间推定，对比基准为 `3f9b4e80`（2026-06-17）；这个基准只用于估算变化规模，不应被视为上一版明确声明的版本。
+> 旧基准：本文上一版使用 `b0cc9a54fc7ee2c14664d192c2c9d5f65e09dafd`（2026-07-28）。更早的推定基准 `3f9b4e80` 只用于保留长期变化背景。
 >
-> 验证范围：本文以实际源码、提交历史、包清单和局部测试为准。完整测试受到本地依赖与构建产物不同步影响，详见“工程验证状态”。
+> 验证范围：本文以实际源码、提交历史和包清单为准。本轮 `pnpm` 因本地 `node_modules` 状态不一致尝试重装，随后受 registry 请求失败与非 TTY 清理保护阻断，没有执行测试，详见“工程验证状态”。
 
 ## 结论概览
 
@@ -20,6 +20,9 @@ InkOS 当前已经从“小说章节生产流水线 + Studio / CLI”扩张成�
 - 非正史剧情多线推演。
 - Studio Chat、TUI、CLI、外部 Agent Skill 入口。
 - 后台生产任务、daemon、通知和多模型路由。
+- 章节版本工作区、安全改写预览和下游失效标记。
+- 章节正文与主要状态投影的多文件 staged commit / rollback。
+- 单任务、最多 20 章的顺序批量写作与 LM Studio 本地 provider。
 
 它的核心形态可以概括为：
 
@@ -55,6 +58,8 @@ Studio + CLI + TUI Product Shells
 
 主要变化不是继续堆长篇 prompt，而是增加了多个独立产品域和运行边界：互动影游、标准 AgentSkills、材料库、Prompt Pack、翻译、剧情推演、后台任务、备份恢复和更严格的安全说明。
 
+本轮从 `b0cc9a54` 到 `a6e05d4d` 又新增 10 个提交、53 个变化文件，约 2,649 行新增、145 行删除。增量集中在章节多文件原子落盘、Studio 章节改写工作区、顺序批量写章、LM Studio provider、后台任务重放修复和若干配置 / UI 缺口；应用版本号没有变化。
+
 ## 当前技术形态
 
 InkOS 是 TypeScript monorepo：
@@ -63,6 +68,7 @@ InkOS 是 TypeScript monorepo：
 - `packages/cli`：原子命令、自然语言入口、TUI、daemon、doctor、备份恢复和通知。
 - `packages/studio`：React 19 + Hono + Vite 6 + Zustand 的本地 Web 工作台。
 - Agent loop：`@mariozechner/pi-agent-core` 与 `@mariozechner/pi-ai` 原生工具调用。
+- Provider：云端 / OpenAI-compatible / Ollama，以及本轮新增的 LM Studio 本地 endpoint（默认 `1234/v1`、无需 API key、动态模型列表）。
 - Schema：Zod 与 TypeBox。
 - 持久化：JSON、Markdown、JSONL、YAML，以及 Node 22+ 的 SQLite。
 - 工程：Vitest、Playwright、TypeScript、ESLint 和发布清单检查。
@@ -258,6 +264,37 @@ InkOS 的生产定位比 OAN 更自主：
 
 这些 gate 改善了自动生产的可靠性，但不改变其本质：模型仍可在一次确认后自动生成、审稿、修订并写入正式章节。这与 OAN “AI 是 Copilot，最终文件变化由作者逐次确认”的边界不同。
 
+### 章节版本工作区与多文件原子落盘
+
+本轮新增的 `chapter-workspace` 为每章保存：
+
+- 作者改写 brief。
+- plan 文档。
+- `.versions/<chapter>/<timestamp>_<source>_<uuid>.md` 历史版本。
+- 当前版本、可恢复版本与改写结果元数据。
+
+Studio 可以预览、恢复或按审稿 gate 改写章节。strict / lenient / always 控制是否采用新版本；重写旧章节不会倒带整本 live state，而是将后续章节标记为 `needs-revision`。这使“旧章变更会污染下游”成为显式状态，是值得参考的 revision lineage。
+
+但安全边界不能夸大：改写通过 gate 后会直接覆盖正式章节和状态，不先生成 PendingAction / Git diff。它是比原来更安全的直接改写工作区，不是 OAN 式内容批准。
+
+`atomic-file-set.ts` 又为 Writer 的主要章节落盘增加真正的 staged commit：
+
+1. 在同一父目录的 `.inkos-file-txn-*` 中准备全部新内容。
+2. 为所有将触及的现有目标建立 backup。
+3. 逐个 rename staged 文件到目标位置。
+4. 任一操作失败时回滚已提交目标并恢复 backup。
+5. 拒绝 path traversal，并由故障注入测试覆盖回滚。
+
+`WriterAgent.saveChapter()` 当前用它一次提交章节、`current_state.md`、`pending_hooks.md`、章节摘要 / 子线等投影和主要 runtime JSON，并可在同一集合删除被替代的旧章节文件。这是相对上一版的重要可靠性提升。
+
+仍需准确限定：整条 pipeline 不是一个事务。后续 truth file 保存、legacy JSON 同步、memory index、chapter index 和 snapshot 仍顺序执行；`reviseDraft()` 也在归档版本后顺序覆盖修订稿和最新状态。因此“主要章节 settlement 已原子化”成立，“所有 InkOS 长篇写入均原子化”不成立。
+
+### 顺序批量写章
+
+`writeChapters` 允许一次请求 1–20 章，在一个 book lock 和一个 production task 内顺序执行；任一章结果不再是 `ready-for-review` 时立即停止。它解决的是任务占用、顺序和中途失败边界，不改变每章直接写入正式文件的权力模型。
+
+OAN 若未来提供批量生成，应默认批量产生独立候选 / PendingAction，或逐章停在 Apply Approval；不能把一次 execution consent 扩大为 20 次真实文件批准。
+
 ## 状态结算与长期记忆
 
 InkOS 已经形成较完整的章节后状态闭环：
@@ -408,9 +445,9 @@ InkOS 的 provider 体系仍是强项：
 
 ## 工程验证状态
 
-当前仓库共有 292 个 `*.test.* / *.spec.*` 文件：
+当前仓库共有 295 个 `*.test.* / *.spec.*` 文件：
 
-- Core Vitest：181。
+- Core Vitest：184。
 - CLI Vitest：41。
 - Studio Vitest：58。
 - Studio Playwright E2E：12。
@@ -418,13 +455,10 @@ InkOS 的 provider 体系仍是强项：
 本次验证结果：
 
 - 根 `pnpm test` 没有开始执行测试。本地 pnpm 11 发现 workspace `node_modules` 状态不一致，尝试重新安装；registry 请求失败，同时非 TTY 环境拒绝清理 modules 目录。
-- 直接调用现有 Core Vitest：181 个文件中 166 通过；1594 个已执行断言中 1592 通过。15 个文件失败主要因为当前 `node_modules` 缺少 `unpdf` / `jszip`，其中 13 个 suite 无法加载，另 2 个 root import 断言因同一缺包失败。
-- 对 Skill、context transform、Composer、forecast、runtime state 和 research 的定向测试中，11 个文件、108 个断言通过；2 个材料测试仍在加载阶段被缺少 `unpdf` 阻断。
-- CLI 的直接 Vitest 绕过了 package 的 `pretest -> build`，因此大量用例因 `dist/index.js` 不存在而失败，不能作为源码回归结论。
-- Studio 的直接 Vitest 同样使用了不同步的 Core 构建产物，38 个文件通过、20 个失败；失败集中表现为缺失 / 过期导出和随后连锁的 API 断言，不应被解释成 78 个独立产品缺陷。
-- 未运行 Playwright E2E。
+- 因安装流程已失败，本轮没有继续用不同步的 workspace build artifact 直接运行 Vitest，也没有运行 Playwright。
+- 上一轮在 `b0cc9a54` 上得到的局部通过数字不能替代当前 `a6e05d4d` 的验证，故不沿用为当前结论。
 
-因此可以确认若干核心机制有可执行测试，但不能声称“最新主线完整测试通过”。最准确的结论是：参考目录源码是最新的，已安装依赖和 workspace build artifact 不是最新主线对应状态。
+因此只能确认当前源码包含 atomic file set、chapter workspace、batch writing 和 provider 的新增回归测试，不能声称“最新主线测试通过”。最准确的结论是：参考目录源码是最新的，已安装依赖不是该主线的可复现验证环境。
 
 ## 值得肯定的工程优点
 
@@ -452,6 +486,12 @@ InkOS 的 provider 体系仍是强项：
 8. **Provider 问题被当作真实产品问题**
    配置来源、模型归属、协议、stream、key 和错误分类都有明确处理。
 
+9. **主要章节 settlement 有故障回滚**
+   staged files、backup、rename、rollback 和路径校验覆盖了最关键的一组正文 / 状态文件，不再完全依赖顺序写入。
+
+10. **历史章节改写会显式污染下游**
+    版本归档、review gate 和 `needs-revision` 使旧章修改的影响范围可见，而不是假装 live state 自动保持一致。
+
 ## 当前限制与风险
 
 1. **产品范围已经非常宽**
@@ -469,22 +509,28 @@ InkOS 的 provider 体系仍是强项：
 5. **直接整文件写 truth 的入口仍存在**
    `write_truth_file` 有路径 allowlist 和 lock，但没有 SemanticPatch、old-value guard 或用户 diff。
 
-6. **Play 跨文件提交并非真正原子**
+6. **原子提交只覆盖主要章节 settlement**
+   truth files、legacy sync、memory / chapter index、snapshot 和 revision 的部分后续路径仍顺序写入，不能概括为全 pipeline 事务。
+
+7. **Studio 改写仍直接应用正式文件**
+   版本归档和 strict gate 改善质量与恢复，但没有最终 SemanticPatch / diff approval。
+
+8. **Play 跨文件提交并非真正原子**
    渲染前不写、图 reducer 有事务，但后续文件写仍可能部分成功。
 
-7. **某些新领域的 schema 完整度不一致**
+9. **某些新领域的 schema 完整度不一致**
    长篇 state 和互动图较严格；翻译 manifest / chapter 的读取仍偏宽松。
 
-8. **URL 材料摄取的网络边界不足**
+10. **URL 材料摄取的网络边界不足**
    已有限制协议、超时和体积，但缺少可见的私网 / 重定向 SSRF 防护。
 
-9. **Skill 只读不等于 Skill 无风险**
+11. **Skill 只读不等于 Skill 无风险**
    恶意指令仍能诱导模型滥用当前可用工具，需要来源管理和最小工具面。
 
-10. **测试基建依赖 workspace 预构建与一致 node_modules**
+12. **测试基建依赖 workspace 预构建与一致 node_modules**
     当前本地快照无法一条命令独立验证，降低了参考项目现状的可复现性。
 
-11. **AGPL 限制代码级吸收**
+13. **AGPL 限制代码级吸收**
     OAN 可以独立学习设计思想，但不能把实现源码或 prompt 文本直接复制进项目。
 
 ## 与 OAN 的关键差异
@@ -538,6 +584,15 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
 10. **Provider 来源和凭据边界可视化**
     继续显示配置来自全局、workspace 还是本轮覆盖，并明确哪些外部服务会接收内容。
 
+11. **多文件 materialization 的 staged commit / rollback**
+    可借鉴目标预检、staging、backup、rename 和故障注入测试；OAN 还要叠加 PendingAction source hash、receipt 和 Git commit，不把临时 backup 当历史引擎。
+
+12. **旧章改写的版本谱系与下游失效**
+    对被接受的历史章节修订记录 previous revision，并将依赖的摘要、状态、时间线和后续章节标为待重建 / 待复核；不要自动重写下游 Canon。
+
+13. **批量写作保持有界、顺序和逐章审批**
+    可复用 1–20 的有界任务与遇错停止思路，但 execution consent 只启动候选生成，每章仍需独立 diff approval。
+
 ### 不建议吸收
 
 - 默认自动审稿 / 自动修订 / 多轮 repair loop。
@@ -545,6 +600,7 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
 - Architect / Writer / Auditor / Reviser 多 Agent 编排进入 `packages/runtime`。
 - 直接整文件 `write_truth_file` 或章节覆盖成为 Agent 默认能力。
 - “确认开始执行”代替最终 diff approval。
+- 将一次批量任务确认当作多章真实写入授权。
 - SQLite、task snapshot、Agent transcript 或 projection 成为小说 truth。
 - 为翻译、互动影游、封面等外围能力扩大当前 Novel IDE 核心范围。
 - 让导入 Skill 自动执行脚本或扩展 ToolSet 权限。
@@ -570,9 +626,14 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
   - `reference-only/inkos/packages/core/src/prompts/prompt-pack.ts`
 - 长篇上下文与状态：
   - `reference-only/inkos/packages/core/src/agents/composer.ts`
+  - `reference-only/inkos/packages/core/src/agents/writer.ts`
   - `reference-only/inkos/packages/core/src/pipeline/chapter-review-cycle.ts`
+  - `reference-only/inkos/packages/core/src/pipeline/runner.ts`
   - `reference-only/inkos/packages/core/src/state/runtime-state-store.ts`
   - `reference-only/inkos/packages/core/src/state/memory-db.ts`
+  - `reference-only/inkos/packages/core/src/state/chapter-workspace.ts`
+  - `reference-only/inkos/packages/core/src/utils/atomic-file-set.ts`
+  - `reference-only/inkos/packages/core/src/llm/providers/endpoints/lmstudio.ts`
 - 新领域：
   - `reference-only/inkos/packages/core/src/forecast/runner.ts`
   - `reference-only/inkos/packages/core/src/materials/ingest.ts`
@@ -582,5 +643,7 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
   - `reference-only/inkos/packages/core/src/interactive-film/validation.ts`
   - `reference-only/inkos/packages/core/src/play/play-runner.ts`
   - `reference-only/inkos/packages/studio/src/api/task-store.ts`
+  - `reference-only/inkos/packages/studio/src/api/server.ts`
+  - `reference-only/inkos/packages/studio/src/components/ChapterWorkspacePanel.tsx`
 
 本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 为准。

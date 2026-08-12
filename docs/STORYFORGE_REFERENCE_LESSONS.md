@@ -2,7 +2,7 @@
 
 > 状态：候选参考笔记，不是 OAN 架构规范或实施计划。
 >
-> 当前基准：`reference-only/storyforge` 已检出 `main@f3316b119175ce1f630f8fc5469cd5cab5a009ca`（2026-07-31），并与 `origin/main` 一致；最新功能提交为 `efe8f04`（2026-07-27）。
+> 当前基准：`reference-only/storyforge` 已检出 `main@d78a7371cb4c8bcd6db9bcd59bc7c15cf16f7e45`（2026-08-12），并与 `origin/main` 一致；本轮最后一个功能提交为 `927b5d0`（2026-08-06）。
 >
 > 配套现状分析：`docs/STORYFORGE_REFERENCE_OVERVIEW.md`。
 >
@@ -10,14 +10,17 @@
 
 ## 本轮更新纠正了什么
 
-上一版以 `f0389bb`（2026-06-19）为基准，已经不足以描述当前 StoryForge。本轮需要明确修正以下判断：
+当前文档最初以 `f0389bb`（2026-06-19）为基准，上一轮推进到 `f3316b1`（2026-07-31）。本轮还需要明确修正：
 
 - StoryForge 已经不只是 Panel / Prompt Workflow；它已有单一前台主 Agent、只读 AgentRunner、固定五领域调度、可恢复候选和独立 Node Mode。
 - “完整 settlement 尚未落地”已经过时；显式“整理本章”已能一次生成六类候选，并支持逐字证据、正文 hash、逐项选择和分领域采纳。
 - 长篇一致性已经扩展到章节记忆、时序事实、角色知识、世界宪法、故事线进度、层级摘要和历史修改影响分析。
 - RAG 已有可见资料目录、稳定资料 ID、字段策略和真实召回证据；但非章节资料仍不是全面向量检索。
 - 参考分析已从单次覆盖升级为 active / ready / superseded 版本链，并带来源 hash、权利声明、失败隔离和引文回查。
-- 模拟运行时已经有 append-only 事件、确定性骰子、回放、检查点和分支；但仍只是早期地基。
+- 模拟运行时已经冻结作者选择的 Canon 来源，并落地 solo TTRPG、战斗、长战役、NPC 演进候选和单角色聊天；“仍只是空壳 / 早期地基”已过时。
+- Node Authoring 已增加 live / snapshot / draft binding、run signature、最后成功结果复用和 stale 传播；不能再列为“没有脏下游失效”。
+- World Engine 当前实现是基于既有 Project 表的领域投影与本地 package；在线社区、独立 World / Work 存储仍是设计目标。
+- AI Harness 当前只有架构文档，不能据此认定已实现多 harness runtime。
 - StoryForge 当前许可证是 MIT。即便如此，OAN 仍应遵守自身 reference no-copy 约束，不直接复制其 prompt、源码结构、UI 文案或产品表达。
 
 因此，本文件不再只罗列“StoryForge 有什么”，而是区分：OAN 已有但值得复核的能力、真正的新候选，以及明确不应进入 OAN 核心的部分。
@@ -61,12 +64,14 @@ StoryForge 不能作为 OAN 的直接架构模板。OAN 的稳定事实仍然是
 - 长篇导入、断点续跑和 source drift。
 - 可恢复长任务与 AI run log。
 - Play Mode 的事件连续性、检查点 hash 和分支校验。
+- 导入 / 恢复的零写入 preflight。
 
 ### P2：只保留为产品形态参考
 
 - 单一主 Agent 入口和候选依赖 UI。
 - 自由节点画布。
 - 固定五领域幕后调度。
+- 本地世界 package 与未来 community 产品层。
 
 这些形态可能改善交互，但不能反向决定 `packages/runtime` 的核心抽象。
 
@@ -296,15 +301,17 @@ OAN 可吸收方式：
 
 ### 13. 模拟存档使用 append-only 事件与可验证检查点
 
-来源：SIM-1A shared simulation runtime。
+来源：shared simulation runtime、Canon snapshot、TTRPG、ChatGame。
 
-StoryForge 当前模拟运行时尚未形成完整产品，但其底层约束可作为 OAN Play Mode 的复核项：
+StoryForge 当前已经形成可执行的 TTRPG / 战役 / 单角色聊天 MVP，其底层约束可作为 OAN Play Mode 的复核项：
 
+- 会话启动时冻结作者选择的 Canon source，并保存逐来源 hash 与整体 SHA-256。
 - 事件序号严格连续。
 - reducer 回放产生状态，不直接信任任意快照。
 - 随机结果由 session seed、事件序号、骰式和 nonce 确定。
 - checkpoint 保存状态 hash，并可通过回放验证。
 - 分支记录父会话和分叉序号。
+- NPC 演进和互动结果返回写作层时仍是 candidate / adoption，不反向静默修改 Canon。
 
 OAN 可吸收的是验证方式，而不是表结构。它不能替代 OAN 已有的 branch-local knowledge、world referee、typed intervention、variant、settlement 和 Human Approval。
 
@@ -314,7 +321,7 @@ OAN 可吸收的是验证方式，而不是表结构。它不能替代 OAN 已�
 
 来源：required tables、AI manual、AST architecture guard、source reachability、roadmap、agent context、Canon coverage 和 project metrics 检查。
 
-StoryForge 快速扩张到 58 张表、45 个 Context Sources 和多种执行原语后，开始用自动检查维持边界。OAN 虽不应复制这种复杂度，但可以吸收“声明必须可验证”的原则：
+StoryForge 快速扩张到 58 张表、47 个 Context Sources 和多种执行原语后，开始用自动检查维持边界。OAN 虽不应复制这种复杂度，但可以吸收“声明必须可验证”的原则：
 
 - capability manual 与 ToolSet / schema 保持生成或测试一致。
 - 所有正式写入路径都必须经过 Apply Engine，使用架构守卫防止旁路。
@@ -351,7 +358,7 @@ OAN 应优先让一个 Runtime 通过明确 ToolSet 和 capability 完成工作�
 
 来源：Node Flow / Node Run。
 
-StoryForge 的自由节点具备 DAG 校验、局部执行、上游证据冻结和确认写回，这些是合理的产品能力。但它目前没有条件、循环、并行、插件、脏下游失效和主 Agent 自动建图，而且与 Prompt Workflow、AgentRunner 和主 Agent 并存。
+StoryForge 的自由节点已具备 DAG 校验、局部执行、上游证据冻结、live / snapshot / draft binding、运行签名、最后成功结果复用、stale 传播和确认写回。这些是合理的产品能力。但它仍没有条件、循环、并行、插件和主 Agent 自动建图，而且与 Prompt Workflow、AgentRunner 和主 Agent 并存。
 
 OAN 若未来需要可视化流程，应满足：
 
@@ -376,6 +383,42 @@ OAN 可生成 AI-readable snapshot 或层级摘要，但必须：
 - snapshot、embedding 和摘要都不能反向覆盖正式对象文件。
 
 建议状态：P1，在真实上下文性能问题出现后再实现。
+
+### 18. 用运行签名统一 resume、reuse 与 stale
+
+来源：Node Authoring bindings、executor、freshness。
+
+OAN 不需要采用 Node 画布，也可以使用相同的不变量：一次 AI run 的身份应覆盖 capability / prompt 配置、上游 artifact、source revision 和 target revision。只有签名完全一致时才允许复用最后成功结果；任一依赖变化都应使候选 stale，并在恢复或 Accept 时重新校验。
+
+建议把这一思想映射到现有 session artifact、PendingAction 和 reference run，不新增通用 DAG runtime。
+
+建议状态：P1。
+
+### 19. 便携包采用 allowlist、用途声明和完整性校验
+
+来源：local world package v1、`PROJECT_TABLES` share metadata。
+
+如果 OAN 未来导出可复用世界 / template package，建议：
+
+- 可分享对象由领域注册信息显式 allowlist，未知与私有域默认拒绝。
+- package 记录 license、attribution、content warnings 和 allowed uses。
+- manifest 和内容带完整性 hash。
+- 导入后保留 origin provenance，但使用新的本地对象身份。
+- 导入只产生 preview / PendingAction，不直接写真实项目。
+
+当前没有对应正式范围，不应因 StoryForge 的 World community 路线图提前建设在线社区。
+
+建议状态：P2。
+
+### 20. 导入和恢复先做零写入 preflight
+
+来源：Backup Trust、world package import。
+
+OAN 对 workspace restore、reference bundle 和未来 package import 都可以先验证版本、路径、表 / 对象类型、引用、license、integrity 和目标冲突，再进入任何真实写入。旧格式缺少可选字段可以 warning；影响 authority 或安全边界的缺失必须 fail closed。
+
+preflight 只证明“可安全生成候选”，不能替代用户对具体 diff 的 Accept。
+
+建议状态：P1。
 
 ## 不建议直接吸收的部分
 
@@ -422,6 +465,12 @@ StoryForge 的 MIT 许可证解决的是许可证授权问题，不会改变 OAN
 - `reference-only/storyforge/docs/RAG-VISIBLE-LIBRARY.md`
 - `reference-only/storyforge/docs/REFERENCE-ANALYSIS-EVOLUTION-DESIGN.md`
 - `reference-only/storyforge/docs/SIM-RUNTIME-DESIGN.md`
+- `reference-only/storyforge/docs/TTRPG-CAMPAIGN-DESIGN.md`
+- `reference-only/storyforge/docs/CHATGAME-1-SINGLE-CHARACTER-DESIGN.md`
+- `reference-only/storyforge/docs/NODE-AUTHORING-MODE-DESIGN.md`
+- `reference-only/storyforge/docs/PRODUCT-1-BACKUP-TRUST-DESIGN.md`
+- `reference-only/storyforge/docs/WORLD-ENGINE-COMMUNITY-ARCHITECTURE.md`
+- `reference-only/storyforge/docs/AI-HARNESS-ARCHITECTURE-20260803.md`
 - `reference-only/storyforge/src/lib/agent/runner.ts`
 - `reference-only/storyforge/src/lib/agent/tool-registry.ts`
 - `reference-only/storyforge/src/lib/agent/orchestrator.ts`
@@ -433,5 +482,12 @@ StoryForge 的 MIT 许可证解决的是许可证授权问题，不会改变 OAN
 - `reference-only/storyforge/src/lib/reference-analysis/lifecycle.ts`
 - `reference-only/storyforge/src/lib/retrieval/rag-library.ts`
 - `reference-only/storyforge/src/lib/simulation/runtime.ts`
+- `reference-only/storyforge/src/lib/simulation/canon-snapshot.ts`
+- `reference-only/storyforge/src/lib/simulation/ttrpg.ts`
+- `reference-only/storyforge/src/lib/simulation/chatgame.ts`
+- `reference-only/storyforge/src/lib/node-authoring/executor.ts`
+- `reference-only/storyforge/src/lib/node-authoring/freshness.ts`
+- `reference-only/storyforge/src/lib/product/world-package.ts`
+- `reference-only/storyforge/src/lib/export/backup-trust.ts`
 
 本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 为准。
