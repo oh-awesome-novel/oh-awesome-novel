@@ -15,6 +15,7 @@ vi.mock('ai', async (importOriginal) => ({
 }));
 
 const {
+  createSandboxNovelAgentEditEnvironmentFactory,
   createNovelAgentTurnEditEnvironment,
   runNovelAgentTurn,
   streamNovelAgentTurn,
@@ -36,14 +37,42 @@ afterEach(async () => {
 });
 
 describe('turn-scoped agent edit environment injection', () => {
-  it('keeps explicit tools compatible when no factory is injected', async () => {
+  it('does not let explicit tools bypass fixed-projection environment creation', async () => {
     const tools = {} as ToolSet;
-    const environment = await createNovelAgentTurnEditEnvironment({
+    await expect(createNovelAgentTurnEditEnvironment({
       workspaceRoot,
       tools,
+    })).rejects.toThrow('require an editEnvironmentFactory with a fixed projection');
+  });
+
+  it('combines projection guardrails with fingerprinted external context', async () => {
+    const environment = await createNovelAgentTurnEditEnvironment({
+      workspaceRoot,
+      editEnvironmentFactory: async () => ({
+        tools: {} as ToolSet,
+        workspace: { workspaceRoot, projectionFingerprint: '0'.repeat(64) },
+        selectedContext: [{
+          kind: 'selected',
+          title: 'Project Health Guardrails',
+          content: 'projection-owned health context',
+        }],
+        assertFresh: vi.fn(async () => {}),
+        dispose() {},
+      }),
+      externalContext: {
+        selectedContext: [{
+          kind: 'selected',
+          title: 'Reference Context Selection',
+          content: 'fingerprinted reference context',
+        }],
+        assertFresh: vi.fn(async () => {}),
+      },
     });
 
-    expect(environment.tools).toBe(tools);
+    expect(environment.selectedContext?.map((item) => item.title)).toEqual([
+      'Project Health Guardrails',
+      'Reference Context Selection',
+    ]);
     await environment.dispose();
   });
 
@@ -71,6 +100,8 @@ describe('turn-scoped agent edit environment injection', () => {
       expect(input.baseTools).toBe(tools);
       return {
         tools: input.baseTools,
+        workspace: { workspaceRoot, projectionFingerprint: 'a'.repeat(64) },
+        assertFresh: vi.fn(async () => {}),
         finalizer,
         dispose: vi.fn(async () => {
           order.push('dispose');
@@ -113,10 +144,51 @@ describe('turn-scoped agent edit environment injection', () => {
     ]);
   });
 
+  it('preserves an explicit skill and context package through run-turn assembly', async () => {
+    const editEnvironmentFactory = vi.fn(async () => ({
+      tools: {} as ToolSet,
+      workspace: { workspaceRoot, projectionFingerprint: 'f'.repeat(64) },
+      assertFresh: vi.fn(async () => {}),
+      dispose() {},
+    }));
+    streamText.mockReturnValueOnce(modelStream({ text: ['done'] }));
+
+    await runNovelAgentTurn({
+      ...baseTurnInput(),
+      skill: {
+        name: 'explicit-skill',
+        system: 'CUSTOM_SKILL_SENTINEL',
+      },
+      contextPackage: {
+        id: 'ctx-explicit',
+        capability: 'novel.update_state',
+        createdAt: '2026-08-13T00:00:00.000Z',
+        selected: [],
+        omitted: [],
+        trace: [],
+        minimalMemory: {
+          characters: [],
+          hooks: [],
+          worldRules: [],
+          recentFacts: [],
+          styleNotes: [],
+        },
+        ruleStack: [],
+      },
+      editEnvironmentFactory,
+    });
+
+    const modelRequest = JSON.stringify(streamText.mock.calls[0]?.[0]);
+    expect(modelRequest).toContain('CUSTOM_SKILL_SENTINEL');
+    expect(modelRequest).toContain('Context Package: ctx-explicit');
+  });
+
   it('disposes the environment after a streamed turn finishes', async () => {
     const order: string[] = [];
     const editEnvironmentFactory = vi.fn(async () => ({
       tools: {} as ToolSet,
+      workspace: { workspaceRoot, projectionFingerprint: 'b'.repeat(64) },
+      assertFresh: vi.fn(async () => {}),
       finalizer: {
         async finalizeTurn(input) {
           order.push(`finalize:${input.stoppedReason}`);
@@ -150,6 +222,8 @@ describe('turn-scoped agent edit environment injection', () => {
       expect(input.abortSignal).toBe(controller.signal);
       return {
         tools: {} as ToolSet,
+        workspace: { workspaceRoot, projectionFingerprint: 'c'.repeat(64) },
+        assertFresh: vi.fn(async () => {}),
         finalizer: {
           async finalizeTurn(finalizeInput) {
             order.push(`finalize:${finalizeInput.stoppedReason}`);
@@ -217,10 +291,58 @@ describe('turn-scoped agent edit environment injection', () => {
     }
   });
 
+  it('keeps prompt and domain reads on one projection and fails closed on host drift', async () => {
+    const root = await createGitWorkspace({
+      'summaries/global.md': '# Global\n\nPROJECTION_A\n',
+      '.oan/workflow.yaml': 'name: projection-a\n',
+    });
+    const nativeFactory = createSandboxNovelAgentEditEnvironmentFactory({
+      capability: 'read-only',
+    });
+    const editEnvironmentFactory = vi.fn(async (input) => {
+      const environment = await nativeFactory(input);
+      await writeFile(
+        join(root, 'summaries/global.md'),
+        '# Global\n\nHOST_B_AFTER_PROJECTION\n',
+      );
+      return environment;
+    });
+    streamText
+      .mockReturnValueOnce(modelStream({
+        toolCalls: [{
+          toolCallId: 'call_summary',
+          toolName: 'summary.get',
+          input: {},
+        }],
+      }))
+      .mockReturnValueOnce(modelStream({ text: ['done'] }));
+
+    await expect(runNovelAgentTurn({
+      ...baseTurnInput(),
+      workspaceRoot: root,
+      workspace: {
+        workspaceRoot: root,
+        summaries: ['PRELOADED_HOST_CONTEXT_MUST_NOT_BE_USED'],
+      },
+      request: 'inspect summary',
+      editEnvironmentFactory,
+    })).rejects.toMatchObject({ code: 'WORKSPACE_PROJECTION_STALE' });
+
+    const modelMessages = JSON.stringify(streamText.mock.calls.map((call) => (
+      (call[0] as { messages?: unknown }).messages
+    )));
+    expect(modelMessages).toContain('PROJECTION_A');
+    expect(modelMessages).not.toContain('PRELOADED_HOST_CONTEXT_MUST_NOT_BE_USED');
+    expect(modelMessages).not.toContain('HOST_B_AFTER_PROJECTION');
+    expect(editEnvironmentFactory).toHaveBeenCalledOnce();
+  });
+
   it('disposes the environment when a run turn fails fatally', async () => {
     const order: string[] = [];
     const editEnvironmentFactory = vi.fn(async () => ({
       tools: {} as ToolSet,
+      workspace: { workspaceRoot, projectionFingerprint: 'd'.repeat(64) },
+      assertFresh: vi.fn(async () => {}),
       finalizer: {
         async finalizeTurn(input) {
           order.push(`finalize:${input.stoppedReason}`);
@@ -247,6 +369,8 @@ describe('turn-scoped agent edit environment injection', () => {
     const order: string[] = [];
     const editEnvironmentFactory = vi.fn(async () => ({
       tools: {} as ToolSet,
+      workspace: { workspaceRoot, projectionFingerprint: 'e'.repeat(64) },
+      assertFresh: vi.fn(async () => {}),
       finalizer: {
         async finalizeTurn(input) {
           order.push(`finalize:${input.stoppedReason}`);
@@ -274,6 +398,21 @@ describe('turn-scoped agent edit environment injection', () => {
     expect(order).toEqual(['finalize:error', 'dispose']);
   });
 });
+
+async function createGitWorkspace(files: Record<string, string>): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'oan-agent-fixed-projection-'));
+  tempRoots.push(root);
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(join(root, path, '..'), { recursive: true });
+    await writeFile(join(root, path), content, 'utf8');
+  }
+  await execFileAsync('git', ['-C', root, 'init', '-b', 'main']);
+  await execFileAsync('git', ['-C', root, 'config', 'user.name', 'OAN Test']);
+  await execFileAsync('git', ['-C', root, 'config', 'user.email', 'oan@example.test']);
+  await execFileAsync('git', ['-C', root, 'add', '--', '.']);
+  await execFileAsync('git', ['-C', root, 'commit', '-m', 'baseline']);
+  return root;
+}
 
 function baseTurnInput() {
   return {

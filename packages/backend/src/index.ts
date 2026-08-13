@@ -44,13 +44,11 @@ import {
   formatPlayWorldRefereePrompt,
   fingerprintPlayOutcomeReport,
   formatPlayWritingReferenceContext,
-  formatProjectHealthMarkdown,
   formatReferenceContextSelectionMarkdown,
   loadAppConfig,
   saveAppConfig,
   loadWorkspaceConfig,
   loadWritingProfileState,
-  loadNovelCopilotSkill,
   loadWorkspaceList,
   listPlaySessions,
   listPlaySessionSummaries,
@@ -156,7 +154,10 @@ import {
   streamNovelAgentCheckpointTurn,
   streamNovelAgentTurn,
 } from '@oh-awesome-novel/agent';
-import type { AiSdkProviderResolver } from '@oh-awesome-novel/agent';
+import type {
+  AiSdkProviderResolver,
+  NovelAgentExternalContext,
+} from '@oh-awesome-novel/agent';
 import type { NovelAgentPlayWritingReferenceInput } from '@oh-awesome-novel/agent';
 import type {
   GenerateReferenceAggregateAnalysisInput,
@@ -206,7 +207,6 @@ import {
   createPendingActionStore,
   createPlayAdoptionChangeProposal,
   PendingActionProtocolError,
-  createReadTools,
   gitDiff,
   listGitCommits,
   loadYaml,
@@ -4300,10 +4300,8 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     providerConfig,
     resolveModel: input.options.resolveModel ?? createAiSdkProviderResolver(),
     workspaceRoot: input.workspaceRoot,
-    workspace: await loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
+    workspace: { workspaceRoot: input.workspaceRoot },
     request: input.request,
-    skill: await loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
-    tools: createReadTools({ workspaceRoot: input.workspaceRoot }),
     abortSignal: input.abortSignal,
   })) {
     if (event.type === 'message_delta') {
@@ -4498,10 +4496,8 @@ async function handlePlayWorldRefereeTurn(
         providerConfig,
         resolveModel: options.resolveModel ?? createAiSdkProviderResolver(),
         workspaceRoot,
-        workspace: await loadNovelAgentWorkspaceSnapshot(workspaceRoot),
+        workspace: { workspaceRoot },
         request,
-        skill: await loadNovelCopilotSkill({ workspaceRoot }),
-        tools: createReadTools({ workspaceRoot }),
         session: { metadata: { title: `Play ${session.id}` } },
       });
       refereeText = result.assistantMessage?.content?.trim() ?? '';
@@ -6236,72 +6232,24 @@ async function createRuntimeEventStream(
       throw new Error('Model mode requires provider config.');
     }
 
-    const [workspace, skill, writingProfileState] = await Promise.all([
-      loadNovelAgentWorkspaceSnapshot(input.workspaceRoot),
-      loadNovelCopilotSkill({ workspaceRoot: input.workspaceRoot }),
-      loadWritingProfileState(input.workspaceRoot),
-    ]);
-    const capability = inferNovelAgentCapability(input.request, skill.quickCommands);
-    const pendingStore = await createPendingActionStore({
+    const capability = inferNovelAgentCapability(input.request);
+    const externalContext = await createAgentExternalContextSnapshot({
       workspaceRoot: input.workspaceRoot,
+      request: input.request,
+      capability,
+      playWritingReferences: input.playWritingReferences ?? [],
     });
-    const pendingActions = await pendingStore.listViews({ status: 'pending' });
-    const referenceRecallActive = hasExplicitReferenceRecallIntent(input.request);
-    const [projectHealth, referenceSelection] = await Promise.all([
-      readProjectHealth(input.workspaceRoot, {
-        pendingActionCount: pendingActions.length,
-      }),
-      referenceRecallActive
-        ? selectReferenceContext({
-            workspaceRoot: input.workspaceRoot,
-            techniquesEnabled:
-              writingProfileState.activeProfile.deconstruction.outputs.includes('techniques'),
-            capability,
-            goal: input.request,
-            tokenBudget: 1_500,
-            maxReferences: 3,
-          })
-        : Promise.resolve(undefined),
-    ]);
-    const selectedContext = [
-      ...(projectHealth.issues.length
-        ? [{
-            kind: 'selected' as const,
-            title: 'Project Health Guardrails',
-            content: formatProjectHealthMarkdown(projectHealth),
-          }]
-        : []),
-      ...(
-        referenceSelection
-        && (
-          referenceSelection.included.length
-          || referenceSelection.omitted.length
-          || referenceSelection.profileOmission
-        )
-          ? [{
-              kind: 'selected' as const,
-              title: 'Reference Context Selection',
-              content: formatReferenceContextSelectionMarkdown(referenceSelection),
-            }]
-          : []
-      ),
-    ];
 
     return streamNovelAgentTurn({
       providerConfig,
       resolveModel,
       workspaceRoot: input.workspaceRoot,
-      workspace,
+      workspace: { workspaceRoot: input.workspaceRoot },
       request: input.request,
-      skill,
       capability,
       exactWritablePaths: input.exactWritablePaths,
-      writingProfile: writingProfileState.activeProfile,
       tools: options.tools,
-      ...(referenceSelection ? { referenceSelection } : {}),
-      playWritingReferences: input.playWritingReferences,
-      projectHealth,
-      selectedContext,
+      externalContext,
       session: { metadata: { title: input.request } },
     });
   }
@@ -6311,6 +6259,100 @@ async function createRuntimeEventStream(
     request: input.request,
     tools: options.tools,
   });
+}
+
+async function createAgentExternalContextSnapshot(input: {
+  workspaceRoot: string;
+  request: string;
+  capability?: NovelCopilotCapabilityId;
+  playWritingReferences: NovelAgentPlayWritingReferenceInput[];
+}): Promise<NovelAgentExternalContext> {
+  const writingProfile = (await loadWritingProfileState(input.workspaceRoot)).activeProfile;
+  const referenceSelection = hasExplicitReferenceRecallIntent(input.request)
+    ? await selectReferenceContext({
+        workspaceRoot: input.workspaceRoot,
+        techniquesEnabled: writingProfile.deconstruction.outputs.includes('techniques'),
+        capability: input.capability,
+        goal: input.request,
+        tokenBudget: 1_500,
+        maxReferences: 3,
+      })
+    : undefined;
+  const baseline = {
+    writingProfile,
+    referenceSelection,
+    playWritingReferences: input.playWritingReferences,
+  };
+  const baselineFingerprint = fingerprintAgentExternalContext(baseline);
+  const selectedContext = referenceSelection && (
+    referenceSelection.included.length
+    || referenceSelection.omitted.length
+    || referenceSelection.profileOmission
+  )
+    ? [{
+        kind: 'selected' as const,
+        title: 'Reference Context Selection',
+        content: formatReferenceContextSelectionMarkdown(referenceSelection),
+      }]
+    : [];
+
+  return {
+    writingProfile,
+    ...(referenceSelection ? { referenceSelection } : {}),
+    selectedContext,
+    ...(input.playWritingReferences.length > 0
+      ? { playWritingReferences: input.playWritingReferences }
+      : {}),
+    async assertFresh() {
+      const currentWritingProfile = (await loadWritingProfileState(input.workspaceRoot))
+        .activeProfile;
+      const currentReferenceSelection = hasExplicitReferenceRecallIntent(input.request)
+        ? await selectReferenceContext({
+            workspaceRoot: input.workspaceRoot,
+            techniquesEnabled:
+              currentWritingProfile.deconstruction.outputs.includes('techniques'),
+            capability: input.capability,
+            goal: input.request,
+            tokenBudget: 1_500,
+            maxReferences: 3,
+          })
+        : undefined;
+      const currentPlayWritingReferences = await Promise.all(
+        input.playWritingReferences.map((reference) =>
+          loadPlayWritingReferenceForAgent(input.workspaceRoot, reference.attachmentId)),
+      );
+      const currentFingerprint = fingerprintAgentExternalContext({
+        writingProfile: currentWritingProfile,
+        referenceSelection: currentReferenceSelection,
+        playWritingReferences: currentPlayWritingReferences,
+      });
+      if (currentFingerprint !== baselineFingerprint) {
+        throw Object.assign(
+          new Error('Agent external context sources changed during the fixed-projection turn.'),
+          { code: 'WORKSPACE_PROJECTION_STALE' as const },
+        );
+      }
+    },
+  };
+}
+
+async function loadPlayWritingReferenceForAgent(
+  workspaceRoot: string,
+  attachmentId: string,
+): Promise<NovelAgentPlayWritingReferenceInput> {
+  const reference = await formatPlayWritingReferenceContext(workspaceRoot, attachmentId);
+  return {
+    attachmentId: reference.attachment.id,
+    sessionId: reference.attachment.sessionId,
+    title: `Play Writing Reference · ${reference.attachment.sessionId}`,
+    path: reference.sourceRef.path
+      ?? resolvePlayWritingReferenceAttachmentPath(workspaceRoot, attachmentId),
+    content: reference.content,
+  };
+}
+
+function fingerprintAgentExternalContext(value: unknown): string {
+  return createHash('sha256').update(stableBackendJson(value)).digest('hex');
 }
 
 export function hasExplicitReferenceRecallIntent(request: string): boolean {
@@ -6327,105 +6369,6 @@ export function hasExplicitReferenceRecallIntent(request: string): boolean {
   }
   return /(?:参考(?:作品|书|小说|文本|资料)?|借鉴|参照|对照|references\b|reference\s+(?:work|novel|book|text|material)\b)/u
     .test(normalized);
-}
-
-async function loadNovelAgentWorkspaceSnapshot(workspaceRoot: string): Promise<{
-  workspaceRoot: string;
-  constitution?: string;
-  workflow?: string;
-  summaries?: string[];
-  state?: string;
-  timeline?: string;
-  foreshadow?: string;
-}> {
-  const [
-    constitution,
-    workflow,
-    summaries,
-    stateFiles,
-    timelineFiles,
-    foreshadowFiles,
-  ] = await Promise.all([
-    readMarkdownDirectoryAsContext(join(workspaceRoot, '.oan', 'constitution')),
-    readTextFileIfExists(join(workspaceRoot, '.oan', 'workflow.yaml')),
-    readContextFiles(join(workspaceRoot, 'summaries'), ['.md']),
-    readContextFiles(join(workspaceRoot, 'state'), ['.yaml', '.yml']),
-    readContextFiles(join(workspaceRoot, 'timeline'), ['.yaml', '.yml', '.md']),
-    readContextFiles(join(workspaceRoot, 'foreshadow'), ['.yaml', '.yml', '.md']),
-  ]);
-
-  return {
-    workspaceRoot,
-    constitution,
-    workflow,
-    summaries,
-    state: stateFiles?.join('\n\n'),
-    timeline: timelineFiles?.join('\n\n'),
-    foreshadow: foreshadowFiles?.join('\n\n'),
-  };
-}
-
-async function readMarkdownDirectoryAsContext(directory: string): Promise<string | undefined> {
-  const files = await readContextFiles(directory, ['.md']);
-  return files?.join('\n\n');
-}
-
-async function readContextFiles(
-  directory: string,
-  extensions: string[],
-): Promise<string[] | undefined> {
-  const files = await listContextFiles(directory, extensions);
-  const selectedFiles = files.slice(0, 12);
-  const contents = await Promise.all(
-    selectedFiles.map(async (filePath) => {
-      const content = await readTextFileIfExists(filePath);
-      return content ? `# ${relative(directory, filePath)}\n\n${content}` : undefined;
-    }),
-  );
-  const compact = contents.filter((content): content is string => Boolean(content));
-
-  return compact.length ? compact : undefined;
-}
-
-async function listContextFiles(directory: string, extensions: string[]): Promise<string[]> {
-  try {
-    const entries = await readdir(directory, { withFileTypes: true });
-    const files = await Promise.all(
-      entries.flatMap(async (entry) => {
-        const filePath = join(directory, entry.name);
-
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          return listContextFiles(filePath, extensions);
-        }
-
-        if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
-          return [filePath];
-        }
-
-        return [];
-      }),
-    );
-
-    return files.flat().sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-async function readTextFileIfExists(filePath: string): Promise<string | undefined> {
-  try {
-    return await readFile(filePath, 'utf-8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return undefined;
-    }
-
-    throw error;
-  }
 }
 
 async function loadLauncherWorkspaces(options: NovelBackendOptions): Promise<LauncherWorkspaceEntry[]> {

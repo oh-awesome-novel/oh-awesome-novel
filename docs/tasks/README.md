@@ -45,6 +45,7 @@
 - [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0600 Human Approval Vertical Slice](0600.md)
+- [0800 Sandbox Change Engine Migration](0800.md)
 - [0900 Project References](0900.md)
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
 - [1010 Context Package And Source Discipline](1010.md)
@@ -72,7 +73,6 @@
 ## Needs Review Tasks
 
 - [0700 Summary Workflow Extensions Polish](0700.md)
-- [0800 Sandbox Change Engine Migration](0800.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 
 ## Planned Tasks

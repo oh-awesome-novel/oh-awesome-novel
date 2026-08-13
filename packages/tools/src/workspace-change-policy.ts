@@ -81,6 +81,7 @@ const INTERNAL_ROOTS = new Set([
 
 const READ_ONLY_OAN_RULES: readonly PathRule[] = [
   { kind: 'prefix', path: '.oan/constitution' },
+  { kind: 'prefix', path: '.oan/skills' },
   { kind: 'exact', path: '.oan/workflow.yaml' },
 ];
 
@@ -218,6 +219,8 @@ export function assertSafeWorkspacePolicyPath(
       path === '.oan/workflow.yaml'
       || path === '.oan/constitution'
       || path.startsWith('.oan/constitution/')
+      || path === '.oan/skills'
+      || path.startsWith('.oan/skills/')
     );
     if (!allowedRead) throw new Error(`Hidden or internal workspace path is forbidden: ${path}.`);
   }

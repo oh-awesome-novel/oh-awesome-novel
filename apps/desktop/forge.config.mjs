@@ -12,11 +12,11 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
  */
 const config = {
   packagerConfig: {
+    name: 'oan',
+    executableName: 'oan',
+    appBundleId: 'com.oh-awesome-novel.oan',
     asar: true,
     extraResource: ['THIRD_PARTY_NOTICES.md'],
-    // Fuses mutate the Electron binary during packageAfterCopy. Signing at the
-    // packager's final step keeps the finished macOS bundle internally valid.
-    osxSign: { identity: '-', identityValidation: false },
   },
   rebuildConfig: {},
   makers: [
@@ -38,6 +38,7 @@ const config = {
                 /^ai(?:\/|$)/,
                 /^bash-tool(?:\/|$)/,
                 /^diff(?:\/|$)/,
+                /^electron-squirrel-startup(?:\/|$)/,
                 /^just-bash(?:\/|$)/,
                 /^yaml(?:\/|$)/,
               ],
@@ -56,7 +57,7 @@ const config = {
       },
     }),
     // Fuses are used to enable/disable various Electron functionality
-    // at package time, before code signing the application
+    // while packaging the application.
     new FusesPlugin({
       version: FuseVersion.V1,
       [FuseV1Options.RunAsNode]: false,

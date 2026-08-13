@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createSandboxEditSession,
@@ -121,6 +121,35 @@ describe('SandboxEditSession', () => {
     await session.dispose();
   });
 
+  it('rechecks trusted external sources before an explicit proposal is persisted', async () => {
+    const workspaceRoot = await tempWorkspace({
+      'summaries/global.md': '# Global\n\nold\n',
+    });
+    const proposeCandidate = vi.fn();
+    const session = await createSandboxEditSession({
+      workspaceRoot,
+      policy: createWorkspaceChangePolicy({ capability: 'summary.edit' }),
+      repositoryReader: fakeRepository,
+      pendingActionStore: { proposeCandidate } as never,
+      freshnessChecks: [async () => {
+        throw Object.assign(new Error('external source drifted'), {
+          code: 'WORKSPACE_PROJECTION_STALE',
+        });
+      }],
+    });
+    await executeTool(session.tools, 'writeFile', {
+      path: 'summaries/global.md',
+      content: '# Global\n\ncandidate\n',
+    });
+
+    await expect(executeTool(session.tools, 'workspace.proposeChanges', {
+      title: 'Review summary',
+      description: 'External source must still match.',
+    })).rejects.toMatchObject({ code: 'WORKSPACE_PROJECTION_STALE' });
+    expect(proposeCandidate).not.toHaveBeenCalled();
+    await session.dispose();
+  });
+
   it('applies cumulative command/source/output budgets and bounded sanitized audit', async () => {
     const workspaceRoot = await tempWorkspace({
       'summaries/global.md': '# Global\n\nold\n',
@@ -147,6 +176,32 @@ describe('SandboxEditSession', () => {
     expect(audit.commandLogHash).toMatch(/^[0-9a-f]{64}$/);
     expect(Buffer.byteLength(audit.entries[0]!.commandPreview, 'utf8')).toBeLessThanOrEqual(12);
     expect(audit.entries[0]!.commandPreview).not.toContain('\u001b');
+    await expect(session.preview()).rejects.toMatchObject({
+      code: 'SANDBOX_RESOURCE_LIMIT_EXCEEDED',
+    });
+    await session.dispose();
+  });
+
+  it('uses a monotonic clock and poisons the session when cumulative wall time is exceeded', async () => {
+    const workspaceRoot = await tempWorkspace({
+      'summaries/global.md': '# Global\n\nold\n',
+    });
+    const ticks = [100, 106, 106, 111];
+    const session = await createSandboxEditSession({
+      workspaceRoot,
+      policy: createWorkspaceChangePolicy({ capability: 'summary.edit' }),
+      repositoryReader: fakeRepository,
+      monotonicNow: () => ticks.shift() ?? 111,
+      limits: { maxTotalWallTimeMs: 10 },
+    });
+
+    await executeTool(session.tools, 'bash', { command: 'true' });
+    await expect(executeTool(session.tools, 'bash', { command: 'true' }))
+      .rejects.toMatchObject({ code: 'SANDBOX_RESOURCE_LIMIT_EXCEEDED' });
+    expect(session.commandAudit()).toMatchObject({
+      bashCalls: 2,
+      totalWallTimeMs: 11,
+    });
     await expect(session.preview()).rejects.toMatchObject({
       code: 'SANDBOX_RESOURCE_LIMIT_EXCEEDED',
     });

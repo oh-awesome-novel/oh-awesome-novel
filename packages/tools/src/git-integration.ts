@@ -520,9 +520,12 @@ export async function readPendingActionCommitAtHead(input: {
   workspaceRoot: string;
   actionId: string;
   files: readonly string[];
+  expectedRepository?: RepositoryBaseline;
+  expectedCommit?: string;
 }): Promise<PendingActionHeadCommit | undefined> {
   const files = validateWorkspaceRelativePaths(input.workspaceRoot, [...input.files]).sort();
-  const [head, branch, body, changed] = await Promise.all([
+  const [root, head, branch, body, changed, parents] = await Promise.all([
+    runGit(input.workspaceRoot, ['rev-parse', '--show-toplevel']),
     runGit(input.workspaceRoot, ['rev-parse', 'HEAD']),
     runGit(input.workspaceRoot, ['branch', '--show-current']),
     runGit(input.workspaceRoot, ['show', '-s', '--format=%B', 'HEAD']),
@@ -535,8 +538,24 @@ export async function readPendingActionCommitAtHead(input: {
       '-r',
       'HEAD',
     ]),
+    runGit(input.workspaceRoot, ['rev-list', '--parents', '-n', '1', 'HEAD']),
   ]);
-  if (!head.ok || !branch.ok || !body.ok || !changed.ok) return undefined;
+  if (!root.ok || !head.ok || !branch.ok || !body.ok || !changed.ok || !parents.ok) return undefined;
+  const headCommit = head.stdout.trim();
+  const branchName = branch.stdout.trim();
+  if (input.expectedCommit !== undefined && headCommit !== input.expectedCommit) return undefined;
+  if (input.expectedRepository !== undefined) {
+    const repositoryRoot = await realpath(root.stdout.trim());
+    const repositoryId = createHash('sha256').update(repositoryRoot).digest('hex');
+    const ancestry = parents.stdout.trim().split(/\s+/u);
+    if (
+      repositoryId !== input.expectedRepository.repositoryId
+      || branchName !== input.expectedRepository.branch
+      || ancestry.length !== 2
+      || ancestry[0] !== headCommit
+      || ancestry[1] !== input.expectedRepository.head
+    ) return undefined;
+  }
   if (!body.stdout.split('\n').some((line) => line.trim() === `Pending-Action-Id: ${input.actionId}`)) {
     return undefined;
   }
@@ -547,9 +566,8 @@ export async function readPendingActionCommitAtHead(input: {
   ) {
     return undefined;
   }
-  const branchName = branch.stdout.trim();
   if (!branchName) return undefined;
-  return { commit: head.stdout.trim(), branch: branchName };
+  return { commit: headCommit, branch: branchName };
 }
 
 export async function syncGit(workspaceRoot: string): Promise<GitSyncResult> {

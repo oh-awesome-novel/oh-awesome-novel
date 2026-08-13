@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "pretest": "npm run build --workspace @oh-awesome-novel/client",
+    "pretest": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",
     "test": "vitest",
-    "pretest:run": "npm run build --workspace @oh-awesome-novel/client",
+    "pretest:run": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",
     "test:run": "vitest run",
     "pretest:renderer-smoke": "npm run typecheck:renderer-smoke",
     "typecheck:renderer-smoke": "vue-tsc --noEmit -p ./renderer-smoke/tsconfig.json",
@@ -14,6 +14,7 @@
     "test:packaged-main-smoke": "node ./packaged-main-smoke/run.cjs"
   },
   "dependencies": {
+    "@oh-awesome-novel/backend": "^0.0.1",
     "@oh-awesome-novel/client": "^0.0.1",
     "vue": "^3.5.34",
     "vue-router": "^5.1.0"

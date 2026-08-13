@@ -2,8 +2,9 @@
 
 > Date: 2026-08-12
 > Task: `docs/tasks/0800.md`
-> Status: Ready for implementation
+> Status: Completed (2026-08-13)
 > Delivery mode: one-time breaking architecture replacement before the first public release
+> Completion evidence: see `docs/tasks/0800.md` Implementation Notes.
 
 ## Goal
 
@@ -1002,13 +1003,13 @@ No released or supported build may expose both protocols.
 - Modify: `docs/tasks/README.md`
 - Modify: `docs/superpowers/plans/2026-06-10-align-apply-engine-implementation-order.md`
 
-- [ ] Write ADR 0004 and mark it `Accepted`.
-- [ ] Immediately replace the old stable architecture formula in `AGENTS.md`, `docs/README.md`, `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT_PLAN.md` with a concise Sandbox Change Engine decision and `0800 migration in progress`; detailed prose can be completed in Task 11.
-- [ ] Mark ADR 0003 `Superseded by ADR 0004` without rewriting its historical body.
-- [ ] Rename task 0800 to `Sandbox Change Engine Migration`, change `Planned -> Needs Review`, and move its entry from Planned to Needs Review in `docs/tasks/README.md` while implementation is incomplete.
-- [ ] Point 0800 only to this plan; do not add 0810-0860 compatibility rollout tasks.
-- [ ] Add a superseded banner to the old Apply Engine implementation-order plan.
-- [ ] Record the destructive-state-reset decision and canonical preservation boundary in ADR 0004.
+- [x] Write ADR 0004 and mark it `Accepted`.
+- [x] Immediately replace the old stable architecture formula in `AGENTS.md`, `docs/README.md`, `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT_PLAN.md` with a concise Sandbox Change Engine decision and `0800 migration in progress`; detailed prose can be completed in Task 11.
+- [x] Mark ADR 0003 `Superseded by ADR 0004` without rewriting its historical body.
+- [x] Rename task 0800 to `Sandbox Change Engine Migration`, change `Planned -> Needs Review`, and move its entry from Planned to Needs Review in `docs/tasks/README.md` while implementation is incomplete.
+- [x] Point 0800 only to this plan; do not add 0810-0860 compatibility rollout tasks.
+- [x] Add a superseded banner to the old Apply Engine implementation-order plan.
+- [x] Record the destructive-state-reset decision and canonical preservation boundary in ADR 0004.
 
 **Gate:** a new agent reading ADR 0004 and task 0800 cannot reasonably continue implementing SemanticPatch.
 
@@ -1022,13 +1023,13 @@ No released or supported build may expose both protocols.
 - Modify or add: third-party notices/license inventory used by packaging
 - Test: `__test__/tools/src/sandbox-dependency-smoke.test.ts`
 
-- [ ] Add exact compatible baselines: `bash-tool@1.3.18`, `just-bash@3.2.0`, and `diff@8.0.2` as direct dependencies of `@oh-awesome-novel/tools`.
-- [ ] Do not rely on bash-tool's transitive just-bash/diff dependency for imports.
-- [ ] Confirm repository Node 24 baseline satisfies just-bash `>=20.18.1`.
-- [ ] Declare the Node 24 baseline in root package engines/CI or package smoke configuration, rather than relying only on the developer machine.
-- [ ] Verify tsdown and Electron main-process bundles can load the packages.
-- [ ] Preserve MIT and Apache-2.0 license/notice requirements in distributable artifacts.
-- [ ] Verify AI SDK 6 ToolSet compatibility against installed docs; do not implement from memory.
+- [x] Add exact compatible baselines: `bash-tool@1.3.18`, `just-bash@3.2.0`, and `diff@8.0.2` as direct dependencies of `@oh-awesome-novel/tools`.
+- [x] Do not rely on bash-tool's transitive just-bash/diff dependency for imports.
+- [x] Confirm repository Node 24 baseline satisfies just-bash `>=20.18.1`.
+- [x] Declare the Node 24 baseline in root package engines/CI or package smoke configuration, rather than relying only on the developer machine.
+- [x] Verify tsdown and Electron main-process bundles can load the packages.
+- [x] Preserve MIT and Apache-2.0 license/notice requirements in distributable artifacts.
+- [x] Verify AI SDK 6 ToolSet compatibility against installed docs; do not implement from memory.
 
 Run:
 
@@ -1053,14 +1054,14 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Test: `__test__/tools/src/final-document-validator.test.ts`
 - Test: `__test__/tools/src/change-diff.test.ts`
 
-- [ ] Implement strict CandidateChangeSet types, sorting, hashing, stats and no-op elimination.
-- [ ] Implement create/update/delete normalization; normalize rename as delete + create.
-- [ ] Refactor useful hash/unified-diff behavior out of `apply-engine.ts`, or replace it with the direct `diff` dependency.
-- [ ] Make diff generation display-only and deterministic.
-- [ ] Implement final path/file-type/encoding/size/domain policy.
-- [ ] Inventory every writable file family against the Final Document Validator Matrix; port proven checks and implement constraints that currently live only in patch/tool normalizers.
-- [ ] Keep a capability read-only until its complete final-document validator test suite passes.
-- [ ] Ensure no final validator consumes SemanticPatch.
+- [x] Implement strict CandidateChangeSet types, sorting, hashing, stats and no-op elimination.
+- [x] Implement create/update/delete normalization; normalize rename as delete + create.
+- [x] Refactor useful hash/unified-diff behavior out of `apply-engine.ts`, or replace it with the direct `diff` dependency.
+- [x] Make diff generation display-only and deterministic.
+- [x] Implement final path/file-type/encoding/size/domain policy.
+- [x] Inventory every writable file family against the Final Document Validator Matrix; port proven checks and implement constraints that currently live only in patch/tool normalizers.
+- [x] Keep a capability read-only until its complete final-document validator test suite passes.
+- [x] Ensure no final validator consumes SemanticPatch.
 
 **Tests must cover:** duplicate paths, unstable ordering, Unicode paths, invalid UTF-8/NUL, create/update/delete, no-op, renamed files, hidden/internal paths, traversal, symlinks, oversized changes, invalid YAML and bounded reference targets.
 
@@ -1077,16 +1078,16 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Test: `__test__/tools/src/tracking-fs.test.ts`
 - Test: `__test__/tools/src/policy-fs.test.ts`
 
-- [ ] Build a fixed InMemoryFs snapshot and baseline manifest from an allowlisted projection.
-- [ ] Reject symlink/non-regular/binary/oversized sources before loading them.
-- [ ] Implement PolicyFs across the complete IFileSystem surface.
-- [ ] Implement TrackingFs across the complete mutation surface.
-- [ ] Proxy `mkdirSync` / `writeFileSync`, implement bootstrap mode, call `activate()` after Bash construction and freeze virtual system paths read-only.
-- [ ] Separate `/workspace` candidates from `/tmp` scratch files.
-- [ ] Reconcile final VFS against baseline rather than trusting the mutation log.
-- [ ] Recheck the projected host manifest at proposal time; mark the session stale if its fixed view drifted during editing.
-- [ ] Enforce projection secrecy across every read/stat/enumeration API, including glob/find/getAllPaths.
-- [ ] Prove the real workspace remains byte-identical through arbitrary virtual mutations.
+- [x] Build a fixed InMemoryFs snapshot and baseline manifest from an allowlisted projection.
+- [x] Reject symlink/non-regular/binary/oversized sources before loading them.
+- [x] Implement PolicyFs across the complete IFileSystem surface.
+- [x] Implement TrackingFs across the complete mutation surface.
+- [x] Proxy `mkdirSync` / `writeFileSync`, implement bootstrap mode, call `activate()` after Bash construction and freeze virtual system paths read-only.
+- [x] Separate `/workspace` candidates from `/tmp` scratch files.
+- [x] Reconcile final VFS against baseline rather than trusting the mutation log.
+- [x] Recheck the projected host manifest at proposal time; mark the session stale if its fixed view drifted during editing.
+- [x] Enforce projection secrecy across every read/stat/enumeration API, including glob/find/getAllPaths.
+- [x] Prove the real workspace remains byte-identical through arbitrary virtual mutations.
 
 **Tests must cover:** `writeFile`, append, redirect, heredoc, `sed -i`, `yq -i`, cp, mv, rm, recursive directory operations, multiple writes, change-then-revert, move-then-move-back, spaces, CJK filenames, absolute paths, `../../`, hidden dirs, `.git`, `.workspace`, readonly `.oan`, symlink escape and two isolated sessions.
 
@@ -1104,19 +1105,19 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Test: `__test__/tools/src/sandbox-toolset.test.ts`
 - Test: affected `__test__/tools/src/read-tools.test.ts`
 
-- [ ] Construct Bash from OAN-owned PolicyFs/TrackingFs/InMemoryFs.
-- [ ] Refactor domain read tools to accept the projected VFS reader and prove they never mix live host bytes into an edit session.
-- [ ] Implement the bash-tool adapter with a turn-scoped AbortSignal closure.
-- [ ] Call `createBashTool({ sandbox, destination: '/workspace' })`; do not call `uploadDirectory`.
-- [ ] Pass a host-owned `promptOptions.toolPrompt` generated strictly from `OAN_COMMAND_ALLOWLIST`; do not rely on empty/automatic sandbox command discovery.
-- [ ] Register the explicit command allowlist and hardened resource limits.
-- [ ] Construct InMemoryFs with `maxTotalBytes` and enforce separate baseline, scratch, candidate and whole-session cumulative counters.
-- [ ] Keep network, Python, JavaScript and trusted custom commands disabled.
-- [ ] Expose `bash`, OAN-bounded `readFile`, `writeFile` and `workspace.previewChanges` as AI SDK ToolSet entries; `workspace.proposeChanges` is added in Task 5 after the store exists.
-- [ ] Replace/wrap model-visible readFile with ranged bounded reads; make preview return a bounded excerpt with explicit truncation metadata.
-- [ ] Implement seal, idempotent preview, one-time candidate finalization and dispose lifecycle.
-- [ ] Sanitize command output/log text.
-- [ ] Produce a bounded command audit digest/summary for later source provenance; Task 4 does not persist PendingAction.
+- [x] Construct Bash from OAN-owned PolicyFs/TrackingFs/InMemoryFs.
+- [x] Refactor domain read tools to accept the projected VFS reader and prove they never mix live host bytes into an edit session.
+- [x] Implement the bash-tool adapter with a turn-scoped AbortSignal closure.
+- [x] Call `createBashTool({ sandbox, destination: '/workspace' })`; do not call `uploadDirectory`.
+- [x] Pass a host-owned `promptOptions.toolPrompt` generated strictly from `OAN_COMMAND_ALLOWLIST`; do not rely on empty/automatic sandbox command discovery.
+- [x] Register the explicit command allowlist and hardened resource limits.
+- [x] Construct InMemoryFs with `maxTotalBytes` and enforce separate baseline, scratch, candidate and whole-session cumulative counters.
+- [x] Keep network, Python, JavaScript and trusted custom commands disabled.
+- [x] Expose `bash`, OAN-bounded `readFile`, `writeFile` and `workspace.previewChanges` as AI SDK ToolSet entries; `workspace.proposeChanges` is added in Task 5 after the store exists.
+- [x] Replace/wrap model-visible readFile with ranged bounded reads; make preview return a bounded excerpt with explicit truncation metadata.
+- [x] Implement seal, idempotent preview, one-time candidate finalization and dispose lifecycle.
+- [x] Sanitize command output/log text.
+- [x] Produce a bounded command audit digest/summary for later source provenance; Task 4 does not persist PendingAction.
 
 **Tests must cover:** all Task 4 model-visible tools, projected domain reads, host drift without mixed reads, multi-call shared state, candidate finalization, double finalization, writes after seal, timeout, abort, command/output/file/byte limits, disabled commands and clean-session behavior.
 
@@ -1139,21 +1140,21 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Add: `__test__/tools/src/change-materializer.test.ts`
 - Add: `__test__/tools/src/pending-action-decision-receipt.test.ts`
 
-- [ ] Introduce the new strict schemaVersion 1 PendingAction and stored parser.
-- [ ] Persist create/update candidate bytes into immutable internal draft artifacts during proposal.
-- [ ] Do not persist a separate authoritative `patches`, `shadowWrites` or `touchedFiles` array.
-- [ ] Implement the frozen `PreparedChangePreviewV1` preview/promote protocol for cross-request Reference/Play flows.
-- [ ] Preserve stable IDs, store/list/read/archive, per-action/global locks and terminal-state conflict behavior.
-- [ ] Add create/update/delete transaction operations and operation-aware journal phases.
-- [ ] Freeze accepted terminal archive as the file transaction commit point and make all post-commit recovery finalize-only.
-- [ ] Preserve baseline, draft hash, path and symlink preflight.
-- [ ] Preserve rollback, crash recovery, reject and Git auto-commit behavior.
-- [ ] Ensure Git only stages accepted paths and refuses unrelated staged state.
-- [ ] Persist Git outcome in a separate decision receipt; test add/commit failure and the staged-not-committed quick-commit path without rolling back accepted files.
-- [ ] Return `UNSUPPORTED_PENDING_ACTION_SCHEMA` for every old/unversioned record; do not decode it.
-- [ ] Ensure Accept never imports or calls bash-tool/just-bash.
-- [ ] Add `workspace.proposeChanges` only now that the new PendingAction store exists; combine session finalization with proposal persistence and seal semantics.
-- [ ] Keep current production store/export unchanged until Task 9; test the new store/materializer directly in isolated workspaces.
+- [x] Introduce the new strict schemaVersion 1 PendingAction and stored parser.
+- [x] Persist create/update candidate bytes into immutable internal draft artifacts during proposal.
+- [x] Do not persist a separate authoritative `patches`, `shadowWrites` or `touchedFiles` array.
+- [x] Implement the frozen `PreparedChangePreviewV1` preview/promote protocol for cross-request Reference/Play flows.
+- [x] Preserve stable IDs, store/list/read/archive, per-action/global locks and terminal-state conflict behavior.
+- [x] Add create/update/delete transaction operations and operation-aware journal phases.
+- [x] Freeze accepted terminal archive as the file transaction commit point and make all post-commit recovery finalize-only.
+- [x] Preserve baseline, draft hash, path and symlink preflight.
+- [x] Preserve rollback, crash recovery, reject and Git auto-commit behavior.
+- [x] Ensure Git only stages accepted paths and refuses unrelated staged state.
+- [x] Persist Git outcome in a separate decision receipt; test add/commit failure and the staged-not-committed quick-commit path without rolling back accepted files.
+- [x] Return `UNSUPPORTED_PENDING_ACTION_SCHEMA` for every old/unversioned record; do not decode it.
+- [x] Ensure Accept never imports or calls bash-tool/just-bash.
+- [x] Add `workspace.proposeChanges` only now that the new PendingAction store exists; combine session finalization with proposal persistence and seal semantics.
+- [x] Keep current production store/export unchanged until Task 9; test the new store/materializer directly in isolated workspaces.
 
 **Fault-injection matrix:** fail before journal, after each stage, after each backup, after each target materialization, before archive, after archive, before Git add, after Git add and before commit. Every case must have a specified retry/recovery result.
 
@@ -1181,17 +1182,17 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Test: `__test__/core/src/writing-planning.test.ts`
 - Test: `__test__/core/src/writing-review.test.ts`
 
-- [ ] Add the new Runtime PendingAction view/event types alongside the current type; remove the old type only in Task 9.
-- [ ] Add a generic async turn finalizer hook that runs before `message_finish`.
-- [ ] Make agent edit-environment creation async and dispose it in `finally` for run and stream paths.
-- [ ] Share one SandboxEditSession across every tool call in a turn.
-- [ ] Pass abort through the session-owned bash adapter.
-- [ ] Replace raw bash `toolCall.args` transport/persistence with bounded sanitized `commandPreview` + hash audit records.
-- [ ] Add the new sandbox edit-environment assembly behind explicit injection while retaining the old production default until Task 9.
-- [ ] Add a sandbox-specific system prompt/skill contract around virtual editing, preview and proposal; switch the default prompt only in Task 9.
-- [ ] Add capability/sandbox-proposal contracts for planning and review helpers; remove `chapter.createDraft` from their production contract in Task 9.
-- [ ] Add `proposedChanges` / `proposed-changes.yaml` and new recovery helpers without reading old artifacts; switch writers in Task 9.
-- [ ] Add a sandbox-backed checkpoint validation path; delete fake patches and the canonical-write bypass in Task 9.
+- [x] Add the new Runtime PendingAction view/event types alongside the current type; remove the old type only in Task 9.
+- [x] Add a generic async turn finalizer hook that runs before `message_finish`.
+- [x] Make agent edit-environment creation async and dispose it in `finally` for run and stream paths.
+- [x] Share one SandboxEditSession across every tool call in a turn.
+- [x] Pass abort through the session-owned bash adapter.
+- [x] Replace raw bash `toolCall.args` transport/persistence with bounded sanitized `commandPreview` + hash audit records.
+- [x] Add the new sandbox edit-environment assembly behind explicit injection while retaining the old production default until Task 9.
+- [x] Add a sandbox-specific system prompt/skill contract around virtual editing, preview and proposal; switch the default prompt only in Task 9.
+- [x] Add capability/sandbox-proposal contracts for planning and review helpers; remove `chapter.createDraft` from their production contract in Task 9.
+- [x] Add `proposedChanges` / `proposed-changes.yaml` and new recovery helpers without reading old artifacts; switch writers in Task 9.
+- [x] Add a sandbox-backed checkpoint validation path; delete fake patches and the canonical-write bypass in Task 9.
 
 **Gate:** injected new-path tests cover normal finish, max-loop finish, explicit proposal, abort and fatal error; existing default builds and no tested new path writes a real target before Accept.
 
@@ -1214,15 +1215,15 @@ npm run test:run --workspace @oh-awesome-novel/test-tools -- src/sandbox-depende
 - Test: `__test__/client/src/play-adoption.test.ts`
 - Test: `__test__/client/src/reference-deconstruction.test.ts`
 
-- [ ] Add a deterministic ChangeSet producer that will replace `createReferenceMaterialAdoptionPatches` at Task 9.
-- [ ] Add Reference publication candidate-file producers beside the current patch builders.
-- [ ] Replace patch equality/kind ownership checks with `origin + allowed paths + baseline/draft fingerprint` checks.
-- [ ] Preserve source checksum, run identity, partial publication and freshness contracts.
-- [ ] Add the new Play business target contract without legacy write tool names; remove the old contract at Task 9.
-- [ ] Compile Play adoption payloads into deterministic candidate changes.
-- [ ] Add new-schema stored prepared preview helpers; do not read old preview records with them.
-- [ ] Ensure every producer uses the same final WorkspaceChangePolicy and PendingAction store.
-- [ ] Add new producer entry points without switching production routes until Task 9.
+- [x] Add a deterministic ChangeSet producer that will replace `createReferenceMaterialAdoptionPatches` at Task 9.
+- [x] Add Reference publication candidate-file producers beside the current patch builders.
+- [x] Replace patch equality/kind ownership checks with `origin + allowed paths + baseline/draft fingerprint` checks.
+- [x] Preserve source checksum, run identity, partial publication and freshness contracts.
+- [x] Add the new Play business target contract without legacy write tool names; remove the old contract at Task 9.
+- [x] Compile Play adoption payloads into deterministic candidate changes.
+- [x] Add new-schema stored prepared preview helpers; do not read old preview records with them.
+- [x] Ensure every producer uses the same final WorkspaceChangePolicy and PendingAction store.
+- [x] Add new producer entry points without switching production routes until Task 9.
 
 Suggested producer migration order:
 
@@ -1253,15 +1254,15 @@ Suggested producer migration order:
 - Test: `__test__/desktop-ui/src/workspace-reference-publish-handoff.test.ts`
 - Test: affected backend/client/desktop-ui tests and renderer smoke
 
-- [ ] Add strict new backend serializers for PendingActionView beside the current live serializer.
-- [ ] Add the new public DTO without `patches`, `shadowWrites`, artifact paths or legacy write `toolName`.
-- [ ] Render structured create/update/delete status from `changes`; do not infer status by parsing diff.
-- [ ] Preserve list/read/accept/reject routes and the human approval journey.
-- [ ] Show unsupported old internal state as an explicit reset-required error.
-- [ ] Keep diff text escaped and command output plain-text only.
-- [ ] Add a component test for create/update/delete labels, escaped diff text and absence of internal artifact paths.
-- [ ] Complete a real UI journey: LLM virtual edit -> preview -> PendingAction -> Accept -> Git result.
-- [ ] Prepare strict new DTO/parser/component paths without switching live backend/client routing until Task 9.
+- [x] Add strict new backend serializers for PendingActionView beside the current live serializer.
+- [x] Add the new public DTO without `patches`, `shadowWrites`, artifact paths or legacy write `toolName`.
+- [x] Render structured create/update/delete status from `changes`; do not infer status by parsing diff.
+- [x] Preserve list/read/accept/reject routes and the human approval journey.
+- [x] Show unsupported old internal state as an explicit reset-required error.
+- [x] Keep diff text escaped and command output plain-text only.
+- [x] Add a component test for create/update/delete labels, escaped diff text and absence of internal artifact paths.
+- [x] Complete a real UI journey: LLM virtual edit -> preview -> PendingAction -> Accept -> Git result.
+- [x] Prepare strict new DTO/parser/component paths without switching live backend/client routing until Task 9.
 
 **Gate:** renderer cannot access internal draft artifacts and accurately labels created, updated and deleted files.
 
@@ -1296,18 +1297,18 @@ Suggested producer migration order:
 - Delete or rewrite around PolicyFs/ChangeMaterializer: `__test__/tools/src/restricted-write-tool.test.ts`
 - Delete/update: all old patch-shaped fixtures across `__test__/`
 
-- [ ] Delete `SemanticPatch`, `ObjectPatch`, `CollectionPatch`, `NarrativePatch`, `ReferenceArtifactPatch`.
-- [ ] In one atomic cut, switch the default agent toolset, Runtime finalizer, PendingAction directories/parser/materializer, deterministic producer routes, Backend serializers, Client parser and Desktop DTO to the new protocol.
-- [ ] Delete `previewSemanticPatches`, patch validators, executors and target resolver.
-- [ ] Delete six typed write-intent tools and their args-to-patch normalizers.
-- [ ] Delete legacy preview/adoption exports: `prepareWriteIntentPreview`, `promoteWriteIntentPreview`, `validateWriteIntentPreview`, `WRITE_INTENT_PREVIEW_SCHEMA_VERSION`, `PreviewableWriteIntentToolName` and `createReferenceMaterialAdoptionPatches`.
-- [ ] Delete backend patch-kind/equality/ownership logic.
-- [ ] Delete Runtime/client public `patches` and old `shadowWrites` semantics.
-- [ ] Delete Play legacy write-tool-name contract.
-- [ ] Delete fake checkpoint patches and canonical restricted-write bypass.
-- [ ] Delete `createRestrictedWriteTools`, `createWorkspaceWriteFileTool`, `writeRestrictedWorkspaceFile` and their public exports; any reusable path checks move into PolicyFs/ChangeMaterializer, with no callable canonical write tool left behind.
-- [ ] Add the packaged Electron main-process smoke harness that loads just-bash, executes an in-memory edit, finalizes a ChangeSet and disposes.
-- [ ] Keep historical occurrences only in superseded ADR/plan with an explicit historical marker.
+- [x] Delete `SemanticPatch`, `ObjectPatch`, `CollectionPatch`, `NarrativePatch`, `ReferenceArtifactPatch`.
+- [x] In one atomic cut, switch the default agent toolset, Runtime finalizer, PendingAction directories/parser/materializer, deterministic producer routes, Backend serializers, Client parser and Desktop DTO to the new protocol.
+- [x] Delete `previewSemanticPatches`, patch validators, executors and target resolver.
+- [x] Delete six typed write-intent tools and their args-to-patch normalizers.
+- [x] Delete legacy preview/adoption exports: `prepareWriteIntentPreview`, `promoteWriteIntentPreview`, `validateWriteIntentPreview`, `WRITE_INTENT_PREVIEW_SCHEMA_VERSION`, `PreviewableWriteIntentToolName` and `createReferenceMaterialAdoptionPatches`.
+- [x] Delete backend patch-kind/equality/ownership logic.
+- [x] Delete Runtime/client public `patches` and old `shadowWrites` semantics.
+- [x] Delete Play legacy write-tool-name contract.
+- [x] Delete fake checkpoint patches and canonical restricted-write bypass.
+- [x] Delete `createRestrictedWriteTools`, `createWorkspaceWriteFileTool`, `writeRestrictedWorkspaceFile` and their public exports; any reusable path checks move into PolicyFs/ChangeMaterializer, with no callable canonical write tool left behind.
+- [x] Add the packaged Electron main-process smoke harness that loads just-bash, executes an in-memory edit, finalizes a ChangeSet and disposes.
+- [x] Keep historical occurrences only in superseded ADR/plan with an explicit historical marker.
 
 Run the production-code gate:
 
@@ -1324,14 +1325,14 @@ Expected: no matches.
 
 This task is performed only after new parsers/materializer are ready and all relevant processes are stopped.
 
-- [ ] Inventory developer/sample/test workspaces that contain old internal state.
-- [ ] Record `git status --short` and a SHA-256 manifest of canonical files.
-- [ ] Prove `.workspace/` and `.oan/sessions/` contain no Git-tracked file; stop for manual classification if this assertion fails.
-- [ ] Resolve and validate the exact `.workspace` and `.oan/sessions` targets.
-- [ ] Delete only those internal directories.
-- [ ] Start the new version and allow it to recreate required directories.
-- [ ] Recompute Git status and canonical manifest; require exact equality except for intentionally implemented source/docs changes in the repository itself.
-- [ ] Verify old records presented without reset fail closed with `UNSUPPORTED_PENDING_ACTION_SCHEMA`.
+- [x] Inventory developer/sample/test workspaces that contain old internal state.
+- [x] Record `git status --short` and a SHA-256 manifest of canonical files.
+- [x] Prove `.workspace/` and `.oan/sessions/` contain no Git-tracked file; stop for manual classification if this assertion fails.
+- [x] Resolve and validate the exact `.workspace` and `.oan/sessions` targets.
+- [x] Delete only those internal directories.
+- [x] Start the new version and allow it to recreate required directories.
+- [x] Recompute Git status and canonical manifest; require exact equality except for intentionally implemented source/docs changes in the repository itself.
+- [x] Verify old records presented without reset fail closed with `UNSUPPORTED_PENDING_ACTION_SCHEMA`.
 
 **Gate:** there is no old runtime record left in supported development workspaces, and canonical novel files/Git history are unchanged by reset.
 
@@ -1358,14 +1359,14 @@ This task is performed only after new parsers/materializer are ready and all rel
 - Modify: `docs/tasks/README.md`
 - Add: `scripts/check-legacy-write-architecture-terms.mjs`
 
-- [ ] Make the stable architecture formula `bash-tool + just-bash + CandidateChangeSet + PendingAction + Git approval`.
-- [ ] State that in-memory shell is allowed while arbitrary host shell remains forbidden.
-- [ ] Document ChangeSet authority, threat model, limits, lifecycle, materializer and reset boundary.
-- [ ] Update all current links after the Apply Engine document rename; do not leave a compatibility tombstone.
-- [ ] Preserve dated historical Implementation Notes; append migration notes rather than rewriting past facts.
-- [ ] Update every active task's current Goal/Constraints to the new engine. Historical occurrences must live under an explicitly titled dated `Historical Implementation Notes` section or in a file whose status is `Superseded`.
-- [ ] Add a checker with an exact file/section allowlist; it must allow ADR 0003, ADR 0004, this migration plan and 0800's migration description, but reject a legacy term in any active current-contract section.
-- [ ] Change task 0800 `Needs Review -> Completed` and move its `docs/tasks/README.md` entry to Completed only after every code/test/reset/doc gate passes.
+- [x] Make the stable architecture formula `bash-tool + just-bash + CandidateChangeSet + PendingAction + Git approval`.
+- [x] State that in-memory shell is allowed while arbitrary host shell remains forbidden.
+- [x] Document ChangeSet authority, threat model, limits, lifecycle, materializer and reset boundary.
+- [x] Update all current links after the Apply Engine document rename; do not leave a compatibility tombstone.
+- [x] Preserve dated historical Implementation Notes; append migration notes rather than rewriting past facts.
+- [x] Update every active task's current Goal/Constraints to the new engine. Historical occurrences must live under an explicitly titled dated `Historical Implementation Notes` section or in a file whose status is `Superseded`.
+- [x] Add a checker with an exact file/section allowlist; it must allow ADR 0003, ADR 0004, this migration plan and 0800's migration description, but reject a legacy term in any active current-contract section.
+- [x] Change task 0800 `Needs Review -> Completed` and move its `docs/tasks/README.md` entry to Completed only after every code/test/reset/doc gate passes.
 
 Documentation gate:
 

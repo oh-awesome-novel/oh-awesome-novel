@@ -286,6 +286,13 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
     mode: 'development' | 'production',
   ): Promise<void> {
     const { build } = await importTsdown();
+    const userConfig = buildConfig.config ?? {};
+    const userDeps = isRecord(userConfig.deps) ? userConfig.deps : {};
+    const userNeverBundle = Array.isArray(userDeps.neverBundle)
+      ? userDeps.neverBundle
+      : userDeps.neverBundle === undefined
+        ? []
+        : [userDeps.neverBundle];
 
     const config: Record<string, unknown> = {
       cwd: this.projectDir,
@@ -299,9 +306,6 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
       dts: false,
       hash: false,
       nodeProtocol: false,
-      deps: {
-        neverBundle: [...electronExternals, ...nodeExternals],
-      },
       define: {
         'process.env.NODE_ENV': JSON.stringify(mode),
       },
@@ -313,7 +317,15 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
         chunkFileNames: '[name].js',
         codeSplitting: buildConfig.target === 'preload' ? false : true,
       },
-      ...buildConfig.config,
+      ...userConfig,
+      deps: {
+        ...userDeps,
+        neverBundle: [
+          ...electronExternals,
+          ...nodeExternals,
+          ...userNeverBundle,
+        ],
+      },
     };
 
     await build(config);
@@ -340,6 +352,9 @@ const importTsdown = async (): Promise<{ build: TsdownBuild }> => {
 
   return importModule('tsdown');
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const importVite = async (): Promise<ViteModule> => {
   const importModule = new Function(

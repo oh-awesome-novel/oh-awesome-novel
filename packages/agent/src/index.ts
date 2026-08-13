@@ -1,13 +1,18 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
+import { parse as parseYaml } from 'yaml';
 
 import {
+  DEFAULT_WRITING_PROFILE_ID,
   NOVEL_COPILOT_QUICK_COMMANDS,
   createContextPackageDraft,
+  createDefaultNovelCopilotSkill,
   createSessionResumeBoundary,
   formatAuthorReportMarkdown,
   formatContextPackageSummary,
+  formatProjectHealthMarkdown,
   formatWritingProfileReminders,
+  getBuiltinWritingProfiles,
   writeAgentSessionArtifact,
   writeContextPackageArtifact,
 } from '@oh-awesome-novel/core';
@@ -36,6 +41,7 @@ import {
 } from '@oh-awesome-novel/tools';
 import type {
   PathRule,
+  SandboxProjectionSnapshot,
   SandboxPendingActionOrigin,
   WorkspaceChangePolicy,
   WorkspaceEditCapability,
@@ -74,6 +80,7 @@ import type {
 
 export interface NovelAgentWorkspaceSnapshot {
   workspaceRoot: string;
+  projectionFingerprint?: string;
   constitution?: string;
   workflow?: string;
   summaries?: string[];
@@ -221,7 +228,16 @@ export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
 
 export interface NovelAgentTurnEditEnvironment {
   tools: ToolSet;
+  workspace: NovelAgentWorkspaceSnapshot;
+  skill?: RuntimeSkill;
+  writingProfile?: WritingProfile;
+  projectHealth?: ProjectHealth;
+  selectedContext?: RuntimeContextItem[];
+  referenceSelection?: ReferenceContextSelection;
+  playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
+  contextPackage?: ContextPackage;
   finalizer?: RuntimeTurnFinalizer;
+  assertFresh(): Promise<void>;
   dispose(): void | Promise<void>;
 }
 
@@ -232,9 +248,10 @@ export interface NovelAgentTurnEditEnvironmentFactoryInput {
   sessionId: string;
   turnId: string;
   abortSignal?: AbortSignal;
+  assertExternalContextFresh?: () => Promise<void>;
   /**
-   * Explicit tools when the caller supplied them, otherwise the current read
-   * tools. The injected factory decides how to compose these with edit tools.
+   * Explicit tools supplied to a trusted injected factory. Default file-domain
+   * reads are always created from the environment's own fixed projection.
    */
   baseTools: ToolSet;
 }
@@ -261,6 +278,9 @@ export interface NovelAgentTurnEditEnvironmentInput {
   sessionId?: string;
   turnId?: string;
   abortSignal?: AbortSignal;
+  externalContext?: NovelAgentExternalContext;
+  skill?: RuntimeSkill;
+  contextPackage?: ContextPackage;
   tools?: ToolSet;
   turnFinalizer?: RuntimeTurnFinalizer;
   editEnvironmentFactory?: NovelAgentTurnEditEnvironmentFactory;
@@ -272,6 +292,16 @@ export interface NovelAgentTurnInput
   /** Trusted host-selected canonical targets; model text never supplies these. */
   exactWritablePaths?: readonly string[];
   editEnvironmentFactory?: NovelAgentTurnEditEnvironmentFactory;
+  /** Host-loaded immutable request context, guarded by its source fingerprint. */
+  externalContext?: NovelAgentExternalContext;
+}
+
+export interface NovelAgentExternalContext {
+  writingProfile?: WritingProfile;
+  referenceSelection?: ReferenceContextSelection;
+  selectedContext?: RuntimeContextItem[];
+  playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
+  assertFresh(): Promise<void>;
 }
 
 export interface NovelAgentSandboxPolicySelection {
@@ -358,11 +388,9 @@ export const createNovelAgentTurnEditEnvironment = async (
   input: NovelAgentTurnEditEnvironmentInput,
 ): Promise<NovelAgentTurnEditEnvironment> => {
   if (input.tools && !input.editEnvironmentFactory) {
-    return {
-      tools: input.tools,
-      ...(input.turnFinalizer ? { finalizer: input.turnFinalizer } : {}),
-      dispose() {},
-    };
+    throw new Error(
+      'Explicit agent tools require an editEnvironmentFactory with a fixed projection.',
+    );
   }
 
   const sessionId = input.sessionId ?? `agent_${crypto.randomUUID()}`;
@@ -380,17 +408,48 @@ export const createNovelAgentTurnEditEnvironment = async (
     sessionId,
     turnId,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    baseTools: input.tools ?? createNovelAgentReadTools(input.workspaceRoot),
+    ...(input.externalContext
+      ? { assertExternalContextFresh: input.externalContext.assertFresh }
+      : {}),
+    baseTools: input.tools ?? Object.freeze({}),
   });
+  const finalizer = environment.finalizer ?? input.turnFinalizer;
+  const selectedContext = [
+    ...(environment.selectedContext ?? []),
+    ...(input.externalContext?.selectedContext ?? []),
+  ];
 
-  if (!environment.finalizer && input.turnFinalizer) {
-    return {
-      ...environment,
-      finalizer: input.turnFinalizer,
-    };
-  }
-
-  return environment;
+  return {
+    ...environment,
+    ...(input.skill ? { skill: input.skill } : {}),
+    ...(input.externalContext?.writingProfile
+      ? { writingProfile: input.externalContext.writingProfile }
+      : {}),
+    ...(input.externalContext?.referenceSelection
+      ? { referenceSelection: input.externalContext.referenceSelection }
+      : {}),
+    ...(selectedContext.length > 0
+      ? { selectedContext }
+      : {}),
+    ...(input.externalContext?.playWritingReferences
+      ? { playWritingReferences: input.externalContext.playWritingReferences }
+      : {}),
+    ...(input.contextPackage ? { contextPackage: input.contextPackage } : {}),
+    finalizer: {
+      async finalizeTurn(finalizeInput) {
+        if (
+          finalizeInput.stoppedReason !== 'aborted'
+          && finalizeInput.stoppedReason !== 'error'
+        ) {
+          await environment.assertFresh();
+          await input.externalContext?.assertFresh();
+        }
+        return finalizer
+          ? finalizer.finalizeTurn(finalizeInput)
+          : finalizeInput.pendingActions;
+      },
+    },
+  };
 };
 
 export const createSandboxNovelAgentEditEnvironmentFactory = (
@@ -433,11 +492,28 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
     sessionId,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     pendingActionStore: store,
+    ...(input.assertExternalContextFresh
+      ? { freshnessChecks: [input.assertExternalContextFresh] }
+      : {}),
     ...(origin ? { proposalOrigin: origin } : {}),
   });
+  const projectionSnapshot = session.projectionSnapshot();
+  const projectHealth = createProjectHealthFromProjection(projectionSnapshot);
 
   return {
     tools: session.tools,
+    workspace: createNovelAgentWorkspaceSnapshotFromProjection(projectionSnapshot),
+    skill: createNovelAgentSkillFromProjection(projectionSnapshot),
+    writingProfile: createDefaultProjectedWritingProfile(),
+    projectHealth,
+    selectedContext: projectHealth.issues.length
+      ? [{
+          kind: 'selected',
+          title: 'Project Health Guardrails',
+          content: formatProjectHealthMarkdown(projectHealth),
+        }]
+      : [],
+    assertFresh: () => session.assertFresh(),
     finalizer: {
       async finalizeTurn(finalizeInput) {
         if (finalizeInput.stoppedReason === 'aborted') {
@@ -468,6 +544,228 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
     dispose: () => session.dispose(),
   };
 };
+
+export function createNovelAgentWorkspaceSnapshotFromProjection(
+  projection: SandboxProjectionSnapshot,
+): NovelAgentWorkspaceSnapshot {
+  const select = (root: string, extensions: readonly string[]) => projection.files
+    .filter((file) => (
+      file.path.startsWith(`${root}/`)
+      && extensions.some((extension) => file.path.endsWith(extension))
+      && file.content.length > 0
+    ))
+    .slice(0, 12);
+  const format = (root: string, file: { path: string; content: string }) =>
+    `# ${file.path.slice(root.length + 1)}\n\n${file.content}`;
+  const constitutionFiles = select('.oan/constitution', ['.md']);
+  const summaryFiles = select('summaries', ['.md']);
+  const stateFiles = select('state', ['.yaml', '.yml']);
+  const timelineFiles = select('timeline', ['.yaml', '.yml', '.md']);
+  const foreshadowFiles = select('foreshadow', ['.yaml', '.yml', '.md']);
+  const workflow = projection.files.find((file) => (
+    file.path === '.oan/workflow.yaml' && file.content.length > 0
+  ));
+  const contextFiles: NovelAgentWorkspaceContextFile[] = [
+    ...constitutionFiles.map((file) => ({ sourceId: 'constitution', path: file.path })),
+    ...(workflow ? [{ sourceId: 'workflow', path: workflow.path }] : []),
+    ...summaryFiles.map((file) => ({
+      sourceId: 'previousChapterEnding',
+      path: file.path,
+    })),
+    ...stateFiles.map((file) => ({ sourceId: 'latestState', path: file.path })),
+    ...timelineFiles.map((file) => ({ sourceId: 'timeline', path: file.path })),
+    ...foreshadowFiles.map((file) => ({
+      sourceId: 'foreshadowLedger',
+      path: file.path,
+    })),
+  ];
+
+  return Object.freeze({
+    workspaceRoot: projection.workspaceRoot,
+    projectionFingerprint: projection.projectionFingerprint,
+    ...(constitutionFiles.length > 0
+      ? { constitution: constitutionFiles.map((file) => format('.oan/constitution', file)).join('\n\n') }
+      : {}),
+    ...(workflow ? { workflow: workflow.content } : {}),
+    ...(summaryFiles.length > 0
+      ? { summaries: Object.freeze(summaryFiles.map((file) => format('summaries', file))) }
+      : {}),
+    ...(stateFiles.length > 0
+      ? { state: stateFiles.map((file) => format('state', file)).join('\n\n') }
+      : {}),
+    ...(timelineFiles.length > 0
+      ? { timeline: timelineFiles.map((file) => format('timeline', file)).join('\n\n') }
+      : {}),
+    ...(foreshadowFiles.length > 0
+      ? { foreshadow: foreshadowFiles.map((file) => format('foreshadow', file)).join('\n\n') }
+      : {}),
+    contextFiles: Object.freeze(contextFiles),
+  });
+}
+
+function createNovelAgentSkillFromProjection(
+  projection: SandboxProjectionSnapshot,
+): NovelCopilotSkill {
+  const override = projection.files.find((file) => (
+    file.path === '.oan/skills/novel-copilot.md'
+  ));
+  return createDefaultNovelCopilotSkill(override?.content);
+}
+
+function createDefaultProjectedWritingProfile(): WritingProfile {
+  const profile = getBuiltinWritingProfiles().find((item) => (
+    item.id === DEFAULT_WRITING_PROFILE_ID
+  ));
+  if (!profile) {
+    throw new Error('Built-in commercialWriting Profile is unavailable.');
+  }
+  return profile;
+}
+
+function createProjectHealthFromProjection(
+  projection: SandboxProjectionSnapshot,
+): ProjectHealth {
+  const filesByPath = new Map(projection.files.map((file) => [file.path, file]));
+  const characterIds = projection.directories
+    .filter((path) => /^characters\/[^/]+$/u.test(path))
+    .map((path) => path.slice('characters/'.length))
+    .sort();
+  const missingCharacterCards = characterIds.filter((id) => (
+    !filesByPath.has(`characters/${id}/meta.yaml`)
+    || !filesByPath.has(`characters/${id}/summary.md`)
+  ));
+  const chapters = projection.files
+    .map((file) => /^chapters\/(.+)\.md$/u.exec(file.path)?.[1])
+    .filter((id): id is string => Boolean(id) && !id!.endsWith('/0000'))
+    .sort();
+  const chapterSummaries = new Set(projection.files
+    .map((file) => /^summaries\/chapter\/(.+)\.md$/u.exec(file.path)?.[1])
+    .filter((id): id is string => Boolean(id)));
+  const chaptersWithoutSummaries = chapters.filter((id) => !chapterSummaries.has(id));
+  const activeHookDocument = parseProjectedYaml(filesByPath.get('foreshadow/active.yaml')?.content);
+  const activeHookCount = isProjectedRecord(activeHookDocument) && Array.isArray(activeHookDocument.active)
+    ? activeHookDocument.active.length
+    : 0;
+  const timelineDocument = parseProjectedYaml(filesByPath.get('timeline/events.yaml')?.content);
+  const timelineChapters = new Set(
+    isProjectedRecord(timelineDocument) && Array.isArray(timelineDocument.events)
+      ? timelineDocument.events
+          .filter(isProjectedRecord)
+          .map((event) => event.chapter)
+          .filter((chapter): chapter is string => typeof chapter === 'string')
+      : [],
+  );
+  const timelineGaps = chapters.filter((id) => !timelineChapters.has(id));
+  const latestChapter = Math.max(0, ...projection.files
+    .filter((file) => /^chapters\/.+\.md$/u.test(file.path) && !file.path.endsWith('/0000.md'))
+    .map((file) => file.mtimeMs));
+  const latestState = Math.max(0, ...projection.files
+    .filter((file) => /^state\/.+\.ya?ml$/u.test(file.path))
+    .map((file) => file.mtimeMs));
+  const latestStateStale = latestChapter > latestState;
+  const issues: ProjectHealth['issues'] = [
+    ...missingCharacterCards.map((characterId) => ({
+      id: `missing-character-card:${characterId}`,
+      severity: 'warning' as const,
+      title: 'Missing character card file',
+      detail: `${characterId} is missing meta.yaml or summary.md.`,
+      path: `characters/${characterId}`,
+    })),
+    ...chaptersWithoutSummaries.map((chapterId) => ({
+      id: `chapter-summary:${chapterId}`,
+      severity: 'warning' as const,
+      title: 'Chapter has no summary',
+      detail: `${chapterId} has no matching summaries/chapter file.`,
+      path: `chapters/${chapterId}.md`,
+    })),
+    ...timelineGaps.map((chapterId) => ({
+      id: `timeline-gap:${chapterId}`,
+      severity: 'info' as const,
+      title: 'No timeline event for chapter',
+      detail: `${chapterId} has chapter text but no timeline event.`,
+      path: `chapters/${chapterId}.md`,
+    })),
+    ...(latestStateStale
+      ? [{
+          id: 'latest-state-stale',
+          severity: 'warning' as const,
+          title: 'Latest state may be stale',
+          detail: 'A chapter file is newer than the latest state YAML file.',
+          path: 'state',
+        }]
+      : []),
+  ];
+
+  return {
+    generatedAt: new Date(Math.max(0, ...projection.files.map((file) => file.mtimeMs)))
+      .toISOString(),
+    missingCharacterCards,
+    chaptersWithoutSummaries,
+    activeHookCount,
+    latestStateStale,
+    timelineGapCount: timelineGaps.length,
+    pendingActionCount: 0,
+    issues,
+  };
+}
+
+function parseProjectedYaml(content: string | undefined): unknown {
+  return content === undefined ? undefined : parseYaml(content) as unknown;
+}
+
+function isProjectedRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function bindNovelAgentTurnToEnvironment(
+  input: NovelAgentTurnInput,
+  environment: NovelAgentTurnEditEnvironment,
+  capability: NovelCopilotCapabilityId | undefined,
+): NovelAgentTurnInput {
+  const {
+    writingProfile: _writingProfile,
+    projectHealth: _projectHealth,
+    selectedContext: _selectedContext,
+    referenceSelection: _referenceSelection,
+    playWritingReferences: _playWritingReferences,
+    ...base
+  } = input;
+  return {
+    ...base,
+    workspace: environment.workspace,
+    ...(capability ? { capability } : {}),
+    ...(environment.skill ? { skill: environment.skill } : {}),
+    ...(environment.writingProfile
+      ? { writingProfile: environment.writingProfile }
+      : {}),
+    ...(environment.projectHealth ? { projectHealth: environment.projectHealth } : {}),
+    ...(environment.selectedContext
+      ? { selectedContext: environment.selectedContext }
+      : {}),
+    ...(environment.referenceSelection
+      ? { referenceSelection: environment.referenceSelection }
+      : {}),
+    ...(environment.playWritingReferences
+      ? { playWritingReferences: environment.playWritingReferences }
+      : {}),
+    ...(environment.contextPackage ? { contextPackage: environment.contextPackage } : {}),
+  };
+}
+
+function assertExternalContextIsBound(input: NovelAgentTurnInput): void {
+  if (input.externalContext) return;
+  const unbound = [
+    input.writingProfile ? 'writingProfile' : undefined,
+    input.referenceSelection ? 'referenceSelection' : undefined,
+    input.selectedContext?.length ? 'selectedContext' : undefined,
+    input.playWritingReferences?.length ? 'playWritingReferences' : undefined,
+  ].filter((field): field is string => Boolean(field));
+  if (unbound.length > 0) {
+    throw new Error(
+      `Agent file-derived context requires externalContext freshness binding: ${unbound.join(', ')}.`,
+    );
+  }
+}
 
 /**
  * Maps a trusted product capability to one sandbox family. A write capability
@@ -512,21 +810,28 @@ function editCapabilityForNovelCapability(
 export const runNovelAgentTurn = async (
   input: NovelAgentTurnInput,
 ): Promise<RunTurnResult & { session?: AgentSessionMetadata }> => {
+  assertExternalContextIsBound(input);
   const session = await prepareAgentSession(input);
-  const contextPackage = input.contextPackage
-    ?? createBaselineNovelAgentContextPackage(input);
+  const capability = input.capability
+    ?? inferNovelAgentCapability(input.request);
   const environment = await createNovelAgentTurnEditEnvironment({
     workspaceRoot: input.workspaceRoot,
-    capability: input.capability ?? contextPackage?.capability,
+    capability,
     exactWritablePaths: input.exactWritablePaths,
     sessionId: session?.metadata.id,
     abortSignal: input.abortSignal,
     tools: input.tools,
     turnFinalizer: input.turnFinalizer,
     editEnvironmentFactory: input.editEnvironmentFactory,
+    externalContext: input.externalContext,
+    skill: input.skill,
+    contextPackage: input.contextPackage,
   });
 
   try {
+    const projectedInput = bindNovelAgentTurnToEnvironment(input, environment, capability);
+    const contextPackage = projectedInput.contextPackage
+      ?? createBaselineNovelAgentContextPackage(projectedInput);
     const runtime = createNovelAgentRuntime({
       ...input,
       tools: environment.tools,
@@ -539,7 +844,7 @@ export const runNovelAgentTurn = async (
       ),
     });
     const result = await runtime.runTurn(createRuntimeTurnInput({
-      ...input,
+      ...projectedInput,
       contextPackage,
     }));
     await maybeWriteNovelAgentSessionArtifacts({
@@ -562,21 +867,28 @@ export const runNovelAgentTurn = async (
 export async function* streamNovelAgentTurn(
   input: NovelAgentTurnInput,
 ): AsyncIterable<RuntimeEvent> {
+  assertExternalContextIsBound(input);
   const session = await prepareAgentSession(input);
-  const contextPackage = input.contextPackage
-    ?? createBaselineNovelAgentContextPackage(input);
+  const capability = input.capability
+    ?? inferNovelAgentCapability(input.request);
   const environment = await createNovelAgentTurnEditEnvironment({
     workspaceRoot: input.workspaceRoot,
-    capability: input.capability ?? contextPackage?.capability,
+    capability,
     exactWritablePaths: input.exactWritablePaths,
     sessionId: session?.metadata.id,
     abortSignal: input.abortSignal,
     tools: input.tools,
     turnFinalizer: input.turnFinalizer,
     editEnvironmentFactory: input.editEnvironmentFactory,
+    externalContext: input.externalContext,
+    skill: input.skill,
+    contextPackage: input.contextPackage,
   });
 
   try {
+    const projectedInput = bindNovelAgentTurnToEnvironment(input, environment, capability);
+    const contextPackage = projectedInput.contextPackage
+      ?? createBaselineNovelAgentContextPackage(projectedInput);
     const runtime = createNovelAgentRuntime({
       ...input,
       tools: environment.tools,
@@ -591,7 +903,7 @@ export async function* streamNovelAgentTurn(
     let finalResult: RunTurnResult | undefined;
 
     for await (const event of runtime.streamTurn(createRuntimeTurnInput({
-      ...input,
+      ...projectedInput,
       contextPackage,
     }))) {
       if (event.type === 'message_finish') {
@@ -859,6 +1171,10 @@ export const createNovelAgentSystemPrompt = (
     'Prefer structured workspace context over broad file loading.',
     `Workspace root: ${input.workspace.workspaceRoot}`,
   ];
+
+  if (input.workspace.projectionFingerprint) {
+    lines.push(`Fixed projection: ${input.workspace.projectionFingerprint}`);
+  }
 
   if (input.skill) {
     lines.push(`Active skill: ${input.skill.name}`);

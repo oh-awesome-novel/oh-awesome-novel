@@ -72,7 +72,8 @@ export type ChangeMaterializerFaultPoint =
   | 'before-terminal'
   | 'after-terminal'
   | 'before-git-add'
-  | 'after-git-add';
+  | 'after-git-add'
+  | 'after-git-commit';
 
 export interface ChangeMaterializerOptions {
   store: PendingActionStore;
@@ -126,7 +127,8 @@ interface TransactionJournal {
   schemaVersion: typeof JOURNAL_SCHEMA_VERSION;
   kind: 'change-materialization-journal';
   actionId: string;
-  receiptId: string;
+  decisionReceiptId: string;
+  acceptedAt: string;
   phase: 'prepared' | 'materializing' | 'accepted-finalize-only';
   autoCommitRequested: boolean;
   repository: PendingAction['repository'];
@@ -198,8 +200,15 @@ class FileChangeMaterializer implements ChangeMaterializer {
       }
 
       const prepared = await this.#preflight(action, locked, policy);
-      const receiptId = assertOpaquePendingActionId(this.#idFactory(), 'Decision receipt id');
-      const journal = createJournal(action, prepared, receiptId, autoCommitRequested);
+      const decisionReceiptId = assertOpaquePendingActionId(this.#idFactory(), 'Decision receipt id');
+      const acceptedAt = this.#now().toISOString();
+      const journal = createJournal(
+        action,
+        prepared,
+        decisionReceiptId,
+        acceptedAt,
+        autoCommitRequested,
+      );
       await this.#fault('before-journal');
       await this.#writeJournal(journal, true);
 
@@ -208,8 +217,8 @@ class FileChangeMaterializer implements ChangeMaterializer {
         await this.#fault('before-terminal');
         const terminal = await locked.writeTerminal({
           decision: 'accepted',
-          decisionReceiptId: receiptId,
-          decidedAt: this.#now().toISOString(),
+          decisionReceiptId: journal.decisionReceiptId,
+          decidedAt: journal.acceptedAt,
         });
         journal.phase = 'accepted-finalize-only';
         await this.#writeJournal(journal, false);
@@ -292,6 +301,31 @@ class FileChangeMaterializer implements ChangeMaterializer {
         await this.#recoverJournalUnlocked(id, { access: locked });
       });
     }
+    const records = await this.#store.listRecords();
+    for (const record of records) {
+      await this.#store.withMaterializationLocks(record.action.id, async (locked) => {
+        if (await this.#readJournal(record.action.id)) return;
+        await this.#removeOrphanTransactionTemporaries(record.action.id);
+        const current = await locked.readRecord();
+        await this.#removeOrphanMaterializationArtifacts(current);
+        if (current.status !== 'pending') {
+          const receipt = await this.#store.readDecisionReceipt(current.action.id);
+          if (receipt) {
+            assertReceiptMatchesRecord(receipt, current);
+          } else if (current.status === 'rejected') {
+            await locked.writeDecisionReceipt(createPendingActionDecisionReceipt({
+              id: current.decisionReceiptId,
+              actionId: current.action.id,
+              decision: 'rejected',
+              decidedAt: current.rejectedAt,
+              materialization: 'not-applicable',
+              git: { status: 'not-requested' },
+            }));
+          }
+          await this.#removeDraftDirectory(current.action.id);
+        }
+      });
+    }
   }
 
   async quickCommit(actionIdValue: string): Promise<PendingActionDecisionReceipt> {
@@ -324,6 +358,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         workspaceRoot: this.#workspaceRoot,
         actionId,
         files,
+        expectedRepository: record.action.repository,
       });
       if (!committed) {
         await this.#assertAcceptedFinalState(record.action);
@@ -356,7 +391,11 @@ class FileChangeMaterializer implements ChangeMaterializer {
       }
       await locked.writeDecisionReceipt(receipt);
       if (git.status === 'committed') await this.#removeJournal(actionId);
-      else await this.#ensureAcceptedGitJournal(record.action, record.decisionReceiptId);
+      else await this.#ensureAcceptedGitJournal(
+        record.action,
+        record.decisionReceiptId,
+        record.acceptedAt,
+      );
     });
     return receipt;
   }
@@ -413,10 +452,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         }
       }
 
-      const token = createHash('sha256')
-        .update(`${action.id}\0${change.path}`, 'utf8')
-        .digest('hex')
-        .slice(0, 32);
+      const token = materializationArtifactToken(action.id, change.path);
       const parent = dirname(targetPath);
       const stagePath = change.operation === 'delete'
         ? undefined
@@ -562,6 +598,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
       },
     });
     if (result.status === 'committed') {
+      // This deliberately precedes the durable journal update: recovery must
+      // reconcile the real Git commit from its trailer/repository identity even
+      // in the narrow crash window where the journal still says `staged`.
+      await this.#fault('after-git-commit');
       journal.git = {
         phase: 'committed',
         branch: result.branch,
@@ -581,15 +621,40 @@ class FileChangeMaterializer implements ChangeMaterializer {
   ): Promise<void> {
     const journal = await this.#readJournal(actionId);
     if (!journal) return;
-    const record = options.access
+    let record = options.access
       ? await options.access.readRecord()
       : await this.#store.readRecord(actionId);
+    assertJournalMatchesAction(journal, record.action);
     if (record.status === 'pending') {
-      await this.#rollback(journal);
-      return;
+      if (journal.phase !== 'accepted-finalize-only') {
+        await this.#rollback(journal);
+        return;
+      }
+      await this.#assertAcceptedFinalState(record.action);
+      await (options.access
+        ? options.access.writeTerminal({
+            decision: 'accepted',
+            decisionReceiptId: journal.decisionReceiptId,
+            decidedAt: journal.acceptedAt,
+          })
+        : this.#store.writeTerminal({
+            actionId,
+            decision: 'accepted',
+            decisionReceiptId: journal.decisionReceiptId,
+            decidedAt: journal.acceptedAt,
+          }));
+      record = options.access
+        ? await options.access.readRecord()
+        : await this.#store.readRecord(actionId);
     }
     if (record.status === 'rejected') {
       throw materializerError('PENDING_ACTION_TERMINAL_CONFLICT', `Rejected action ${actionId} has a transaction journal.`);
+    }
+    if (
+      record.decisionReceiptId !== journal.decisionReceiptId
+      || record.acceptedAt !== journal.acceptedAt
+    ) {
+      throw invalidJournal();
     }
     if (journal.phase !== 'accepted-finalize-only') {
       // A crash can occur after the durable terminal rename and before the
@@ -601,13 +666,15 @@ class FileChangeMaterializer implements ChangeMaterializer {
     await this.#finalize(journal, { keepJournal: journal.autoCommitRequested });
     let receipt = await this.#store.readDecisionReceipt(actionId);
     if (journal.autoCommitRequested && receipt?.git.status !== 'committed') {
-      const committed = journal.git.phase === 'committed' && journal.git.commit && journal.git.branch
-        ? { commit: journal.git.commit, branch: journal.git.branch }
-        : await readPendingActionCommitAtHead({
-            workspaceRoot: this.#workspaceRoot,
-            actionId,
-            files: record.action.changes.map((change) => change.path),
-          });
+      const committed = await readPendingActionCommitAtHead({
+        workspaceRoot: this.#workspaceRoot,
+        actionId,
+        files: record.action.changes.map((change) => change.path),
+        expectedRepository: record.action.repository,
+        ...(journal.git.phase === 'committed' && journal.git.commit
+          ? { expectedCommit: journal.git.commit }
+          : {}),
+      });
       if (committed) {
         const next = createPendingActionDecisionReceipt({
           id: record.decisionReceiptId,
@@ -865,11 +932,16 @@ class FileChangeMaterializer implements ChangeMaterializer {
     try {
       const entries = await readdir(root, { withFileTypes: true });
       return entries.map((entry) => {
+        if (
+          entry.isFile()
+          && !entry.isSymbolicLink()
+          && transactionTemporaryActionId(entry.name) !== undefined
+        ) return undefined;
         if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith('.json')) {
           throw materializerError('CHANGE_JOURNAL_CORRUPT', `Unexpected transaction entry: ${entry.name}.`);
         }
         return assertOpaquePendingActionId(entry.name.slice(0, -5));
-      }).sort();
+      }).filter((id): id is string => id !== undefined).sort();
     } catch (error) {
       if (isNotFound(error)) return [];
       throw error;
@@ -909,7 +981,106 @@ class FileChangeMaterializer implements ChangeMaterializer {
     });
   }
 
-  async #ensureAcceptedGitJournal(action: PendingAction, receiptId: string): Promise<void> {
+  async #removeOrphanTransactionTemporaries(actionId: string): Promise<void> {
+    const root = enginePath(this.#workspaceRoot, 'transactions');
+    let entries: Awaited<ReturnType<typeof readdir>>;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if (isNotFound(error)) return;
+      throw error;
+    }
+    let removed = false;
+    for (const entry of entries) {
+      if (transactionTemporaryActionId(entry.name) !== actionId) continue;
+      const path = join(root, entry.name);
+      const information = await lstat(path);
+      if (
+        entry.isSymbolicLink()
+        || !entry.isFile()
+        || information.isSymbolicLink()
+        || !information.isFile()
+        || information.nlink !== 1
+        || (information.mode & 0o777) !== 0o600
+        || information.size > 16 * 1024 * 1024
+      ) {
+        throw materializerError(
+          'UNSAFE_ORPHAN_TRANSACTION_ARTIFACT',
+          `Refusing to remove unsafe transaction temporary: ${entry.name}.`,
+        );
+      }
+      await rm(path);
+      removed = true;
+    }
+    if (removed) await fsyncDirectory(root);
+  }
+
+  async #removeOrphanMaterializationArtifacts(record: PendingActionRecord): Promise<void> {
+    const removable: string[] = [];
+    for (const change of record.action.changes) {
+      const targetPath = await this.#resolveTarget(change.path);
+      const parent = dirname(targetPath);
+      const token = materializationArtifactToken(record.action.id, change.path);
+      const targetMode = change.operation === 'create'
+        ? DEFAULT_CREATED_FILE_MODE
+        : change.baseline.mode;
+      const stagePath = change.operation === 'delete'
+        ? undefined
+        : join(parent, `.oan-ce-${token}.stage`);
+      const backupPath = change.operation === 'create'
+        ? undefined
+        : join(parent, `.oan-ce-${token}.backup`);
+
+      if (stagePath && await safeLstat(stagePath)) {
+        await assertOrphanArtifactMatches(stagePath, {
+          sha256: change.draft!.sha256,
+          byteLength: change.draft!.byteLength,
+          mode: targetMode,
+        });
+        removable.push(stagePath);
+      }
+      if (backupPath && await safeLstat(backupPath)) {
+        await assertOrphanArtifactMatches(backupPath, {
+          sha256: change.baseline.sha256,
+          byteLength: change.baseline.byteLength,
+          mode: change.baseline.mode,
+        });
+        if (record.status === 'accepted') {
+          await this.#assertAcceptedOperation({
+            operation: change.operation,
+            targetFile: change.path,
+            ...(change.draft
+              ? {
+                  draftHash: change.draft.sha256,
+                  draftByteLength: change.draft.byteLength,
+                }
+              : {}),
+            targetMode,
+          });
+        } else {
+          await this.#assertOperationBaseline({
+            operation: change.operation,
+            targetFile: change.path,
+            targetPath,
+            baselineHash: change.baseline.sha256,
+            baselineMode: change.baseline.mode,
+            targetMode,
+          });
+        }
+        removable.push(backupPath);
+      }
+    }
+    for (const path of removable) {
+      await rm(path);
+      await fsyncDirectory(dirname(path));
+    }
+  }
+
+  async #ensureAcceptedGitJournal(
+    action: PendingAction,
+    decisionReceiptId: string,
+    acceptedAt: string,
+  ): Promise<void> {
     if (await this.#readJournal(action.id)) return;
     const operations: PreparedOperation[] = action.changes.map((change) => ({
       operation: change.operation,
@@ -928,7 +1099,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         ? DEFAULT_CREATED_FILE_MODE
         : change.baseline.mode,
     }));
-    const journal = createJournal(action, operations, receiptId, true);
+    const journal = createJournal(action, operations, decisionReceiptId, acceptedAt, true);
     journal.phase = 'accepted-finalize-only';
     await this.#writeJournal(journal, true);
   }
@@ -960,14 +1131,16 @@ function requiresTrustedOrigin(
 function createJournal(
   action: PendingAction,
   operations: PreparedOperation[],
-  receiptId: string,
+  decisionReceiptId: string,
+  acceptedAt: string,
   autoCommitRequested: boolean,
 ): TransactionJournal {
   return {
     schemaVersion: JOURNAL_SCHEMA_VERSION,
     kind: 'change-materialization-journal',
     actionId: action.id,
-    receiptId,
+    decisionReceiptId,
+    acceptedAt,
     phase: 'prepared',
     autoCommitRequested,
     repository: structuredClone(action.repository),
@@ -996,13 +1169,98 @@ function createJournal(
   };
 }
 
+function materializationArtifactToken(actionId: string, targetFile: string): string {
+  return createHash('sha256')
+    .update(`${actionId}\0${targetFile}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+}
+
+function assertJournalMatchesAction(
+  journal: TransactionJournal,
+  action: PendingAction,
+): void {
+  if (
+    journal.actionId !== action.id
+    || journal.repository.repositoryId !== action.repository.repositoryId
+    || journal.repository.branch !== action.repository.branch
+    || journal.repository.head !== action.repository.head
+    || journal.operations.length !== action.changes.length
+  ) {
+    throw invalidJournal();
+  }
+  for (let index = 0; index < action.changes.length; index += 1) {
+    const change = action.changes[index]!;
+    const token = materializationArtifactToken(action.id, change.path);
+    const parent = dirname(change.path);
+    const expected: TransactionOperation = {
+      operation: change.operation,
+      targetFile: change.path,
+      ...(change.operation === 'delete'
+        ? {}
+        : { stageFile: join(parent, `.oan-ce-${token}.stage`) }),
+      ...(change.operation === 'create'
+        ? {}
+        : { backupFile: join(parent, `.oan-ce-${token}.backup`) }),
+      ...(change.baseline.exists
+        ? { baselineHash: change.baseline.sha256, baselineMode: change.baseline.mode }
+        : {}),
+      ...(change.draft
+        ? {
+            draftHash: change.draft.sha256,
+            draftByteLength: change.draft.byteLength,
+          }
+        : {}),
+      targetMode: change.operation === 'create'
+        ? DEFAULT_CREATED_FILE_MODE
+        : change.baseline.mode,
+    };
+    if (JSON.stringify(journal.operations[index]) !== JSON.stringify(expected)) {
+      throw invalidJournal();
+    }
+  }
+}
+
+function assertReceiptMatchesRecord(
+  receipt: PendingActionDecisionReceipt,
+  record: PendingActionRecord,
+): void {
+  if (record.status === 'pending') {
+    throw materializerError('PENDING_ACTION_CORRUPT', 'A pending action cannot have a decision receipt.');
+  }
+  const decision = record.status === 'accepted' ? 'accepted' : 'rejected';
+  const decidedAt = record.status === 'accepted' ? record.acceptedAt : record.rejectedAt;
+  if (
+    receipt.id !== record.decisionReceiptId
+    || receipt.actionId !== record.action.id
+    || receipt.decision !== decision
+    || receipt.decidedAt !== decidedAt
+  ) {
+    throw materializerError(
+      'PENDING_ACTION_CORRUPT',
+      `Decision receipt does not match PendingAction ${record.action.id} terminal.`,
+    );
+  }
+}
+
+function transactionTemporaryActionId(name: string): string | undefined {
+  const match = /^\.([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.json\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/u.exec(name);
+  if (!match) return undefined;
+  try {
+    return assertOpaquePendingActionId(match[1]);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseJournal(value: unknown, expectedActionId: string): TransactionJournal {
   if (!isRecord(value)) throw invalidJournal();
   assertExact(value, [
     'schemaVersion',
     'kind',
     'actionId',
-    'receiptId',
+    'decisionReceiptId',
+    'acceptedAt',
     'phase',
     'autoCommitRequested',
     'repository',
@@ -1020,7 +1278,8 @@ function parseJournal(value: unknown, expectedActionId: string): TransactionJour
     || value.operations.length > 4096
   ) throw invalidJournal();
   assertOpaquePendingActionId(value.actionId);
-  assertOpaquePendingActionId(value.receiptId, 'Decision receipt id');
+  assertOpaquePendingActionId(value.decisionReceiptId, 'Decision receipt id');
+  assertJournalTimestamp(value.acceptedAt);
   if (!isRecord(value.repository)) throw invalidJournal();
   assertExact(value.repository, ['repositoryId', 'branch', 'head']);
   if (!Object.values(value.repository).every((field) => typeof field === 'string' && field.length > 0)) {
@@ -1060,6 +1319,16 @@ function parseJournal(value: unknown, expectedActionId: string): TransactionJour
     }
   }
   return structuredClone(value) as unknown as TransactionJournal;
+}
+
+function assertJournalTimestamp(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string'
+    || !Number.isFinite(Date.parse(value))
+    || new Date(value).toISOString() !== value
+  ) {
+    throw invalidJournal();
+  }
 }
 
 function gitBaselineFiles(action: PendingAction): PendingActionGitBaselineFile[] {
@@ -1168,6 +1437,26 @@ async function readRegularFileHash(path: string): Promise<string> {
   const hash = await tryReadRegularFileHash(path);
   if (!hash) throw materializerError('MISSING_CANONICAL_TARGET', `Expected file is missing: ${path}.`);
   return hash;
+}
+
+async function assertOrphanArtifactMatches(
+  path: string,
+  expected: { sha256: string; byteLength: number; mode: number },
+): Promise<void> {
+  const information = await lstat(path);
+  if (
+    information.isSymbolicLink()
+    || !information.isFile()
+    || information.nlink !== 1
+    || information.size !== expected.byteLength
+    || (information.mode & 0o777) !== expected.mode
+    || await readRegularFileHash(path) !== expected.sha256
+  ) {
+    throw materializerError(
+      'UNSAFE_ORPHAN_TRANSACTION_ARTIFACT',
+      `Refusing to remove an unverified transaction artifact: ${path}.`,
+    );
+  }
 }
 
 function sha256(bytes: Uint8Array): string {

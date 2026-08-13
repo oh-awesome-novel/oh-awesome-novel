@@ -287,6 +287,7 @@ describe('agent session persistence', () => {
       workspace: { workspaceRoot },
       request: '写一段正文',
       tools,
+      editEnvironmentFactory: fixedToolEnvironmentFactory(workspaceRoot),
       session: { metadata: { title: 'agent turn' } },
     });
 
@@ -371,6 +372,7 @@ describe('agent session persistence', () => {
       },
       request: '/写下一章',
       tools,
+      editEnvironmentFactory: fixedToolEnvironmentFactory(workspaceRoot),
       session: { metadata: { title: 'artifact turn' } },
     });
 
@@ -394,6 +396,18 @@ async function createTempWorkspace(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'oan-agent-session-'));
   tempRoots.push(root);
   return root;
+}
+
+function fixedToolEnvironmentFactory(workspaceRoot: string) {
+  const projectionFingerprint = createHash('sha256')
+    .update('session-store-test-fixed-projection')
+    .digest('hex');
+  return async (input: { baseTools: ToolSet }) => ({
+    tools: input.baseTools,
+    workspace: { workspaceRoot, projectionFingerprint },
+    async assertFresh() {},
+    dispose() {},
+  });
 }
 
 async function* toAsyncIterable(chunks: string[]): AsyncIterable<string> {

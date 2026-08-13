@@ -59,6 +59,7 @@ export interface WorkspaceProjectionManifestFile {
   sha256: string;
   byteLength: number;
   mode: number;
+  mtimeMs: number;
 }
 
 export interface WorkspaceProjectionManifest {
@@ -422,6 +423,7 @@ async function readRegularHostFile(
       sha256: sha256Text(content),
       byteLength: bytes.byteLength,
       mode: after.mode & 0o777,
+      mtimeMs: after.mtimeMs,
     };
   } finally {
     await handle.close();

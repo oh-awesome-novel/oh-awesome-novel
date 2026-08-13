@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   lstat,
@@ -166,6 +167,130 @@ describe('ChangeMaterializer v1', () => {
     await expect(readFile(transactionPath(fixture.root, fixture.actionId), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });
+  });
+
+  it('restores a missing accepted terminal from finalize-only journal identity without rolling back', async () => {
+    const fixture = await createFixture('missing-accepted-terminal');
+    let armed = true;
+    const materializer = createChangeMaterializer({
+      store: fixture.store,
+      now: () => new Date(now),
+      idFactory: () => 'receipt-missing-accepted-terminal',
+      faultInjector: (point) => {
+        if (armed && point === 'after-terminal') throw new Error('simulated missing terminal crash');
+      },
+    });
+
+    await expect(materializer.accept({
+      actionId: fixture.actionId,
+      autoCommitOnAccept: false,
+    })).rejects.toThrow('simulated missing terminal crash');
+    const journal = JSON.parse(
+      await readFile(transactionPath(fixture.root, fixture.actionId), 'utf8'),
+    ) as { phase: string; decisionReceiptId: string; acceptedAt: string };
+    expect(journal).toMatchObject({
+      phase: 'accepted-finalize-only',
+      decisionReceiptId: 'receipt-missing-accepted-terminal',
+      acceptedAt: now,
+    });
+
+    await rm(terminalPath(fixture.root, 'accepted', fixture.actionId));
+    expect((await fixture.store.readRecord(fixture.actionId)).status).toBe('pending');
+    expect(await readFile(join(fixture.root, 'state/value.yaml'), 'utf8')).toBe('value: new\n');
+
+    armed = false;
+    await materializer.recover();
+    expect(await fixture.store.readRecord(fixture.actionId)).toMatchObject({
+      status: 'accepted',
+      decisionReceiptId: journal.decisionReceiptId,
+      acceptedAt: journal.acceptedAt,
+    });
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toMatchObject({
+      id: journal.decisionReceiptId,
+      decision: 'accepted',
+      decidedAt: journal.acceptedAt,
+      git: { status: 'not-requested' },
+    });
+    expect(await readFile(join(fixture.root, 'state/value.yaml'), 'utf8')).toBe('value: new\n');
+    await expect(readFile(join(fixture.root, 'world/obsolete.md'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    await expect(readFile(transactionPath(fixture.root, fixture.actionId), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('removes only verified current-protocol orphan transaction artifacts without changing canonical files', async () => {
+    const fixture = await createFixture('orphan-artifacts');
+    const token = artifactToken(fixture.actionId, 'state/value.yaml');
+    const stage = join(fixture.root, 'state', `.oan-ce-${token}.stage`);
+    const backup = join(fixture.root, 'state', `.oan-ce-${token}.backup`);
+    const unknownStage = join(fixture.root, 'state', `.oan-ce-${'f'.repeat(32)}.stage`);
+    const legacyBackup = join(fixture.root, 'state', '.oan-write-intent-legacy.backup');
+    const transactions = join(fixture.root, '.workspace/change-engine/v1/transactions');
+    const transactionTemporary = join(
+      transactions,
+      `.${fixture.actionId}.json.00000000-0000-4000-8000-000000000000.tmp`,
+    );
+    const unknownTransactionTemporary = join(
+      transactions,
+      '.pa-unknown.json.00000000-0000-4000-8000-000000000001.tmp',
+    );
+    await mkdir(transactions, { recursive: true });
+    await writeFile(stage, 'value: new\n');
+    await writeFile(backup, 'value: old\n');
+    await writeFile(unknownStage, 'user-owned lookalike\n');
+    await writeFile(legacyBackup, 'legacy namespace\n');
+    await writeFile(transactionTemporary, '{"partial":true}', { mode: 0o600 });
+    await writeFile(unknownTransactionTemporary, '{"partial":true}', { mode: 0o600 });
+
+    await createChangeMaterializer({ store: fixture.store }).recover();
+
+    await expect(readFile(stage, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(backup, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(transactionTemporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(unknownStage, 'utf8')).toBe('user-owned lookalike\n');
+    expect(await readFile(legacyBackup, 'utf8')).toBe('legacy namespace\n');
+    expect(await readFile(unknownTransactionTemporary, 'utf8')).toBe('{"partial":true}');
+    await expectCanonicalBaseline(fixture.root);
+  });
+
+  it('fails closed on an unsafe orphan artifact and does not follow it into canonical data', async () => {
+    const fixture = await createFixture('unsafe-orphan-artifact');
+    const token = artifactToken(fixture.actionId, 'state/value.yaml');
+    const stage = join(fixture.root, 'state', `.oan-ce-${token}.stage`);
+    await symlink(join(fixture.root, 'state/value.yaml'), stage);
+
+    await expect(createChangeMaterializer({ store: fixture.store }).recover()).rejects.toMatchObject({
+      code: 'UNSAFE_ORPHAN_TRANSACTION_ARTIFACT',
+    });
+    expect((await lstat(stage)).isSymbolicLink()).toBe(true);
+    await expectCanonicalBaseline(fixture.root);
+  });
+
+  it('supplements a rejected terminal receipt and removes draft leftovers without a journal', async () => {
+    const fixture = await createFixture('orphan-terminal-draft');
+    const terminal = await fixture.store.writeTerminal({
+      actionId: fixture.actionId,
+      decision: 'rejected',
+      decisionReceiptId: 'receipt-orphan-terminal-draft',
+    });
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toBeUndefined();
+    await expect(readFile(draftPath(fixture.root, fixture.actionId, 0), 'utf8'))
+      .resolves.toContain('Chapter 2');
+
+    await createChangeMaterializer({ store: fixture.store }).recover();
+
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toMatchObject({
+      id: terminal.decisionReceiptId,
+      decision: 'rejected',
+      decidedAt: terminal.decidedAt,
+      materialization: 'not-applicable',
+      git: { status: 'not-requested' },
+    });
+    await expect(readFile(draftPath(fixture.root, fixture.actionId, 0), 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expectCanonicalBaseline(fixture.root);
   });
 
   it('rejects without touching canonical files and deletes private drafts', async () => {
@@ -432,6 +557,68 @@ describe('ChangeMaterializer v1', () => {
       git: { status: 'committed' },
     });
   });
+
+  it('records an interrupted automatic commit before git add and resumes only through quick commit', async () => {
+    const fixture = await createFixture('before-git-add');
+    let armed = true;
+    const materializer = createChangeMaterializer({
+      store: fixture.store,
+      idFactory: () => 'receipt-before-git-add',
+      faultInjector: (point) => {
+        if (armed && point === 'before-git-add') throw new Error('simulated crash before add');
+      },
+    });
+
+    await expect(materializer.accept({ actionId: fixture.actionId })).rejects.toThrow(
+      'simulated crash before add',
+    );
+    expect((await fixture.store.readRecord(fixture.actionId)).status).toBe('accepted');
+    expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(fixture.repository.head);
+
+    armed = false;
+    await materializer.recover();
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toMatchObject({
+      decision: 'accepted',
+      git: { status: 'failed', errorCode: 'automatic_commit_interrupted' },
+    });
+    await expect(materializer.quickCommit(fixture.actionId)).resolves.toMatchObject({
+      git: { status: 'committed' },
+    });
+  });
+
+  it('reconciles a committed action after a pre-receipt crash without committing twice', async () => {
+    const fixture = await createFixture('after-git-commit');
+    let armed = true;
+    const materializer = createChangeMaterializer({
+      store: fixture.store,
+      idFactory: () => 'receipt-after-git-commit',
+      faultInjector: (point) => {
+        if (armed && point === 'after-git-commit') throw new Error('simulated crash after commit');
+      },
+    });
+
+    await expect(materializer.accept({ actionId: fixture.actionId })).rejects.toThrow(
+      'simulated crash after commit',
+    );
+    const committedHead = await git(fixture.root, ['rev-parse', 'HEAD']);
+    expect(committedHead).not.toBe(fixture.repository.head);
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toBeUndefined();
+    expect(await git(fixture.root, ['rev-list', '--count', 'HEAD'])).toBe('2');
+
+    armed = false;
+    await materializer.recover();
+    expect(await fixture.store.readDecisionReceipt(fixture.actionId)).toMatchObject({
+      decision: 'accepted',
+      git: { status: 'committed', commit: committedHead, branch: 'main' },
+    });
+    expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(committedHead);
+    expect(await git(fixture.root, ['rev-list', '--count', 'HEAD'])).toBe('2');
+    await materializer.recover();
+    expect(await git(fixture.root, ['rev-list', '--count', 'HEAD'])).toBe('2');
+    await expect(readFile(transactionPath(fixture.root, fixture.actionId), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
 });
 
 async function createFixture(
@@ -533,8 +720,23 @@ function transactionPath(root: string, actionId: string): string {
   return join(root, '.workspace/change-engine/v1/transactions', `${actionId}.json`);
 }
 
+function terminalPath(
+  root: string,
+  decision: 'accepted' | 'rejected',
+  actionId: string,
+): string {
+  return join(root, '.workspace/change-engine/v1/terminal', decision, `${actionId}.json`);
+}
+
 function draftPath(root: string, actionId: string, index: number): string {
   return join(root, '.workspace/change-engine/v1/drafts', actionId, `${index}.txt`);
+}
+
+function artifactToken(actionId: string, targetFile: string): string {
+  return createHash('sha256')
+    .update(`${actionId}\0${targetFile}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
 }
 
 async function git(root: string, args: string[]): Promise<string> {

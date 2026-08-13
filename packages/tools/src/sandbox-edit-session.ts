@@ -13,6 +13,7 @@ import {
 } from './candidate-change-set';
 import type {
   CandidateChangeSet,
+  CandidateFileSnapshot,
   CandidateFileChange,
   RepositoryBaseline,
 } from './candidate-change-set';
@@ -91,8 +92,23 @@ export interface CreateSandboxEditSessionOptions {
   proposalOrigin?: PendingActionOrigin;
   pendingActionId?: string;
   repositoryReader?: (workspaceRoot: string) => Promise<RepositoryBaseline>;
+  /** Trusted non-projection sources that must still be current before proposal. */
+  freshnessChecks?: readonly (() => Promise<void>)[];
   limits?: Partial<SandboxEditSessionLimits>;
   now?: () => Date;
+  /** Injectable monotonic clock for deterministic cumulative wall-time accounting. */
+  monotonicNow?: () => number;
+}
+
+export interface SandboxProjectionSnapshot {
+  readonly workspaceRoot: string;
+  readonly projectionFingerprint: string;
+  readonly files: readonly SandboxProjectionSnapshotFile[];
+  readonly directories: readonly string[];
+}
+
+export interface SandboxProjectionSnapshotFile extends CandidateFileSnapshot {
+  readonly mtimeMs: number;
 }
 
 export interface CandidateChangePreview {
@@ -144,6 +160,8 @@ export interface SandboxEditSession {
   readonly tools: ToolSet;
   readonly policy: WorkspaceChangePolicy;
   readonly projectionFingerprint: string;
+  projectionSnapshot(): SandboxProjectionSnapshot;
+  assertFresh(): Promise<void>;
   isDirty(): boolean;
   isSealed(): boolean;
   preview(): Promise<CandidateChangePreview>;
@@ -240,6 +258,8 @@ class FileSandboxEditSession implements SandboxEditSession {
   #bash: Bash;
   #createdAt: string;
   #now: () => Date;
+  #monotonicNow: () => number;
+  #projectionSnapshot: SandboxProjectionSnapshot;
   #audit: AuditState = {
     entries: [],
     bashCalls: 0,
@@ -273,14 +293,41 @@ class FileSandboxEditSession implements SandboxEditSession {
     this.#policyFs = input.policyFs;
     this.#bash = input.bash;
     this.#now = input.options.now ?? (() => new Date());
+    this.#monotonicNow = input.options.monotonicNow ?? (() => performance.now());
     this.#createdAt = canonicalTimestamp(this.#now(), 'session createdAt');
     this.id = opaqueSessionId(input.options.sessionId ?? `ses_${randomUUID()}`);
     this.policy = input.options.policy;
     this.projectionFingerprint = input.projection.fingerprint;
+    const metadataByPath = new Map(input.projection.manifest.files.map((file) => [
+      file.path,
+      file,
+    ]));
+    this.#projectionSnapshot = Object.freeze({
+      workspaceRoot: input.projection.workspaceRoot,
+      projectionFingerprint: input.projection.fingerprint,
+      files: Object.freeze(input.projection.baselineFiles.map((file) => {
+        const metadata = metadataByPath.get(file.path);
+        if (!metadata) {
+          throw new Error(`Projection manifest is missing baseline file metadata: ${file.path}.`);
+        }
+        return Object.freeze({ ...file, mtimeMs: metadata.mtimeMs });
+      })),
+      directories: input.projection.manifest.directories,
+    });
   }
 
   get tools(): ToolSet {
     return this.#tools;
+  }
+
+  projectionSnapshot(): SandboxProjectionSnapshot {
+    this.#assertUsable();
+    return this.#projectionSnapshot;
+  }
+
+  async assertFresh(): Promise<void> {
+    this.#assertUsable();
+    await this.#assertAllSourcesFresh();
   }
 
   async initializeTools(): Promise<void> {
@@ -360,7 +407,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     this.#assertUsable();
     this.#assertBudgetHealthy();
     if (this.#previewCache) return this.#previewCache;
-    await this.#projection.assertFresh();
+    await this.#assertAllSourcesFresh();
     const candidate = await this.#buildCandidate('runtime-fallback');
     const preview = candidate
       ? renderPreview(candidate, this.#projection, this.#limits.maxPreviewBytes)
@@ -380,7 +427,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     const finalization = normalizeFinalization(input.finalization);
     this.#sealed = true;
     this.#finalized = true;
-    await this.#projection.assertFresh();
+    await this.#assertAllSourcesFresh();
     return this.#buildCandidate(finalization);
   }
 
@@ -466,7 +513,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     this.#audit.bashCalls += 1;
     this.#audit.totalSourceBytes += sourceBytes;
     this.#invalidatePreview();
-    const startedAt = performance.now();
+    const startedAt = monotonicTimestamp(this.#monotonicNow());
     let exitCode: number | 'error' = 'error';
     try {
       const signal = combinedAbortSignal(
@@ -487,11 +534,14 @@ class FileSandboxEditSession implements SandboxEditSession {
         exitCode: result.exitCode,
       };
     } finally {
-      const elapsed = Math.max(0, Math.ceil(performance.now() - startedAt));
+      const elapsed = Math.max(
+        0,
+        Math.ceil(monotonicTimestamp(this.#monotonicNow()) - startedAt),
+      );
       this.#audit.totalWallTimeMs += elapsed;
       this.#appendAudit(source, exitCode);
       if (this.#audit.totalWallTimeMs > this.#limits.maxTotalWallTimeMs) {
-        this.#poisonBudget('Sandbox cumulative wall-time limit exceeded.');
+        throw this.#poisonBudget('Sandbox cumulative wall-time limit exceeded.');
       }
     }
   }
@@ -628,12 +678,26 @@ class FileSandboxEditSession implements SandboxEditSession {
     if (this.#budgetFailure) throw this.#budgetFailure;
   }
 
+  async #assertAllSourcesFresh(): Promise<void> {
+    await this.#projection.assertFresh();
+    for (const check of this.#options.freshnessChecks ?? []) {
+      await check();
+    }
+  }
+
   #poisonBudget(message: string): Error {
     this.#budgetFailure ??= Object.assign(new Error(message), {
       code: 'SANDBOX_RESOURCE_LIMIT_EXCEEDED',
     });
     return this.#budgetFailure;
   }
+}
+
+function monotonicTimestamp(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error('Sandbox monotonic clock returned an invalid timestamp.');
+  }
+  return value;
 }
 
 export function sanitizeSandboxText(value: string): string {

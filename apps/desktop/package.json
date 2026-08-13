@@ -1,5 +1,6 @@
 {
   "name": "@oh-awesome-novel/desktop",
+  "productName": "oan",
   "private": true,
   "version": "0.0.0",
   "description": "",

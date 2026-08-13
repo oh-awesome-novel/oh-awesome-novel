@@ -70,8 +70,10 @@ async function findPackagedExecutable(root) {
   const candidates = [];
   await walk(root, candidates);
   const executable = candidates.find((candidate) =>
-    candidate.includes('.app/Contents/MacOS/')
-      && !candidate.includes('/Frameworks/'))
+    candidate.endsWith('/oan.app/Contents/MacOS/oan'))
+    ?? candidates.find((candidate) =>
+      candidate.includes('.app/Contents/MacOS/')
+        && !candidate.includes('/Frameworks/'))
     ?? candidates.find((candidate) => candidate.endsWith('.exe'))
     ?? candidates.find((candidate) => /-linux-[^/]+\/[^/]+$/u.test(candidate));
   if (!executable) {

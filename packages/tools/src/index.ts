@@ -265,6 +265,8 @@ export type {
   SandboxCommandAuditSummary,
   SandboxEditSession,
   SandboxEditSessionLimits,
+  SandboxProjectionSnapshot,
+  SandboxProjectionSnapshotFile,
   SandboxProposalResult,
 } from './sandbox-edit-session';
 
