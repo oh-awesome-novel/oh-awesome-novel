@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
@@ -16,13 +17,13 @@ import type { PlayTurnArtifact } from './play-turn-artifact.js';
 import type {
   PlayActivatedSource,
   PlayAdoptionCandidate,
+  PlayAdoptionBusinessTarget,
   PlayAdoptionDraft,
   PlayAdoptionEvidenceClosure,
   PlayAdoptionSeed,
   PlayAdoptionSourceSnapshot,
   PlayAdoptionTarget,
   PlayAdoptionTargetSuggestion,
-  PlayAdoptionWriteIntentToolName,
   PlayEventVisibility,
   PlayObservation,
   PlayWorldEvent,
@@ -297,12 +298,10 @@ export function suggestPlayAdoptionTargets(input: {
 
   const specs: Array<{
     target: PlayAdoptionTarget;
-    toolName: PlayAdoptionWriteIntentToolName;
     reason: string;
     defaultPayload: Record<string, unknown>;
   }> = [{
     target: 'chapterDraft',
-    toolName: 'chapter.createDraft',
     reason: 'Turn the selected Play result into editable chapter prose.',
     defaultPayload: {
       chapterId: '0001/0001',
@@ -311,7 +310,6 @@ export function suggestPlayAdoptionTargets(input: {
     },
   }, {
     target: 'state',
-    toolName: 'state.set',
     reason: 'Record the selected Play result as an explicit canonical state value.',
     defaultPayload: {
       file: 'play-adoption.yaml',
@@ -323,7 +321,6 @@ export function suggestPlayAdoptionTargets(input: {
     },
   }, {
     target: 'timeline',
-    toolName: 'timeline.add',
     reason: 'Append the selected Play result as a canonical timeline event.',
     defaultPayload: {
       file: 'events.yaml',
@@ -337,7 +334,6 @@ export function suggestPlayAdoptionTargets(input: {
     },
   }, {
     target: 'foreshadow',
-    toolName: 'foreshadow.create',
     reason: 'Preserve the selected Play result as an active clue or future payoff.',
     defaultPayload: {
       file: 'active.yaml',
@@ -356,6 +352,116 @@ export function suggestPlayAdoptionTargets(input: {
     recommended: spec.target === recommendedTarget,
     defaultPayload: structuredClone(spec.defaultPayload),
   }));
+}
+
+/**
+ * Normalizes a user-reviewed Play adoption selection into a business-level,
+ * single-target mutation.  It deliberately contains no AI/write-tool name;
+ * the tools package compiles this value to immutable final file bytes.
+ */
+export function normalizePlayAdoptionBusinessTarget(input: {
+  target: PlayAdoptionTarget;
+  payload: Record<string, unknown>;
+}): PlayAdoptionBusinessTarget {
+  if (!PLAY_ADOPTION_TARGETS.includes(input.target)) {
+    throw new Error(`Unsupported Play adoption target: ${String(input.target)}.`);
+  }
+  const payload = requireRecord(input.payload, 'Play adoption business payload');
+
+  if (input.target === 'chapterDraft') {
+    assertOnlyKnownFields(
+      payload,
+      ['chapterId', 'title', 'content', 'file', 'mode'],
+      'Play chapter adoption payload',
+    );
+    const chapterId = requireChapterId(payload.chapterId);
+    const expectedFile = `chapters/${chapterId}.md`;
+    if (payload.file !== undefined) {
+      const requested = requireWorkspaceFile(payload.file, 'chapter file');
+      const withRoot = requested.startsWith('chapters/')
+        ? requested
+        : `chapters/${requested}`;
+      if (withRoot !== expectedFile) {
+        throw new Error(`Play chapter adoption file must match ${expectedFile}.`);
+      }
+    }
+    const rawContent = requireBoundedString(
+      payload.content,
+      'Play chapter adoption content',
+      1_000_000,
+    );
+    const title = payload.title === undefined
+      ? undefined
+      : requireBoundedString(payload.title, 'Play chapter adoption title', 1_000);
+    const content = normalizeFinalMarkdown(
+      title && !rawContent.startsWith('# ')
+        ? `# ${title}\n\n${rawContent}`
+        : rawContent,
+    );
+    if (
+      payload.mode !== undefined
+      && payload.mode !== 'create'
+      && payload.mode !== 'replace'
+    ) {
+      throw new Error('Play chapter adoption mode must be create or replace.');
+    }
+    return {
+      target: 'chapterDraft',
+      targetFile: expectedFile,
+      operation: 'replace-file',
+      content,
+      ...(payload.mode ? { mode: payload.mode } : {}),
+    };
+  }
+
+  if (input.target === 'state') {
+    assertOnlyKnownFields(
+      payload,
+      ['file', 'path', 'value'],
+      'Play state adoption payload',
+    );
+    if (!Object.hasOwn(payload, 'value')) {
+      throw new Error('Play state adoption payload requires value.');
+    }
+    const file = requireYamlFile(payload.file, 'Play state adoption file');
+    return {
+      target: 'state',
+      targetFile: `state/${file}`,
+      operation: 'yaml-set',
+      path: requireDottedYamlPath(payload.path, 'Play state adoption path'),
+      value: cloneJsonValue(payload.value, 'Play state adoption value'),
+    };
+  }
+
+  const isTimeline = input.target === 'timeline';
+  assertOnlyKnownFields(
+    payload,
+    isTimeline ? ['file', 'path', 'event'] : ['file', 'path', 'item'],
+    `Play ${input.target} adoption payload`,
+  );
+  const valueField = isTimeline ? 'event' : 'item';
+  if (!Object.hasOwn(payload, valueField)) {
+    throw new Error(`Play ${input.target} adoption payload requires ${valueField}.`);
+  }
+  const defaultFile = isTimeline ? 'events.yaml' : 'active.yaml';
+  const defaultPath = isTimeline ? 'events' : 'active';
+  const file = requireYamlFile(
+    payload.file ?? defaultFile,
+    `Play ${input.target} adoption file`,
+  );
+  return {
+    target: input.target,
+    targetFile: `${input.target}/${file}`,
+    operation: 'yaml-append',
+    path: requireDottedYamlPath(
+      payload.path ?? defaultPath,
+      `Play ${input.target} adoption path`,
+    ),
+    value: cloneJsonValue(
+      payload[valueField],
+      `Play ${input.target} adoption ${valueField}`,
+    ),
+  } as PlayAdoptionBusinessTarget;
 }
 
 export function createPlayAdoptionCandidateFromDraft(
@@ -1004,7 +1110,6 @@ function normalizeTargetSuggestions(value: unknown): PlayAdoptionTargetSuggestio
     const record = requireRecord(entry, 'Play adoption target suggestion');
     assertOnlyKnownFields(record, [
       'target',
-      'toolName',
       'recommended',
       'reason',
       'defaultPayload',
@@ -1012,10 +1117,6 @@ function normalizeTargetSuggestions(value: unknown): PlayAdoptionTargetSuggestio
     const target = PLAY_ADOPTION_TARGETS[index]!;
     if (record.target !== target) {
       throw new Error('Play adoption targetSuggestions must use stable target order.');
-    }
-    const toolName = toolNameForTarget(target);
-    if (record.toolName !== toolName) {
-      throw new Error(`Play adoption target ${target} has an invalid write-intent tool.`);
     }
     if (typeof record.recommended !== 'boolean') {
       throw new Error('Play adoption target suggestion requires recommended boolean.');
@@ -1026,7 +1127,6 @@ function normalizeTargetSuggestions(value: unknown): PlayAdoptionTargetSuggestio
     }
     return {
       target,
-      toolName,
       recommended: record.recommended,
       reason: requireBoundedString(record.reason, 'Play adoption target reason', 1_000),
       defaultPayload: structuredClone(record.defaultPayload),
@@ -1036,15 +1136,6 @@ function normalizeTargetSuggestions(value: unknown): PlayAdoptionTargetSuggestio
     throw new Error('Play adoption targetSuggestions require exactly one recommendation.');
   }
   return suggestions;
-}
-
-function toolNameForTarget(target: PlayAdoptionTarget): PlayAdoptionWriteIntentToolName {
-  switch (target) {
-    case 'chapterDraft': return 'chapter.createDraft';
-    case 'state': return 'state.set';
-    case 'timeline': return 'timeline.add';
-    case 'foreshadow': return 'foreshadow.create';
-  }
 }
 
 function redactEvidenceClosure(
@@ -1152,6 +1243,97 @@ function requireBoundedString(value: unknown, label: string, max: number): strin
   return value.trim();
 }
 
+function requireChapterId(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !/^\d{4}\/\d{4}$/u.test(value)
+    || value.endsWith('/0000')
+  ) {
+    throw new Error('Play chapter adoption chapterId must match NNNN/NNNN.');
+  }
+  return value;
+}
+
+function requireWorkspaceFile(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value !== value.trim() || !value) {
+    throw new Error(`${label} must be a workspace-relative path.`);
+  }
+  if (
+    value.includes('\\')
+    || posix.isAbsolute(value)
+    || posix.normalize(value) !== value
+    || value.split('/').some((segment) =>
+      !segment || segment === '.' || segment === '..' || segment.startsWith('.'))
+  ) {
+    throw new Error(`${label} must be a safe workspace-relative path.`);
+  }
+  return value;
+}
+
+function requireYamlFile(value: unknown, label: string): string {
+  const file = requireWorkspaceFile(value, label);
+  if (!file.endsWith('.yaml')) {
+    throw new Error(`${label} must end in .yaml.`);
+  }
+  return file;
+}
+
+function requireDottedYamlPath(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value !== value.trim() || !value) {
+    throw new Error(`${label} is required.`);
+  }
+  const segments = value.split('.');
+  if (segments.some((segment) =>
+    !segment
+    || !/^[\p{L}\p{N}_-]+$/u.test(segment)
+    || ['__proto__', 'prototype', 'constructor'].includes(segment))) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return segments.join('.');
+}
+
+function normalizeFinalMarkdown(value: string): string {
+  const trimmed = value.trim();
+  return trimmed ? `${trimmed}\n` : '';
+}
+
+function cloneJsonValue(value: unknown, label: string): unknown {
+  const ancestors = new Set<object>();
+  const visit = (current: unknown): unknown => {
+    if (
+      current === null
+      || typeof current === 'string'
+      || typeof current === 'boolean'
+    ) {
+      return current;
+    }
+    if (typeof current === 'number') {
+      if (!Number.isFinite(current)) throw new Error(`${label} must contain finite numbers.`);
+      return Object.is(current, -0) ? 0 : current;
+    }
+    if (typeof current !== 'object') {
+      throw new Error(`${label} must be JSON-compatible.`);
+    }
+    if (ancestors.has(current)) throw new Error(`${label} must not contain cycles.`);
+    ancestors.add(current);
+    try {
+      if (Array.isArray(current)) return current.map(visit);
+      const prototype = Object.getPrototypeOf(current);
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error(`${label} must contain plain objects.`);
+      }
+      return Object.fromEntries(
+        Object.keys(current as Record<string, unknown>)
+          .sort()
+          .map((key) => [key, visit((current as Record<string, unknown>)[key])]),
+      );
+    } finally {
+      ancestors.delete(current);
+    }
+  };
+  return visit(value);
+}
+
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`${label} must be an object.`);
   return value;
@@ -1189,10 +1371,10 @@ function canonicalJson(value: unknown): string {
 }
 
 export type {
+  PlayAdoptionBusinessTarget,
   PlayAdoptionDraft,
   PlayAdoptionEvidenceClosure,
   PlayAdoptionSeed,
   PlayAdoptionSourceSnapshot,
   PlayAdoptionTargetSuggestion,
-  PlayAdoptionWriteIntentToolName,
 } from './play-types.js';

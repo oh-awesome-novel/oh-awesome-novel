@@ -145,7 +145,7 @@ Webnovel Writer v6 的事实链分为主链和投影：
 
 `chapter-commit` 根据 blocking、missed nodes、pending disambiguation 自动判定 accepted 或 rejected。accepted 后写入事件审计，并驱动 state、index、summary、memory、vector 等 projection writers。
 
-这一套非常适合研究“写后结算应该有哪些字段”，但 OAN 落地时应转换成 observation log + PendingAction / SemanticPatch bundle，而不是直接写 projection。
+这一套非常适合研究“写后结算应该有哪些字段”，但 OAN 落地时应转换成 observation log + PendingAction / CandidateChangeSet bundle，而不是直接写 projection。
 
 ## 审稿机制
 
@@ -240,7 +240,7 @@ Webnovel Writer 的 reference 系统很有工程纪律：
    `.story-system`、`.webnovel`、SQLite、vectors、projection、projection log、run ledger、hooks、Dashboard 加起来是一套完整平台，不适合直接塞进 OAN 的极简 runtime。
 
 2. **不符合 OAN 的 PendingAction 写入边界**  
-   Webnovel Writer 的 skill 会实际写文件、数据库和投影。OAN 必须改成“生成 PendingAction / SemanticPatch，等待用户 diff 确认”。
+   Webnovel Writer 的 skill 会实际写文件、数据库和投影。OAN 必须改成“生成 PendingAction / CandidateChangeSet，等待用户 diff 确认”。
 
 3. **再造了类似提交链的结构**  
    `CHAPTER_COMMIT` 对它有意义，但 OAN 已明确 Git 是历史引擎，不应再造平行 VCS。
@@ -263,7 +263,7 @@ Webnovel Writer 的 reference 系统很有工程纪律：
 |------|-----------------|-----|
 | 产品形态 | Claude Code 插件 | Filesystem-first Novel IDE / Copilot |
 | Runtime | Python CLI + Skill + Agent + projection | Aider-style 极简 tool loop |
-| 写入 | 运行时直接写项目文件和 read-model | PendingAction / SemanticPatch / Git diff 审批 |
+| 写入 | 运行时直接写项目文件和 read-model | PendingAction / CandidateChangeSet / Git diff 审批 |
 | 事实源 | `.story-system` 主链 + `.webnovel` 投影 | Markdown / YAML / Object File Tree |
 | 历史 | CHAPTER_COMMIT + backup + Git 校验 | Git 是历史引擎 |
 | 多 agent | 当前流程强制 subagent | 默认不引入重型多 agent runtime |

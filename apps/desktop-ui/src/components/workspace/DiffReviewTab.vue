@@ -10,6 +10,7 @@ const props = defineProps<{
 }>();
 
 const action = computed(() => props.selectedAction ?? props.actions[0]);
+const changes = computed(() => action.value?.changes ?? []);
 </script>
 
 <template>
@@ -23,7 +24,7 @@ const action = computed(() => props.selectedAction ?? props.actions[0]);
     <PendingActionDiffViewer
       v-if="action"
       :diff="action.diff"
-      :touched-files="action.touchedFiles"
+      :changes="changes"
     />
     <p v-else class="empty-copy">Select a PendingAction to inspect its diff.</p>
   </section>

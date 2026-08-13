@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createReadTools } from '@oh-awesome-novel/tools';
+import type { WorkspaceReader } from '@oh-awesome-novel/tools';
 import type { ToolSet } from 'ai';
 
 import { prepareSampleNovel } from './support/sample-novel';
@@ -115,6 +116,30 @@ describe('read tools', () => {
       executeTool(tools, 'chapter.get', { id: '0001/0000' }),
     ).rejects.toThrow(/reserved for volume metadata/);
   });
+
+  it('can read exclusively from an injected fixed projection', async () => {
+    const reader = createMemoryReader({
+      '/workspace/chapters/0001/0001.md': [
+        '---',
+        'id: 0001/0001',
+        'title: Snapshot title',
+        '---',
+        '',
+        '# Scene',
+        '',
+        'Snapshot bytes only.',
+        '',
+      ].join('\n'),
+    });
+    const tools = createReadTools({ workspaceRoot: '/workspace', reader });
+
+    await expect(executeTool(tools, 'chapter.get', { id: '0001/0001' }))
+      .resolves
+      .toMatchObject({
+        frontmatter: { title: 'Snapshot title' },
+        content: expect.stringContaining('Snapshot bytes only.'),
+      });
+  });
 });
 
 async function executeTool(
@@ -131,4 +156,31 @@ async function executeTool(
   }
 
   return executable.execute(args, {});
+}
+
+function createMemoryReader(files: Record<string, string>): WorkspaceReader {
+  return {
+    async readFile(path) {
+      const content = files[path];
+      if (content === undefined) throw new Error(`Missing projected file: ${path}`);
+      return content;
+    },
+    async readdir(path) {
+      const prefix = `${path.replace(/\/$/u, '')}/`;
+      const children = new Map<string, { isFile: boolean; isDirectory: boolean }>();
+      for (const file of Object.keys(files)) {
+        if (!file.startsWith(prefix)) continue;
+        const remainder = file.slice(prefix.length);
+        const [name] = remainder.split('/');
+        if (!name) continue;
+        const isDirectory = remainder.includes('/');
+        children.set(name, { isFile: !isDirectory, isDirectory });
+      }
+      return [...children.entries()].map(([name, type]) => ({
+        name,
+        ...type,
+        isSymbolicLink: false,
+      }));
+    },
+  };
 }

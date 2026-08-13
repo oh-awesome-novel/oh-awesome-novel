@@ -6,7 +6,7 @@
 
 - `docs/ARCHITECTURE.md`
 - `docs/FILESYSTEM_SPEC.md`
-- `docs/APPLY_ENGINE.md`
+- `docs/SANDBOX_CHANGE_ENGINE.md`
 - `docs/AGENT_RUNTIME_AND_TOOLS.md`
 - `docs/HUMAN_APPROVAL_AND_GIT.md`
 
@@ -35,7 +35,7 @@
 - [0200 Markdown YAML Engine](0200.md)
 - [0300 AI SDK ToolSet And Read Tools](0300.md)
 - [0350 Agent LLM Bridge And Message Assembly](0350.md)
-- [0400 Restricted File Write Tool](0400.md)
+- [0400 Early Write-loop Validation](0400.md)
 - [0450 Agent Session Persistence](0450.md)
 - [0500 Minimal Copilot Interface](0500.md)
 - [0520 HTTP Backend SSE And AI SDK Vue Interface](0520.md)
@@ -44,7 +44,7 @@
 - [0550 NoteGen Inspired Workspace Shell](0550.md)
 - [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
-- [0600 Write Intent And Human Approval](0600.md)
+- [0600 Human Approval Vertical Slice](0600.md)
 - [0900 Project References](0900.md)
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
 - [1010 Context Package And Source Discipline](1010.md)
@@ -72,13 +72,13 @@
 ## Needs Review Tasks
 
 - [0700 Summary Workflow Extensions Polish](0700.md)
+- [0800 Sandbox Change Engine Migration](0800.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 
 ## Planned Tasks
 
 - [0570 Workspace Global Search](0570.md)
 - [0580 Git History And Sync Page](0580.md)
-- [0800 SemanticPatch Apply Engine](0800.md)
 - [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 
 ## Package Call Route
@@ -109,9 +109,10 @@ Every task must preserve these constraints:
 - Do not introduce LangChain, AutoGen, CrewAI, Semantic Kernel, or a heavy agent framework.
 - Keep Runtime as an Aider-style loop, not a planner or multi-agent platform.
 - Keep project data filesystem-first: Markdown, YAML, Object File Tree, and Git.
-- Production write tools must produce visible `PendingAction` / diff output before any file write.
-- The early restricted file write tool is only for validating the full agent loop and must hard reject every path outside the active workspace.
-- File write tools must not accept hidden file or hidden directory targets inside the workspace.
-- Internal crash-recovery shadow writes may use `workspace/.workspace`, but callers must not be able to target that path directly.
-- Prefer SemanticPatch and Apply Engine over full-file rewrites.
+- Production edits must generate a normalized create/update/delete `CandidateChangeSet` and visible `PendingAction` / diff before any canonical write.
+- Model editing uses only the fixed in-memory `bash-tool` / `just-bash` sandbox; arbitrary host shell and host filesystem access are forbidden.
+- Hidden/internal paths, symlinks and non-regular files must be rejected for reads, enumeration and writes.
+- Immutable candidate/recovery data may use `workspace/.workspace/change-engine/v1`, but callers cannot target or inspect that namespace.
+- Accept materializes immutable drafts through `ChangeMaterializer`; it never parses diff or replays model commands.
+- Capability comes from trusted host workflows; unknown workflows are `read-only`, and deterministic producers receive exact targets.
 - Project references under `examples/` are implemented last and are not the primary novel workspace.

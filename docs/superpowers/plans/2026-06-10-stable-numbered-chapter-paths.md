@@ -1,5 +1,7 @@
 # Stable Numbered Chapter Paths Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enforce stable numbered novel body paths everywhere: `chapters/0001/0001.md`, `summaries/chapter/0001/0001.md`, `summaries/volume/0001.md`, and chapter ids like `0001/0001`.
@@ -323,7 +325,7 @@ no matches
 **Files:**
 
 - Inspect: `docs/FILESYSTEM_SPEC.md`
-- Inspect: `docs/APPLY_ENGINE.md`
+- Inspect: `docs/SANDBOX_CHANGE_ENGINE.md`
 - Inspect: `docs/tasks/0100.md`
 - Inspect: implementation files from tasks above
 

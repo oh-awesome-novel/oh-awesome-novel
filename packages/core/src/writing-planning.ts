@@ -1,3 +1,5 @@
+import type { NovelCopilotSandboxProposalContract } from './novel-copilot-skill.js';
+
 export type PlanningGranularity = 'outline' | 'volume' | 'chapter' | 'keyChapter';
 
 export type HookPlanOperation = 'create' | 'mention' | 'advance' | 'resolve' | 'defer';
@@ -67,6 +69,16 @@ export type PlanningPacket =
   | VolumePlanningPacket
   | ChapterPlanningPacket;
 
+/**
+ * Planning stays conversational/session-local by default. This separate
+ * contract exists only when the user explicitly asks to persist the plan.
+ */
+export interface PlanningSandboxProposal {
+  userRequestedPersistence: true;
+  granularity: PlanningGranularity;
+  sandboxProposal: NovelCopilotSandboxProposalContract<'outline.edit'>;
+}
+
 export interface PreWriteRiskScan {
   ooc: boolean;
   informationLeak: boolean;
@@ -83,7 +95,7 @@ export interface PreWriteCheck {
   pendingHooks: string[];
   secretsToWithhold: string[];
   riskScan: PreWriteRiskScan;
-  writeTool: 'chapter.createDraft';
+  sandboxProposal: NovelCopilotSandboxProposalContract<'chapter.edit'>;
 }
 
 export const formatChapterContractMarkdown = (
@@ -146,6 +158,31 @@ export const formatVolumePlanningPacketMarkdown = (
   formatList(packet.notes ?? []),
 ].join('\n');
 
+export const formatPlanningSandboxProposalMarkdown = (
+  proposal: PlanningSandboxProposal,
+): string => {
+  if (proposal.userRequestedPersistence !== true) {
+    throw new Error('Planning persistence proposal requires an explicit user request.');
+  }
+  if (proposal.sandboxProposal.capability !== 'outline.edit') {
+    throw new Error('Planning persistence proposal must use outline.edit capability.');
+  }
+
+  return [
+    '## 规划保存提案契约',
+    '',
+    '- 用户已明确要求保存: yes',
+    `- 规划粒度: ${proposal.granularity}`,
+    `- 虚拟编辑能力: ${proposal.sandboxProposal.capability}`,
+    `- 预览工具: ${proposal.sandboxProposal.previewTool}`,
+    `- 提案工具: ${proposal.sandboxProposal.proposalTool}`,
+    `- canonical 写入边界: ${proposal.sandboxProposal.canonicalWriteBoundary}`,
+    '',
+    '### Target Paths',
+    formatList(proposal.sandboxProposal.targetPaths),
+  ].join('\n');
+};
+
 export const formatPreWriteCheckMarkdown = (
   check: PreWriteCheck,
 ): string => [
@@ -153,7 +190,13 @@ export const formatPreWriteCheckMarkdown = (
   '',
   `- 本章契约对齐: ${check.chapterContractAligned ? 'yes' : 'no'}`,
   `- 当前锚点: ${check.currentAnchor}`,
-  `- 写入方式: ${check.writeTool}`,
+  `- 虚拟编辑能力: ${check.sandboxProposal.capability}`,
+  `- 预览工具: ${check.sandboxProposal.previewTool}`,
+  `- 提案工具: ${check.sandboxProposal.proposalTool}`,
+  `- canonical 写入边界: ${check.sandboxProposal.canonicalWriteBoundary}`,
+  '',
+  '### 目标文件',
+  formatList(check.sandboxProposal.targetPaths),
   '',
   '### 上下文范围',
   formatList(check.contextScope),

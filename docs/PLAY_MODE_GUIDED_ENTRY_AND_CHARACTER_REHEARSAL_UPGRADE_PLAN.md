@@ -977,10 +977,10 @@ F4 的 `redirectStep`、provisional time/state overlay 与 suffix invalidation �
 2. **Adopt into Canon**
    - 从 outcome report 生成 observation / adoption candidates。
    - 映射到现有 `chapterDraft | state | timeline | foreshadow` 等合法目标。
-   - 创建 PendingAction，展示 SemanticPatch / diff。
+   - 创建 PendingAction，展示 CandidateChangeSet / diff。
    - 用户 accept 后才写真实目标文件并按配置 Git commit。
 
-当前 adoption target 不包含 `chapterPlan / sceneOutline`。如未来确有需求，应单独增加真实 write-intent target、schema 和测试，不能把章纲内容伪装成 `chapterDraft`。
+当前 adoption target 不包含 `chapterPlan / sceneOutline`。如未来确有需求，应单独增加真实 change-proposal target、schema 和测试，不能把章纲内容伪装成 `chapterDraft`。
 
 ## 13. API 与事件契约候选
 
@@ -1169,7 +1169,7 @@ Done Criteria：
 
 H 不作为 F1–F3 的统一前置。若出现可复现的数据丢失、历史覆盖、安全边界破坏，或某个切片直接改变对应持久化 / 并发保证，相关项才升级为该切片的局部 gate。
 
-`chapterPlan / sceneOutline` 是否成为新 canonical adoption target 不属于 F3。当前继续使用既有目标；如需要新目标，必须形成独立 design decision，并由另一个 task 冻结 write intent、SemanticPatch 与审批测试。
+`chapterPlan / sceneOutline` 是否成为新 canonical adoption target 不属于 F3。当前继续使用既有目标；如需要新目标，必须形成独立 design decision，并由另一个 task 冻结 change proposal、CandidateChangeSet 与审批测试。
 
 ## 16. 验收场景
 

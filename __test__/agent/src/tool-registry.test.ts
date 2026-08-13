@@ -5,6 +5,8 @@ import {
   createNovelAgentReadTools,
   createNovelAgentRuntime,
   createNovelAgentToolSet,
+  createNovelAgentTurnEditEnvironment,
+  selectNovelAgentSandboxPolicy,
 } from '@oh-awesome-novel/agent';
 import type { ToolSet } from 'ai';
 
@@ -64,7 +66,7 @@ describe('Novel agent tool assembly', () => {
     ]);
   });
 
-  it('assembles M6 write intent tools into the default agent tool set', () => {
+  it('keeps the synchronous default tool set read-only', () => {
     const tools = createNovelAgentToolSet({ workspaceRoot });
 
     expect(Object.keys(tools)).toEqual([
@@ -78,13 +80,47 @@ describe('Novel agent tool assembly', () => {
       'summary.get',
       'constitution.get',
       'workflow.get',
-      'chapter.createDraft',
-      'character.updatePersonality',
-      'state.set',
-      'timeline.add',
-      'foreshadow.create',
-      'summary.generateChapter',
     ]);
+  });
+
+  it('maps host capabilities only when exact targets are present', () => {
+    expect(selectNovelAgentSandboxPolicy({
+      capability: 'novel.write_chapter',
+    })).toEqual({ capability: 'read-only', exactWritablePaths: [] });
+    expect(selectNovelAgentSandboxPolicy({
+      capability: 'novel.write_chapter',
+      exactWritablePaths: ['chapters/0001/0002.md'],
+    })).toEqual({
+      capability: 'chapter.edit',
+      exactWritablePaths: ['chapters/0001/0002.md'],
+    });
+    expect(selectNovelAgentSandboxPolicy({
+      capability: 'novel.play_scene',
+      exactWritablePaths: ['state/play.yaml'],
+    })).toEqual({ capability: 'read-only', exactWritablePaths: [] });
+  });
+
+  it('uses a read-only sandbox when the host did not select an exact target', async () => {
+    const environment = await createNovelAgentTurnEditEnvironment({
+      workspaceRoot,
+      capability: 'novel.write_chapter',
+    });
+
+    try {
+      expect(Object.keys(environment.tools)).toEqual(expect.arrayContaining([
+        'bash',
+        'readFile',
+        'writeFile',
+        'workspace.previewChanges',
+        'workspace.proposeChanges',
+      ]));
+      await expect(executeTool(environment.tools, 'writeFile', {
+        path: 'chapters/0001/0002.md',
+        content: '# Changed\n',
+      })).rejects.toThrow(/not writable|read-only|forbidden|denied/iu);
+    } finally {
+      await environment.dispose();
+    }
   });
 
   it('does not expose future tools in the default agent tool set', () => {

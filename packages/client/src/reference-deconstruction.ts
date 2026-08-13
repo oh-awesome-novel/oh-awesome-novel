@@ -9,6 +9,8 @@ import type {
 } from './index.js';
 import { WRITING_PROFILE_OUTPUTS } from './writing-profile.js';
 import type { WritingProfileOutput } from './writing-profile.js';
+import { parsePendingActionView } from './pending-action-view.js';
+import type { PendingActionViewV1 } from './pending-action-view.js';
 
 export type NovelCopilotCapabilityId =
   | 'novel.generate_character_card'
@@ -370,29 +372,9 @@ export interface ReferenceDeconstructionRunMutationResult {
   replayed: boolean;
 }
 
-export interface ReferenceDeconstructionPublishPendingActionOrigin {
-  kind: 'referenceDeconstructionPublish';
-  referenceId: string;
-  runId: string;
-  runRevision: number;
-  candidateFingerprint: string;
-}
-
-export interface ReferenceDeconstructionPublishPendingAction {
-  id: string;
-  title: string;
-  description: string;
-  touchedFiles: string[];
-  diff: string;
-  createdAt: string;
-  status: 'pending' | 'accepted';
-  acceptedAt?: string;
-  origin: ReferenceDeconstructionPublishPendingActionOrigin;
-}
-
 export interface ReferenceDeconstructionPublishResult
   extends ReferenceDeconstructionRunMutationResult {
-  pendingAction: ReferenceDeconstructionPublishPendingAction;
+  pendingAction: PendingActionViewV1;
 }
 
 export interface ReferenceDeconstructionRunReadResult {
@@ -824,33 +806,39 @@ export function parseReferenceDeconstructionPublishResult(
     expectedInput.idempotencyKey,
     expectedRunId,
   );
-  if (
-    !isReferenceDeconstructionPublishPendingAction(
-      value.pendingAction,
-      expectedReferenceId,
-      expectedRunId,
-      expectedInput.baseRunRevision,
-    )
-  ) {
+  let pendingAction: PendingActionViewV1;
+  try {
+    pendingAction = parsePendingActionView(value.pendingAction);
+  } catch {
     throw new Error('Reference deconstruction publish returned an invalid payload.');
   }
   const run = value.run as ReferenceDeconstructionRun;
-  const pendingAction =
-    value.pendingAction as ReferenceDeconstructionPublishPendingAction;
+  const origin = pendingAction.origin;
+  const touchedFiles = pendingAction.changes.map((change) => change.path);
   if (
-    !run.publication
+    (pendingAction.status !== 'pending' && pendingAction.status !== 'accepted')
+    || origin?.kind !== 'referenceDeconstructionPublish'
+    || origin.referenceId !== expectedReferenceId
+    || origin.runId !== expectedRunId
+    || origin.runRevision !== expectedInput.baseRunRevision
+    || !run.publication
     || run.publication.pendingActionId !== pendingAction.id
     || run.publication.candidateFingerprint !==
-      pendingAction.origin.candidateFingerprint
-    || pendingAction.touchedFiles.length !== run.publication.files.length
-    || pendingAction.touchedFiles.some((path) =>
+      origin.candidateFingerprint
+    || touchedFiles.length !== run.publication.files.length
+    || touchedFiles.some((path) =>
       !run.publication?.files.some((file) => file.path === path))
     || (pendingAction.status === 'pending' && run.status !== 'publishing')
     || (pendingAction.status === 'accepted' && run.status !== 'completed')
   ) {
     throw new Error('Reference deconstruction publish returned an inconsistent payload.');
   }
-  return value as unknown as ReferenceDeconstructionPublishResult;
+  return {
+    run,
+    receipt: structuredClone(value.receipt) as ReferenceDeconstructionMutationReceipt,
+    replayed: value.replayed as boolean,
+    pendingAction,
+  };
 }
 
 export function isReferenceDeconstructionRun(
@@ -1232,61 +1220,6 @@ function isReferenceDeconstructionPublicationEntry(
     && isBoundedText(value.title, 500)
     && isPositiveSafeInteger(value.estimatedTokens)
     && value.estimatedTokens <= MAX_REFERENCE_DISTILLED_ENTRY_TOKENS;
-}
-
-function isReferenceDeconstructionPublishPendingAction(
-  value: unknown,
-  referenceId: string,
-  runId: string,
-  runRevision: number,
-): value is ReferenceDeconstructionPublishPendingAction {
-  if (
-    !isRecord(value)
-    || !hasOnlyKnownFields(value, [
-      'id',
-      'title',
-      'description',
-      'touchedFiles',
-      'diff',
-      'createdAt',
-      'status',
-      'acceptedAt',
-      'rejectedAt',
-      'origin',
-    ])
-    || !isPendingActionId(value.id)
-    || !isBoundedText(value.title, 1_000)
-    || !isBoundedText(value.description, 4_000)
-    || !Array.isArray(value.touchedFiles)
-    || value.touchedFiles.length < 1
-    || value.touchedFiles.length > 4_096
-    || !value.touchedFiles.every(isSafeRelativePath)
-    || new Set(value.touchedFiles).size !== value.touchedFiles.length
-    || typeof value.diff !== 'string'
-    || value.diff.length > 10_000_000
-    || !isTimestamp(value.createdAt)
-    || (value.status !== 'pending' && value.status !== 'accepted')
-    || (value.acceptedAt !== undefined && !isTimestamp(value.acceptedAt))
-    || value.rejectedAt !== undefined
-    || !isRecord(value.origin)
-    || !hasOnlyKnownFields(value.origin, [
-      'kind',
-      'referenceId',
-      'runId',
-      'runRevision',
-      'candidateFingerprint',
-    ])
-    || value.origin.kind !== 'referenceDeconstructionPublish'
-    || value.origin.referenceId !== referenceId
-    || value.origin.runId !== runId
-    || value.origin.runRevision !== runRevision
-    || !isSha256(value.origin.candidateFingerprint)
-  ) {
-    return false;
-  }
-  return value.status === 'accepted'
-    ? value.acceptedAt !== undefined
-    : value.acceptedAt === undefined;
 }
 
 function isFullStageSummary(

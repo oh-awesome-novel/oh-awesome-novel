@@ -1,5 +1,7 @@
 # Planning Commands And Prewrite Calibration Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Keep ordinary chapter writing lightweight. Put heavy structure in outline, volume, or key-chapter planning.
 
 **Goal:** Implement chapter contracts, planning granularity, and short pre-write checks.

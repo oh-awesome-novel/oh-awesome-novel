@@ -1,5 +1,46 @@
 import { DefaultChatTransport } from 'ai';
 import type { ChatTransport, UIMessage } from 'ai';
+import {
+  parsePendingActionDecisionEnvelope,
+  parsePendingActionQuickCommitEnvelope,
+  parsePendingActionView,
+  parsePendingActionViewEnvelope,
+  parsePendingActionViewListEnvelope,
+} from './pending-action-view.js';
+import type {
+  PendingActionDecisionEnvelopeV1,
+  PendingActionQuickCommitEnvelopeV1,
+  PendingActionViewEnvelopeV1,
+  PendingActionViewListEnvelopeV1,
+  PendingActionViewV1,
+} from './pending-action-view.js';
+
+export {
+  INVALID_PENDING_ACTION_VIEW_CODE,
+  PENDING_ACTION_RESET_REQUIRED_CODE,
+  PendingActionViewParseError,
+  createPendingActionViewApi,
+  parsePendingActionDecisionEnvelope,
+  parsePendingActionDecisionReceiptV1,
+  parsePendingActionQuickCommitEnvelope,
+  parsePendingActionView,
+  parsePendingActionViewEnvelope,
+  parsePendingActionViewListEnvelope,
+  parsePendingActionViewV1,
+} from './pending-action-view.js';
+export type {
+  PendingActionDecisionEnvelopeV1,
+  PendingActionDecisionReceiptV1,
+  PendingActionQuickCommitEnvelopeV1,
+  PendingActionViewApi,
+  PendingActionViewChange,
+  PendingActionViewEnvelopeV1,
+  PendingActionViewErrorCode,
+  PendingActionViewListEnvelopeV1,
+  PendingActionViewV1,
+  PublicPendingActionGitResult,
+  PublicPendingActionOrigin,
+} from './pending-action-view.js';
 
 import {
   createOanRequestError,
@@ -36,7 +77,6 @@ import type {
   MutateReferenceDeconstructionRunInput,
   NovelCopilotCapabilityId,
   ReferenceDistilledCategory,
-  ReferenceDeconstructionPublishPendingActionOrigin,
   ReferenceDeconstructionRunMutationResult,
   ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionRunReadResult,
@@ -50,7 +90,6 @@ import {
 } from './reference-material-adoption.js';
 import type {
   ReferenceMaterialAdoptionCatalog,
-  ReferenceMaterialAdoptionPendingActionOrigin,
   ReferenceMaterialAdoptionPendingActionResult,
   ReferenceMaterialAdoptionPreviewResult,
   ReferenceMaterialAdoptionSelection,
@@ -149,8 +188,6 @@ export type {
   ReferenceDeconstructionPublicationFile,
   ReferenceDeconstructionPublicationFileKind,
   ReferenceDeconstructionPublicationMaterialInventoryItem,
-  ReferenceDeconstructionPublishPendingAction,
-  ReferenceDeconstructionPublishPendingActionOrigin,
   ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionFullProgress,
   ReferenceDeconstructionFullRun,
@@ -183,7 +220,6 @@ export type {
   ReferenceMaterialAdoptionCatalog,
   ReferenceMaterialAdoptionDecision,
   ReferenceMaterialAdoptionEntry,
-  ReferenceMaterialAdoptionPendingActionOrigin,
   ReferenceMaterialAdoptionPendingActionResult,
   ReferenceMaterialAdoptionPreview,
   ReferenceMaterialAdoptionPreviewResult,
@@ -556,11 +592,6 @@ export interface ReferenceContextSelection {
 export type PlaySourceTrust = 'canonical' | 'interactionHint' | 'playLocal' | 'modelImprovisation';
 export type PlayAdoptionTarget = 'chapterDraft' | 'state' | 'timeline' | 'foreshadow';
 export type PlayAdoptionProjection = 'player' | 'director';
-export type PlayAdoptionWriteIntentToolName =
-  | 'chapter.createDraft'
-  | 'state.set'
-  | 'timeline.add'
-  | 'foreshadow.create';
 export type PlayAdoptionSeed =
   | { kind: 'event'; eventId: string }
   | { kind: 'observation'; observationId: string }
@@ -590,7 +621,6 @@ export interface PlayAdoptionEvidenceClosure {
 }
 export interface PlayAdoptionTargetSuggestion {
   target: PlayAdoptionTarget;
-  toolName: PlayAdoptionWriteIntentToolName;
   recommended: boolean;
   reason: string;
   defaultPayload: Record<string, unknown>;
@@ -620,7 +650,7 @@ export interface PlayAdoptionPreview {
   suggestions: PlayAdoptionTargetSuggestion[];
   target: PlayAdoptionTarget;
   payload: Record<string, unknown>;
-  touchedFiles: string[];
+  changes: PendingActionViewV1['changes'];
   diff: string;
   fingerprint: string;
   createdAt: string;
@@ -1691,27 +1721,6 @@ export interface WorkspaceOnboardingInput {
   skipped?: boolean;
 }
 
-export interface PendingAction {
-  id: string;
-  title: string;
-  description: string;
-  patches: unknown[];
-  touchedFiles: string[];
-  diff: string;
-  createdAt: string;
-  status: 'pending';
-  origin?:
-    | ReferenceDeconstructionPublishPendingActionOrigin
-    | ReferenceMaterialAdoptionPendingActionOrigin;
-  shadowWrites?: Array<{
-    targetFile: string;
-    shadowFile: string;
-    originalHash?: string;
-    draftHash?: string;
-    targetExisted?: boolean;
-  }>;
-}
-
 export interface PlayAdoptionPreviewResult {
   preview: PlayAdoptionPreview;
 }
@@ -1722,45 +1731,21 @@ export interface PlayAdoptionSessionUpdate {
   revision: number;
 }
 
-export interface PlayAdoptionPendingActionReceipt {
-  id: string;
-  title: string;
-  description: string;
-  touchedFiles: string[];
-  diff: string;
-  createdAt: string;
-  status: 'pending';
-}
-
 export interface PlayAdoptionPendingActionResult {
   sessionUpdate: PlayAdoptionSessionUpdate;
   candidate: PlayAdoptionCandidate;
-  pendingAction: PlayAdoptionPendingActionReceipt;
+  pendingAction: PendingActionViewV1;
   refresh: WorkspaceDecisionRefresh;
 }
 
-export interface AcceptedPendingAction {
-  id: string;
-  status: 'accepted';
-  appliedFiles: string[];
-  gitDiff: string;
-  gitCommit: GitCommitResult;
-  dirtyStatus: string;
-  refresh?: WorkspaceDecisionRefresh;
-  referencePublish?: ReferenceDeconstructionRunMutationResult;
-}
-
-export interface RejectedPendingAction {
-  id: string;
-  status: 'rejected';
-  refresh?: WorkspaceDecisionRefresh;
-  referencePublish?: ReferenceDeconstructionRunMutationResult;
+export interface AgentChatEditContext {
+  readonly exactWritablePaths: readonly string[];
 }
 
 export interface OanClient extends PlayRehearsalClientMethods {
   readonly backendBaseUrl: string;
   getAgentChatApi(): string;
-  createAgentChatTransport(): ChatTransport<UIMessage>;
+  createAgentChatTransport(editContext?: AgentChatEditContext): ChatTransport<UIMessage>;
   getAppVersion(): Promise<string | undefined>;
   getSystemThemePreference(): ThemeMode;
   getAppConfig(): Promise<AppConfigState>;
@@ -2047,11 +2032,62 @@ export interface OanClient extends PlayRehearsalClientMethods {
     workspace: WorkspaceSummary;
     config: unknown;
   }>;
-  listPendingActions(): Promise<{ pendingActions: PendingAction[] }>;
-  acceptPendingAction(id: string): Promise<AcceptedPendingAction>;
-  rejectPendingAction(id: string): Promise<RejectedPendingAction>;
+  listPendingActions(): Promise<PendingActionViewListEnvelopeV1>;
+  readPendingAction(id: string): Promise<PendingActionViewEnvelopeV1>;
+  acceptPendingAction(id: string): Promise<PendingActionDecisionEnvelopeV1>;
+  rejectPendingAction(id: string): Promise<PendingActionDecisionEnvelopeV1>;
+  quickCommitPendingAction(id: string): Promise<PendingActionQuickCommitEnvelopeV1>;
   getChapters(): Promise<{ index: ChapterIndex; status: ChapterIndexStatus }>;
   rescanChapters(): Promise<{ index: ChapterIndex; status: ChapterIndexStatus }>;
+}
+
+function normalizeAgentChatEditContext(
+  value: AgentChatEditContext | undefined,
+): { exactWritablePaths: string[] } | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value)
+    || Object.keys(value).some((key) => key !== 'exactWritablePaths')
+    || !Array.isArray(value.exactWritablePaths)
+    || value.exactWritablePaths.length > 64
+  ) {
+    throw new TypeError(
+      'Agent editContext must contain only a bounded exactWritablePaths array.',
+    );
+  }
+
+  const exactWritablePaths: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value.exactWritablePaths as readonly unknown[]) {
+    if (
+      typeof candidate !== 'string'
+      || candidate.length === 0
+      || candidate.length > 512
+      || candidate !== candidate.trim()
+      || candidate.includes('\0')
+      || candidate.includes('\\')
+      || candidate.startsWith('/')
+      || /^[A-Za-z]:/u.test(candidate)
+    ) {
+      throw new TypeError('Agent exact writable path is invalid.');
+    }
+    const segments = candidate.split('/');
+    if (segments.some((segment) => (
+      segment.length === 0
+      || segment === '.'
+      || segment === '..'
+      || segment.startsWith('.')
+    ))) {
+      throw new TypeError(
+        'Agent exact writable paths cannot traverse or target hidden paths.',
+      );
+    }
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      exactWritablePaths.push(candidate);
+    }
+  }
+  return { exactWritablePaths };
 }
 
 export function createOanClient(options: OanClientOptions = {}): OanClient {
@@ -2113,10 +2149,15 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     ...playRehearsalClient,
     backendBaseUrl,
     getAgentChatApi: () => joinUrl(backendBaseUrl, '/api/agent/chat'),
-    createAgentChatTransport: () =>
-      new DefaultChatTransport<UIMessage>({
+    createAgentChatTransport: (editContext) => {
+      const normalizedEditContext = normalizeAgentChatEditContext(editContext);
+      return new DefaultChatTransport<UIMessage>({
         api: joinUrl(backendBaseUrl, '/api/agent/chat'),
-      }),
+        ...(normalizedEditContext === undefined
+          ? {}
+          : { body: { editContext: normalizedEditContext } }),
+      });
+    },
     getAppVersion: async () => bridge?.app?.getVersion(),
     getSystemThemePreference: systemTheme,
     getAppConfig,
@@ -2744,17 +2785,27 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         body: input,
       }),
     listPendingActions: () =>
-      requestJson<{ pendingActions: PendingAction[] }>('/api/workspace/pending-actions'),
+      requestJson<unknown>('/api/workspace/pending-actions')
+        .then(parsePendingActionViewListEnvelope),
+    readPendingAction: (id) =>
+      requestJson<unknown>(
+        `/api/workspace/pending-actions/${encodeURIComponent(id)}`,
+      ).then(parsePendingActionViewEnvelope),
     acceptPendingAction: (id) =>
-      requestJson<AcceptedPendingAction>(
+      requestJson<unknown>(
         `/api/workspace/pending-actions/${encodeURIComponent(id)}/accept`,
         { method: 'POST' },
-      ),
+      ).then(parsePendingActionDecisionEnvelope),
     rejectPendingAction: (id) =>
-      requestJson<RejectedPendingAction>(
+      requestJson<unknown>(
         `/api/workspace/pending-actions/${encodeURIComponent(id)}/reject`,
         { method: 'POST' },
-      ),
+      ).then(parsePendingActionDecisionEnvelope),
+    quickCommitPendingAction: (id) =>
+      requestJson<unknown>(
+        `/api/workspace/pending-actions/${encodeURIComponent(id)}/quick-commit`,
+        { method: 'POST' },
+      ).then(parsePendingActionQuickCommitEnvelope),
     getChapters: () =>
       requestJson<{ index: ChapterIndex; status: ChapterIndexStatus }>(
         '/api/workspace/chapters',
@@ -3757,7 +3808,7 @@ function isPlayAdoptionPreviewEnvelope(
       'suggestions',
       'target',
       'payload',
-      'touchedFiles',
+      'changes',
       'diff',
       'fingerprint',
       'createdAt',
@@ -3784,8 +3835,11 @@ function isPlayAdoptionPreviewEnvelope(
     || !isPlayAdoptionTargetSuggestionList(value.suggestions)
     || !isPlayAdoptionTarget(value.target)
     || !isPlayAdoptionPayloadForTarget(value.target, value.payload)
-    || !isPlayAdoptionTouchedFiles(value.touchedFiles, value.target, value.payload)
-    || !isPlayAdoptionDiff(value.diff, value.touchedFiles)
+    || !isPlayAdoptionPreviewChanges(value.changes, value.target, value.payload)
+    || !isPlayAdoptionDiff(
+      value.diff,
+      (value.changes as PendingActionViewV1['changes']).map((change) => change.path),
+    )
     || !isSha256Hex(value.fingerprint)
     || !isValidPlayTimestamp(value.createdAt)
     || value.canonicalUnchanged !== true
@@ -3928,12 +3982,6 @@ function isPlayAdoptionTargetSuggestionList(
     'timeline',
     'foreshadow',
   ] as const satisfies readonly PlayAdoptionTarget[];
-  const tools: Record<PlayAdoptionTarget, PlayAdoptionWriteIntentToolName> = {
-    chapterDraft: 'chapter.createDraft',
-    state: 'state.set',
-    timeline: 'timeline.add',
-    foreshadow: 'foreshadow.create',
-  };
   if (!Array.isArray(value) || value.length !== targets.length) return false;
   let recommended = 0;
   for (const [index, entry] of value.entries()) {
@@ -3942,13 +3990,11 @@ function isPlayAdoptionTargetSuggestionList(
       !isRecord(entry)
       || !hasOnlyKnownFields(entry, [
         'target',
-        'toolName',
         'recommended',
         'reason',
         'defaultPayload',
       ])
       || entry.target !== target
-      || entry.toolName !== tools[target]
       || typeof entry.recommended !== 'boolean'
       || !isBoundedNonEmptyString(entry.reason, 1_000)
       || entry.reason !== entry.reason.trim()
@@ -3959,6 +4005,37 @@ function isPlayAdoptionTargetSuggestionList(
     if (entry.recommended) recommended += 1;
   }
   return recommended === 1;
+}
+
+function isPlayAdoptionPreviewChanges(
+  value: unknown,
+  target: PlayAdoptionTarget,
+  payload: unknown,
+): value is PendingActionViewV1['changes'] {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || !isPlayAdoptionPayloadForTarget(target, payload)
+  ) return false;
+  let changes: PendingActionViewV1['changes'];
+  try {
+    changes = parsePendingActionView({
+      id: 'preview-shape',
+      title: 'Preview',
+      description: 'Preview changes',
+      status: 'pending',
+      createdAt: '2000-01-01T00:00:00.000Z',
+      changes: value,
+      diff: '',
+    }).changes;
+  } catch {
+    return false;
+  }
+  return isPlayAdoptionTouchedFiles(
+    changes.map((change) => change.path),
+    target,
+    payload,
+  );
 }
 
 function isPlayAdoptionPayloadForTarget(
@@ -4118,16 +4195,33 @@ function parsePlayAdoptionPendingActionResponse(
     )
     || !isPlayAdoptionCandidateEnvelope(value.candidate)
     || value.candidate.id !== `adoption-${request.previewId.slice(3)}`
-    || !isPlayAdoptionPendingActionEnvelope(
-      value.pendingAction,
-      request.previewId,
-      value.candidate,
-    )
     || !isWorkspaceDecisionRefreshEnvelope(value.refresh)
   ) {
     throw new Error('Play adoption PendingAction returned an invalid payload.');
   }
-  return value as unknown as PlayAdoptionPendingActionResult;
+  let pendingAction: PendingActionViewV1;
+  try {
+    pendingAction = parsePendingActionView(value.pendingAction);
+  } catch {
+    throw new Error('Play adoption PendingAction returned an invalid payload.');
+  }
+  const candidate = value.candidate as PlayAdoptionCandidate;
+  const changedFiles = pendingAction.changes.map((change) => change.path);
+  if (
+    pendingAction.id !== request.previewId
+    || pendingAction.status !== 'pending'
+    || !candidate.payload
+    || !isPlayAdoptionTouchedFiles(changedFiles, candidate.target, candidate.payload)
+    || !isPlayAdoptionDiff(pendingAction.diff, changedFiles)
+  ) {
+    throw new Error('Play adoption PendingAction returned an invalid payload.');
+  }
+  return {
+    sessionUpdate: structuredClone(value.sessionUpdate) as PlayAdoptionSessionUpdate,
+    candidate: structuredClone(candidate),
+    pendingAction,
+    refresh: structuredClone(value.refresh) as WorkspaceDecisionRefresh,
+  };
 }
 
 function isPlayAdoptionSessionUpdateEnvelope(
@@ -4140,41 +4234,6 @@ function isPlayAdoptionSessionUpdateEnvelope(
     && value.sessionId === sessionId
     && value.baseRevision === baseRevision
     && value.revision === baseRevision + 1;
-}
-
-function isPlayAdoptionPendingActionEnvelope(
-  value: unknown,
-  previewId: string,
-  candidate: PlayAdoptionCandidate,
-): value is PlayAdoptionPendingActionReceipt {
-  const touchedFiles = isRecord(value) ? value.touchedFiles : undefined;
-  if (
-    !isRecord(value)
-    || !hasOnlyKnownFields(value, [
-      'id',
-      'title',
-      'description',
-      'touchedFiles',
-      'diff',
-      'createdAt',
-      'status',
-    ])
-    || value.id !== previewId
-    || !isBoundedNonEmptyString(value.title, 1_000)
-    || !isBoundedNonEmptyString(value.description, 4_000)
-    || !candidate.payload
-    || !isPlayAdoptionTouchedFiles(
-      touchedFiles,
-      candidate.target,
-      candidate.payload,
-    )
-    || !isPlayAdoptionDiff(value.diff, touchedFiles)
-    || !isValidPlayTimestamp(value.createdAt)
-    || value.status !== 'pending'
-  ) {
-    return false;
-  }
-  return true;
 }
 
 function isWorkspaceDecisionRefreshEnvelope(

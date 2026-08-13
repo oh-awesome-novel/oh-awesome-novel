@@ -1,5 +1,7 @@
 # Evidence-backed Play Adoption M4 Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-07-16). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > Date: 2026-07-16
 > Task: [1170 Evidence-backed Play Adoption Path](../../tasks/1170.md)
 

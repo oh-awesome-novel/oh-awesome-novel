@@ -1,5 +1,7 @@
 # Projections And Project Health Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Projection is a read model, not truth. It must be deletable and rebuildable.
 
 **Goal:** Provide author-readable views and read-only health checks over existing Object File Tree domains.

@@ -145,7 +145,7 @@ OAN 对它的升级是：
 
 ```text
 novel-bot: tool -> direct file write
-OAN: tool -> PendingAction / SemanticPatch -> diff preview -> Human Approval -> materialize
+OAN: tool -> PendingAction / CandidateChangeSet -> diff preview -> Human Approval -> materialize
 ```
 
 ### agent loop
@@ -315,7 +315,7 @@ OAN 当前文档已经能看到这两类理念的落地：
 - `AGENT_OPERATING_MANUAL.md` 明确最终目标是 `Obsidian + Git + Aider + NovelBot`。
 - `FILESYSTEM_SPEC.md` 将 novel-bot 的扁平 Markdown workspace 升级成细粒度 Object File Tree。
 - `novel-copilot-skill.ts` 已定义 observe -> plan -> draft/propose -> verify -> settle。
-- OAN 已有 `summary.get`、`state.get`、`timeline.list`、`foreshadow.list` 等读工具，以及 `chapter.createDraft`、`summary.generateChapter`、`state.set`、`timeline.add`、`foreshadow.create` 等写意图工具。
+- OAN 已有 `summary.get`、`state.get`、`timeline.list`、`foreshadow.list` 等读工具，以及 `workspace.proposeChanges`、`workspace.proposeChanges`、`workspace.proposeChanges`、`workspace.proposeChanges`、`workspace.proposeChanges` 等写意图工具。
 - `OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` 已把 chapter-intent、context-package、PRE_WRITE_CHECK、observation log、settlement bundle、audit checklist 等写作指引升级为候选 vNext。
 
 因此判断：
@@ -330,7 +330,7 @@ novel-bot 与 StoryWriter 的核心理念已经进入 OAN。
 虽然理念已经覆盖，但这两个项目仍提供几个提醒：
 
 1. **先保持小工具循环可理解**  
-   novel-bot 的好处是容易理解。OAN 后续即使加强 context package、run log、SemanticPatch，也要避免让 agent runtime 变成黑箱。
+   novel-bot 的好处是容易理解。OAN 后续即使加强 context package、run log、CandidateChangeSet，也要避免让 agent runtime 变成黑箱。
 
 2. **写作前必须有结构，而不是直接写正文**  
    StoryWriter 的 event -> sub-event -> chapter 说明长篇生成必须先有剧情骨架。OAN 的 chapter-intent 不应被省略。

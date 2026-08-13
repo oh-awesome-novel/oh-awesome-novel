@@ -17,9 +17,11 @@ Aider-style Runtime
     +
 Vercel AI SDK Tool Calling
     +
+In-memory bash-tool / just-bash Editing
+    +
 Object File Tree
     +
-SemanticPatch Apply Engine
+CandidateChangeSet + PendingAction
     +
 Git Diff Human Approval
 ```
@@ -32,7 +34,9 @@ Git Diff Human Approval
 - AI 是 Copilot，不是数据所有者。
 - 所有写入真实目标文件必须经过人类确认。
 - Runtime 学 Aider 的极简循环，不做重型多 Agent 平台。
-- 文件修改核心采用 `SemanticPatch + Apply Engine`，避免全文重写。
+- 文件修改核心采用 `bash-tool + just-bash + CandidateChangeSet + PendingAction + ChangeMaterializer`。
+- 模型只能编辑固定的内存投影；Accept 前不得触碰 canonical 文件，Accept 也不得重放 shell 命令。
+- `Sandbox Change Engine` 是唯一正式写入架构；不得恢复私有 patch DSL、双引擎、兼容 reader 或旧记录迁移器。
 
 ## 优先阅读
 
@@ -47,8 +51,9 @@ Git Diff Human Approval
 1. `docs/PROJECT_VISION.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/FILESYSTEM_SPEC.md`
-4. `docs/APPLY_ENGINE.md`
-5. `docs/DEVELOPMENT_PLAN.md`
+4. `docs/SANDBOX_CHANGE_ENGINE.md`
+5. `docs/adr/0004-sandbox-change-engine.md`
+6. `docs/DEVELOPMENT_PLAN.md`
 
 ## 工作原则
 
@@ -65,7 +70,7 @@ Git Diff Human Approval
 - 实现时保持 filesystem-first：项目状态应能由文件树、Markdown、YAML 和 Git 历史解释。
 - 不要引入重型多 Agent 平台或复杂 Repository Layer，除非后续设计文档明确改变方向。
 - 与小说内容相关的数据应优先落到对象文件树，而不是隐藏在运行时状态或私有数据库中。
-- 用户确认前不得写真实目标文件；允许系统内部写入 `workspace/.workspace` shadow recovery / PendingAction 数据用于 diff preview 和崩溃恢复。
+- 用户确认前不得写真实目标文件；允许系统内部写入 `workspace/.workspace/change-engine/v1` 的 immutable draft、PendingAction 与 recovery 数据用于审批和崩溃恢复。
 - AI 发起的文件修改在 PendingAction accept 后默认应按配置自动 Git commit；`git.autoCommitOnAccept: false` 时不得自动 commit 或 sync，并应提供用户显式 quick commit 入口。
 
 ## 测试放置规则

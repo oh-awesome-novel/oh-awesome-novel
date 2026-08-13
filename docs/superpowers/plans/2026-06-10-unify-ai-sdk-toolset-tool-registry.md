@@ -1,5 +1,7 @@
 # Unify AI SDK ToolSet Tool Registry Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ensure the implementation uses Vercel AI SDK `ToolSet` as the only runtime/tool-calling abstraction, with no `defineStoryTool()`, `StoryTool`, or independent `RuntimeToolRegistry`.

@@ -261,7 +261,7 @@ SillyTavern 的角色扮演交互体验
     +
 InkOS Play 的事务式状态提交
     +
-OAN 的 PendingAction / SemanticPatch / Git diff 审批
+OAN 的 PendingAction / CandidateChangeSet / Git diff 审批
 ```
 
 换句话说：SillyTavern 负责启发“怎么玩、怎么试”；InkOS Play 负责启发“怎么结算”；OAN 负责确保“怎么进入真实小说文件树”。

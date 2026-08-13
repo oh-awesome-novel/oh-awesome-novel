@@ -74,7 +74,7 @@ archives/
 
 `status.md#phase` 是调度路由状态，`chapters/*.md#status` 是章节生命周期；order 文件是跨 Agent hand-off。正文经历 draft、anti-ai 和 final archive 多个文件，设定、时间线、角色状态和伏笔在归档阶段直接更新。
 
-这是一套 filesystem-persisted 工作流，但 Git 不是统一历史引擎，也不存在 SemanticPatch / PendingAction。作者在各阶段可以确认方案，却仍可通过 SOLO 模式把确认权委托给 Agent；这种可绕过行为与 OAN 的真实目标文件审批硬边界不兼容。
+这是一套 filesystem-persisted 工作流，但 Git 不是统一历史引擎，也不存在 CandidateChangeSet / PendingAction。作者在各阶段可以确认方案，却仍可通过 SOLO 模式把确认权委托给 Agent；这种可绕过行为与 OAN 的真实目标文件审批硬边界不兼容。
 
 ## 断点续跑、归档与回滚
 
@@ -90,7 +90,7 @@ v4.10 以后新增的机制包括：
 
 这些协议证明“阶段内 checkpoint”和“领域补偿式回滚”可以仅靠文件实现。但它们不是数据库事务：多个对象由 Agent 按 SOP 顺序修改，失败恢复依赖幂等锚点、checkpoint 和后续补做，也没有 Git receipt 证明每一步的真实结果。
 
-OAN 可借鉴 partial artifact、source fingerprint 和 resumable phase；正式 materialization 仍必须由 Apply Engine 与 Git 管理，不能用 prompt 驱动的补偿写入替代。
+OAN 可借鉴 partial artifact、source fingerprint 和 resumable phase；正式 materialization 仍必须由 ChangeMaterializer 与 Git 管理，不能用 prompt 驱动的补偿写入替代。
 
 ## 跨宿主平台层
 
@@ -231,4 +231,4 @@ fail-fast 本身是合理改进：生成跨宿主权限与 Agent 配置时，解
 - `reference-only/awesome-novel-skill/LICENSE`
 - `reference-only/awesome-novel-skill/LICENSE-DECLARATION.md`
 
-本文只更新参考判断。OAN 的正式方案仍由自身稳定设计文档、task、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 决定。
+本文只更新参考判断。OAN 的正式方案仍由自身稳定设计文档、task、Object File Tree、AI SDK ToolSet、CandidateChangeSet、PendingAction 和 Git diff approval 决定。

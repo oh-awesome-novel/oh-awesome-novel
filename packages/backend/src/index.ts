@@ -61,6 +61,7 @@ import {
   normalizeLlmProviderConfig,
   normalizePlayRelativeTimeAdvance,
   normalizePlayAdoptionSeed,
+  normalizePlayAdoptionBusinessTarget,
   normalizePlayWorldMomentum,
   preparePlayWorldSettlementRetry,
   projectPlayOutcomeReport,
@@ -178,6 +179,10 @@ import type {
 } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
+  createPendingActionViewHandlers,
+  toPendingActionViewErrorResponse,
+} from './pending-action-view.js';
+import {
   createPlayRehearsalBackendController,
   toPlayRehearsalErrorResponse,
 } from './play-rehearsal.js';
@@ -196,33 +201,35 @@ import type {
 } from './reference-deconstruction.js';
 import {
   buildChapterIndex,
-  acceptPendingAction,
   commitFiles,
+  createChangeMaterializer,
+  createPendingActionStore,
+  createPlayAdoptionChangeProposal,
+  PendingActionProtocolError,
   createReadTools,
-  createWriteIntentTools,
   gitDiff,
-  listPendingActions,
-  prepareWriteIntentPreview,
-  promoteWriteIntentPreview,
-  validateWriteIntentPreview,
   listGitCommits,
   loadYaml,
-  readPendingAction,
+  readRepositoryBaseline,
   readGitStatus,
   readChapterIndexStatus,
-  rejectPendingAction,
   showGitCommit,
   syncGit,
   writeChapterIndexFile,
 } from '@oh-awesome-novel/tools';
 import type {
-  PreviewableWriteIntentToolName,
-  ReferenceDeconstructionPublishPendingActionOrigin,
-  ReferenceMaterialAdoptionPendingActionOrigin,
-  WriteIntentPendingAction,
+  ChangeMaterializer,
+  PendingAction,
+  PendingActionStore,
+  PendingActionView,
+  PreparedChangePreviewV1,
+  SandboxPendingActionOrigin,
 } from '@oh-awesome-novel/tools';
 import {
   createStoredPlayAdoptionPreview,
+  fingerprintPlayAdoptionPreviewBinding,
+  markStoredPlayAdoptionCandidate,
+  promoteStoredPlayAdoptionPreview,
   projectStoredPlayAdoptionDiff,
   projectStoredPlayAdoptionPreview,
   readStoredPlayAdoptionPreview,
@@ -239,6 +246,10 @@ import {
 import type {
   ReferenceMaterialAdoptionController,
 } from './reference-material-adoption.js';
+import {
+  fingerprintCandidateProjection,
+  readCandidateTargetSnapshots,
+} from './candidate-snapshot.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
@@ -247,7 +258,9 @@ const PLAY_CONTEXT_EVENT_LIMIT = 12;
 
 class InvalidJsonBodyError extends Error {}
 
-class StalePlayAdoptionPreviewError extends Error {}
+class StalePlayAdoptionPreviewError extends Error {
+  readonly code = 'STALE_PLAY_ADOPTION_PREVIEW';
+}
 
 export interface NovelBackendOptions {
   workspaceRoot?: string;
@@ -304,6 +317,8 @@ export interface NovelBackendAgentInput {
   request: string;
   workspaceRoot: string;
   messages: UIMessage[];
+  /** Trusted renderer-selected canonical targets; never inferred from prompt text. */
+  exactWritablePaths: readonly string[];
   playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
 }
 
@@ -331,10 +346,18 @@ interface BackendState {
   providerConfigState: LlmProviderConfigState;
   providerConfigLoaded: boolean;
   activePlayTurns: Set<string>;
+  pendingActionPlaySessions: Map<string, PlaySession>;
   playTurnRuns: Map<string, PlayTurnRunRecord>;
   playRehearsal?: PlayRehearsalBackendController;
   referenceDeconstruction?: ReferenceDeconstructionBackendController;
   referenceMaterialAdoption?: ReferenceMaterialAdoptionController;
+  pendingActionServices: Map<string, Promise<PendingActionServices>>;
+}
+
+interface PendingActionServices {
+  store: PendingActionStore;
+  materializer: ChangeMaterializer;
+  handlers: import('./pending-action-view.js').PendingActionViewHandlers;
 }
 
 type PlayTurnRunStatus =
@@ -400,7 +423,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       : createEmptyLlmProviderConfigState(),
     providerConfigLoaded: Boolean(options.providerConfig),
     activePlayTurns: new Set<string>(),
+    pendingActionPlaySessions: new Map<string, PlaySession>(),
     playTurnRuns: new Map<string, PlayTurnRunRecord>(),
+    pendingActionServices: new Map<string, Promise<PendingActionServices>>(),
   };
   const app = new Hono();
   const playRehearsal = createPlayRehearsalBackendController({
@@ -482,6 +507,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   state.referenceDeconstruction = referenceDeconstruction;
   const referenceMaterialAdoption = createReferenceMaterialAdoptionController({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getPendingActionStore: async (workspaceRoot) =>
+      (await getPendingActionServices(state, workspaceRoot)).store,
     async getModelRuntime() {
       await ensureProviderConfigLoaded(options, state);
       const providerConfig = options.providerConfig
@@ -509,8 +536,16 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
 
   app.onError((error, context) => jsonResponse(
     context,
-    error instanceof InvalidJsonBodyError ? 400 : 500,
-    { error: error instanceof Error ? error.message : String(error) },
+    error instanceof InvalidJsonBodyError
+      ? 400
+      : hasPendingActionErrorCode(error)
+        ? toPendingActionViewErrorResponse(error).status
+        : 500,
+    error instanceof InvalidJsonBodyError
+      ? { error: error.message }
+      : hasPendingActionErrorCode(error)
+        ? toPendingActionViewErrorResponse(error).body
+        : { error: error instanceof Error ? error.message : String(error) },
   ));
 
   app.get('/api/health', (context) => context.json({ ok: true }));
@@ -899,6 +934,20 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.post('/api/workspace/onboarding', (context) => handleSaveWorkspaceOnboarding(options, state, context));
   app.get('/api/workspace/pending-actions', (context) => handleListPendingActions(options, state, context));
+  app.get('/api/workspace/pending-actions/:id', (context) =>
+    handleReadPendingActionView(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/pending-actions/:id/quick-commit', (context) =>
+    handlePendingActionQuickCommit(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
   app.post('/api/workspace/pending-actions/:id/:decision', (context) => {
     const decision = context.req.param('decision');
 
@@ -970,6 +1019,7 @@ async function handleAgentChat(
   const messages = Array.isArray(body.messages) ? (body.messages as UIMessage[]) : [];
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
   const attachmentIds = readPlayWritingReferenceAttachmentIds(body);
+  const exactWritablePaths = readAgentExactWritablePaths(body);
 
   if (!requestText.trim()) {
     return jsonResponse(context, 400, { error: 'A user message is required.' });
@@ -1008,6 +1058,7 @@ async function handleAgentChat(
     request: requestText,
     workspaceRoot,
     messages,
+    exactWritablePaths,
     ...(playWritingReferences.length ? { playWritingReferences } : {}),
   });
   const stream = runtimeEventsToUiMessageStream(runtimeEvents);
@@ -1513,8 +1564,9 @@ async function handleWorkspaceStatus(
   context: NovelBackendContext,
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const pendingStore = await createPendingActionStore({ workspaceRoot });
   const [pendingActions, gitStatus, gitConfig] = await Promise.all([
-    listPendingActions({ workspaceRoot }),
+    pendingStore.listViews({ status: 'pending' }),
     readGitStatus(workspaceRoot),
     readWorkspaceGitConfig(workspaceRoot),
   ]);
@@ -2295,7 +2347,8 @@ async function handleWorkspaceProjectHealth(
   context: NovelBackendContext,
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
-  const pendingActions = await listPendingActions({ workspaceRoot });
+  const pendingStore = await createPendingActionStore({ workspaceRoot });
+  const pendingActions = await pendingStore.listViews({ status: 'pending' });
   const health = await readProjectHealth(workspaceRoot, {
     pendingActionCount: pendingActions.length,
   });
@@ -4891,36 +4944,89 @@ async function handleCreatePlayAdoptionPreview(
         error: `Play adoption target is not available: ${target}.`,
       });
     }
-    const payload = structuredClone(
+    const payload = normalizePlayAdoptionPayloadForChangeEngine(
+      target,
       request.value.payload ?? suggestion.defaultPayload,
+      session.revision,
     );
-    const toolRequest = createPlayAdoptionToolRequest(target, payload);
-    if ('error' in toolRequest) {
-      return jsonResponse(context, 400, { error: toolRequest.error });
-    }
-    if (toolRequest.toolName !== suggestion.toolName) {
-      throw new Error('Play adoption target does not match its write-intent tool.');
-    }
-
-    const preparedWriteIntent = await prepareWriteIntentPreview({
-      workspaceRoot,
-      toolName: toolRequest.toolName,
-      args: toolRequest.args,
-    });
-    const stored = createStoredPlayAdoptionPreview({
+    const businessTarget = normalizePlayAdoptionBusinessTarget({ target, payload });
+    const previewId = `pa_${randomUUID()}`;
+    const createdAt = new Date().toISOString();
+    const branchId = playAdoptionBranchId(session);
+    const candidateId = `adoption-${previewId.slice(3)}`;
+    const previewFingerprint = fingerprintPlayAdoptionPreviewBinding({
+      id: previewId,
       sessionId: session.id,
+      branchId,
       baseRevision: session.revision,
       projection: request.value.projection,
-      candidateId: `adoption-${preparedWriteIntent.id.slice(3)}`,
+      candidateId,
       fullDraft,
       target,
       payload,
-      preparedWriteIntent,
+      createdAt,
+    });
+    const origin: Extract<SandboxPendingActionOrigin, { kind: 'playAdoption' }> = {
+      kind: 'playAdoption',
+      sessionId: session.id,
+      branchId,
+      sourceRevision: session.revision,
+      previewFingerprint,
+    };
+    const baselineFiles = await readCandidateTargetSnapshots(
+      workspaceRoot,
+      [businessTarget.targetFile],
+    );
+    const proposal = createPlayAdoptionChangeProposal({
+      target,
+      payload,
+      source: {
+        sessionId: session.id,
+        branchId,
+        sourceRevision: session.revision,
+        previewFingerprint,
+      },
+      context: {
+        sessionId: `play-adoption-${previewId.slice(3)}`,
+        repository: await readRepositoryBaseline(workspaceRoot),
+        projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+        baselineFiles,
+        origin,
+        createdAt,
+        finalizedAt: createdAt,
+      },
+    });
+    if (!proposal) {
+      throw new Error('Play adoption target already matches the reviewed payload.');
+    }
+    const services = await getPendingActionServices(state, workspaceRoot);
+    const preparedChangePreview = await services.store.prepareChangePreview({
+      candidate: proposal.candidate,
+      origin,
+      allowedTargets: proposal.allowedTargets,
+      id: previewId,
+      createdAt,
+    });
+    const stored = createStoredPlayAdoptionPreview({
+      sessionId: session.id,
+      branchId,
+      baseRevision: session.revision,
+      projection: request.value.projection,
+      candidateId,
+      fullDraft,
+      target,
+      payload,
+      preparedChangePreview,
+      createdAt,
     });
     await writeStoredPlayAdoptionPreview(workspaceRoot, stored, { create: true });
 
     return jsonResponse(context, 200, {
-      preview: projectStoredPlayAdoptionPreview(stored, projectedDraft),
+      preview: projectStoredPlayAdoptionPreview(
+        stored,
+        projectedDraft,
+        preparedChangePreview,
+      ),
     });
   } catch (error) {
     return playAdoptionPreviewErrorResponse(
@@ -4968,6 +5074,8 @@ async function handlePromotePlayAdoptionPreview(
   let responseProjection: PlayAdoptionProjection | undefined;
   try {
     let stored = await readStoredPlayAdoptionPreview(workspaceRoot, previewId);
+    const services = await getPendingActionServices(state, workspaceRoot);
+    const preparedChangePreview = await services.store.readPreparedChangePreview(previewId);
     responseProjection = stored.projection;
     if (
       stored.id !== previewId ||
@@ -4993,14 +5101,13 @@ async function handlePromotePlayAdoptionPreview(
     if (stored.status === 'promoted') {
       assertPlayAdoptionSourcesHashBound(session);
       await loadPlayActivatedSourceContext(workspaceRoot, session);
-      const livePendingAction = (await listPendingActions({ workspaceRoot }))
-        .find((action) => action.id === stored.id);
+      const livePendingAction = await services.store.readView(stored.id);
       if (
-        !stored.pendingAction ||
+        stored.pendingActionId !== stored.id ||
         !existingCandidate ||
         !isDeepStrictEqual(existingCandidate, expectedCandidate) ||
-        !livePendingAction ||
-        !isDeepStrictEqual(livePendingAction, stored.pendingAction) ||
+        livePendingAction.status !== 'pending' ||
+        livePendingAction.origin?.kind !== 'playAdoption' ||
         session.revision !== stored.baseRevision + 1 ||
         !isStoredPlayAdoptionBranchCurrent(session, stored)
       ) {
@@ -5015,6 +5122,7 @@ async function handlePromotePlayAdoptionPreview(
         session,
         existingCandidate,
         livePendingAction,
+        preparedChangePreview,
       );
     }
 
@@ -5030,7 +5138,7 @@ async function handlePromotePlayAdoptionPreview(
         );
       }
       if (stored.status === 'prepared') {
-        stored = { ...stored, status: 'candidateStored' };
+        stored = markStoredPlayAdoptionCandidate(stored);
         await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
       }
     } else {
@@ -5059,37 +5167,53 @@ async function handlePromotePlayAdoptionPreview(
         );
       }
 
-      await validateWriteIntentPreview({
+      await assertPreparedChangePreviewCanonicalCurrent(
         workspaceRoot,
-        preview: stored.preparedWriteIntent,
-      });
+        preparedChangePreview,
+      );
       const next = addPlayAdoptionCandidate(session, expectedCandidate);
       await writePlaySessionFiles(workspaceRoot, next, {
         expectedCurrentSession: session,
       });
       session = next;
-      stored = { ...stored, status: 'candidateStored' };
+      stored = markStoredPlayAdoptionCandidate(stored);
       await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
     }
 
-    let pendingAction: WriteIntentPendingAction;
+    let pendingAction: PendingActionView;
     try {
-      pendingAction = await promoteWriteIntentPreview({
-        workspaceRoot,
-        preview: stored.preparedWriteIntent,
+      const origin = preparedChangePreview.origin;
+      if (origin.kind !== 'playAdoption') {
+        throw new StalePlayAdoptionPreviewError('Play adoption preview origin is invalid.');
+      }
+      pendingAction = await services.store.promotePreparedChangePreview({
+        id: stored.id,
+        title: `Adopt Play Candidate ${stored.candidateId}`,
+        description: `Adopt reviewed Play material into ${preparedChangePreview.allowedTargets.join(', ')}.`,
+        source: {
+          kind: 'deterministic-builder',
+          producer: 'play-adoption',
+          capability: 'play.adopt',
+        },
+        origin,
+        allowedTargets: preparedChangePreview.allowedTargets,
       });
     } catch (error) {
-      const existingAction = (await listPendingActions({ workspaceRoot }))
-        .find((action) => action.id === stored.id);
-      if (!existingAction) throw error;
+      let existingAction: PendingActionView | undefined;
+      try {
+        existingAction = await services.store.readView(stored.id);
+      } catch {
+        // Preserve the original promotion failure when no action was created.
+      }
+      if (!existingAction || existingAction.status !== 'pending') throw error;
       pendingAction = existingAction;
     }
 
-    stored = {
-      ...stored,
-      status: 'promoted',
+    stored = promoteStoredPlayAdoptionPreview(
+      stored,
+      preparedChangePreview,
       pendingAction,
-    };
+    );
     await writeStoredPlayAdoptionPreview(workspaceRoot, stored);
 
     return playAdoptionPromotionSuccessResponse(
@@ -5099,6 +5223,7 @@ async function handlePromotePlayAdoptionPreview(
       session,
       expectedCandidate,
       pendingAction,
+      preparedChangePreview,
     );
   } catch (error) {
     return playAdoptionPreviewErrorResponse(
@@ -5162,13 +5287,129 @@ function isStoredPlayAdoptionBranchCurrent(
     isDeepStrictEqual(closure.sourceSnapshots, sourceBase.sourceSnapshots);
 }
 
+function playAdoptionBranchId(session: PlaySession): string {
+  return session.selectedTurnIds.at(-1) ?? 'initial-world';
+}
+
+function fingerprintManualPlayAdoptionOrigin(
+  session: PlaySession,
+  candidate: PlayAdoptionCandidate,
+): string {
+  if (!candidate.payload) {
+    throw new StalePlayAdoptionPreviewError(
+      'Manual Play adoption candidate has no payload.',
+    );
+  }
+  const payload = normalizePlayAdoptionPayloadForChangeEngine(
+    candidate.target,
+    candidate.payload,
+    session.revision,
+  );
+  return createHash('sha256').update(stableBackendJson({
+    sessionId: session.id,
+    branchId: playAdoptionBranchId(session),
+    sourceRevision: session.revision,
+    candidateId: candidate.id,
+    target: candidate.target,
+    payload,
+  })).digest('hex');
+}
+
+function normalizePlayAdoptionPayloadForChangeEngine(
+  target: PlayAdoptionTarget,
+  value: Record<string, unknown>,
+  sourceRevision: number,
+): Record<string, unknown> {
+  const payload = structuredClone(value);
+  if (target === 'chapterDraft' && typeof payload.content === 'string') {
+    const content = payload.content.trim();
+    if (content && !/^#\s+\S/mu.test(content)) {
+      const title = typeof payload.title === 'string' && payload.title.trim()
+        ? payload.title.trim()
+        : 'Play Adoption Draft';
+      payload.content = `# ${title}\n\n${content}\n`;
+    }
+  }
+  if (target === 'timeline' && isRecord(payload.event)) {
+    const event = payload.event;
+    const summary = typeof event.summary === 'string' ? event.summary.trim() : '';
+    payload.event = {
+      ...event,
+      ...(event.title === undefined && event.name === undefined && summary
+        ? { title: summary }
+        : {}),
+      ...(event.date === undefined && event.time === undefined && event.order === undefined
+        ? { time: `play-session-revision-${sourceRevision}` }
+        : {}),
+    };
+  }
+  if (target === 'foreshadow' && isRecord(payload.item)) {
+    const item = payload.item;
+    const summary = typeof item.summary === 'string' ? item.summary.trim() : '';
+    payload.item = {
+      ...item,
+      ...(item.setup === undefined && item.description === undefined && item.title === undefined
+        && summary
+        ? { setup: summary }
+        : {}),
+    };
+  }
+  return payload;
+}
+
+function stableBackendJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableBackendJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableBackendJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+async function assertPreparedChangePreviewCanonicalCurrent(
+  workspaceRoot: string,
+  preview: PreparedChangePreviewV1,
+): Promise<void> {
+  const repository = await readRepositoryBaseline(workspaceRoot);
+  if (!isDeepStrictEqual(repository, preview.repository)) {
+    throw new StalePlayAdoptionPreviewError('Play adoption repository baseline is stale.');
+  }
+  const snapshots = await readCandidateTargetSnapshots(
+    workspaceRoot,
+    preview.changes.map((change) => change.path),
+  );
+  const snapshotsByPath = new Map(snapshots.map((snapshot) => [snapshot.path, snapshot]));
+  for (const change of preview.changes) {
+    const snapshot = snapshotsByPath.get(change.path);
+    if (change.baseline.exists === false) {
+      if (snapshot) {
+        throw new StalePlayAdoptionPreviewError(
+          `Play adoption target unexpectedly exists: ${change.path}.`,
+        );
+      }
+      continue;
+    }
+    if (
+      !snapshot
+      || createHash('sha256').update(snapshot.content).digest('hex') !== change.baseline.sha256
+      || Buffer.byteLength(snapshot.content, 'utf8') !== change.baseline.byteLength
+      || snapshot.mode !== change.baseline.mode
+    ) {
+      throw new StalePlayAdoptionPreviewError(
+        `Play adoption target baseline is stale: ${change.path}.`,
+      );
+    }
+  }
+}
+
 async function playAdoptionPromotionSuccessResponse(
   context: NovelBackendContext,
   workspaceRoot: string,
   stored: StoredPlayAdoptionPreview,
   session: PlaySession,
   candidate: PlayAdoptionCandidate,
-  pendingAction: WriteIntentPendingAction,
+  pendingAction: PendingActionView,
+  preparedChangePreview: PreparedChangePreviewV1,
 ): Promise<Response> {
   const projectedCandidate = projectPlayAdoptionCandidate(
     candidate,
@@ -5180,7 +5421,7 @@ async function playAdoptionPromotionSuccessResponse(
     );
   }
   const projectedDiff = stored.projection === 'player'
-    ? projectStoredPlayAdoptionDiff(stored)
+    ? projectStoredPlayAdoptionDiff(stored, preparedChangePreview)
     : pendingAction.diff;
   return jsonResponse(context, 200, {
     sessionUpdate: {
@@ -5189,15 +5430,7 @@ async function playAdoptionPromotionSuccessResponse(
       revision: session.revision,
     },
     candidate: projectedCandidate,
-    pendingAction: {
-      id: pendingAction.id,
-      title: pendingAction.title,
-      description: pendingAction.description,
-      touchedFiles: [...pendingAction.touchedFiles],
-      diff: projectedDiff,
-      createdAt: pendingAction.createdAt,
-      status: pendingAction.status,
-    },
+    pendingAction: { ...pendingAction, diff: projectedDiff },
     refresh: await buildPostDecisionRefresh(workspaceRoot),
   });
 }
@@ -5301,22 +5534,81 @@ async function handleCreatePlayAdoptionPendingAction(
     throw error;
   }
 
-  const payload = isRecord(body.payload) ? body.payload : candidate.payload;
-  const toolRequest = createPlayAdoptionToolRequest(candidate.target, payload);
-
-  if ('error' in toolRequest) {
-    return jsonResponse(context, 400, { error: toolRequest.error });
+  if (Object.hasOwn(body, 'payload') && !isDeepStrictEqual(body.payload, candidate.payload)) {
+    return jsonResponse(context, 400, {
+      error: 'Play adoption payload must match the stored candidate.',
+    });
   }
-
-  const result = await executeWriteIntentTool(
-    createWriteIntentTools({ workspaceRoot }),
-    toolRequest.toolName,
-    toolRequest.args,
+  if (!candidate.payload) {
+    return jsonResponse(context, 400, {
+      error: 'Play adoption candidate requires a stored payload.',
+    });
+  }
+  const payload = normalizePlayAdoptionPayloadForChangeEngine(
+    candidate.target,
+    candidate.payload,
+    session.revision,
   );
+  const businessTarget = normalizePlayAdoptionBusinessTarget({
+    target: candidate.target,
+    payload,
+  });
+  const branchId = playAdoptionBranchId(session);
+  const pendingActionId = `pa_${randomUUID()}`;
+  const createdAt = new Date().toISOString();
+  const previewFingerprint = fingerprintManualPlayAdoptionOrigin(
+    session,
+    candidate,
+  );
+  const origin: Extract<SandboxPendingActionOrigin, { kind: 'playAdoption' }> = {
+    kind: 'playAdoption',
+    sessionId: session.id,
+    branchId,
+    sourceRevision: session.revision,
+    previewFingerprint,
+  };
+  const baselineFiles = await readCandidateTargetSnapshots(
+    workspaceRoot,
+    [businessTarget.targetFile],
+  );
+  const proposal = createPlayAdoptionChangeProposal({
+    target: candidate.target,
+    payload,
+    source: {
+      sessionId: session.id,
+      branchId,
+      sourceRevision: session.revision,
+      previewFingerprint,
+    },
+    context: {
+      sessionId: `play-adoption-${pendingActionId.slice(3)}`,
+      repository: await readRepositoryBaseline(workspaceRoot),
+      projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+      baselineFiles,
+      origin,
+      createdAt,
+      finalizedAt: createdAt,
+    },
+  });
+  if (!proposal) {
+    return jsonResponse(context, 409, {
+      error: 'Play adoption candidate already matches the canonical target.',
+      code: 'play_adoption_no_changes',
+    });
+  }
+  const services = await getPendingActionServices(state, workspaceRoot);
+  const pendingAction = await services.store.proposeCandidate({
+    candidate: proposal.candidate,
+    id: pendingActionId,
+    title: `Adopt Play Candidate ${candidate.id}`,
+    description: `Adopt reviewed Play material into ${businessTarget.targetFile}.`,
+    origin,
+    createdAt,
+  });
 
   return jsonResponse(context, 200, {
     candidate,
-    pendingActionResult: result,
+    pendingAction,
     refresh: await buildPostDecisionRefresh(workspaceRoot),
   });
 }
@@ -5403,9 +5695,39 @@ async function handleListPendingActions(
   context: NovelBackendContext,
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
-  const pendingActions = await listPendingActions({ workspaceRoot });
+  const services = await getPendingActionServices(state, workspaceRoot);
+  return jsonResponse(context, 200, await services.handlers.list());
+}
 
-  return jsonResponse(context, 200, { pendingActions });
+async function handleReadPendingActionView(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const services = await getPendingActionServices(state, workspaceRoot);
+  return jsonResponse(context, 200, await services.handlers.read(id));
+}
+
+async function handlePendingActionQuickCommit(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const services = await getPendingActionServices(state, workspaceRoot);
+  try {
+    const result = await services.handlers.quickCommit(id);
+    return jsonResponse(context, 200, {
+      ...result,
+      refresh: await buildPostDecisionRefresh(workspaceRoot),
+    });
+  } catch (error) {
+    const response = toPendingActionViewErrorResponse(error);
+    return jsonResponse(context, response.status, response.body);
+  }
 }
 
 async function handlePendingActionDecision(
@@ -5417,168 +5739,64 @@ async function handlePendingActionDecision(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const gitConfig = await readWorkspaceGitConfig(workspaceRoot);
-  const storedAction = await readPendingAction({ workspaceRoot, id });
-  const referenceOrigin = readReferencePublishPendingActionOrigin(
-    storedAction.origin,
-  );
-  const materialAdoptionOrigin = readReferenceMaterialAdoptionPendingActionOrigin(
-    storedAction.origin,
-  );
-  const hasReferenceArtifactPatch = storedAction.patches.some((patch) =>
-    isRecord(patch) && patch.kind === 'referenceArtifact');
-  if (hasReferenceArtifactPatch && !referenceOrigin) {
-    return jsonResponse(context, 409, {
-      error: 'Reference publication PendingAction origin is missing or invalid.',
-      code: 'invalid_reference_publish_pending_action',
-    });
-  }
-  let result: Awaited<ReturnType<typeof acceptPendingAction>> |
-    Awaited<ReturnType<typeof rejectPendingAction>>;
-  let referencePublish:
-    Awaited<ReturnType<ReferenceDeconstructionBackendController[
-      'completePublishPendingAction'
-    ]>> | undefined;
+  const services = await getPendingActionServices(state, workspaceRoot);
   try {
-    if (referenceOrigin) {
-      const controller = state.referenceDeconstruction;
-      if (!controller) {
-        throw new Error('Reference deconstruction controller is unavailable.');
-      }
-      const decided = await controller.decidePublishPendingAction(
-        id,
-        referenceOrigin,
-        decision,
-        gitConfig.autoCommitOnAccept,
-      );
-      result = decided.action;
-      referencePublish = decided.referencePublish;
-    } else if (materialAdoptionOrigin) {
-      const controller = state.referenceMaterialAdoption;
-      if (!controller) {
-        throw new Error('Reference Material adoption controller is unavailable.');
-      }
-      if (decision === 'accept') {
-        await controller.assertPendingActionCurrent(id, materialAdoptionOrigin);
-        result = await acceptPendingAction({
+    const source = await services.store.readAction(id);
+    const result = decision === 'accept'
+      ? await acceptPendingActionWithDomainLock({
           workspaceRoot,
-          id,
+          state,
+          services,
+          action: source,
           autoCommitOnAccept: gitConfig.autoCommitOnAccept,
-        });
-      } else {
-        result = await rejectPendingAction({ workspaceRoot, id });
-      }
-    } else {
-      result = decision === 'accept'
-        ? await acceptPendingActionWithPlayAdoptionValidation({
-            workspaceRoot,
-            state,
-            id,
-            autoCommitOnAccept: gitConfig.autoCommitOnAccept,
-          })
-        : await rejectPendingAction({ workspaceRoot, id });
-    }
+        })
+      : await services.handlers.reject(id);
+    const referencePublish = await finalizePendingActionDomainDecision(
+      state,
+      source,
+      decision,
+    );
+    return jsonResponse(context, 200, {
+      ...result,
+      ...(referencePublish === undefined ? {} : { referencePublish }),
+      refresh: await buildPostDecisionRefresh(workspaceRoot),
+    });
   } catch (error) {
+    if (error instanceof PlayLaunchSourceValidationError) {
+      return jsonResponse(context, 409, {
+        error: error.message,
+        code: 'play_launch_source_validation',
+      });
+    }
     if (
-      error instanceof StalePlayAdoptionPreviewError ||
-      error instanceof PlaySessionWriteConflictError
+      error instanceof StalePlayAdoptionPreviewError
+      || error instanceof PlaySessionWriteConflictError
     ) {
       return jsonResponse(context, 409, {
         error: error.message,
         code: 'stale_play_adoption_preview',
       });
     }
-    if (error instanceof PlayLaunchSourceValidationError) {
-      return playLaunchSourceConflictResponse(context, error.diagnostics);
-    }
-    if (referenceOrigin) {
-      const response = toReferenceDeconstructionErrorResponse(error);
-      return jsonResponse(context, response.status, response.body);
-    }
-    if (materialAdoptionOrigin) {
-      const response = toReferenceMaterialAdoptionErrorResponse(error);
-      return jsonResponse(context, response.status, response.body);
-    }
-    throw error;
+    const response = toPendingActionViewErrorResponse(error);
+    return jsonResponse(context, response.status, response.body);
   }
-
-  return jsonResponse(context, 200, {
-    ...result,
-    ...(referencePublish ? { referencePublish } : {}),
-    refresh: await buildPostDecisionRefresh(workspaceRoot),
-  });
 }
 
-function readReferencePublishPendingActionOrigin(
-  value: unknown,
-): ReferenceDeconstructionPublishPendingActionOrigin | undefined {
-  if (
-    !isRecord(value)
-    || Object.keys(value).length !== 5
-    || value.kind !== 'referenceDeconstructionPublish'
-    || typeof value.referenceId !== 'string'
-    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
-    || value.referenceId.includes('..')
-    || typeof value.runId !== 'string'
-    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.runId)
-    || value.runId.includes('..')
-    || !Number.isSafeInteger(value.runRevision)
-    || (value.runRevision as number) < 0
-    || typeof value.candidateFingerprint !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(value.candidateFingerprint)
-  ) {
-    return undefined;
-  }
-  return value as unknown as ReferenceDeconstructionPublishPendingActionOrigin;
-}
-
-function readReferenceMaterialAdoptionPendingActionOrigin(
-  value: unknown,
-): ReferenceMaterialAdoptionPendingActionOrigin | undefined {
-  if (
-    !isRecord(value)
-    || Object.keys(value).length !== 7
-    || value.kind !== 'referenceMaterialAdoption'
-    || typeof value.referenceId !== 'string'
-    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.referenceId)
-    || value.referenceId.includes('..')
-    || !Number.isSafeInteger(value.manifestRevision)
-    || (value.manifestRevision as number) < 0
-    || typeof value.sourceChecksumSha256 !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(value.sourceChecksumSha256)
-    || typeof value.catalogFingerprint !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(value.catalogFingerprint)
-    || typeof value.contextFingerprint !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(value.contextFingerprint)
-    || typeof value.previewFingerprint !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(value.previewFingerprint)
-  ) {
-    return undefined;
-  }
-  return value as unknown as ReferenceMaterialAdoptionPendingActionOrigin;
-}
-
-async function acceptPendingActionWithPlayAdoptionValidation(input: {
+async function acceptPendingActionWithDomainLock(input: {
   workspaceRoot: string;
   state: BackendState;
-  id: string;
+  services: PendingActionServices;
+  action: PendingAction;
   autoCommitOnAccept: boolean;
-}) {
-  const initialStored = await readOptionalStoredPlayAdoptionPreviewForDecision(
-    input.workspaceRoot,
-    input.id,
-  );
-  if (!initialStored) {
-    return acceptPendingAction({
-      workspaceRoot: input.workspaceRoot,
-      id: input.id,
+}): Promise<import('./pending-action-view.js').PendingActionDecisionViewEnvelope> {
+  const origin = input.action.origin;
+  if (origin?.kind !== 'playAdoption') {
+    return input.services.handlers.accept(input.action.id, {
       autoCommitOnAccept: input.autoCommitOnAccept,
     });
   }
 
-  const lockKey = createPlayTurnLockKey(
-    input.workspaceRoot,
-    initialStored.sessionId,
-  );
+  const lockKey = createPlayTurnLockKey(input.workspaceRoot, origin.sessionId);
   if (input.state.activePlayTurns.has(lockKey)) {
     throw new StalePlayAdoptionPreviewError(
       'Play adoption cannot be accepted while its session is being modified.',
@@ -5588,43 +5806,17 @@ async function acceptPendingActionWithPlayAdoptionValidation(input: {
   try {
     return await withPlaySessionFileTransaction(
       input.workspaceRoot,
-      initialStored.sessionId,
+      origin.sessionId,
       async (transaction) => {
-        let stored: StoredPlayAdoptionPreview;
+        const currentSession = await transaction.read();
+        input.state.pendingActionPlaySessions.set(origin.sessionId, currentSession);
         try {
-          stored = await readStoredPlayAdoptionPreview(
-            input.workspaceRoot,
-            input.id,
-          );
-        } catch {
-          throw new StalePlayAdoptionPreviewError(
-            'Play adoption approval record is unavailable or invalid.',
-          );
+          return await input.services.handlers.accept(input.action.id, {
+            autoCommitOnAccept: input.autoCommitOnAccept,
+          });
+        } finally {
+          input.state.pendingActionPlaySessions.delete(origin.sessionId);
         }
-        if (stored.sessionId !== initialStored.sessionId) {
-          throw new StalePlayAdoptionPreviewError(
-            'Play adoption approval changed sessions before acceptance.',
-          );
-        }
-
-        let session: PlaySession;
-        try {
-          session = await transaction.read();
-        } catch {
-          throw new StalePlayAdoptionPreviewError(
-            'Play adoption session is unavailable for acceptance.',
-          );
-        }
-        await assertPlayAdoptionPendingActionCurrent(
-          input.workspaceRoot,
-          stored,
-          session,
-        );
-        return acceptPendingAction({
-          workspaceRoot: input.workspaceRoot,
-          id: input.id,
-          autoCommitOnAccept: input.autoCommitOnAccept,
-        });
       },
     );
   } finally {
@@ -5632,24 +5824,255 @@ async function acceptPendingActionWithPlayAdoptionValidation(input: {
   }
 }
 
-async function readOptionalStoredPlayAdoptionPreviewForDecision(
+async function finalizePendingActionDomainDecision(
+  state: BackendState,
+  action: PendingAction,
+  decision: 'accept' | 'reject',
+): Promise<unknown | undefined> {
+  const origin = action.origin;
+  if (origin?.kind !== 'referenceDeconstructionPublish') return undefined;
+  const controller = state.referenceDeconstruction;
+  if (!controller) throw new Error('Reference deconstruction controller is unavailable.');
+  return decision === 'accept'
+    ? controller.completePublishPendingAction(action.id, origin)
+    : controller.rejectPublishPendingAction(action.id, origin);
+}
+
+async function getPendingActionServices(
+  state: BackendState,
   workspaceRoot: string,
-  id: string,
-): Promise<StoredPlayAdoptionPreview | undefined> {
+): Promise<PendingActionServices> {
+  const key = await realpath(workspaceRoot);
+  const existing = state.pendingActionServices.get(key);
+  if (existing) return existing;
+  const created = (async (): Promise<PendingActionServices> => {
+    const store = await createPendingActionStore({
+      workspaceRoot: key,
+      assertOriginFresh: ({ origin, preview }) =>
+        assertPreparedPendingActionOriginFresh(state, key, origin, preview),
+    });
+    let materializer!: ChangeMaterializer;
+    materializer = createChangeMaterializer({
+      store,
+      assertOriginFresh: async (action) => {
+        await assertPendingActionOriginFresh(state, key, action);
+      },
+    });
+    await materializer.recover();
+    return {
+      store,
+      materializer,
+      handlers: createPendingActionViewHandlers({ store, materializer }),
+    };
+  })();
+  state.pendingActionServices.set(key, created);
   try {
-    return await readStoredPlayAdoptionPreview(workspaceRoot, id);
+    return await created;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw new StalePlayAdoptionPreviewError(
-      'Play adoption approval record is unavailable or invalid.',
+    state.pendingActionServices.delete(key);
+    throw error;
+  }
+}
+
+async function assertPendingActionOriginFresh(
+  state: BackendState,
+  workspaceRoot: string,
+  action: PendingAction,
+): Promise<void> {
+  const origin = action.origin;
+  assertCapabilityOriginBinding(action.source.capability, origin);
+  if (origin === undefined || origin.kind === 'agentTurn') return;
+  if (origin.kind === 'referenceDeconstructionPublish') {
+    const controller = state.referenceDeconstruction;
+    if (!controller) throw new Error('Reference deconstruction controller is unavailable.');
+    try {
+      await controller.assertPublishPendingActionCurrent(action.id, origin);
+    } catch (error) {
+      throw stalePendingActionOrigin(error);
+    }
+    return;
+  }
+  if (origin.kind === 'referenceMaterialAdoption') {
+    const controller = state.referenceMaterialAdoption;
+    if (!controller) throw new Error('Reference Material adoption controller is unavailable.');
+    await controller.assertPendingActionCurrent(action.id, origin);
+    return;
+  }
+  if (origin.kind === 'playAdoption') {
+    await assertPlayAdoptionPendingActionCurrent(state, workspaceRoot, action, origin);
+    return;
+  }
+}
+
+async function assertPreparedPendingActionOriginFresh(
+  state: BackendState,
+  workspaceRoot: string,
+  origin: SandboxPendingActionOrigin,
+  preview: PreparedChangePreviewV1,
+): Promise<void> {
+  assertCapabilityOriginBinding(preview.capability, origin);
+  if (origin.kind === 'referenceMaterialAdoption') {
+    const controller = state.referenceMaterialAdoption;
+    if (!controller) throw new Error('Reference Material adoption controller is unavailable.');
+    await controller.assertPreparedPreviewCurrent(preview.id, origin);
+    return;
+  }
+  if (origin.kind === 'playAdoption') {
+    await assertPlayAdoptionPreparedPreviewCurrent(state, workspaceRoot, preview, origin);
+    return;
+  }
+  throw new PendingActionProtocolError(
+    'PENDING_ACTION_ALLOWED_TARGETS_MISMATCH',
+    `Origin ${origin.kind} does not support prepared-preview promotion.`,
+  );
+}
+
+function stalePendingActionOrigin(error: unknown): PendingActionProtocolError {
+  if (error instanceof PendingActionProtocolError) return error;
+  return new PendingActionProtocolError(
+    'PENDING_ACTION_ALLOWED_TARGETS_MISMATCH',
+    error instanceof Error ? error.message : 'PendingAction origin is stale.',
+  );
+}
+
+function assertCapabilityOriginBinding(
+  capability: PendingAction['source']['capability'],
+  origin: SandboxPendingActionOrigin | undefined,
+): void {
+  const expected = capability === 'reference.publish'
+    ? 'referenceDeconstructionPublish'
+    : capability === 'reference.adopt'
+      ? 'referenceMaterialAdoption'
+      : capability === 'play.adopt'
+        ? 'playAdoption'
+        : undefined;
+  const originRestricted = origin?.kind === 'referenceDeconstructionPublish'
+    || origin?.kind === 'referenceMaterialAdoption'
+    || origin?.kind === 'playAdoption';
+  if ((expected !== undefined && origin?.kind !== expected) || (originRestricted && expected !== origin.kind)) {
+    throw new PendingActionProtocolError(
+      'PENDING_ACTION_ALLOWED_TARGETS_MISMATCH',
+      `PendingAction capability ${capability} does not match its origin.`,
     );
   }
 }
 
+function hasPendingActionErrorCode(error: unknown): boolean {
+  return isRecord(error)
+    && typeof error.code === 'string'
+    && (
+      error.code.startsWith('PENDING_ACTION_')
+      || error.code === 'UNSUPPORTED_PENDING_ACTION_SCHEMA'
+      || error.code === 'INVALID_PENDING_ACTION_SCHEMA'
+      || error.code === 'STALE_REPOSITORY_BASELINE'
+    );
+}
+
 async function assertPlayAdoptionPendingActionCurrent(
+  state: BackendState,
+  workspaceRoot: string,
+  action: PendingAction,
+  origin: Extract<SandboxPendingActionOrigin, { kind: 'playAdoption' }>,
+): Promise<void> {
+  if (
+    action.source.kind !== 'deterministic-builder'
+    || action.source.producer !== 'play-adoption'
+    || action.source.capability !== 'play.adopt'
+    || stableBackendJson(action.origin) !== stableBackendJson(origin)
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption PendingAction provenance is invalid.',
+    );
+  }
+
+  const session = state.pendingActionPlaySessions.get(origin.sessionId)
+    ?? await readPlaySessionFiles(workspaceRoot, origin.sessionId);
+  let stored: StoredPlayAdoptionPreview | undefined;
+  try {
+    stored = await readStoredPlayAdoptionPreview(workspaceRoot, action.id);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new StalePlayAdoptionPreviewError(
+        'Play adoption approval binding is unavailable or invalid.',
+      );
+    }
+  }
+  if (!stored) {
+    await assertManualPlayAdoptionPendingActionCurrent(
+      workspaceRoot,
+      action,
+      origin,
+      session,
+    );
+    return;
+  }
+  if (
+    stored.status !== 'promoted'
+    || stored.pendingActionId !== action.id
+    || stored.sessionId !== origin.sessionId
+    || stored.branchId !== origin.branchId
+    || stored.baseRevision !== origin.sourceRevision
+    || stored.previewFingerprint !== origin.previewFingerprint
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption approval binding no longer matches its PendingAction.',
+    );
+  }
+  const store = await createPendingActionStore({ workspaceRoot });
+  const preview = await store.readPreparedChangePreview(action.id);
+  projectStoredPlayAdoptionDiff(stored, preview);
+  if (!samePendingChanges(action.changes, preview.changes)) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption PendingAction changed after preview promotion.',
+    );
+  }
+  await assertStoredPlayAdoptionStateCurrent(workspaceRoot, stored, session, 'promoted');
+  await assertPreparedChangePreviewCanonicalCurrent(workspaceRoot, preview);
+}
+
+async function assertPlayAdoptionPreparedPreviewCurrent(
+  state: BackendState,
+  workspaceRoot: string,
+  preview: PreparedChangePreviewV1,
+  origin: Extract<SandboxPendingActionOrigin, { kind: 'playAdoption' }>,
+): Promise<void> {
+  let stored: StoredPlayAdoptionPreview;
+  try {
+    stored = await readStoredPlayAdoptionPreview(workspaceRoot, preview.id);
+  } catch {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption preview binding is unavailable or invalid.',
+    );
+  }
+  if (
+    stored.status !== 'candidateStored'
+    || stored.sessionId !== origin.sessionId
+    || stored.branchId !== origin.branchId
+    || stored.baseRevision !== origin.sourceRevision
+    || stored.previewFingerprint !== origin.previewFingerprint
+    || stableBackendJson(preview.origin) !== stableBackendJson(origin)
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Play adoption preview provenance is stale.',
+    );
+  }
+  projectStoredPlayAdoptionDiff(stored, preview);
+  const session = state.pendingActionPlaySessions.get(origin.sessionId)
+    ?? await readPlaySessionFiles(workspaceRoot, origin.sessionId);
+  await assertStoredPlayAdoptionStateCurrent(
+    workspaceRoot,
+    stored,
+    session,
+    'candidateStored',
+  );
+  await assertPreparedChangePreviewCanonicalCurrent(workspaceRoot, preview);
+}
+
+async function assertStoredPlayAdoptionStateCurrent(
   workspaceRoot: string,
   stored: StoredPlayAdoptionPreview,
   session: PlaySession,
+  requiredStatus: 'candidateStored' | 'promoted',
 ): Promise<void> {
   assertPlayAdoptionSourcesHashBound(session);
   await loadPlayActivatedSourceContext(workspaceRoot, session);
@@ -5661,22 +6084,125 @@ async function assertPlayAdoptionPendingActionCurrent(
   });
   const candidate = session.adoptionCandidates.find((item) =>
     item.id === stored.candidateId);
-  const livePendingAction = (await listPendingActions({ workspaceRoot }))
-    .find((action) => action.id === stored.id);
   if (
-    stored.status !== 'promoted' ||
-    !stored.pendingAction ||
-    !candidate ||
-    !isDeepStrictEqual(candidate, expectedCandidate) ||
-    !livePendingAction ||
-    !isDeepStrictEqual(livePendingAction, stored.pendingAction) ||
-    session.revision !== stored.baseRevision + 1 ||
-    !isStoredPlayAdoptionBranchCurrent(session, stored)
+    stored.status !== requiredStatus
+    || session.id !== stored.sessionId
+    || !candidate
+    || !isDeepStrictEqual(candidate, expectedCandidate)
+    || session.revision !== stored.baseRevision + 1
+    || !isStoredPlayAdoptionBranchCurrent(session, stored)
   ) {
     throw new StalePlayAdoptionPreviewError(
       'Play adoption evidence is no longer current for acceptance.',
     );
   }
+}
+
+async function assertManualPlayAdoptionPendingActionCurrent(
+  workspaceRoot: string,
+  action: PendingAction,
+  origin: Extract<SandboxPendingActionOrigin, { kind: 'playAdoption' }>,
+  session: PlaySession,
+): Promise<void> {
+  assertPlayAdoptionSourcesHashBound(session);
+  await loadPlayActivatedSourceContext(workspaceRoot, session);
+  const candidates = session.adoptionCandidates.filter((candidate) =>
+    fingerprintManualPlayAdoptionOrigin(session, candidate) === origin.previewFingerprint);
+  if (
+    candidates.length !== 1
+    || session.revision !== origin.sourceRevision
+    || playAdoptionBranchId(session) !== origin.branchId
+  ) {
+    throw new StalePlayAdoptionPreviewError(
+      'Manual Play adoption candidate is no longer current.',
+    );
+  }
+  const candidate = candidates[0]!;
+  if (!isPlayAdoptionCandidateOnCurrentBranch(session, candidate)) {
+    throw new StalePlayAdoptionPreviewError(
+      'Manual Play adoption candidate changed branches.',
+    );
+  }
+  if (!candidate.payload) {
+    throw new StalePlayAdoptionPreviewError(
+      'Manual Play adoption candidate has no payload.',
+    );
+  }
+  const payload = normalizePlayAdoptionPayloadForChangeEngine(
+    candidate.target,
+    candidate.payload,
+    session.revision,
+  );
+  const businessTarget = normalizePlayAdoptionBusinessTarget({
+    target: candidate.target,
+    payload,
+  });
+  const baselineFiles = await readCandidateTargetSnapshots(
+    workspaceRoot,
+    [businessTarget.targetFile],
+  );
+  const proposal = createPlayAdoptionChangeProposal({
+    target: candidate.target,
+    payload,
+    source: {
+      sessionId: origin.sessionId,
+      branchId: origin.branchId,
+      sourceRevision: origin.sourceRevision,
+      previewFingerprint: origin.previewFingerprint,
+    },
+    context: {
+      sessionId: action.id,
+      repository: action.repository,
+      projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+      baselineFiles,
+      origin,
+      createdAt: action.createdAt,
+      finalizedAt: action.createdAt,
+    },
+  });
+  if (!proposal || !samePendingChanges(action.changes, proposal.candidate.changes)) {
+    throw new StalePlayAdoptionPreviewError(
+      'Manual Play adoption PendingAction no longer matches its candidate.',
+    );
+  }
+}
+
+function samePendingChanges(
+  left: ReadonlyArray<{
+    operation: 'create' | 'update' | 'delete';
+    path: string;
+    baseline: { exists: false } | {
+      exists: true;
+      sha256: string;
+      byteLength: number;
+      mode: number;
+    };
+    draft: null | { sha256: string; byteLength: number };
+  }>,
+  right: ReadonlyArray<{
+    operation: 'create' | 'update' | 'delete';
+    path: string;
+    baseline: { exists: false } | {
+      exists: true;
+      sha256: string;
+      byteLength: number;
+      mode: number;
+    };
+    draft: null | { sha256: string; byteLength: number };
+  }>,
+): boolean {
+  const project = (changes: typeof left) => changes.map((change) => ({
+    operation: change.operation,
+    path: change.path,
+    baseline: change.baseline,
+    draft: change.draft === null
+      ? null
+      : {
+          sha256: change.draft.sha256,
+          byteLength: change.draft.byteLength,
+        },
+  }));
+  return stableBackendJson(project(left)) === stableBackendJson(project(right));
 }
 
 async function handleWorkspaceChapterRescan(
@@ -5716,7 +6242,10 @@ async function createRuntimeEventStream(
       loadWritingProfileState(input.workspaceRoot),
     ]);
     const capability = inferNovelAgentCapability(input.request, skill.quickCommands);
-    const pendingActions = await listPendingActions({ workspaceRoot: input.workspaceRoot });
+    const pendingStore = await createPendingActionStore({
+      workspaceRoot: input.workspaceRoot,
+    });
+    const pendingActions = await pendingStore.listViews({ status: 'pending' });
     const referenceRecallActive = hasExplicitReferenceRecallIntent(input.request);
     const [projectHealth, referenceSelection] = await Promise.all([
       readProjectHealth(input.workspaceRoot, {
@@ -5766,6 +6295,7 @@ async function createRuntimeEventStream(
       request: input.request,
       skill,
       capability,
+      exactWritablePaths: input.exactWritablePaths,
       writingProfile: writingProfileState.activeProfile,
       tools: options.tools,
       ...(referenceSelection ? { referenceSelection } : {}),
@@ -6600,7 +7130,8 @@ async function buildPostDecisionRefresh(workspaceRoot: string): Promise<{
   };
   projectHealth: ProjectHealth;
 }> {
-  const pendingActions = await listPendingActions({ workspaceRoot });
+  const pendingStore = await createPendingActionStore({ workspaceRoot });
+  const pendingActions = await pendingStore.listViews({ status: 'pending' });
   const [gitStatus, projectHealth, gitConfig] = await Promise.all([
     readGitStatus(workspaceRoot),
     readProjectHealth(workspaceRoot, {
@@ -7434,99 +7965,6 @@ function readPlayAdoptionCandidate(
   });
 }
 
-function createPlayAdoptionToolRequest(
-  target: PlayAdoptionTarget,
-  payload: Record<string, unknown> | undefined,
-):
-  | { toolName: PreviewableWriteIntentToolName; args: Record<string, unknown> }
-  | { error: string } {
-  if (!payload) {
-    return { error: 'Adoption payload is required before creating a PendingAction.' };
-  }
-
-  if (target === 'chapterDraft') {
-    const chapterId = getOptionalString(payload, 'chapterId')?.trim();
-    const content = getOptionalString(payload, 'content')?.trim();
-
-    if (!chapterId || !content) {
-      return { error: 'chapterDraft adoption requires chapterId and content.' };
-    }
-
-    return {
-      toolName: 'chapter.createDraft',
-      args: omitUndefined({
-        chapterId,
-        content,
-        title: getOptionalString(payload, 'title')?.trim(),
-        file: getOptionalString(payload, 'file')?.trim(),
-        mode: getOptionalString(payload, 'mode')?.trim(),
-      }),
-    };
-  }
-
-  if (target === 'state') {
-    const file = getOptionalString(payload, 'file')?.trim();
-    const path = getOptionalString(payload, 'path')?.trim();
-
-    if (!file || !path || !Object.prototype.hasOwnProperty.call(payload, 'value')) {
-      return { error: 'state adoption requires file, path, and value.' };
-    }
-
-    return {
-      toolName: 'state.set',
-      args: {
-        file,
-        path,
-        value: payload.value,
-      },
-    };
-  }
-
-  if (target === 'timeline') {
-    if (!Object.prototype.hasOwnProperty.call(payload, 'event')) {
-      return { error: 'timeline adoption requires event.' };
-    }
-
-    return {
-      toolName: 'timeline.add',
-      args: omitUndefined({
-        event: payload.event,
-        file: getOptionalString(payload, 'file')?.trim(),
-        path: getOptionalString(payload, 'path')?.trim(),
-      }),
-    };
-  }
-
-  if (!Object.prototype.hasOwnProperty.call(payload, 'item')) {
-    return { error: 'foreshadow adoption requires item.' };
-  }
-
-  return {
-    toolName: 'foreshadow.create',
-    args: omitUndefined({
-      item: payload.item,
-      file: getOptionalString(payload, 'file')?.trim(),
-      path: getOptionalString(payload, 'path')?.trim(),
-    }),
-  };
-}
-
-async function executeWriteIntentTool(
-  tools: ToolSet,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<unknown> {
-  const executable = tools[name] as {
-    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-  };
-
-  if (!executable?.execute) {
-    throw new Error(`Write-intent tool is not available: ${name}`);
-  }
-
-  return executable.execute(args, {});
-}
-
 function readBudgetLayer(
   value: Record<string, unknown>,
   key: string,
@@ -7599,6 +8037,56 @@ function getLastUserText(messages: UIMessage[]): string | undefined {
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('')
     .trim();
+}
+
+function readAgentExactWritablePaths(body: JsonBody): string[] {
+  if (!hasOwn(body, 'editContext')) return [];
+  const editContext = body.editContext;
+  if (!isRecord(editContext)) {
+    throw new InvalidJsonBodyError('Agent editContext must be an object.');
+  }
+  if (Object.keys(editContext).some((key) => key !== 'exactWritablePaths')) {
+    throw new InvalidJsonBodyError('Agent editContext contains unknown fields.');
+  }
+  const value = editContext.exactWritablePaths;
+  if (!Array.isArray(value) || value.length > 64) {
+    throw new InvalidJsonBodyError(
+      'Agent editContext.exactWritablePaths must be a bounded array.',
+    );
+  }
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (
+      typeof candidate !== 'string'
+      || candidate.length === 0
+      || candidate.length > 512
+      || candidate !== candidate.trim()
+      || candidate.includes('\0')
+      || candidate.includes('\\')
+      || isAbsolute(candidate)
+      || /^[A-Za-z]:/u.test(candidate)
+    ) {
+      throw new InvalidJsonBodyError('Agent exact writable path is invalid.');
+    }
+    const segments = candidate.split('/');
+    if (
+      segments.some((segment) =>
+        !segment
+        || segment === '.'
+        || segment === '..'
+        || segment.startsWith('.'))
+    ) {
+      throw new InvalidJsonBodyError(
+        'Agent exact writable paths cannot traverse or target hidden paths.',
+      );
+    }
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      paths.push(candidate);
+    }
+  }
+  return paths;
 }
 
 async function readJsonBody(context: NovelBackendContext): Promise<JsonBody> {
@@ -7864,6 +8352,26 @@ function jsonResponse(
 }
 
 export type { LanguageModel };
+export {
+  PENDING_ACTION_RESET_REQUIRED_CODE,
+  PendingActionResetRequiredError,
+  createPendingActionViewHandlers,
+  parsePendingActionDecisionViewEnvelope,
+  parsePendingActionViewDto,
+  serializePendingActionView,
+  serializePendingActionViewList,
+  toPendingActionPublicError,
+  toPendingActionViewErrorResponse,
+} from './pending-action-view.js';
+export type {
+  PendingActionDecisionViewEnvelope,
+  PendingActionQuickCommitViewEnvelope,
+  PendingActionViewEnvelope,
+  PendingActionViewHandlers,
+  PendingActionViewErrorResponse,
+  PendingActionViewListEnvelope,
+  PendingActionViewSource,
+} from './pending-action-view.js';
 export {
   formatPlayRehearsalStepRefereePrompt,
 } from './play-rehearsal.js';

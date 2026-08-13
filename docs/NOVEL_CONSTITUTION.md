@@ -226,7 +226,7 @@ Future Constitution workflow tools may add:
 - `constitution.search`
 - `constitution.proposeUpdate`
 
-Write tools must only create proposals. `constitution.proposeUpdate` is a proposed Constitution workflow tool, not part of the completed M6 write-intent scope.
+Edit tools must only create proposals in the fixed in-memory sandbox. `constitution.proposeUpdate` is a proposed Constitution workflow capability, not part of the currently writable Sandbox Change Engine policy.
 
 Proposal example:
 

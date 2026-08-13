@@ -785,7 +785,7 @@ adoption candidate 应自动携带：
 ```text
 Play observation / event
   -> adoption candidate
-  -> write intent / SemanticPatch draft
+  -> change proposal / CandidateChangeSet draft
   -> PendingAction + diff
   -> human accept / reject
   -> optional Git commit

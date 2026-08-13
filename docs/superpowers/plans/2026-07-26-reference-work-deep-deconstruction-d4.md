@@ -1,5 +1,7 @@
 # Reference Work Deep Deconstruction D4 Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-07-26). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > Date: 2026-07-26
 > Task: [0900 Project References And Deconstruction](../../tasks/0900.md)
 > Related plan: [Reference Work Deep Deconstruction Upgrade Plan](../../REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)

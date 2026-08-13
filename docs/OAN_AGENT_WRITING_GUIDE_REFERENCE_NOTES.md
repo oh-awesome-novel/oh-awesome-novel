@@ -93,14 +93,14 @@ observe -> plan -> draft/propose -> verify -> settle
 - 使用世界规则、势力、地点、力量体系、生物或设定事实前读取 `world.search`。
 - 续写、审稿、整理或改写章节时读取 `chapter.get`。
 
-当前 write-intent 规则：
+当前 change-proposal 规则：
 
-- 章节正文使用 `chapter.createDraft`。
-- 摘要使用 `summary.generateChapter`。
-- 最新状态使用 `state.set`。
-- 剧情事件使用 `timeline.add`。
-- 伏笔使用 `foreshadow.create`。
-- 角色卡局部更新使用 `character.updatePersonality`。
+- 章节正文使用 `workspace.proposeChanges`。
+- 摘要使用 `workspace.proposeChanges`。
+- 最新状态使用 `workspace.proposeChanges`。
+- 剧情事件使用 `workspace.proposeChanges`。
+- 伏笔使用 `workspace.proposeChanges`。
+- 角色卡局部更新使用 `workspace.proposeChanges`。
 
 当前 settle 规则仍偏宽，需要在后续实现中收紧：
 
@@ -125,7 +125,7 @@ observe -> plan -> draft/propose -> verify -> settle
 
 其中 `/规划下一章` 已要求读取 workflow、constitution、summary、state、timeline、foreshadow，并输出下一章目标、场景序列、角色出场、钩子和结尾变化。
 
-`/写下一章` 已要求先读取必要角色卡和前章内容，并且正文只能通过 `chapter.createDraft` 创建 PendingAction。
+`/写下一章` 已要求先读取必要角色卡和前章内容，并且正文只能通过 `workspace.proposeChanges` 创建 PendingAction。
 
 `/整理本章` 已要求读取目标章节并生成章节摘要、角色状态、时间线和伏笔变更的 PendingAction。
 
@@ -263,12 +263,12 @@ OAN 可要求 `/整理本章` 先输出 observation log，再生成 PendingActio
 
 然后再把 observation log 映射为：
 
-- `summary.generateChapter`
-- `state.set`
-- `timeline.add`
-- `foreshadow.create`
+- `workspace.proposeChanges`
+- `workspace.proposeChanges`
+- `workspace.proposeChanges`
+- `workspace.proposeChanges`
 - 未来的 `foreshadow.resolve`
-- 必要时的 `character.updatePersonality`
+- 必要时的 `workspace.proposeChanges`
 - 必要时的 world / constitution proposal
 
 ### Audit Checklist
@@ -286,7 +286,7 @@ OAN `/审稿` 可逐步固定为：
 - 风格：是否符合 constitution/style，是否有词汇疲劳或 AI 味。
 - 正文证据：所有建议应引用章节中的具体依据，避免空泛判断。
 
-默认只输出审稿意见；只有用户要求改写时，才通过 `chapter.createDraft` 生成 PendingAction。[OAN-current][OAN-adaptation]
+默认只输出审稿意见；只有用户要求改写时，才通过 `workspace.proposeChanges` 生成 PendingAction。[OAN-current][OAN-adaptation]
 
 ### Human-Readable Projections
 
@@ -343,7 +343,7 @@ StoryForge 把 AI 功能做成 PromptModuleKey、AI call category 和 generated 
 OAN 可吸收为：
 
 - 为写作能力建立 capability id，例如 `novel.plan_chapter`、`novel.write_chapter`、`novel.review_chapter`、`novel.settle_chapter`、`novel.import_existing_text`。
-- 每个 capability 声明允许读取的 source、允许生成的中间产物、允许提出的 SemanticPatch 类型和是否必须用户确认。
+- 每个 capability 声明允许读取的 source、允许生成的中间产物、允许提出的 CandidateChangeSet 类型和是否必须用户确认。
 - 每轮写作保留 prompt / guide provenance：使用了哪个 agent guide 版本、genre/style pack、用户临时偏好。
 - 生成只读能力说明或 manual，用于盘点 OAN 当前 AI 写作能力，避免 prompt 和行为散落在代码里。
 
@@ -376,7 +376,7 @@ OAN 可吸收为 settlement bundle 的补充字段：
 - 下一章衔接点。
 - 需要用户确认的疑点。
 
-边界：事实源更新必须 evidence-only，并通过 PendingAction / SemanticPatch；下一章衔接点和疑点默认进入 settlement report 或 session artifact，不直接写入 `state/`、`timeline/`、`foreshadow/`。[OAN-adaptation]
+边界：事实源更新必须 evidence-only，并通过 PendingAction / CandidateChangeSet；下一章衔接点和疑点默认进入 settlement report 或 session artifact，不直接写入 `state/`、`timeline/`、`foreshadow/`。[OAN-adaptation]
 
 ### Review To Revision Loop
 
@@ -386,7 +386,7 @@ OAN 的口径应更保守：
 
 - `/审稿` 默认只输出报告。
 - 报告必须按维度列出 evidence、severity、suggested fix。
-- 只有用户确认要修哪些问题后，agent 才能生成局部或全文 SemanticPatch / `chapter.createDraft`。
+- 只有用户确认要修哪些问题后，agent 才能生成局部或全文 CandidateChangeSet / `workspace.proposeChanges`。
 - 审稿报告可以作为 session artifact 或 shadow 产物保留，方便追踪修改理由。
 
 这与 InkOS 的“默认审稿不改正文”不冲突。[OAN-adaptation][InkOS-reference][StoryForge-reference]
@@ -601,7 +601,7 @@ Webnovel Writer 的 `prewrite / precommit / postcommit` 适合转译为 OAN 的�
 - Apply 前：检查 settlement bundle 是否有 evidence、是否触达预期文件、是否存在 unresolved ambiguity 或 user decision。
 - Accept 后：做轻量 postaccept check，确认 Object File Tree 已更新；如果 projection 能力已启用，确认派生 projection 可重建；确认 auto-commit 是否成功，若配置关闭或提交失败，再提示 dirty state 和 quick commit 入口。
 
-这条和 OAN 的 PendingAction / Apply Engine / Git diff 工作流兼容；它不要求新增 `.story-system`、投影状态五件套或独立提交链。[OAN-constraint][WebnovelWriter-reference]
+这条和 OAN 的 PendingAction / ChangeMaterializer / Git diff 工作流兼容；它不要求新增 `.story-system`、投影状态五件套或独立提交链。[OAN-constraint][WebnovelWriter-reference]
 
 ### Pre-Write Calibration
 
@@ -614,7 +614,7 @@ OAN `/写下一章` 的写前校准表应默认保持短小，只合并这些必
 - 必须兑现：hook id、状态变化、读者期待。
 - 暂不暴露：秘密、底牌、未到时机的设定。
 - 风险检查：OOC、信息越界、世界规则冲突、战力或资源异常、AI 味高危点。
-- 写入方式：正文只能通过 `chapter.createDraft` 创建 PendingAction。
+- 写入方式：正文只能通过 `workspace.proposeChanges` 创建 PendingAction。
 
 这与 InkOS `PRE_WRITE_CHECK` 和 StoryForge chapter context recipe 是同一个方向，应统一实现，而不是分成多个检查表。但它不应变成每章完整 planning gate；复杂检查应交给 `/规划大纲`、`/规划下一卷` 或关键章详细规划。[InkOS-reference][StoryForge-reference][NovelWriterSkills-reference][OhStoryClaudeCode-reference][WebnovelWriter-reference][OAN-adaptation]
 
@@ -627,9 +627,9 @@ OAN `/整理本章` 或写章后的 settle 阶段可明确输出：
 - `fulfillment`：本章契约 / 卷级节点中哪些已覆盖、哪些遗漏、哪些额外生成。
 - `ambiguities`：新增名词、别名、角色身份、地点归属、信息边界或低置信推断，需要用户确认。
 - `observations`：正文证据支持的角色状态、关系、时间、地点、物品、世界规则、伏笔和场景变化。
-- `patches`：由 observations 转成的 PendingAction / SemanticPatch 候选。
+- `patches`：由 observations 转成的 PendingAction / CandidateChangeSet 候选。
 
-这与 InkOS 的 evidence-only settlement、StoryForge 的 state diff 和 OAN Apply Engine 是同一个方向。关键边界：settlement bundle 不是事实源，只有用户接受后的 Object File Tree 变更才是事实。[InkOS-reference][StoryForge-reference][WebnovelWriter-reference][OAN-adaptation]
+这与 InkOS 的 evidence-only settlement、StoryForge 的 state diff 和 OAN ChangeMaterializer 是同一个方向。关键边界：settlement bundle 不是事实源，只有用户接受后的 Object File Tree 变更才是事实。[InkOS-reference][StoryForge-reference][WebnovelWriter-reference][OAN-adaptation]
 
 ### Minimal Memory Package
 
@@ -703,7 +703,7 @@ OAN `/审稿` 可统一 findings schema：
 - suggested fix。
 - whether needs user decision。
 
-这与 StoryForge 的 review-to-revision loop 不冲突：OAN 默认只输出报告；用户确认后，才把指定 finding 转成 `chapter.createDraft` 或 SemanticPatch。[StoryForge-reference][OAN-adaptation]
+这与 StoryForge 的 review-to-revision loop 不冲突：OAN 默认只输出报告；用户确认后，才把指定 finding 转成 `workspace.proposeChanges` 或 CandidateChangeSet。[StoryForge-reference][OAN-adaptation]
 
 ### Reference Deconstruction Layer
 
@@ -855,9 +855,9 @@ OAN 也不需要照搬 Webnovel Writer v7 的中文目录命名或完整 Story R
 - 待处理 hooks。
 - 暂不暴露的秘密、底牌和设定。
 - 风险扫描。
-- 写入方式确认：只能通过 `chapter.createDraft` PendingAction。
+- 写入方式确认：只能通过 `workspace.proposeChanges` PendingAction。
 
-然后才生成标题和正文草稿。普通单章不重复运行卷级 planning gate；正文写入只能通过 `chapter.createDraft` PendingAction。
+然后才生成标题和正文草稿。普通单章不重复运行卷级 planning gate；正文写入只能通过 `workspace.proposeChanges` PendingAction。
 
 ### 6. Review
 
@@ -873,7 +873,7 @@ OAN 也不需要照搬 Webnovel Writer v7 的中文目录命名或完整 Story R
 - blocking。
 - dimension result：相关维度无问题时也显式 pass。
 
-blocking issue 需要用户裁决或进入定点修复；非 blocking issue 可以进入修订候选。用户要求改写时，先确认要修哪些问题，再使用 `chapter.createDraft` 或 SemanticPatch 生成替换草稿 PendingAction。只有用户明确要求整理、落库或按审稿结果更新状态时，审稿结果才进入 settlement。[WebnovelWriter-reference][OAN-adaptation]
+blocking issue 需要用户裁决或进入定点修复；非 blocking issue 可以进入修订候选。用户要求改写时，先确认要修哪些问题，再使用 `workspace.proposeChanges` 或 CandidateChangeSet 生成替换草稿 PendingAction。只有用户明确要求整理、落库或按审稿结果更新状态时，审稿结果才进入 settlement。[WebnovelWriter-reference][OAN-adaptation]
 
 `/去AI味` 属于 review / revision 子类，必须遵守保护规则：只改表达，不改剧情事实，不删除伏笔、钩子、角色特征、关键信息或必要转折。[AwesomeNovelSkill-reference][OhStoryClaudeCode-reference][OAN-adaptation]
 
@@ -925,10 +925,10 @@ blocking issue 需要用户裁决或进入定点修复；非 blocking issue 可�
 | 状态驱动单 agent harness | Add | AwesomeNovelSkill v3 SOLO / state-driven loop + OhAwesomeNovelSkill lightweight single-agent workflow | Accepted direction; not implemented |
 | `/规划大纲` / `/规划下一卷` 卷级规划入口 | Add | Webnovel Writer plan workflow + OAN user feedback | Accepted direction; not implemented |
 | 复杂 gate 与结构化节点默认用于卷级 / 大纲级，普通单章轻量化 | Modify | Webnovel Writer write-gate / CBN-CPNs-CEN + OAN user feedback | Accepted direction; not implemented |
-| 按粒度启用 planning/apply/postaccept gates | Add | Webnovel Writer write-gate + OAN Apply Engine | Accepted direction; not implemented |
+| 按粒度启用 planning/apply/postaccept gates | Add | Webnovel Writer write-gate + OAN ChangeMaterializer | Accepted direction; not implemented |
 | `/整理本章` 先 observation log 后 PendingAction bundle | Modify | InkOS Observer / settlement pattern + StoryForge settlement objects + AwesomeNovelSkill updater archive + OhAwesomeNovelSkill archive memory update | Accepted direction; not implemented |
 | settlement bundle 拆分 fulfillment / ambiguities / observations / patches | Modify | Webnovel Writer data-agent artifacts + InkOS evidence-only settlement + StoryForge state diff | Accepted direction; not implemented |
-| 状态变化以 diff 表达：old/new/evidence/confidence | Modify | StoryForge state diff + OAN Apply Engine | Accepted direction; not implemented |
+| 状态变化以 diff 表达：old/new/evidence/confidence | Modify | StoryForge state diff + OAN ChangeMaterializer | Accepted direction; not implemented |
 | 伏笔 mention / advance / resolve / defer 分级 | Modify | InkOS hookOps discipline + AwesomeNovelSkill / OhStoryClaudeCode hooks update | Accepted direction; not implemented |
 | evidence-only settlement 规则 | Modify | InkOS settler constraints + AwesomeNovelSkill updater archive + OhStoryClaudeCode tracking update + OAN human approval | Accepted direction; not implemented |
 | settlement report 增加 next handoff / unresolved ambiguity | Add | StoryForge settlement extension + Webnovel Writer disambiguation artifact | Accepted direction; not implemented |

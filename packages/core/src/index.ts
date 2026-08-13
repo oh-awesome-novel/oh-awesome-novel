@@ -105,18 +105,27 @@ export {
   NOVEL_COPILOT_CAPABILITIES,
   NOVEL_COPILOT_CAPABILITY_IDS,
   NOVEL_COPILOT_QUICK_COMMANDS,
+  NOVEL_COPILOT_SANDBOX_CAPABILITIES,
+  NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES,
+  NOVEL_COPILOT_SANDBOX_SYSTEM,
+  createNovelCopilotSandboxProposalContract,
+  parseNovelCopilotSandboxProposalContract,
   createDefaultNovelCopilotSkill,
   loadNovelCopilotSkill,
 } from './novel-copilot-skill.js';
 
 export type {
   LoadNovelCopilotSkillOptions,
+  CreateNovelCopilotSandboxProposalContractInput,
   NovelCopilotCapability,
   NovelCopilotCapabilityId,
   NovelCopilotCapabilityMode,
   NovelCopilotCapabilityStatus,
   NovelCopilotQuickCommandId,
   NovelCopilotQuickCommand,
+  NovelCopilotSandboxCapability,
+  NovelCopilotSandboxEditCapability,
+  NovelCopilotSandboxProposalContract,
   NovelCopilotSkill,
 } from './novel-copilot-skill.js';
 
@@ -151,6 +160,7 @@ export type {
 // Writing Planning
 export {
   formatChapterContractMarkdown,
+  formatPlanningSandboxProposalMarkdown,
   formatPreWriteCheckMarkdown,
   formatVolumePlanningPacketMarkdown,
 } from './writing-planning.js';
@@ -164,6 +174,7 @@ export type {
   OutlinePlanningPacket,
   PlanningGranularity,
   PlanningPacket,
+  PlanningSandboxProposal,
   PreWriteCheck,
   PreWriteRiskScan,
   VolumePlanningPacket,
@@ -175,6 +186,7 @@ export {
   REVIEW_DIMENSIONS,
   formatDeAiProtectionRulesMarkdown,
   formatReviewReportMarkdown,
+  formatReviewSandboxProposalMarkdown,
 } from './writing-review.js';
 
 export type {
@@ -182,6 +194,7 @@ export type {
   ReviewDimensionResult,
   ReviewDimensionStatus,
   ReviewFinding,
+  ReviewSandboxProposal,
   ReviewSeverity,
 } from './writing-review.js';
 
@@ -209,13 +222,19 @@ export type {
 // Session Artifacts
 export {
   SESSION_ARTIFACT_FILES,
+  SESSION_PROPOSED_CHANGES_SCHEMA_VERSION,
+  UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA,
+  SessionProposedChangesSchemaError,
   checkSessionResumeBoundary,
   createSessionResumeBoundary,
+  createSessionResumeBoundaryFromProposedChanges,
   formatAuthorReportMarkdown,
+  parseSessionProposedChanges,
+  readSessionProposedChanges,
   resolveSessionArtifactPath,
   writeAgentSessionArtifact,
   writeSessionOutputs,
-  writeSessionProposedPatches,
+  writeSessionProposedChanges,
   writeSessionRunMetadata,
   writeSessionUnresolved,
 } from './session-artifacts.js';
@@ -226,7 +245,11 @@ export type {
   SessionArtifactFile,
   SessionInputSource,
   SessionOutputArtifact,
-  SessionProposedPatch,
+  SessionProposedChange,
+  SessionProposedChangesDocument,
+  SessionProposedChangeStatus,
+  SessionProposedFileChange,
+  SessionProposedFileOperation,
   SessionResumeBoundary,
   SessionResumeCheck,
   SessionResumeFileSnapshot,
@@ -266,6 +289,7 @@ export {
   createPlayAdoptionCandidateFromDraft,
   createPlayAdoptionSourceBase,
   fingerprintPlayAdoptionEvidenceClosure,
+  normalizePlayAdoptionBusinessTarget,
   normalizePlayAdoptionDraft,
   normalizePlayAdoptionEvidenceClosure,
   normalizePlayAdoptionSeed,
@@ -276,13 +300,13 @@ export {
 } from './play-adoption.js';
 export type {
   CreatePlayAdoptionCandidateFromDraftInput,
+  PlayAdoptionBusinessTarget,
   PlayAdoptionSourceBase,
   PlayAdoptionDraft,
   PlayAdoptionEvidenceClosure,
   PlayAdoptionSeed,
   PlayAdoptionSourceSnapshot,
   PlayAdoptionTargetSuggestion,
-  PlayAdoptionWriteIntentToolName,
   RebuildPlayAdoptionDraftInput,
 } from './play-adoption.js';
 

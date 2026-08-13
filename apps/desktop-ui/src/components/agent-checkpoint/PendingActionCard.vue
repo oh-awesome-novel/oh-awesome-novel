@@ -6,8 +6,7 @@ import type { PendingActionView } from '../../composables/useAgentCheckpointChat
 
 const props = defineProps<{
   action: PendingActionView & {
-    touchedFiles?: string[];
-    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+    decision?: 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected';
     decisionError?: string;
   };
   compact?: boolean;
@@ -16,23 +15,53 @@ const props = defineProps<{
 const emit = defineEmits<{
   accept: [action: PendingActionView];
   reject: [action: PendingActionView];
+  quickCommit: [action: PendingActionView];
   review: [action: PendingActionView];
   openDiff: [action: PendingActionView];
 }>();
 
 const diffOpen = shallowRef(false);
 
+const changes = computed(() => props.action.changes);
 const fileLabel = computed(() => {
-  const files = props.action.touchedFiles ?? [];
-
-  if (files.length === 0) {
-    return 'No touched files';
+  if (changes.value.length === 0) {
+    return 'No file changes';
   }
 
-  return files.length === 1 ? files[0] : `${files.length} files`;
+  if (changes.value.length === 1) {
+    const change = changes.value[0]!;
+    return `${operationLabel(change.operation)}: ${change.path}`;
+  }
+
+  const counts = changes.value.reduce(
+    (result, change) => ({
+      ...result,
+      [change.operation]: result[change.operation] + 1,
+    }),
+    { create: 0, update: 0, delete: 0 },
+  );
+  const breakdown = (['create', 'update', 'delete'] as const)
+    .filter((operation) => counts[operation] > 0)
+    .map((operation) => `${counts[operation]} ${operationLabel(operation).toLowerCase()}`)
+    .join(' · ');
+
+  return `${changes.value.length} file changes · ${breakdown}`;
 });
 
-const disabled = computed(() => Boolean(props.action.decision));
+const disabled = computed(() => (
+  props.action.status !== 'pending' || Boolean(props.action.decision)
+));
+const quickCommitAvailable = computed(() => (
+  props.action.status === 'accepted'
+  && (props.action.git?.status === 'staged-not-committed'
+    || props.action.git?.status === 'failed')
+));
+
+function operationLabel(operation: 'create' | 'update' | 'delete'): string {
+  if (operation === 'create') return 'Created';
+  if (operation === 'delete') return 'Deleted';
+  return 'Updated';
+}
 </script>
 
 <template>
@@ -57,7 +86,16 @@ const disabled = computed(() => Boolean(props.action.decision));
         Reject
       </button>
       <button
-        v-if="!compact || (action.touchedFiles ?? []).length <= 1"
+        v-if="quickCommitAvailable"
+        class="primary-button tight-button"
+        type="button"
+        :disabled="Boolean(action.decision)"
+        @click="emit('quickCommit', action)"
+      >
+        Quick commit
+      </button>
+      <button
+        v-if="action.status === 'pending' && (!compact || changes.length <= 1)"
         class="primary-button tight-button"
         type="button"
         :disabled="disabled"
@@ -76,7 +114,7 @@ const disabled = computed(() => Boolean(props.action.decision));
     <PendingActionDiffViewer
       v-if="diffOpen && !compact"
       :diff="action.diff"
-      :touched-files="action.touchedFiles"
+      :changes="changes"
     />
   </article>
 </template>

@@ -1,5 +1,7 @@
 # Unify OAN Workspace Runtime Directory Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ensure the application, tests, examples, and docs consistently use `.oan/` as the only canonical workspace runtime directory.
@@ -411,7 +413,7 @@ no matches
 Run:
 
 ```bash
-rg -n '\.storyforge' docs/README.md docs/PROJECT_VISION.md docs/REQUIREMENTS.md docs/ARCHITECTURE.md docs/FILESYSTEM_SPEC.md docs/APPLY_ENGINE.md docs/HUMAN_APPROVAL_AND_GIT.md docs/AGENT_RUNTIME_AND_TOOLS.md docs/AGENT_OPERATING_MANUAL.md docs/DEVELOPMENT_PLAN.md docs/NOVEL_CONSTITUTION.md docs/adr
+rg -n '\.storyforge' docs/README.md docs/PROJECT_VISION.md docs/REQUIREMENTS.md docs/ARCHITECTURE.md docs/FILESYSTEM_SPEC.md docs/SANDBOX_CHANGE_ENGINE.md docs/HUMAN_APPROVAL_AND_GIT.md docs/AGENT_RUNTIME_AND_TOOLS.md docs/AGENT_OPERATING_MANUAL.md docs/DEVELOPMENT_PLAN.md docs/NOVEL_CONSTITUTION.md docs/adr
 ```
 
 Expected allowed matches:

@@ -147,8 +147,12 @@ function pendingAction() {
     id: 'pending-reference-publish-1',
     title: 'Publish Reference One deconstruction',
     description: 'Publish the complete accepted candidate.',
-    patches: [],
-    touchedFiles: ['examples/references/reference-1/context/index.yaml'],
+    changes: [{
+      operation: 'update',
+      path: 'examples/references/reference-1/context/index.yaml',
+      oldHash: 'a'.repeat(64),
+      newHash: 'b'.repeat(64),
+    }],
     diff: 'diff --git a/examples/references/reference-1/context/index.yaml ' +
       'b/examples/references/reference-1/context/index.yaml',
     createdAt: '2026-07-22T00:09:00.000Z',

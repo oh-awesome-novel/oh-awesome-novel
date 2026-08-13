@@ -10,7 +10,6 @@ import WritingReferenceSelector from './WritingReferenceSelector.vue';
 import WritingProfileSummary from './writing-profile/WritingProfileSummary.vue';
 import { useAgentTimeline } from '../../composables/useAgentTimeline';
 import type {
-  PendingAction,
   PlayWritingReferenceAttachment,
   WritingProfileState,
 } from '../../composables/useWorkspaceApi';
@@ -23,7 +22,7 @@ const props = defineProps<{
   chatInput: string;
   chatMessages: UIMessage[];
   chatPendingActions: PendingActionView[];
-  pendingActions: PendingAction[];
+  pendingActions: PendingActionView[];
   pendingActionsLoading: boolean;
   pendingActionsError: string;
   rightPanelShown: boolean;
@@ -43,6 +42,7 @@ const emit = defineEmits<{
   configureProvider: [];
   acceptPendingAction: [action: PendingActionView];
   rejectPendingAction: [action: PendingActionView];
+  quickCommitPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   refreshWritingReferences: [];
@@ -115,21 +115,19 @@ function rejectPendingAction(action: PendingActionView) {
 }
 
 function mergePendingActions(
-  storedActions: PendingAction[],
+  storedActions: PendingActionView[],
   streamedActions: PendingActionView[],
 ): PendingActionView[] {
   const actions = new Map<string, PendingActionView>();
 
-  for (const action of storedActions) {
+  for (const action of streamedActions) {
     actions.set(action.id, action);
   }
 
-  for (const action of streamedActions) {
-    actions.set(action.id, {
-      ...actions.get(action.id),
-      ...action,
-      touchedFiles: action.touchedFiles ?? actions.get(action.id)?.touchedFiles,
-    });
+  // The persisted, strictly parsed store view is authoritative when a stale
+  // stream event and a terminal decision share an id.
+  for (const action of storedActions) {
+    actions.set(action.id, action);
   }
 
   return [...actions.values()];
@@ -182,6 +180,7 @@ function mergePendingActions(
         :actions="decoratedPendingActions"
         @accept="acceptPendingAction"
         @reject="rejectPendingAction"
+        @quick-commit="emit('quickCommitPendingAction', $event)"
         @review="emit('reviewPendingAction', $event)"
         @open-diff="emit('openPendingActionDiff', $event)"
       />

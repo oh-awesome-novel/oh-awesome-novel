@@ -1,5 +1,6 @@
 import { PriorityRuntimeContextBuilder } from './context-builder';
 import type { ToolSet } from 'ai';
+import { createHash } from 'node:crypto';
 
 import type {
   CopilotRuntimeOptions,
@@ -72,46 +73,57 @@ export class RuntimeSession {
     const maxToolLoops = this.options.maxToolLoops ?? defaultMaxToolLoops;
     let assistantMessage: RuntimeMessage | undefined;
 
-    for (let loop = 0; loop < maxToolLoops; loop += 1) {
-      if (input.abortSignal?.aborted) {
-        return this.finish('aborted', assistantMessage);
-      }
-
-      const tools = this.listActiveTools(input);
-      const response = await this.generateModelResponse({
-        messages: this.contextBuilder.build({
-          doneMessages: this.state.doneMessages,
-          curMessages: this.state.curMessages,
-          context: input.context,
-          skill: input.skill,
-        }),
-        tools,
-        abortSignal: input.abortSignal,
-      });
-
-      if (response.toolCalls?.length) {
-        if (response.message) {
-          assistantMessage = response.message;
+    try {
+      for (let loop = 0; loop < maxToolLoops; loop += 1) {
+        if (input.abortSignal?.aborted) {
+          return await this.finish('aborted', assistantMessage, input.abortSignal);
         }
 
-        this.state.curMessages.push({
-          role: 'assistant',
-          content: response.message?.content ?? '',
-          toolCalls: response.toolCalls,
+        const tools = this.listActiveTools(input);
+        const response = await this.generateModelResponse({
+          messages: this.contextBuilder.build({
+            doneMessages: this.state.doneMessages,
+            curMessages: this.state.curMessages,
+            context: input.context,
+            skill: input.skill,
+          }),
+          tools,
+          abortSignal: input.abortSignal,
         });
-        await this.executeToolCalls(response, tools);
-        continue;
+        const auditedMessage = response.message
+          ? auditRuntimeMessage(response.message)
+          : undefined;
+
+        if (response.toolCalls?.length) {
+          if (auditedMessage) {
+            assistantMessage = auditedMessage;
+          }
+
+          this.state.curMessages.push({
+            role: 'assistant',
+            content: auditedMessage?.content ?? '',
+            toolCalls: response.toolCalls.map(auditRuntimeToolCall),
+          });
+          await this.executeToolCalls(response, tools);
+          continue;
+        }
+
+        if (auditedMessage) {
+          assistantMessage = auditedMessage;
+          this.state.curMessages.push(auditedMessage);
+        }
+
+        return await this.finish('completed', assistantMessage, input.abortSignal);
       }
 
-      if (response.message) {
-        assistantMessage = response.message;
-        this.state.curMessages.push(response.message);
+      return await this.finish('max_tool_loops', assistantMessage, input.abortSignal);
+    } catch (error) {
+      if (input.abortSignal?.aborted || isAbortError(error)) {
+        return await this.finish('aborted', assistantMessage, input.abortSignal);
       }
-
-      return this.finish('completed', assistantMessage);
+      await this.failTurn(error, input.abortSignal);
+      throw error;
     }
-
-    return this.finish('max_tool_loops', assistantMessage);
   }
 
   async *streamTurn(input: RunTurnInput): AsyncIterable<RuntimeEvent> {
@@ -165,19 +177,20 @@ export class RuntimeSession {
     tools: ToolSet,
   ): Promise<void> {
     for (const toolCall of response.toolCalls ?? []) {
-      await this.emit({ type: 'tool_call_start', toolCall });
+      const auditedToolCall = auditRuntimeToolCall(toolCall);
+      await this.emit({ type: 'tool_call_start', toolCall: auditedToolCall });
 
       const tool = tools[toolCall.name];
       const result = tool
         ? await this.executeTool(tool, toolCall)
         : this.unknownToolResult(toolCall);
 
-      const logEntry: RuntimeToolLogEntry = { toolCall, result };
+      const logEntry: RuntimeToolLogEntry = { toolCall: auditedToolCall, result };
       this.state.toolLog.push(logEntry);
 
       await this.emit({
         type: 'tool_call_finish',
-        toolCall,
+        toolCall: auditedToolCall,
         result,
       });
 
@@ -262,7 +275,23 @@ export class RuntimeSession {
   private async finish(
     stoppedReason: RunTurnResult['stoppedReason'],
     assistantMessage: RuntimeMessage | undefined,
+    abortSignal?: AbortSignal,
   ): Promise<RunTurnResult> {
+    const finalizedActions = await this.options.turnFinalizer?.finalizeTurn({
+      stoppedReason,
+      pendingActions: [...this.state.pendingActions],
+      ...(abortSignal ? { abortSignal } : {}),
+    });
+    if (finalizedActions) {
+      const knownIds = new Set(this.state.pendingActions.map((action) => action.id));
+      for (const pendingAction of finalizedActions) {
+        if (knownIds.has(pendingAction.id)) continue;
+        knownIds.add(pendingAction.id);
+        this.state.pendingActions.push(pendingAction);
+        await this.emit({ type: 'pending_action', pendingAction });
+      }
+    }
+
     const result: RunTurnResult = {
       messages: [...this.state.doneMessages, ...this.state.curMessages],
       assistantMessage,
@@ -277,6 +306,22 @@ export class RuntimeSession {
     await this.emit({ type: 'message_finish', result });
 
     return result;
+  }
+
+  private async failTurn(error: unknown, abortSignal?: AbortSignal): Promise<void> {
+    try {
+      await this.options.turnFinalizer?.finalizeTurn({
+        stoppedReason: 'error',
+        pendingActions: [...this.state.pendingActions],
+        ...(abortSignal ? { abortSignal } : {}),
+      });
+    } catch {
+      // The original fatal error remains authoritative. A finalizer must fail closed.
+    }
+    await this.emit({
+      type: 'error',
+      error: this.toRuntimeError('RUNTIME_TURN_FAILED', error),
+    });
   }
 
   private toRuntimeError(code: string, error: unknown): RuntimeError {
@@ -372,6 +417,78 @@ function extractPendingActions(content: unknown): PendingAction[] {
   }
 
   return [];
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError');
+}
+
+function auditRuntimeToolCall(toolCall: RuntimeToolCall): RuntimeToolCall {
+  if (toolCall.name !== 'bash') return toolCall;
+  const command = readBashCommand(toolCall.args);
+  const hashInput = command ?? '<invalid-bash-command-arguments>';
+  const preview = boundedCommandPreview(
+    command ?? '[invalid bash command arguments]',
+    2 * 1024,
+  );
+  return {
+    id: toolCall.id,
+    name: toolCall.name,
+    args: {
+      commandPreview: preview.text,
+      commandHash: createHash('sha256').update(hashInput, 'utf8').digest('hex'),
+      commandByteLength: Buffer.byteLength(command ?? '', 'utf8'),
+      previewByteLength: Buffer.byteLength(preview.text, 'utf8'),
+      truncated: preview.truncated,
+    },
+  };
+}
+
+function auditRuntimeMessage(message: RuntimeMessage): RuntimeMessage {
+  if (!message.toolCalls?.length) return message;
+  return {
+    ...message,
+    toolCalls: message.toolCalls.map(auditRuntimeToolCall),
+  };
+}
+
+function readBashCommand(value: unknown): string | undefined {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as { command?: unknown }).command === 'string'
+    ? (value as { command: string }).command
+    : undefined;
+}
+
+function boundedCommandPreview(
+  value: string,
+  maxBytes: number,
+): { text: string; truncated: boolean } {
+  const sanitized = value
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/gu, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '')
+    .replace(/\\/gu, '\\\\')
+    .replace(/\r/gu, '\\r')
+    .replace(/\n/gu, '\\n')
+    .replace(/\t/gu, '\\t')
+    .replace(/[\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu, (character) => (
+      `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`
+    ))
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, (character) => (
+      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+    ));
+  if (Buffer.byteLength(sanitized, 'utf8') <= maxBytes) {
+    return { text: sanitized, truncated: false };
+  }
+  let text = '';
+  let bytes = 0;
+  for (const character of sanitized) {
+    const length = Buffer.byteLength(character, 'utf8');
+    if (bytes + length > maxBytes) break;
+    text += character;
+    bytes += length;
+  }
+  return { text, truncated: true };
 }
 
 export class CopilotRuntime extends RuntimeSession {}

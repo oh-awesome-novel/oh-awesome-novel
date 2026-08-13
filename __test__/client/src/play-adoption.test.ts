@@ -113,7 +113,9 @@ describe('Play adoption client contract', () => {
       mutate(valid, (value) => { value.preview.projection = 'director'; }),
       mutate(valid, (value) => { value.preview.fingerprint = 'invalid'; }),
       mutate(valid, (value) => { value.preview.evidenceFingerprint = 'invalid'; }),
-      mutate(valid, (value) => { value.preview.touchedFiles = ['../timeline.yaml']; }),
+      mutate(valid, (value) => {
+        value.preview.changes[0]!.path = '../timeline.yaml';
+      }),
       mutate(valid, (value) => {
         value.preview.diff = 'diff --git a/state/secret.yaml b/state/secret.yaml\n';
       }),
@@ -129,7 +131,9 @@ describe('Play adoption client contract', () => {
           .unexpected = true;
       }),
       mutate(valid, (value) => {
-        value.preview.suggestions[0]!.toolName = 'state.set';
+        const legacyField = ['tool', 'Name'].join('');
+        (value.preview.suggestions[0] as unknown as Record<string, unknown>)[legacyField] =
+          ['state', 'set'].join('.');
       }),
     ];
 
@@ -239,7 +243,7 @@ describe('Play adoption client contract', () => {
       mutate(valid, (value) => { value.candidate.id = 'adoption-other'; }),
       mutate(valid, (value) => { value.pendingAction.id = 'pa_other'; }),
       mutate(valid, (value) => {
-        value.pendingAction.touchedFiles = ['state/secret.yaml'];
+        value.pendingAction.changes[0]!.path = 'state/secret.yaml';
       }),
       mutate(valid, (value) => {
         (value.pendingAction as unknown as Record<string, unknown>).patches = [];
@@ -298,7 +302,12 @@ function createPreviewResponse(
       suggestions,
       target: selectedTarget,
       payload,
-      touchedFiles: [touchedFile],
+      changes: [{
+        operation: 'update' as const,
+        path: touchedFile,
+        oldHash: '1'.repeat(64),
+        newHash: '2'.repeat(64),
+      }],
       diff: `diff --git a/${touchedFile} b/${touchedFile}\n`,
       fingerprint: FINGERPRINT,
       createdAt: '2026-07-16T02:00:00.000Z',
@@ -309,13 +318,12 @@ function createPreviewResponse(
 
 function createSuggestions() {
   return ([
-    ['chapterDraft', 'chapter.createDraft'],
-    ['state', 'state.set'],
-    ['timeline', 'timeline.add'],
-    ['foreshadow', 'foreshadow.create'],
-  ] as const).map(([target, toolName]) => ({
+    'chapterDraft',
+    'state',
+    'timeline',
+    'foreshadow',
+  ] as const).map((target) => ({
     target,
-    toolName,
     recommended: target === 'timeline',
     reason: `Use ${target}.`,
     defaultPayload: targetPayload(target),
@@ -375,10 +383,22 @@ function createPromotionResponse() {
       id: PREVIEW_ID,
       title: 'Add timeline event event-adopted',
       description: 'Append to events in timeline/events.yaml.',
-      touchedFiles: ['timeline/events.yaml'],
+      changes: [{
+        operation: 'update' as const,
+        path: 'timeline/events.yaml',
+        oldHash: '1'.repeat(64),
+        newHash: '2'.repeat(64),
+      }],
       diff: 'diff --git a/timeline/events.yaml b/timeline/events.yaml\n',
       createdAt: '2026-07-16T02:01:00.000Z',
       status: 'pending' as const,
+      origin: {
+        kind: 'playAdoption' as const,
+        sessionId: 'play-1',
+        branchId: 'main',
+        sourceRevision: 7,
+        previewFingerprint: FINGERPRINT,
+      },
     },
     refresh: {
       workspaceStatus: {

@@ -2,332 +2,151 @@
 
 ## User Problems
 
-从对话中整理出的核心痛点：
-
-1. Open WebUI / SillyTavern 适合聊天和角色扮演，但不适合直接生成文件、修改文件、维护几十万字小说工程。
-2. OpenCode 等 coding agent 可能有较重 system prompt 或框架侧审查，不适合自由小说创作工作流。
-3. 长篇小说需要跨文件维护角色、人设、世界观、时间线、伏笔、状态、摘要，而不是把几万字粘贴到聊天框。
-4. 传统 RAG / Memory 如果无节制塞上下文，会导致慢、乱、上下文爆炸。
-5. AI 直接全文重写 Markdown 很容易破坏格式、删掉无关内容、造成不可审阅修改。
-6. 作者需要 Git diff、Accept / Reject、回滚和可控修改，而不是 AI 静默写入。
+1. 聊天或角色扮演产品不适合直接管理几十万字、多对象、多章节小说工程。
+2. 长篇创作需要跨文件维护人物、世界、状态、时间线、伏笔、摘要与大纲。
+3. 无节制上下文会导致成本、延迟与一致性问题。
+4. AI 全文重写或直接写盘容易破坏格式、覆盖用户修改并产生不可审阅结果。
+5. 作者需要明确的 diff、Accept / Reject、Git 历史与恢复能力。
 
 ## Primary Users
 
 ### Independent Novel Author
 
-需要：
+- 管理长篇、多卷、多角色项目。
+- 局部续写、润色、结算状态与维护设定。
+- 自由选择模型，并始终掌握真实文件和 Git 历史。
 
-- 长篇小说项目管理。
-- 多章节、多角色、多世界观文件维护。
-- 能局部润色、续写、反提取状态。
-- 能自由选择模型。
-- 能用 Git 管理版本。
+### Power User With File Tools
 
-### Power User With Agent Tools
-
-需要：
-
-- 与 Codex、Aider、Crush、Claude Code、VSCode、Obsidian 兼容。
-- 文件系统是第一公民。
-- 可导入导出、可用外部工具直接编辑。
+- 用 Codex、Aider、Claude Code、VS Code、Obsidian 或 Git 直接编辑项目。
+- 在不依赖私有数据库的前提下导入、导出与自动化只读分析。
 
 ## Functional Requirements
 
 ### F1. Novel Project Initialization
 
-系统应能创建一个标准小说项目目录：
-
-```text
-my-novel/
-├── .oan/
-├── characters/
-├── world/
-├── chapters/
-├── state/
-├── timeline/
-├── foreshadow/
-├── summaries/
-└── .git/
-```
-
-项目内部运行目录统一为 `.oan/`。早期讨论中的 `.storyforge/` 不是有效 workspace 目录，不需要兼容层。
+系统创建标准 `.oan/` 配置和 `characters/`、`world/`、`chapters/`、`outline/`、`state/`、`timeline/`、`foreshadow/`、`summaries/` 对象树，并初始化或识别 Git repository。
 
 ### F2. Object File Tree
 
-Character、World、Constitution 等对象不能长期维护成单个巨大 Markdown 文件。
-
-应拆成细粒度文件：
-
-```text
-characters/heroine/
-├── meta.yaml
-├── summary.md
-├── personality.md
-├── appearance.md
-├── growth.md
-└── relationships.yaml
-```
-
-原则：
-
-- 一个 AI Tool 一次最好只修改一个物理文件。
-- 文件粒度越小，diff 越清晰，Apply Engine 越稳定。
+Character、World、Constitution 等长期对象拆成小型 Markdown / YAML 文件。粒度应使作者能理解单次 diff，并让 validator 可以针对完整文件做严格校验。
 
 ### F3. Domain Support
 
-必须支持七个一级领域：
+必须支持 Character、World、Chapter、State、Timeline、Foreshadow、Summary 与 Outline，以及 Constitution、Workflow、Skill、Writing Profile 和 Extension 控制域。
 
-- Character
-- World
-- Chapter
-- State
-- Timeline
-- Foreshadow
-- Summary
+### F4. Novel Constitution And Workflow
 
-另有项目控制领域：
+Constitution 是作者可见、可编辑、Git tracked 的最高优先级创作约束；AI 只能提出修改建议。`.oan/workflow.yaml` 描述作者流程，不得演化成隐藏 planner。
 
-- Constitution
-- Workflow
-- Skill
-- Extension
+### F5. AI SDK ToolSet
 
-### F4. Novel Constitution
+工具统一使用 Vercel AI SDK `ToolSet`、`tool()` 与 `jsonSchema()`。不得引入第二套 Tool registry 抽象。只读领域工具从 turn 的固定 projection 读取；UI metadata 应作为 ToolSet 外围薄映射存在。
 
-每个小说项目必须有创作宪法。
+### F6. Aider-style Runtime
 
-它定义：
+Runtime 支持 streaming、多个 tool call、最大循环次数、tool error result 与通用 turn finalizer。它必须 provider-agnostic，不实现 Planner、多 Agent、后台自治执行或隐藏重试。
 
-- 项目身份
-- 写作哲学
-- 叙事规则
-- 人物规则
-- 世界规则
-- 内容规则
-- 风格指南
-- 禁用模式
-- 长期方向
+### F7. Fixed In-memory Editing
 
-AI 只能建议修改，不能自动修改。
+每个写 turn 只创建一个 `SandboxEditSession`：
 
-### F5. Workflow
+- host 枚举 allowlisted canonical 文件并一次性构造 baseline manifest；
+- 文件装入固定 `InMemoryFs`，session 中不再 lazy-read host workspace；
+- `TrackingFs` 覆盖完整 mutation surface；
+- `PolicyFs` 对读取、枚举与 mutation 都执行 capability/path policy；
+- `bash-tool` 只连接 `just-bash`，允许受限文件/文本命令；
+- network、宿主进程、Python、JavaScript、symlink、hardlink 与内部路径不可用。
 
-作者可以用 `.oan/workflow.yaml` 定义创作流程。
+任意 domain read tool 若参与同一 turn，也必须读取该固定投影。
 
-示例：
+### F8. Host-selected Capability
 
-```yaml
-name: lightnovel
-steps:
-  - constitution
-  - world
-  - character
-  - outline
-  - chapter
-  - summary
-  - review
-```
+写权限只能由可信 host workflow 选择，模型参数不能声明或扩大。未知或缺失 workflow 必须降为 `read-only`。能力至少覆盖单一小说文件族、显式 multi-file edit、Reference publish/adopt 与 Play adopt；确定性 producer 使用 exact target policy。
 
-Workflow 属于作者，不属于 AI。
+### F9. CandidateChangeSet
 
-### F6. AI SDK ToolSet Registry
+finalize 比较 baseline 与最终 VFS，并生成 schema version 1 `CandidateChangeSet`：
 
-系统应提供领域工具集合，暴露 AI 可调用的小说操作。
+- 只含 NFC-normalized workspace-relative POSIX path；
+- 只支持 UTF-8 text 的 create / update / delete；
+- change 按 path 稳定排序且不重复；
+- create 声明 baseline 不存在，update/delete 携带 baseline hash、size 与 mode；
+- no-op 必须消除，空集合不创建 PendingAction；
+- repository identity、branch、HEAD 与 projection fingerprint 固定在 proposal；
+- final whole-document validators 必须对所有 writable family 完整覆盖。
 
-这里的 Tool Registry 是概念名：实现统一使用 Vercel AI SDK `ToolSet`。不要实现 `defineStoryTool()`、`StoryTool`、`RuntimeToolRegistry` 这类第二套工具抽象。
+`changes` 是唯一 Accept authority。diff、command log 与 mutation log 不具备权威性。
 
-如 UI 后续需要 `readOnly`、`risk`、`allowedInSkills` 等信息，应在 AI SDK `ToolSet` 外围增加轻量 metadata map，而不是替换 `ToolSet`。
+### F10. PendingAction And Prepared Preview
 
-工具清单按阶段分层。不要把 future/proposed tools 当成 M5/M6 已完成范围。
+PendingAction、terminal record、decision receipt 和 prepared preview 使用严格 schema version 1 与独立 kind。create/update 候选 bytes 只存在 OAN 内部 immutable draft artifact；公共 DTO 只能暴露 operation、path、hash、diff、origin 与 Git result，不能暴露 artifact path 或候选全文。
 
-M5 completed read tools:
+旧或无版本内部记录必须返回 `UNSUPPORTED_PENDING_ACTION_SCHEMA`，不得静默忽略或自动转换。
 
-- `character.get`
-- `character.list`
-- `world.search`
-- `chapter.get`
-- `state.get`
-- `timeline.list`
-- `foreshadow.list`
-- `summary.get`
-- `constitution.get`
-- `workflow.get`
+### F11. Human Approval
 
-M6 completed write-intent tools:
+所有 AI 或 producer 发起的 canonical 修改都必须进入 PendingAction。Accept 前 canonical bytes 与 Git working tree 不得因候选而变化。Reject 只终结 action 并清理候选；Accept 也不得解析 diff 或重放 shell command。
 
-- `character.updatePersonality`
-- `state.set`
-- `timeline.add`
-- `foreshadow.create`
-- `summary.generateChapter`
+### F12. Transactional Materialization
 
-Post-M6 / proposed tools:
+`ChangeMaterializer` 必须：
 
-- `chapter.rewriteScene`
-- `foreshadow.resolve`
-- `constitution.proposeUpdate`
-- `constitution.search`
+- 重验 action schema、origin freshness、repository、policy、baseline、mode 与 draft hash；
+- 对 create/update/delete 建立 operation-aware stage、backup 与 journal；
+- commit point 前失败逆序 rollback；
+- durable accepted terminal record 是文件事务 commit point；
+- commit point 后恢复只 finalize，永不 rollback；
+- Git 是 Accept 后 side effect，失败不回滚已接受的 canonical 修改。
 
-### F7. Aider-style Copilot Runtime
+### F13. Git Integration
 
-Runtime 必须保持极简：
+默认 `git.autoCommitOnAccept: true` 时只 stage/commit accepted action paths；禁止混入 unrelated staged/dirty content。关闭自动提交或 Git 失败时，UI 展示 dirty 状态并提供显式 quick commit。frontend 不能提交任意路径或任意 Git 命令。
 
-- OpenAI compatible API
-- 支持 Vercel AI SDK `tool()` / `generateText()` / `streamText()`
-- 支持多 tool call
-- 支持最大循环次数
-- Tool error 作为 tool result 返回
+### F14. Summary And Context
 
-明确不做：
+上下文来自 Constitution、Workflow、当前任务、显式选择、近期章节、摘要、State、Timeline 与 Foreshadow。默认不加载整本小说，向量数据库不得成为 memory 事实源。
 
-- Planner
-- Multi-Agent
-- Autonomous execution
-- Hidden retry engine
+### F15. Review, Settlement And Adoption
 
-### F8. SemanticPatch
+- Review 默认 report-only；只有作者明确要求编辑时才创建候选。
+- Chapter settlement 先记录 evidence-backed observation，再提议 summary/state/timeline/foreshadow/character changes。
+- Reference publication/adoption 与 Play adoption 保留 source fingerprint、origin freshness 与 exact target policy。
+- 确定性 workflow 直接生成同一 ChangeSet，不强制翻译成 shell 字符串。
 
-写入工具不应直接输出完整文件，也不应输出脆弱的 search/replace。
+### F16. Desktop Review
 
-AI 应输出意图：
+UI 必须展示 PendingAction title/status、create/update/delete path list、纯文本 diff、origin 与 Git outcome；路径标签只能来自结构化 `changes`，不能从 diff header 或内部 artifact 推断。
 
-```json
-{
-  "target": "character",
-  "entityId": "heroine",
-  "operation": "replaceBlock",
-  "file": "personality.md",
-  "block": "内在人格",
-  "instruction": "增加外冷内热的表现，但保留善良本性。"
-}
-```
+### F17. Internal State And Reset
 
-Apply Engine 将意图转成 diff。
-
-### F9. Human Approval
-
-所有写操作必须生成 Patch Preview。
-
-用户确认前不得写真实目标文件，也不得 materialize 到小说 workspace 正式内容路径。
-
-系统内部可以在用户确认前写入 `workspace/.workspace` shadow recovery / PendingAction 数据，用于 diff preview、崩溃恢复和审批状态。调用方不能把 `.workspace` 当作可写目标路径传入。
-
-### F10. Summary And Memory
-
-Memory 不是向量数据库，而是由文件组成：
-
-- 最近章节
-- 章节摘要
-- 卷摘要
-- 全局摘要
-- 当前角色状态
-- 时间线
-- 伏笔
-
-生成上下文时优先使用：
-
-```text
-Constitution
-Workflow
-Current Task
-Current Chapter
-Previous Chapter
-Recent Summaries
-Volume Summary
-Global Summary
-State
-Timeline
-Foreshadow
-```
-
-不要加载整本小说。
-
-### F11. Chapter Completion Assistant
-
-用户标记一章完成后，Copilot 应分析：
-
-- 人物状态变化
-- 关系变化
-- 物品变化
-- 时间线事件
-- 伏笔新增或回收
-- 需要生成的摘要
-
-输出待确认提案。
-
-### F12. Skills
-
-Skill = Prompt Pack + Allowed Tool List。
-
-示例：
-
-```yaml
-name: rewrite
-allowed_tools:
-  - chapter.get
-  - summary.get
-system: |
-  Rewrite locally.
-  Preserve character voice.
-  Avoid AI clichés.
-```
-
-`chapter.rewriteScene` 属于后续 Apply Engine-backed rewrite skill，不属于当前 M5/M6 completed tool scope。
-
-Skill 不包含业务逻辑。
-
-### F13. Extensions
-
-Extension 可以贡献：
-
-- Tools
-- Prompt Packs
-- Workflow Templates
-- Constitution Templates
-
-参考 Goose 的扩展思想，不参考复杂 runtime。
+新协议仅使用 `.workspace/change-engine/v1/`。`.workspace/` 与 `.oan/sessions/` 是 disposable runtime/session state；一次性开发 reset 只能在验证 exact realpath、Git tracked files、Git status 与 canonical SHA-256 manifest 后删除这两个目录。`.git`、`.oan` 其它配置与所有小说对象树必须保留。
 
 ## Non-Functional Requirements
 
-### Simplicity
+### Security
 
-一个开发者应能在短时间内读懂核心 runtime。
+- arbitrary host shell 永远禁止；只允许固定内存投影中的受限同进程 shell。
+- 隐藏路径、secrets、未投影文件名、non-regular files 与 host process 不可见。
+- command、output、source、scratch、candidate、file count、单文件与 diff 均有独立累计上限。
+- stdout/stderr 和 command preview 去除控制字符并按纯文本渲染。
 
-### Observability
+### Simplicity And Observability
 
-Tool calls、参数、结果预览、SemanticPatch、diff 都必须可见。
+一个开发者应能读懂核心 runtime。tool activity、bounded command preview/hash、CandidateChangeSet summary、PendingAction 与 diff 均可观察，但日志不得保存可重放的完整 bash args。
 
-### Git Friendliness
+### Durability
 
-所有项目数据都应 Git friendly。
+proposal、draft、terminal、receipt 与 journal 采用 temp + fsync + atomic rename。恢复逻辑 fail closed，绝不猜测或局部应用 stale proposal。
 
-### Model Flexibility
+### Git Friendliness And Local First
 
-应支持 OpenAI compatible provider：
-
-- DeepSeek
-- Qwen
-- Ollama
-- OpenRouter
-- Gemini compatible gateway
-- 其它兼容 API
-
-### Local First
-
-项目应能在本地运行，默认不依赖云端数据库。
+所有 canonical 项目数据保持 text-based、可 diff、可由外部编辑器修改，并可在不依赖云数据库的本地环境运行。
 
 ## Explicitly Avoid
 
-不要引入：
-
-- LangChain
-- AutoGen
-- CrewAI
-- Semantic Kernel
-- Hidden planners
-- Heavy multi-agent runtime
-- Autonomous background writes
-- Database migrations
-- Event sourcing
-- CQRS
-- 向量数据库作为事实源
+- LangChain、AutoGen、CrewAI、Semantic Kernel 或重型多 Agent runtime
+- feature flag 双写、dual-run、兼容 reader、旧记录 migrator 或 downgrade path
+- arbitrary host shell、trusted custom shell command、network/package manager
+- database migrations、event sourcing、CQRS 或向量数据库事实源
+- silent writes、自动后台写作、diff-as-authority 或 command replay on Accept

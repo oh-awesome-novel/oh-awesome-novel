@@ -16,6 +16,12 @@ export interface RuntimeToolCall {
   args: unknown;
 }
 
+export interface RuntimeToolCallAudit {
+  id: string;
+  name: string;
+  args: unknown;
+}
+
 export interface RuntimeError {
   code: string;
   message: string;
@@ -27,14 +33,27 @@ export interface PendingAction {
   id: string;
   title: string;
   description: string;
-  patches: unknown[];
-  touchedFiles: string[];
-  diff: string;
+  status: 'pending' | 'accepted' | 'rejected';
   createdAt: string;
-  status: 'pending';
+  decidedAt?: string;
+  changes: Array<{
+    operation: 'create' | 'update' | 'delete';
+    path: string;
+    oldHash?: string;
+    newHash?: string;
+  }>;
+  diff: string;
+  origin?: unknown;
+  git?: unknown;
 }
 
 export type PendingActionSummary = PendingAction;
+
+/**
+ * Additive sandbox-engine public view used by injected turns before the atomic
+ * production cut removes the legacy PendingAction contract.
+ */
+export type SandboxPendingActionView = PendingAction;
 
 export type RuntimeToolResult =
   | {
@@ -76,7 +95,7 @@ export interface RuntimeModelAdapter {
 }
 
 export interface RuntimeToolLogEntry {
-  toolCall: RuntimeToolCall;
+  toolCall: RuntimeToolCallAudit;
   result: RuntimeToolResult;
 }
 
@@ -125,13 +144,21 @@ export type RuntimeStopReason =
   | 'aborted'
   | 'error';
 
+export interface RuntimeTurnFinalizer {
+  finalizeTurn(input: {
+    stoppedReason: RuntimeStopReason;
+    pendingActions: PendingAction[];
+    abortSignal?: AbortSignal;
+  }): Promise<PendingAction[]>;
+}
+
 export type RuntimeEvent =
   | { type: 'message_start'; messages: RuntimeMessage[] }
   | { type: 'message_delta'; text: string }
-  | { type: 'tool_call_start'; toolCall: RuntimeToolCall }
+  | { type: 'tool_call_start'; toolCall: RuntimeToolCallAudit }
   | {
       type: 'tool_call_finish';
-      toolCall: RuntimeToolCall;
+      toolCall: RuntimeToolCallAudit;
       result: RuntimeToolResult;
     }
   | { type: 'pending_action'; pendingAction: PendingAction }
@@ -143,6 +170,7 @@ export interface CopilotRuntimeOptions {
   tools?: ToolSet;
   contextBuilder?: RuntimeContextBuilder;
   maxToolLoops?: number;
+  turnFinalizer?: RuntimeTurnFinalizer;
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
 }
 

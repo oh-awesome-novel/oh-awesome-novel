@@ -35,7 +35,7 @@ StoryForge 不能作为 OAN 的直接架构模板。OAN 的稳定事实仍然是
 - AI 是 Copilot，不是数据所有者。
 - 所有真实目标文件写入都必须经过人类确认。
 - Runtime 学 Aider 的极简循环，并使用 Vercel AI SDK Tool Calling。
-- 文件修改通过 `SemanticPatch + Apply Engine + PendingAction + Git diff` 完成。
+- 文件修改通过 `CandidateChangeSet + ChangeMaterializer + PendingAction + Git diff` 完成。
 - 不把固定领域编排扩张成重型多 Agent 平台。
 
 吸收时应遵守四条转换规则：
@@ -49,7 +49,7 @@ StoryForge 不能作为 OAN 的直接架构模板。OAN 的稳定事实仍然是
 
 ### P0：优先对照现有实现复核
 
-这些能力与 OAN 当前方向高度一致。重点不是重新设计，而是检查现有 task、UI、schema 和 Apply Engine 是否已形成端到端闭环：
+这些能力与 OAN 当前方向高度一致。重点不是重新设计，而是检查现有 task、UI、schema 和 ChangeMaterializer 是否已形成端到端闭环：
 
 - 候选卡的真实上下文证据与预算。
 - 六领域章节后整理及逐项确认。
@@ -60,7 +60,7 @@ StoryForge 不能作为 OAN 的直接架构模板。OAN 的稳定事实仍然是
 ### P1：核心闭环稳定后再增强
 
 - Prompt provenance 与项目级覆盖。
-- 审稿报告到局部 SemanticPatch 的闭环。
+- 审稿报告到局部 CandidateChangeSet 的闭环。
 - 长篇导入、断点续跑和 source drift。
 - 可恢复长任务与 AI run log。
 - Play Mode 的事件连续性、检查点 hash 和分支校验。
@@ -94,7 +94,7 @@ StoryForge 的真正价值不只是“功能很多”，而是逐步把 AI 能�
   - `novel.update_character_card`
 - 每项能力声明允许读取的对象文件、可生成的中间产物、可提出的 patch 类型和确认要求。
 - 从注册信息生成只读 manual，用检查保证文档与代码一致。
-- 不为此建立第二套业务数据库；能力目录应描述现有 ToolSet、ContextPackage 和 Apply Engine 边界。
+- 不为此建立第二套业务数据库；能力目录应描述现有 ToolSet、ContextPackage 和 ChangeMaterializer 边界。
 
 建议状态：保留为 P0 复核项，先盘点 OAN 已有能力，避免重复创建新抽象。
 
@@ -140,7 +140,7 @@ StoryForge 当前一次整理会生成六类候选：
 - 新批次失败不能破坏上一批有效数据。
 - 事实候选不会因为“被整理出来”就自动升为 confirmed Canon。
 
-OAN 应把这些约束映射到现有 `ObservationLog -> SettlementBundle -> PendingAction -> SemanticPatch -> Git diff` 流程。正文、状态、时间线、关系、伏笔和物品文件仍然分别形成可审查 patch，而不是一次性覆盖对象树。
+OAN 应把这些约束映射到现有 `ObservationLog -> SettlementBundle -> PendingAction -> CandidateChangeSet -> Git diff` 流程。正文、状态、时间线、关系、伏笔和物品文件仍然分别形成可审查 patch，而不是一次性覆盖对象树。
 
 建议状态：P0。旧版“完整 settlement 仍未落地”的表述作废。
 
@@ -163,7 +163,7 @@ OAN 可吸收方式：
 - 确定性失败产生 repair candidate 或阻止采纳；不要隐藏调用模型自动重写。
 - 报告、候选和 patch 都绑定源文件 hash / Git blob 身份，源文件变化后失效。
 
-建议状态：P0。适合复核 OAN review、settlement 和 Apply Engine 之间的职责边界。
+建议状态：P0。适合复核 OAN review、settlement 和 ChangeMaterializer 之间的职责边界。
 
 ### 5. 为参考分析建立 active / ready 版本隔离
 
@@ -231,7 +231,7 @@ OAN 可以吸收以下纪律：
 3. 生成场景 / beat 候选。
 4. 生成正文候选。
 5. 生成章节后 SettlementBundle。
-6. 生成 SemanticPatch 候选。
+6. 生成 CandidateChangeSet 候选。
 7. 用户通过 Git diff 确认应用。
 
 每一步需要稳定产物名、来源 hash、状态和恢复入口。它们可以位于 workspace shadow / PendingAction 区，但不能偷偷成为正式小说对象。
@@ -247,7 +247,7 @@ OAN 可吸收方式：
 - 审稿报告按逻辑、角色、设定、时序、认知、伏笔、节奏和文风分类。
 - 每项 finding 带正文证据、关联 Canon 证据、严重度和置信度。
 - 报告本身只读且绑定正文版本。
-- 用户选择要处理的问题后，Agent 才生成局部 SemanticPatch。
+- 用户选择要处理的问题后，Agent 才生成局部 CandidateChangeSet。
 - 修订稿必须经过 PendingAction 和 Git diff，不能由审稿调用直接覆盖正文。
 - Fast / Deep 应表示上下文深度和预算，不应暗示更高层级拥有自动写入权限。
 
@@ -264,7 +264,7 @@ OAN 可吸收方式：
 - 每 N 块做确定性合并、去重和冲突报告。
 - 允许取消、续跑和 source drift 检测。
 - 新分析先进入 run / pending publication，不直接写正式对象文件。
-- 用户确认发布后，再由多个 SemanticPatch 建立 Object File Tree。
+- 用户确认发布后，再由多个 CandidateChangeSet 建立 Object File Tree。
 
 建议状态：P1。重点吸收恢复和版本隔离，不复制 StoryForge 的 Dexie chunk 表。
 
@@ -324,7 +324,7 @@ OAN 可吸收的是验证方式，而不是表结构。它不能替代 OAN 已�
 StoryForge 快速扩张到 58 张表、47 个 Context Sources 和多种执行原语后，开始用自动检查维持边界。OAN 虽不应复制这种复杂度，但可以吸收“声明必须可验证”的原则：
 
 - capability manual 与 ToolSet / schema 保持生成或测试一致。
-- 所有正式写入路径都必须经过 Apply Engine，使用架构守卫防止旁路。
+- 所有正式写入路径都必须经过 ChangeMaterializer，使用架构守卫防止旁路。
 - task 状态、代码入口和测试覆盖之间建立检查。
 - ContextPackage 的固定入口设置体积或预算回归检查。
 - 每条 Canon 规则至少有一个可执行反例。
@@ -449,7 +449,7 @@ StoryForge 的 MIT 许可证解决的是许可证授权问题，不会改变 OAN
 - `[StoryForge]` 章节整理结果应按领域、逐项确认；事实观察不会因被抽取就自动成为 confirmed Canon。
 - `[StoryForge]` LLM 负责提出带引文的 finding，确定性代码负责闭集校验和 Canon 冲突判断，两者都不得直接覆盖正文。
 - `[StoryForge]` 参考分析的新 run 不应覆盖当前 active 版本；失败、取消、source drift 和回滚必须保持最后一个可用版本。
-- `[StoryForge]` 审稿应走“报告 → 用户选择 → 修订 SemanticPatch → Git diff 确认”的闭环。
+- `[StoryForge]` 审稿应走“报告 → 用户选择 → 修订 CandidateChangeSet → Git diff 确认”的闭环。
 - `[StoryForge]` Prompt、agent guide、ContextPackage 和 run log 应保留 provenance，使每个 patch 的生成依据可追溯。
 
 这些仍是候选内容。本文更新不会自动合并它们，也不会创建对应 task 或 plan。
@@ -490,4 +490,4 @@ StoryForge 的 MIT 许可证解决的是许可证授权问题，不会改变 OAN
 - `reference-only/storyforge/src/lib/product/world-package.ts`
 - `reference-only/storyforge/src/lib/export/backup-trust.ts`
 
-本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 为准。
+本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、CandidateChangeSet、PendingAction 和 Git diff approval 为准。

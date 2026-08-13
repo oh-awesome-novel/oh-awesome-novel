@@ -32,7 +32,7 @@ Local File Dashboard
 - 单一结构化追踪状态带 revision CAS；派生 Markdown 先写，权威状态最后写为 commit point。
 - 热上下文、Skill 文档体积和多宿主派生文件都有自动预算 / 一致性检查。
 
-这些机制可以强化 OAN 的 `SettlementBundle`、projection、ContextPackage 和 adapter governance，但不能替代 `SemanticPatch → PendingAction → Git diff → Accept`。
+这些机制可以强化 OAN 的 `SettlementBundle`、projection、ContextPackage 和 adapter governance，但不能替代 `CandidateChangeSet → PendingAction → Git diff → Accept`。
 
 ## 当前产品与仓库形态
 
@@ -191,7 +191,7 @@ dashboard 是一个 loopback Node 文件浏览 / 编辑服务，不是 AI runtim
    commit point 前的派生文件可能部分更新，必须依靠 revision 和可重建性处理。
 
 6. **本地 Dashboard 不是 Human Approval 引擎**
-   hash 并发控制防止覆盖旧版本，但不负责 AI 候选、SemanticPatch 或 Git 历史。
+   hash 并发控制防止覆盖旧版本，但不负责 AI 候选、CandidateChangeSet 或 Git 历史。
 
 ## 对 OAN 的建议
 

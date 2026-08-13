@@ -47,6 +47,14 @@ const sourceKindLabel = computed(() => {
 const selectedSuggestion = computed(() =>
   props.preview?.suggestions.find((suggestion) => suggestion.target === target.value),
 );
+const selectedBusinessTargetLabel = computed(() => {
+  const selectedTarget = selectedSuggestion.value?.target;
+  if (selectedTarget === 'chapterDraft') return 'Chapter Markdown';
+  if (selectedTarget === 'state') return 'Canonical state YAML';
+  if (selectedTarget === 'timeline') return 'Timeline event YAML';
+  if (selectedTarget === 'foreshadow') return 'Foreshadow YAML';
+  return '';
+});
 const parsedPayload = computed<{
   value?: Record<string, unknown>;
   error?: string;
@@ -200,7 +208,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
           Server suggestion
           <template v-if="selectedSuggestion.recommended"> · recommended</template>
         </span>
-        <strong>{{ selectedSuggestion.toolName }}</strong>
+        <strong>{{ selectedBusinessTargetLabel }}</strong>
         <p>{{ selectedSuggestion.reason }}</p>
       </div>
 
@@ -233,8 +241,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     <section v-if="preview" class="play-adoption-preview" aria-label="Canonical adoption preview">
       <div class="play-adoption-target-files">
         <span>Target files</span>
-        <ul v-if="preview.touchedFiles.length">
-          <li v-for="file in preview.touchedFiles" :key="file">{{ file }}</li>
+        <ul v-if="preview.changes.length">
+          <li v-for="change in preview.changes" :key="change.path">
+            {{ change.operation }} · {{ change.path }}
+          </li>
         </ul>
         <p v-else>No canonical target file was returned.</p>
       </div>

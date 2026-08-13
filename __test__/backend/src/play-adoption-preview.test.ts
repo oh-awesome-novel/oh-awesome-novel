@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import {
   mkdir,
   mkdtemp,
@@ -8,6 +9,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   startNovelHttpBackend,
@@ -17,6 +19,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const workspaces: string[] = [];
 const backends: NovelBackendHandle[] = [];
+const execFileAsync = promisify(execFile);
 
 const canonicalTargets = {
   chapterDraft: 'chapters/0001/0001.md',
@@ -63,7 +66,7 @@ describe('evidence-backed Play adoption preview transport', () => {
         projection: 'director',
         seed,
       });
-      expect(created.response.status).toBe(200);
+      expect(created.response.status, JSON.stringify(created.body)).toBe(200);
       expect(created.body.preview).toMatchObject({
         schemaVersion: 1,
         sessionId: harness.session.id,
@@ -95,7 +98,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       previews.set(target, preview);
       expect(preview).toMatchObject({
         target,
-        touchedFiles: [canonicalTargets[target]],
+        changes: [expect.objectContaining({ path: canonicalTargets[target] })],
         canonicalUnchanged: true,
       });
       expect(preview.id).toMatch(/^pa_[0-9a-f-]+$/iu);
@@ -118,7 +121,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       seed: { kind: 'event', eventId: event.id },
       target: 'state',
     });
-    expect(created.response.status).toBe(200);
+    expect(created.response.status, JSON.stringify(created.body)).toBe(200);
     const preview = created.body.preview;
 
     const first = await promotePreview(harness, preview);
@@ -140,7 +143,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       pendingAction: {
         id: preview.id,
         status: 'pending',
-        touchedFiles: preview.touchedFiles,
+        changes: [expect.objectContaining({ path: canonicalTargets.state })],
         diff: preview.diff,
       },
     });
@@ -156,12 +159,12 @@ describe('evidence-backed Play adoption preview transport', () => {
     ]);
     await expect(readCanonicalTargets(harness.workspaceRoot)).resolves.toEqual(before);
 
-    const rejected = await requestJson<{ status: string }>(
+    const rejected = await requestJson<{ pendingAction: { status: string } }>(
       `${harness.backend.url}/api/workspace/pending-actions/${preview.id}/reject`,
       { method: 'POST' },
     );
     expect(rejected.response.status).toBe(200);
-    expect(rejected.body.status).toBe('rejected');
+    expect(rejected.body.pendingAction.status).toBe('rejected');
     const afterDecision = await promotePreview(harness, preview);
     expect(afterDecision.response.status).toBe(409);
     expect(afterDecision.body).toMatchObject({
@@ -220,7 +223,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       projection: 'director',
       seed: hiddenSeed,
     });
-    expect(director.response.status).toBe(200);
+    expect(director.response.status, JSON.stringify(director.body)).toBe(200);
     expect(director.body.preview).toMatchObject({
       visibility: 'playerUnknown',
       summary: expect.stringContaining(hiddenEvent.summary),
@@ -420,7 +423,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       `${harness.backend.url}/api/workspace/pending-actions/${preview.id}/accept`,
       { method: 'POST' },
     );
-    expect(staleAccept.response.status).toBe(409);
+    expect(staleAccept.response.status, JSON.stringify(staleAccept.body)).toBe(409);
     expect(staleAccept.body).toMatchObject({
       code: 'stale_play_adoption_preview',
     });
@@ -429,12 +432,12 @@ describe('evidence-backed Play adoption preview transport', () => {
       expect.objectContaining({ id: preview.id, status: 'pending' }),
     ]);
 
-    const rejected = await requestJson<{ status: string }>(
+    const rejected = await requestJson<{ pendingAction: { status: string } }>(
       `${harness.backend.url}/api/workspace/pending-actions/${preview.id}/reject`,
       { method: 'POST' },
     );
     expect(rejected.response.status).toBe(200);
-    expect(rejected.body.status).toBe('rejected');
+    expect(rejected.body.pendingAction.status).toBe('rejected');
   });
 
   it('revalidates activated source content before accepting a promoted PendingAction', async () => {
@@ -469,7 +472,7 @@ describe('evidence-backed Play adoption preview transport', () => {
       `${harness.backend.url}/api/workspace/pending-actions/${preview.id}/accept`,
       { method: 'POST' },
     );
-    expect(staleAccept.response.status).toBe(409);
+    expect(staleAccept.response.status, JSON.stringify(staleAccept.body)).toBe(409);
     expect(staleAccept.body).toMatchObject({
       code: 'play_launch_source_validation',
     });
@@ -484,13 +487,16 @@ describe('evidence-backed Play adoption preview transport', () => {
     expect(promoted.response.status).toBe(200);
     await expect(readCanonicalTargets(harness.workspaceRoot)).resolves.toEqual(before);
 
-    const accepted = await requestJson<{ status: string; appliedFiles: string[] }>(
+    const accepted = await requestJson<{
+      pendingAction: { status: string };
+      appliedFiles: string[];
+    }>(
       `${harness.backend.url}/api/workspace/pending-actions/${preview.id}/accept`,
       { method: 'POST' },
     );
-    expect(accepted.response.status).toBe(200);
+    expect(accepted.response.status, JSON.stringify(accepted.body)).toBe(200);
     expect(accepted.body).toMatchObject({
-      status: 'accepted',
+      pendingAction: { status: 'accepted' },
       appliedFiles: [canonicalTargets.state],
     });
     const after = await readCanonicalTargets(harness.workspaceRoot);
@@ -584,7 +590,7 @@ interface AdoptionPreview {
   suggestions: Array<{ target: AdoptionTarget }>;
   target: AdoptionTarget;
   payload: Record<string, unknown>;
-  touchedFiles: string[];
+  changes: Array<{ path: string }>;
   diff: string;
   fingerprint: string;
   canonicalUnchanged: true;
@@ -651,7 +657,7 @@ async function createSettledHarness(options: {
       },
     },
   );
-  expect(created.response.status).toBe(200);
+  expect(created.response.status, JSON.stringify(created.body)).toBe(200);
   let session = created.body.session;
   const turnCount = options.turnCount ?? 1;
   for (let index = 0; index < turnCount; index += 1) {
@@ -798,7 +804,20 @@ async function createWorkspace(): Promise<string> {
       'active: []\n',
     ),
   ]);
+  await initializeGitRepository(workspaceRoot);
   return workspaceRoot;
+}
+
+async function initializeGitRepository(workspaceRoot: string): Promise<void> {
+  await execFileAsync('git', ['init'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd: workspaceRoot,
+  });
+  await execFileAsync('git', ['config', 'user.name', 'Test User'], {
+    cwd: workspaceRoot,
+  });
+  await execFileAsync('git', ['add', '.'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspaceRoot });
 }
 
 async function writeWorkspaceFile(

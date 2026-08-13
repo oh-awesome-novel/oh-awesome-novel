@@ -1,5 +1,7 @@
 > From: https://chatgpt.com/c/6a217ff8-9a38-83e8-9182-c88155960b1e
 
+> Status: Historical raw conversation transcript; not a current OAN contract.
+
 # you asked
 
 https://github.com/charmbracelet/crush 是否有 multiagent或者subagent

@@ -1523,6 +1523,67 @@ describe('createOanClient', () => {
     await expect(client.selectDirectory()).resolves.toBe('/workspace');
   });
 
+  it('passes a strict explicit writable-path edit context through the chat transport body', () => {
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: createFetchMock([], {}),
+      systemTheme: () => 'dark',
+    });
+    const readStaticBody = (transport: unknown): unknown =>
+      (transport as { body?: unknown }).body;
+
+    expect(readStaticBody(client.createAgentChatTransport())).toBeUndefined();
+    expect(readStaticBody(client.createAgentChatTransport({
+      exactWritablePaths: [],
+    }))).toEqual({ editContext: { exactWritablePaths: [] } });
+    expect(readStaticBody(client.createAgentChatTransport({
+      exactWritablePaths: [
+        'chapters/0001/0001.md',
+        'summaries/chapter/0001/0001.md',
+        'chapters/0001/0001.md',
+      ],
+    }))).toEqual({
+      editContext: {
+        exactWritablePaths: [
+          'chapters/0001/0001.md',
+          'summaries/chapter/0001/0001.md',
+        ],
+      },
+    });
+  });
+
+  it('rejects malformed, traversing and hidden chat edit contexts client-side', () => {
+    const client = createOanClient({
+      backendBaseUrl: 'http://backend.test',
+      fetch: createFetchMock([], {}),
+      systemTheme: () => 'dark',
+    });
+    const invalid: unknown[] = [
+      null,
+      {},
+      { exactWritablePaths: 'chapters/0001/0001.md' },
+      { exactWritablePaths: [], extra: true },
+      { exactWritablePaths: Array.from({ length: 65 }, (_, index) => `chapters/${index}.md`) },
+      { exactWritablePaths: [42] },
+      { exactWritablePaths: [''] },
+      { exactWritablePaths: [' chapters/0001.md'] },
+      { exactWritablePaths: ['chapters/0001.md\0'] },
+      { exactWritablePaths: ['chapters\\0001.md'] },
+      { exactWritablePaths: ['/chapters/0001.md'] },
+      { exactWritablePaths: ['C:/chapters/0001.md'] },
+      { exactWritablePaths: ['chapters/../secrets.md'] },
+      { exactWritablePaths: ['chapters/.draft.md'] },
+      { exactWritablePaths: ['.workspace/change-engine/v1/pending/action.json'] },
+      { exactWritablePaths: [`chapters/${'a'.repeat(504)}.md`] },
+    ];
+
+    for (const editContext of invalid) {
+      expect(() => client.createAgentChatTransport(
+        editContext as { exactWritablePaths: readonly string[] },
+      )).toThrow(TypeError);
+    }
+  });
+
   it('reads and writes app config through the HTTP backend when no desktop bridge exists', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {

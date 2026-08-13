@@ -1,7 +1,16 @@
 import { createUIMessageStream } from 'ai';
 import type { UIMessage, UIMessageChunk } from 'ai';
 
-import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
+import type {
+  RunTurnResult,
+  RuntimeEvent,
+  RuntimeMessage,
+  RuntimeToolCall,
+} from '@oh-awesome-novel/runtime';
+import {
+  createBashCommandAudit,
+  normalizeBashCommandAudit,
+} from './bash-command-audit';
 
 export interface RuntimeEventUiStreamOptions {
   messageId?: string;
@@ -55,20 +64,25 @@ export function runtimeEventsToUiMessageStream(
 
         if (event.type === 'tool_call_start') {
           endTextPart();
+          const publicToolCall = sanitizeRuntimeToolCall(event.toolCall);
           writer.write({
             type: 'tool-input-available',
             toolCallId: event.toolCall.id,
             toolName: event.toolCall.name,
-            input: event.toolCall.args,
+            input: publicToolCall.args,
           });
           writer.write({
             type: 'data-runtime-event',
-            data: event,
+            data: {
+              ...event,
+              toolCall: publicToolCall,
+            },
           });
           continue;
         }
 
         if (event.type === 'tool_call_finish') {
+          const publicToolCall = sanitizeRuntimeToolCall(event.toolCall);
           writer.write(
             event.result.ok
               ? {
@@ -85,7 +99,7 @@ export function runtimeEventsToUiMessageStream(
           writer.write({
             type: 'data-tool-log',
             data: {
-              toolCall: event.toolCall,
+              toolCall: publicToolCall,
               result: event.result,
             },
           });
@@ -104,7 +118,7 @@ export function runtimeEventsToUiMessageStream(
           endTextPart();
           writer.write({
             type: 'data-runtime-result',
-            data: event.result,
+            data: sanitizeRuntimeResult(event.result),
           });
           writer.write({ type: 'finish-step' });
           continue;
@@ -122,4 +136,45 @@ export function runtimeEventsToUiMessageStream(
       endTextPart();
     },
   });
+}
+
+export function sanitizeRuntimeToolCall(
+  toolCall: RuntimeToolCall,
+): RuntimeToolCall {
+  if (toolCall.name !== 'bash') return toolCall;
+  const audit = normalizeBashCommandAudit(toolCall.args)
+    ?? createBashCommandAudit(toolCall.args);
+  return {
+    id: toolCall.id,
+    name: toolCall.name,
+    args: {
+      commandPreview: audit.commandPreview,
+      commandHash: audit.commandHash,
+      commandByteLength: audit.commandByteLength,
+      previewByteLength: audit.previewByteLength,
+      truncated: audit.truncated,
+    },
+  };
+}
+
+export function sanitizeRuntimeResult(result: RunTurnResult): RunTurnResult {
+  return {
+    ...result,
+    messages: result.messages.map(sanitizeRuntimeMessage),
+    ...(result.assistantMessage
+      ? { assistantMessage: sanitizeRuntimeMessage(result.assistantMessage) }
+      : {}),
+    toolLog: result.toolLog.map((entry) => ({
+      ...entry,
+      toolCall: sanitizeRuntimeToolCall(entry.toolCall),
+    })),
+  };
+}
+
+function sanitizeRuntimeMessage(message: RuntimeMessage): RuntimeMessage {
+  if (!message.toolCalls?.length) return message;
+  return {
+    ...message,
+    toolCalls: message.toolCalls.map(sanitizeRuntimeToolCall),
+  };
 }

@@ -73,6 +73,7 @@ describe('agent conversation Play Writing References', () => {
       {
         body: {
           writingReferenceAttachmentIds: ['attachment-1', 'attachment-2'],
+          editContext: { exactWritablePaths: [] },
         },
       },
     );
@@ -88,7 +89,33 @@ describe('agent conversation Play Writing References', () => {
     await conversations.sendCurrentInput();
     expect(chat.sendMessage).toHaveBeenLastCalledWith(
       { text: 'A second request' },
-      { body: { writingReferenceAttachmentIds: [] } },
+      {
+        body: {
+          writingReferenceAttachmentIds: [],
+          editContext: { exactWritablePaths: [] },
+        },
+      },
+    );
+  });
+
+  it('sends only host-selected exact writable paths as edit context', async () => {
+    const conversations = useAgentConversationSessions({
+      getExactWritablePaths: () => ['chapters/0001.md'],
+    });
+    const chat = chatHarness.instances[0]!;
+    chat.sendMessage.mockResolvedValueOnce(undefined);
+    conversations.activeInput.value = 'Revise the open chapter';
+
+    await conversations.sendCurrentInput();
+
+    expect(chat.sendMessage).toHaveBeenCalledWith(
+      { text: 'Revise the open chapter' },
+      {
+        body: {
+          writingReferenceAttachmentIds: [],
+          editContext: { exactWritablePaths: ['chapters/0001.md'] },
+        },
+      },
     );
   });
 

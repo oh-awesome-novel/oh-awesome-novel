@@ -10,7 +10,7 @@ import { useWorkspaceApi } from './useWorkspaceApi';
 import type {
   MutateReferenceDeconstructionRunInput,
   ReferenceDeconstructionPublication,
-  ReferenceDeconstructionPublishPendingAction,
+  ReferenceDeconstructionPublishResult,
   ReferenceDeconstructionRun,
   ReferenceWorkSummary,
   RetryReferenceDeconstructionRunInput,
@@ -21,7 +21,7 @@ type WorkspaceApi = ReturnType<typeof useWorkspaceApi>;
 export type ReferenceDeconstructionPublicationView =
   ReferenceDeconstructionPublication;
 export type ReferencePublishPendingActionView =
-  ReferenceDeconstructionPublishPendingAction;
+  ReferenceDeconstructionPublishResult['pendingAction'];
 
 export type ReferenceDeconstructionClient = Pick<WorkspaceApi,
   | 'createReferenceDeconstructionRun'

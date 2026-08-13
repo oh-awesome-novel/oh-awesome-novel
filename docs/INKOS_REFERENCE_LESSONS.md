@@ -16,7 +16,7 @@ InkOS 最值得 OAN 学习的不是功能数量，也不是多阶段 Agent 流�
 InkOS 的局部机制
   → 提取不依赖其产品架构的约束
   → 映射到 Object File Tree / AI SDK ToolSet
-  → 生成 SemanticPatch / PendingAction
+  → 生成 CandidateChangeSet / PendingAction
   → Git diff Human Approval
 ```
 
@@ -39,7 +39,7 @@ InkOS 的局部机制
    长篇运行状态以 `story/state/*.json` 为权威结构化层，Markdown 是投影，`memory.db` 是可重建索引；基础设定和控制文件仍是 Markdown。不同产品域还有独立 manifest、JSONL、snapshot 和 store。
 
 5. **Play 的落盘不是完整跨文件事务**
-   InkOS 会先 render，再执行图状态事务；但图状态提交后的 event、current state、projection 和 transcript 仍是顺序写入。它降低了半状态概率，却不能保证所有文件原子提交。OAN 不应把这一实现当作多文件 Apply Engine 的事务证明。
+   InkOS 会先 render，再执行图状态事务；但图状态提交后的 event、current state、projection 和 transcript 仍是顺序写入。它降低了半状态概率，却不能保证所有文件原子提交。OAN 不应把这一实现当作多文件 ChangeMaterializer 的事务证明。
 
 6. **新增长任务和候选域**
    当前 InkOS 已有剧情推演、材料库、联网研究、翻译、互动影游、后台任务、Prompt Pack、备份恢复和标准 Skill。这些能力提供了新的局部参考，但不自动成为 Novel IDE 的范围。
@@ -77,7 +77,7 @@ Execution Consent
   确认模型、预算、输入范围、预计产物和是否启动
 
 Apply Approval
-  确认 SemanticPatch 产生的具体文件 diff 是否成为真实项目状态
+  确认 CandidateChangeSet 产生的具体文件 diff 是否成为真实项目状态
 ```
 
 第一层适合建书、长时间参考分析、批量规划和大材料导入；第二层是所有 AI 写入的硬边界。取消第一层不应产生正式写入，确认第一层也不能绕过第二层。
@@ -120,7 +120,7 @@ OAN 可吸收：
 - 用 execution id / fingerprint 防止按钮重放、重复任务或把旧确认用于新输入。
 - 把执行结果绑定到 session artifact、Tool Log 和 PendingAction，而不是模型口头“已完成”。
 
-硬边界：正式文件变化仍必须进入 `SemanticPatch → PendingAction → diff → Accept`。不应增加 InkOS 式 `write_truth_file` 直写入口。
+硬边界：正式文件变化仍必须进入 `CandidateChangeSet → PendingAction → diff → Accept`。不应增加 InkOS 式 `write_truth_file` 直写入口。
 
 ### 2. 复核 ContextPackage 的 protected / compressible 语义
 
@@ -166,7 +166,7 @@ InkOS v1.7.2 把 Prompt Pack 从 Skill 协议剥离，这个方向与 OAN `0700`
 
 ### 5. 结构化变化使用 typed delta + deterministic reducer
 
-InkOS 章节结算不是让模型重写整份 current state，而是产生 typed delta，再由 immutable reducer 和 validator 应用。这与 OAN 的 SettlementBundle、SemanticPatch 和 Object File Tree 很相容。
+InkOS 章节结算不是让模型重写整份 current state，而是产生 typed delta，再由 immutable reducer 和 validator 应用。这与 OAN 的 SettlementBundle、CandidateChangeSet 和 Object File Tree 很相容。
 
 可迁移约束：
 
@@ -182,7 +182,7 @@ InkOS 章节结算不是让模型重写整份 current state，而是产生 typed
 
 InkOS 当前同时提供正反两类证据：Writer 的主要 chapter settlement 已使用 staging、backup、rename 和 rollback 形成多文件原子集合；Play 和长篇后续 truth / index / snapshot 仍有顺序写入。先 render、局部 atomic file set、单 store transaction 和完整 pipeline transaction 是四件不同的事。
 
-对 PendingAction / Apply Engine 应持续验证：
+对 PendingAction / ChangeMaterializer 应持续验证：
 
 - preview 阶段不修改真实目标。
 - Accept 前重新检查 source hash、Git dirty 状态和所有路径。
@@ -204,7 +204,7 @@ InkOS Narrative Forecast 将 2–5 条未来分支保存在 `story/runtime/narra
 ```text
 Forecast Artifact（non-Canon）
   → 用户选择分支
-  → Adoption Preview / SemanticPatch
+  → Adoption Preview / CandidateChangeSet
   → PendingAction Accept
 ```
 
@@ -247,7 +247,7 @@ OAN 的研究产物应：
 - 记录可访问来源、查询时间、摘录位置和未验证项。
 - 区分“来源声称”“模型推断”“作者决定”。
 - 不把搜索摘要第一句当作已验证 claim。
-- 只有经作者选择并进入 SemanticPatch 的内容才可修改世界设定或章节。
+- 只有经作者选择并进入 CandidateChangeSet 的内容才可修改世界设定或章节。
 - 外部服务接收了哪些正文或设定要在 provider / egress UI 中可见。
 
 ### 11. 导入已有小说应支持重放和 source drift
@@ -292,7 +292,7 @@ InkOS chapter workspace 在改写前归档原版本，并将历史章节变更�
 - Accept 后记录 previous / current commit identity。
 - 依赖该章的 summary、state、timeline、foreshadow、reference 和后续写作 context 标为 stale / needs-review。
 - 只自动重建确定性 projection；任何 AI 生成的下游修复继续形成独立 PendingAction。
-- 恢复旧版本仍走 Git / SemanticPatch，不由 Agent 直接覆盖并手工补状态。
+- 恢复旧版本仍走 Git / CandidateChangeSet，不由 Agent 直接覆盖并手工补状态。
 
 ### 15. 批量写作只复用任务边界，不复用授权边界
 
@@ -444,8 +444,8 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
   - `reference-only/inkos/packages/studio/src/components/ChapterWorkspacePanel.tsx`
 - OAN 当前边界：
   - `docs/ARCHITECTURE.md`
-  - `docs/APPLY_ENGINE.md`
+  - `docs/SANDBOX_CHANGE_ENGINE.md`
   - `docs/AGENT_OPERATING_MANUAL.md`
   - `docs/tasks/0700.md`
 
-本文只更新参考判断。OAN 的正式方案仍由自身稳定设计文档、task、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 决定。
+本文只更新参考判断。OAN 的正式方案仍由自身稳定设计文档、task、Object File Tree、AI SDK ToolSet、CandidateChangeSet、PendingAction 和 Git diff approval 决定。

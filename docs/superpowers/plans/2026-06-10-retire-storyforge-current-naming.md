@@ -1,5 +1,7 @@
 # Retire StoryForge Current Naming Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ensure StoryForge remains only historical/reference terminology and is not reintroduced as a current product name, component name, runtime directory, or compatibility target.

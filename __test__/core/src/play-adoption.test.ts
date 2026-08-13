@@ -146,7 +146,7 @@ describe('evidence-backed Play adoption', () => {
     expect(eventDraft.targetSuggestions.map((suggestion) => suggestion.target))
       .toEqual(PLAY_ADOPTION_TARGETS);
     expect(eventDraft.targetSuggestions.find((suggestion) => suggestion.recommended))
-      .toMatchObject({ target: 'state', toolName: 'state.set' });
+      .toMatchObject({ target: 'state' });
     expect(eventDraft.targetSuggestions.every((suggestion) =>
       JSON.stringify(suggestion.defaultPayload).includes(eventDraft.summary)))
       .toBe(true);

@@ -1,5 +1,7 @@
 # Align Monorepo Source Layout Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Keep all future implementation work aligned to the current monorepo layout (`packages/*`, `apps/*`, `__test__/*`) and prevent new code from being added under the obsolete single-package `src/` layout.

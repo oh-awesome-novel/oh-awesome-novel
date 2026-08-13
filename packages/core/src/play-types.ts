@@ -141,19 +141,43 @@ export interface PlayAdoptionEvidenceClosure {
   sourceBaseFingerprint: string;
 }
 
-export type PlayAdoptionWriteIntentToolName =
-  | 'chapter.createDraft'
-  | 'state.set'
-  | 'timeline.add'
-  | 'foreshadow.create';
-
 export interface PlayAdoptionTargetSuggestion {
   target: PlayAdoptionTarget;
-  toolName: PlayAdoptionWriteIntentToolName;
   recommended: boolean;
   reason: string;
   defaultPayload: Record<string, unknown>;
 }
+
+/** Business-level target compiled to final bytes by the sandbox change engine. */
+export type PlayAdoptionBusinessTarget =
+  | {
+      target: 'chapterDraft';
+      targetFile: string;
+      operation: 'replace-file';
+      content: string;
+      mode?: 'create' | 'replace';
+    }
+  | {
+      target: 'state';
+      targetFile: string;
+      operation: 'yaml-set';
+      path: string;
+      value: unknown;
+    }
+  | {
+      target: 'timeline';
+      targetFile: string;
+      operation: 'yaml-append';
+      path: string;
+      value: unknown;
+    }
+  | {
+      target: 'foreshadow';
+      targetFile: string;
+      operation: 'yaml-append';
+      path: string;
+      value: unknown;
+    };
 
 export interface PlayAdoptionDraft {
   seed: PlayAdoptionSeed;

@@ -1,5 +1,7 @@
 # Align Tool Scope Roadmap Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-10). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Keep completed tool scope and future/proposed tool scope separate so implementation does not accidentally treat `chapter.rewriteScene`, `foreshadow.resolve`, or Constitution proposal/search tools as already completed M5/M6 work.

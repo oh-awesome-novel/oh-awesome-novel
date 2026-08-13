@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, realpath, writeFile, appendFile } from 'node:fs/promises';
-import { dirname, resolve, sep } from 'node:path';
+import { appendFile, lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
 
@@ -10,6 +10,13 @@ import type {
   RuntimeToolLogEntry,
   RuntimeToolResult,
 } from '@oh-awesome-novel/runtime';
+import {
+  DEFAULT_BASH_COMMAND_PREVIEW_BYTES,
+  DEFAULT_BASH_TURN_PREVIEW_BYTES,
+  createBashCommandAudit,
+  normalizeBashCommandAudit,
+} from './bash-command-audit';
+import type { BashCommandAudit } from './bash-command-audit';
 
 export interface AgentSessionStoreOptions {
   workspaceRoot: string;
@@ -31,19 +38,34 @@ export interface AgentSessionMetadata {
 export interface AgentSessionRecovery {
   sessionId: string;
   updatedAt: string;
-  shadowWrites: string[];
+  pendingActionIds: string[];
 }
 
-export type AgentSessionToolLogEntry =
+export interface AgentSessionAuditedToolCall {
+  id: string;
+  name: 'bash';
+}
+
+export type AgentSessionCommandAudit = BashCommandAudit;
+
+type AgentSessionToolCallFields =
   | {
-      type: 'tool_call_start';
       toolCall: RuntimeToolCall;
+      commandAudit?: never;
     }
   | {
-      type: 'tool_call_finish';
-      toolCall: RuntimeToolCall;
-      result: RuntimeToolResult;
+      toolCall: AgentSessionAuditedToolCall;
+      commandAudit: AgentSessionCommandAudit;
     };
+
+export type AgentSessionToolLogEntry =
+  | (AgentSessionToolCallFields & {
+      type: 'tool_call_start';
+    })
+  | (AgentSessionToolCallFields & {
+      type: 'tool_call_finish';
+      result: RuntimeToolResult;
+    });
 
 export interface RecoveredAgentSession {
   metadata: AgentSessionMetadata;
@@ -74,6 +96,11 @@ export function createAgentSessionStore(
 
 class FileAgentSessionStore implements AgentSessionStore {
   private readonly workspaceRoot: string;
+  private readonly remainingTurnPreviewBytes = new Map<string, number>();
+  private readonly turnCommandAudits = new Map<
+    string,
+    Map<string, AgentSessionCommandAudit>
+  >();
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
@@ -122,27 +149,35 @@ class FileAgentSessionStore implements AgentSessionStore {
     sessionId: string,
     entry: RuntimeToolLogEntry,
   ): Promise<void> {
+    const toolCallFields = this.createToolCallFields(sessionId, entry.toolCall);
     await this.appendJsonLine(sessionId, 'tool-log.jsonl', {
       type: 'tool_call_finish',
-      ...entry,
+      ...toolCallFields,
+      result: entry.result,
     } satisfies AgentSessionToolLogEntry);
-    const shadowWrites = findShadowWrites(entry);
-
-    if (shadowWrites.length) {
-      await this.mergeShadowWrites(sessionId, shadowWrites);
-    }
+    this.releaseCommandAudit(sessionId, entry.toolCall.id);
   }
 
   async recordRuntimeEvent(sessionId: string, event: RuntimeEvent): Promise<void> {
+    if (event.type === 'message_start') {
+      this.resetCommandAuditBudget(sessionId);
+      return;
+    }
+
     if (event.type === 'message_finish') {
-      await this.appendMessages(sessionId, event.result.messages);
+      await this.appendMessages(
+        sessionId,
+        event.result.messages.map((message) => sanitizeStoredMessage(message)),
+      );
+      this.clearCommandAuditBudget(sessionId);
       return;
     }
 
     if (event.type === 'tool_call_start') {
+      const toolCallFields = this.createToolCallFields(sessionId, event.toolCall);
       await this.appendJsonLine(sessionId, 'tool-log.jsonl', {
         type: 'tool_call_start',
-        toolCall: event.toolCall,
+        ...toolCallFields,
       } satisfies AgentSessionToolLogEntry);
       return;
     }
@@ -152,6 +187,16 @@ class FileAgentSessionStore implements AgentSessionStore {
         toolCall: event.toolCall,
         result: event.result,
       });
+      return;
+    }
+
+    if (event.type === 'pending_action') {
+      await this.mergePendingActionIds(sessionId, [event.pendingAction.id]);
+      return;
+    }
+
+    if (event.type === 'error') {
+      this.clearCommandAuditBudget(sessionId);
     }
   }
 
@@ -200,8 +245,7 @@ class FileAgentSessionStore implements AgentSessionStore {
   }
 
   private async writeMetadata(metadata: AgentSessionMetadata): Promise<void> {
-    const filePath = await this.sessionFile(metadata.id, 'session.yaml');
-    await mkdir(dirname(filePath), { recursive: true });
+    const filePath = await this.sessionFile(metadata.id, 'session.yaml', true);
     await writeFile(filePath, stringify(metadata), 'utf-8');
   }
 
@@ -212,13 +256,13 @@ class FileAgentSessionStore implements AgentSessionStore {
 
   private async writeRecovery(
     sessionId: string,
-    shadowWrites: string[],
+    pendingActionIds: string[],
   ): Promise<void> {
-    const filePath = await this.sessionFile(sessionId, 'recovery.yaml');
+    const filePath = await this.sessionFile(sessionId, 'recovery.yaml', true);
     const recovery: AgentSessionRecovery = {
       sessionId,
       updatedAt: new Date().toISOString(),
-      shadowWrites: [...new Set(shadowWrites)].toSorted(),
+      pendingActionIds: [...new Set(pendingActionIds)].toSorted(),
     };
     await writeFile(filePath, stringify(recovery), 'utf-8');
     await this.touchSession(sessionId);
@@ -234,7 +278,7 @@ class FileAgentSessionStore implements AgentSessionStore {
         return {
           sessionId,
           updatedAt: new Date().toISOString(),
-          shadowWrites: [],
+          pendingActionIds: [],
         };
       }
 
@@ -242,14 +286,14 @@ class FileAgentSessionStore implements AgentSessionStore {
     }
   }
 
-  private async mergeShadowWrites(
+  private async mergePendingActionIds(
     sessionId: string,
-    shadowWrites: string[],
+    pendingActionIds: string[],
   ): Promise<void> {
     const recovery = await this.readRecovery(sessionId);
     await this.writeRecovery(sessionId, [
-      ...recovery.shadowWrites,
-      ...shadowWrites,
+      ...recovery.pendingActionIds,
+      ...pendingActionIds,
     ]);
   }
 
@@ -258,8 +302,7 @@ class FileAgentSessionStore implements AgentSessionStore {
     fileName: string,
     value: unknown,
   ): Promise<void> {
-    const filePath = await this.sessionFile(sessionId, fileName);
-    await mkdir(dirname(filePath), { recursive: true });
+    const filePath = await this.sessionFile(sessionId, fileName, true);
     await appendFile(filePath, `${JSON.stringify(value)}\n`, 'utf-8');
     await this.touchSession(sessionId);
   }
@@ -293,26 +336,96 @@ class FileAgentSessionStore implements AgentSessionStore {
     });
   }
 
-  private async sessionsRoot(): Promise<string> {
-    const workspaceRealpath = await realpath(this.workspaceRoot);
-    const sessionsRoot = resolve(workspaceRealpath, '.oan', 'sessions');
-    assertPathInside(
-      workspaceRealpath,
-      sessionsRoot,
-      'Session storage escaped workspace.',
-    );
-    return sessionsRoot;
+  private createToolCallFields(
+    sessionId: string,
+    toolCall: RuntimeToolCall,
+  ): AgentSessionToolCallFields {
+    if (toolCall.name !== 'bash') {
+      return { toolCall };
+    }
+
+    let sessionAudits = this.turnCommandAudits.get(sessionId);
+
+    if (!sessionAudits) {
+      sessionAudits = new Map();
+      this.turnCommandAudits.set(sessionId, sessionAudits);
+    }
+
+    let commandAudit = sessionAudits.get(toolCall.id);
+
+    if (!commandAudit) {
+      const remainingBytes = this.remainingTurnPreviewBytes.get(sessionId)
+        ?? DEFAULT_BASH_TURN_PREVIEW_BYTES;
+      const maxPreviewBytes = Math.min(
+        DEFAULT_BASH_COMMAND_PREVIEW_BYTES,
+        remainingBytes,
+      );
+      const existing = readExistingCommandAudit(toolCall.args);
+      commandAudit = existing
+        ? boundExistingCommandAudit(existing, maxPreviewBytes)
+        : createBashCommandAudit(toolCall.args, { maxPreviewBytes });
+      sessionAudits.set(toolCall.id, commandAudit);
+      this.remainingTurnPreviewBytes.set(
+        sessionId,
+        Math.max(0, remainingBytes - commandAudit.previewByteLength),
+      );
+    }
+
+    return {
+      toolCall: {
+        id: toolCall.id,
+        name: 'bash',
+      },
+      commandAudit,
+    };
   }
 
-  private async sessionFile(sessionId: string, fileName: string): Promise<string> {
+  private resetCommandAuditBudget(sessionId: string): void {
+    this.remainingTurnPreviewBytes.set(
+      sessionId,
+      DEFAULT_BASH_TURN_PREVIEW_BYTES,
+    );
+    this.turnCommandAudits.set(sessionId, new Map());
+  }
+
+  private releaseCommandAudit(sessionId: string, toolCallId: string): void {
+    const sessionAudits = this.turnCommandAudits.get(sessionId);
+    sessionAudits?.delete(toolCallId);
+  }
+
+  private clearCommandAuditBudget(sessionId: string): void {
+    this.remainingTurnPreviewBytes.delete(sessionId);
+    this.turnCommandAudits.delete(sessionId);
+  }
+
+  private async sessionsRoot(): Promise<string> {
+    const workspaceRealpath = await realpath(this.workspaceRoot);
+    return resolveSafeSessionDirectory(
+      workspaceRealpath,
+      ['.oan', 'sessions'],
+      false,
+    );
+  }
+
+  private async sessionFile(
+    sessionId: string,
+    fileName: string,
+    createParent = false,
+  ): Promise<string> {
     assertSafeSessionId(sessionId);
 
     if (!allowedSessionFiles.has(fileName)) {
       throw new Error(`Unsupported session file: ${fileName}`);
     }
 
-    const sessionsRoot = await this.sessionsRoot();
-    const filePath = resolve(sessionsRoot, sessionId, fileName);
+    const workspaceRealpath = await realpath(this.workspaceRoot);
+    const sessionsRoot = resolve(workspaceRealpath, '.oan', 'sessions');
+    const sessionRoot = await resolveSafeSessionDirectory(
+      workspaceRealpath,
+      ['.oan', 'sessions', sessionId],
+      createParent,
+    );
+    const filePath = resolve(sessionRoot, fileName);
     assertPathInside(
       sessionsRoot,
       filePath,
@@ -342,19 +455,85 @@ function createSessionMetadata(
   };
 }
 
-function findShadowWrites(entry: RuntimeToolLogEntry): string[] {
-  if (!entry.result.ok || typeof entry.result.content !== 'object' || entry.result.content === null) {
-    return [];
-  }
+function sanitizeStoredMessage(message: RuntimeMessage): RuntimeMessage {
+  if (!message.toolCalls?.length) return message;
+  return {
+    ...message,
+    toolCalls: message.toolCalls.map((toolCall) => toolCall.name === 'bash'
+      ? {
+          id: toolCall.id,
+          name: toolCall.name,
+          args: readExistingCommandAudit(toolCall.args)
+            ?? createBashCommandAudit(toolCall.args),
+        }
+      : toolCall),
+  };
+}
 
-  const shadowFile = (entry.result.content as { shadowFile?: unknown }).shadowFile;
-  return typeof shadowFile === 'string' ? [shadowFile] : [];
+function readExistingCommandAudit(value: unknown): AgentSessionCommandAudit | undefined {
+  return normalizeBashCommandAudit(value);
+}
+
+function boundExistingCommandAudit(
+  audit: AgentSessionCommandAudit,
+  maxPreviewBytes: number,
+): AgentSessionCommandAudit {
+  if (audit.previewByteLength <= maxPreviewBytes) return audit;
+  let commandPreview = '';
+  let previewByteLength = 0;
+  for (const character of audit.commandPreview) {
+    const characterBytes = Buffer.byteLength(character, 'utf-8');
+    if (previewByteLength + characterBytes > maxPreviewBytes) break;
+    commandPreview += character;
+    previewByteLength += characterBytes;
+  }
+  return {
+    ...audit,
+    commandPreview,
+    previewByteLength,
+    truncated: true,
+  };
 }
 
 function assertSafeSessionId(sessionId: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
     throw new Error('Session id may only contain letters, numbers, "_" and "-".');
   }
+}
+
+async function resolveSafeSessionDirectory(
+  workspaceRoot: string,
+  parts: readonly string[],
+  create: boolean,
+): Promise<string> {
+  let cursor = workspaceRoot;
+  for (let index = 0; index < parts.length; index += 1) {
+    cursor = resolve(cursor, parts[index]!);
+    assertPathInside(workspaceRoot, cursor, 'Session storage escaped workspace.');
+    if (create) {
+      await mkdir(cursor, { mode: 0o700 }).catch((error: unknown) => {
+        if (!isAlreadyExistsError(error)) throw error;
+      });
+    }
+    let information: Awaited<ReturnType<typeof lstat>>;
+    try {
+      information = await lstat(cursor);
+    } catch (error) {
+      if (!create && isNotFoundError(error)) {
+        return resolve(cursor, ...parts.slice(index + 1));
+      }
+      throw error;
+    }
+    if (information.isSymbolicLink() || !information.isDirectory()) {
+      throw new Error(`Session storage directory is unsafe: ${cursor}`);
+    }
+    assertPathInside(
+      workspaceRoot,
+      await realpath(cursor),
+      'Session storage directory escaped workspace.',
+    );
+  }
+  return cursor;
 }
 
 function assertPathInside(root: string, path: string, message: string): void {
@@ -370,5 +549,13 @@ function isNotFoundError(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     (error as { code?: unknown }).code === 'ENOENT'
+  );
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && (error as { code?: unknown }).code === 'EEXIST'
   );
 }

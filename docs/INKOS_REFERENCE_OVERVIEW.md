@@ -42,7 +42,7 @@ Play / Interactive Film / Translation Domain Runtimes
 Studio + CLI + TUI Product Shells
 ```
 
-“filesystem-persisted”不等于 OAN 意义上的 filesystem-first：InkOS 确实把正文、JSON、Markdown、JSONL 和运行产物放在项目目录，但正式变更由工具与流水线直接写入，没有 SemanticPatch、PendingAction、Git diff approval，也不以 Git 作为统一历史引擎。
+“filesystem-persisted”不等于 OAN 意义上的 filesystem-first：InkOS 确实把正文、JSON、Markdown、JSONL 和运行产物放在项目目录，但正式变更由工具与流水线直接写入，没有 CandidateChangeSet、PendingAction、Git diff approval，也不以 Git 作为统一历史引擎。
 
 上一版中仍然成立的判断是：InkOS 很适合参考产品化工作流、上下文治理、状态投影、provider 诊断和互动创作领域建模；不适合作为 OAN 的 Runtime 或写入架构模板。
 
@@ -187,7 +187,7 @@ InkOS
 
 OAN
   用户请求生成
-  → SemanticPatch / shadow / PendingAction / diff
+  → CandidateChangeSet / shadow / PendingAction / diff
   → 用户确认“应用这些具体变化”
   → 写真实目标文件
 ```
@@ -507,13 +507,13 @@ InkOS 的 provider 体系仍是强项：
    Markdown 控制文件、JSON state、projection、SQLite、JSONL、snapshot 和各领域 store 共同解释项目。
 
 5. **直接整文件写 truth 的入口仍存在**
-   `write_truth_file` 有路径 allowlist 和 lock，但没有 SemanticPatch、old-value guard 或用户 diff。
+   `write_truth_file` 有路径 allowlist 和 lock，但没有 CandidateChangeSet、old-value guard 或用户 diff。
 
 6. **原子提交只覆盖主要章节 settlement**
    truth files、legacy sync、memory / chapter index、snapshot 和 revision 的部分后续路径仍顺序写入，不能概括为全 pipeline 事务。
 
 7. **Studio 改写仍直接应用正式文件**
-   版本归档和 strict gate 改善质量与恢复，但没有最终 SemanticPatch / diff approval。
+   版本归档和 strict gate 改善质量与恢复，但没有最终 CandidateChangeSet / diff approval。
 
 8. **Play 跨文件提交并非真正原子**
    渲染前不写、图 reducer 有事务，但后续文件写仍可能部分成功。
@@ -539,7 +539,7 @@ InkOS 的 provider 体系仍是强项：
 | --- | --- | --- |
 | 定位 | Story production agent / 多产品创作系统 | Filesystem-first Novel IDE / Copilot |
 | Runtime | pi-agent Chat loop + 多阶段领域 Agent + 多种 domain runtime | 单一 Aider-style loop + AI SDK ToolSet |
-| 正式写入 | 确认动作后工具 / pipeline 直接写文件 | SemanticPatch → PendingAction → diff → Accept |
+| 正式写入 | 确认动作后工具 / pipeline 直接写文件 | CandidateChangeSet → PendingAction → diff → Accept |
 | Truth | Markdown 控制文件 + JSON runtime state + 多领域 store | Markdown / YAML / Object File Tree |
 | 历史 | snapshot、backup、event、task state | Git 是统一历史引擎 |
 | 自动化 | 自动审稿修订、批量写章、daemon | AI 提议，作者批准 |
@@ -564,7 +564,7 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
    对 OAN `ContextPackage.trace` 补充 protected budget、被压缩来源和“核心材料本身超限”的可见错误。
 
 4. **Narrative Forecast 的 non-Canon fingerprint**
-   候选方向绑定源 revision；Canon 变化后 stale；选择只保存 plan artifact，真正应用另走 SemanticPatch。
+   候选方向绑定源 revision；Canon 变化后 stale；选择只保存 plan artifact，真正应用另走 CandidateChangeSet。
 
 5. **后台任务与对话并行的产品状态**
    长分析 / reference / review 可以在后台运行，但同一 workspace mutation 要有单槽、provider lease、abort、恢复和可见 task card。
@@ -576,7 +576,7 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
    在引入 embedding 之前，先用稳定来源、char range、purpose 和可见评分建立可审计召回。
 
 8. **备份 / rollback / lock 的失败路径测试**
-   可对照 OAN 的 PendingAction、Apply Engine、reference run 和 Play settlement，补齐并发、崩溃、stale owner 和 partial materialization 测试。
+   可对照 OAN 的 PendingAction、ChangeMaterializer、reference run 和 Play settlement，补齐并发、崩溃、stale owner 和 partial materialization 测试。
 
 9. **结构生成后的确定性 validator**
    对大纲图、Play worldline、伏笔依赖或参考分析结构使用闭集校验，不让 LLM 同时定义规则和判断自己是否合格。
@@ -646,4 +646,4 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
   - `reference-only/inkos/packages/studio/src/api/server.ts`
   - `reference-only/inkos/packages/studio/src/components/ChapterWorkspacePanel.tsx`
 
-本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、SemanticPatch、PendingAction 和 Git diff approval 为准。
+本文只吸收设计与现状判断。OAN 的正式实现仍应以自身 task、plan、Object File Tree、AI SDK ToolSet、CandidateChangeSet、PendingAction 和 Git diff approval 为准。

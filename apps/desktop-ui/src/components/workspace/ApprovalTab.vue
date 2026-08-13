@@ -4,8 +4,7 @@ import type { PendingActionView } from '../../composables/useAgentCheckpointChat
 
 defineProps<{
   actions: Array<PendingActionView & {
-    touchedFiles?: string[];
-    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+    decision?: 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected';
     decisionError?: string;
   }>;
   loading: boolean;
@@ -15,6 +14,7 @@ defineProps<{
 const emit = defineEmits<{
   accept: [action: PendingActionView];
   reject: [action: PendingActionView];
+  quickCommit: [action: PendingActionView];
   review: [action: PendingActionView];
   openDiff: [action: PendingActionView];
 }>();
@@ -35,6 +35,7 @@ const emit = defineEmits<{
         :action="action"
         @accept="emit('accept', $event)"
         @reject="emit('reject', $event)"
+        @quick-commit="emit('quickCommit', $event)"
         @review="emit('review', $event)"
         @open-diff="emit('openDiff', $event)"
       />

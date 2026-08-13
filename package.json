@@ -7,6 +7,9 @@
   "author": "",
   "directories": {},
   "type": "commonjs",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "desktop:build:deps": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend",
     "desktop:build:package": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend @oh-awesome-novel/desktop-ui"

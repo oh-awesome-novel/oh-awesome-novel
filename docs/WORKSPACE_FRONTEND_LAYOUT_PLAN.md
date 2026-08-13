@@ -587,7 +587,7 @@ Deliverables：
 
 ### Diff Parsing Complexity
 
-不要把 unified diff parser 做成核心域模型。第一版只是前端展示 helper；真正写入仍以 PendingAction / SemanticPatch / backend accept 为准。
+不要把 unified diff parser 做成核心域模型。第一版只是前端展示 helper；真正写入仍以 PendingAction / CandidateChangeSet / backend accept 为准。
 
 ## Suggested Task Split
 

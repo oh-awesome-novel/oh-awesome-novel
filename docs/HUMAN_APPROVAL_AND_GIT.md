@@ -2,231 +2,168 @@
 
 ## Principle
 
-Human Approval 是横切层。
-
-所有写入都必须经过：
+Human Approval 是所有 canonical 写入的硬边界：
 
 ```text
-Generate Patch
-    ↓
-Preview Diff
-    ↓
-Accept / Reject
-    ↓
-Materialize accepted shadow write
-    ↓
-Git Commit if auto-commit is enabled
+CandidateChangeSet
+  -> immutable PendingAction
+  -> structured create/update/delete review + diff
+  -> Accept / Reject
+  -> ChangeMaterializer
+  -> Git side effect
 ```
 
-AI 永远不能静默写盘。
+模型、deterministic producer、Backend 与 UI 都不能绕过这条链路。Accept 前真实 target bytes 保持不变；diff 是 display-only，Accept 不解析它；shell command 也不在 Accept 时重放。
 
-AI 只能产生文件修改建议和 `.workspace` shadow write。Accept 前真实 workspace 文件不变，Git working tree 不应因为 AI 建议而 dirty。
+## PendingAction Model
 
-## Git Integration Phases
+Stored proposal 使用严格 schema version 1，并包含：
 
-Git 是 OAN 的历史引擎，但 Git 操作实现分阶段推进。
+- immutable identity、title、description、createdAt
+- source capability/producer evidence
+- repository identity、branch、HEAD
+- authoritative create/update/delete `changes`
+- diff + diff hash（展示用）
+- optional trusted origin
 
-### Phase A: Global Git Command
+create/update 的 candidate bytes 只存于 `.workspace/change-engine/v1/drafts/` 内部 immutable artifact。delete 没有 draft。proposal 永不原地改 status；accepted/rejected terminal record 与 decision receipt 分别表达生命周期和 Git outcome。
 
-当前实现优先假设用户电脑已经存在可用的全局 `git` 命令。
-
-Git integration 层可以通过 Node.js `child_process.execFile` 调用：
-
-```ts
-execFile('git', ['-C', workspaceRoot, 'status', '--porcelain'])
-```
-
-要求：
-
-- Git 命令只能在 backend / Electron main / Git integration 层调用。
-- Vue frontend 只能调用 backend API，不能直接执行 Git 或访问 filesystem。
-- 必须使用 `execFile` 或等价的非 shell API，不拼接 shell 字符串。
-- 所有命令都必须显式使用 `-C <workspaceRoot>` 或等价 cwd，并锁定到当前 workspace root。
-- `workspaceRoot` 必须来自 backend 当前 active workspace，不接受 frontend 任意传入。
-- 文件参数必须是 workspace 内的相对路径，并使用 `--` 分隔 revision/option 与 file path。
-- 不允许 frontend 传入任意 Git 子命令、shell 参数或可执行路径。
-- Git 不存在、不是 Git 仓库、identity 未配置、remote 不存在、鉴权失败等错误必须以结构化错误返回 UI。
-- Git 不可用时，读写链路仍可完成 PendingAction materialize，但 Git status / commit / sync 功能必须显示不可用或失败状态。
-
-Phase A 的目标是先让本地开发和早期桌面版本可用，不要求打包内置 Git binary。
-
-### Phase B: Bundled Git Binary
-
-后续 Electron 打包版本应内嵌一个 Git 二进制，避免依赖用户系统环境。
-
-要求：
-
-- 应用启动时解析 bundled Git binary path。
-- Git integration 层使用明确的 Git binary path，而不是默认搜索 `PATH`。
-- UI 能区分 `globalGit` 和 `bundledGit` 的能力来源，便于诊断。
-- 如果 bundled Git 在某个平台不可用，可以临时 fallback 到 global Git，但 UI 需要显示降级状态。
-- 打包、签名和平台兼容性需要单独验证。
-
-### Phase C: Git Library Wrapper
-
-`simple-git` 可以作为后续包装层，用于把 Git 命令调用和结果解析收敛到更清晰的 TypeScript API。
-
-约束：
-
-- `simple-git` 只能运行在 backend / Electron main / Git integration 层。
-- 即使使用 `simple-git`，也必须绑定到 Phase B 的 bundled Git binary。
-- 不因为引入 wrapper 而放宽命令 allowlist、workspace boundary 或 Human Approval 边界。
-
-## Git Command Boundary
-
-第一版允许封装的 Git 能力：
-
-| Operation | Command Shape | Notes |
-| --- | --- | --- |
-| availability | `git --version` | 只用于诊断 Git 是否可用。 |
-| repo root | `git -C <workspace> rev-parse --show-toplevel` | 用于确认当前 workspace 是否在 Git 仓库内。 |
-| head | `git -C <workspace> rev-parse HEAD` | 用于 index stale 判断和历史状态。 |
-| status | `git -C <workspace> status --porcelain` / `--short` | 用于 clean/dirty 和 quick commit 文件列表。 |
-| diff | `git -C <workspace> diff -- <files...>` | 只读取 diff，不写入。 |
-| log | `git -C <workspace> log --oneline --decorate --max-count <n>` | 第一版只展示列表。 |
-| show | `git -C <workspace> show --name-status --format=fuller <commit>` | commit detail 只接受已验证 commit hash。 |
-| add | `git -C <workspace> add -- <files...>` | 只允许 accepted PendingAction touchedFiles 或用户确认的 quick commit files。 |
-| commit | `git -C <workspace> commit -m <message>` | 只能发生在 Human Approval 后。 |
-| fetch | `git -C <workspace> fetch` | 同步能力第一版可选。 |
-| pull | `git -C <workspace> pull --ff-only` | 禁止自动 merge/rebase。 |
-| push | `git -C <workspace> push` | 失败只提示，不回滚本地 commit。 |
-
-第一版禁止：
-
-- 任意 shell 命令。
-- 任意 Git 子命令 passthrough。
-- `git reset --hard`、`git clean`、`git checkout -- <file>` 等 destructive 操作，除非后续设计了明确的用户确认和恢复策略。
-- 自动处理 merge conflict。
-- 自动创建、删除、切换 branch。
-
-## PendingAction
-
-每个写操作返回 `PendingAction`。
+Public view：
 
 ```ts
-interface PendingAction {
+interface PendingActionView {
   id: string;
   title: string;
   description: string;
-  patches: SemanticPatch[];
-  touchedFiles: string[];
-  diff: string;
+  status: 'pending' | 'accepted' | 'rejected';
   createdAt: string;
-  status: "pending" | "accepted" | "rejected" | "applied" | "failed";
+  decidedAt?: string;
+  changes: Array<{
+    operation: 'create' | 'update' | 'delete';
+    path: string;
+    oldHash?: string;
+    newHash?: string;
+  }>;
+  diff: string;
+  origin?: PublicPendingActionOrigin;
+  git?: PublicPendingActionGitResult;
 }
 ```
 
+Renderer 不接收 artifact paths、candidate bytes、shell source 或 internal repository id。touched paths 若为 UI convenience 提供，只能现场从 `changes` 派生，不能成为第二份 persisted authority。
+
 ## Approval UI
 
-第一版可以是 CLI：
+UI 至少展示：
+
+- title / description / status
+- 每个 change 的 `create | update | delete` 与 path
+- old/new hash（适用时）
+- 纯文本 unified diff
+- origin/source summary
+- accepted/rejected timestamp
+- Git result 和 recovery action
+
+路径 label 只来自 structured `changes`，不从 diff header、title 或 artifact location 推断。包含空格、CJK 或 HTML-like 内容时仍作为纯文本显示。
+
+MVP 优先整个 action Accept/Reject；需要 partial acceptance 时，producer 应拆成多个 action，而不是在 Accept 阶段修改 immutable proposal。
+
+## Accept Preconditions
+
+`ChangeMaterializer` 在写盘前必须：
+
+1. strict parse schema/kind/complete fields；
+2. 获取 per-action lock 与 global apply lock；
+3. 恢复遗留新协议 transaction；
+4. 验证 action 仍为 pending，且不存在 conflicting terminal；
+5. 验证 trusted origin freshness；
+6. 验证 repository identity、branch、HEAD 未变；
+7. 再次执行 exact path/capability/final-document policy；
+8. create target 仍不存在；
+9. update/delete target 仍为同一普通文件且 hash/mode 未变；
+10. create/update draft ownership、path、size 与 hash 正确；
+11. Git index 没有会混入提交的 unrelated staged state。
+
+任一项不满足均 fail closed，canonical target 零变化。不得用局部 apply、自动 rebase baseline 或解析最新 diff 来“修复” stale action。
+
+## File Transaction
+
+### Operation Semantics
+
+- create：stage new bytes；materialize 后 rollback 会删除 target。
+- update：backup original + stage candidate；rollback 恢复 backup。
+- delete：backup original；materialize 删除；rollback 恢复 backup。
+- rename：同一 transaction 的 delete + create。
+
+### Durable Phases
 
 ```text
-Pending Action: Update heroine injury state
-
-Touched files:
-- state/characters.yaml
-- timeline/events.yaml
-
-Diff:
-...
-
-[a] accept
-[r] reject
-[d] show diff
-[q] quit
+prepared
+  -> materializing
+  -> accepted terminal written
+  -> accepted-finalize-only
+  -> cleanup / Git / receipt
 ```
 
-成熟 UI：
+accepted terminal record 是文件事务 commit point：
 
-- Chat
-- Tool Log
-- Patch Preview
-- Pending Actions
-- Memory Preview
-- Git Status
+- commit point 前 crash/failure：逆序 rollback。
+- commit point 后 crash/failure：只 finalize，永不 rollback。
+- 唯一 backup 在 terminal durable 前不能删除。
+- terminal 缺失但 journal 已到 finalize-only 时，恢复先原子补 terminal。
+- terminal 已 accepted 但 journal 未 finalize 时，以 terminal 为准继续 finalize。
 
-## Write Flow
+Git commit 不是文件事务 commit point。
 
-```text
-Tool Call
-    ↓
-SemanticPatch[]
-    ↓
-ApplyEngine.preview()
-    ↓
-PendingAction
-    ↓
-.workspace shadow write
-    ↓
-User Accept
-    ↓
-ApplyEngine.apply()
-    ↓
-Write files
-    ↓
-git diff / git status
-    ↓
-auto-commit enabled?
-    ↓ yes
-git add accepted touched files
-    ↓
-git commit generated message
-    ↓ no
-visible dirty state + quick commit button
-```
+## Reject
 
-## Git Commit
+Reject：
 
-Git commit 和 AI 自主行为无关。AI 只生成 PendingAction 建议，不能在 Human Approval 前写入真实文件或提交 Git。
+- 不修改 canonical target。
+- 原子写 rejected terminal 与 receipt。
+- 清理 action draft/temporary state。
+- 保留可审计的 proposal/terminal metadata。
+- 不创建 commit，不触发 sync。
 
-PendingAction 被用户 Accept 后，Git integration 默认自动提交本次 PendingAction 的 touched files。
+## Git Integration Boundary
 
-Phase A 中，自动提交通过用户电脑上的全局 `git` 命令完成。后续 Phase B 再切换为 Electron 内嵌 Git binary。这个切换不应改变 Human Approval 语义、API 返回形状或用户看到的审批流程。
+Git 只能由 backend/Electron Git integration 层通过参数化 process API 调用；禁止拼接 shell 字符串。workspace root 来自 active host context，frontend 不能传任意 root、subcommand、executable 或 path。
 
-自动提交必须可配置。第一版使用 workspace 配置：
+第一版允许封装：
+
+| Operation | Safe shape |
+| --- | --- |
+| diagnose | `git --version` |
+| repository | `git -C <root> rev-parse --show-toplevel/HEAD/--abbrev-ref HEAD` |
+| status | `git -C <root> status --porcelain` |
+| diff | `git -C <root> diff -- <validated paths...>` |
+| log/show | bounded validated revision reads |
+| stage | `git -C <root> add -- <accepted paths...>` |
+| commit | fixed operation with explicit message/trailer |
+| fetch/pull/push | explicit user sync workflow only; pull is fast-forward only |
+
+禁止 arbitrary Git passthrough、shell、automatic merge/rebase、`reset --hard`、`clean` 或其它 destructive command。
+
+## Auto Commit On Accept
+
+workspace configuration：
 
 ```yaml
 git:
   autoCommitOnAccept: true
 ```
 
-默认值是 `true`。如果用户关闭该配置，Accept 只 materialize shadow write 到真实 workspace 文件，随后展示 dirty 状态，并提供快捷提交入口。
+默认 `true`。durable Accept 后：
 
-默认流程：
+1. 只计算 action `changes` paths；
+2. 再读 repository/branch/index/status；
+3. 拒绝 unrelated staged state；
+4. stage only action paths；
+5. 使用确定性 message 与 action id metadata/trailer commit；
+6. 原子写 decision receipt；
+7. 成功后才允许可配置的 sync。
 
-```text
-AI proposes change
-    ↓
-.workspace shadow write
-    ↓
-User reviews PendingAction diff
-    ↓
-User accepts
-    ↓
-Materialize touched files
-    ↓
-autoCommitOnAccept?
-    ↓ true
-git add accepted touched files
-    ↓
-git commit with generated message
-    ↓ false
-show dirty state and Commit now button
-```
-
-自动提交必须满足：
-
-- 只提交 accepted PendingAction 的 `touchedFiles`。
-- 不提交 workspace 中其它 dirty 文件。
-- 提交前必须校验 `git status --short -- <touchedFiles>` 确认实际 dirty 范围和 touched files 对齐。
-- PendingAction reject 不创建 commit。
-- 自动提交失败时展示错误，保留已经 materialize 的文件和可见 dirty 状态。
-- 自动提交失败不回滚已写入文件。
-- 没有 Git 仓库、全局 Git 不可用、commit identity 缺失等错误都必须可见。
-- 后续自动同步只能在自动提交成功后触发。
-- `git.autoCommitOnAccept: false` 时不得自动 commit，也不得自动 sync。
-
-Commit message 第一版使用确定性模板：
+建议 message：
 
 ```text
 chore(novel): apply pending action <short-id>
@@ -234,115 +171,64 @@ chore(novel): apply pending action <short-id>
 <PendingAction title>
 ```
 
-后续可以让 AI 建议 commit message，但 commit 仍只能发生在用户 Accept PendingAction 之后。
+proposal 时 target 已相对 HEAD dirty，可能包含作者在 proposal 前的 work。Accept 仍可依据 baseline 审批 materialize，但 auto commit 必须 fail closed 或降级 explicit quick commit，不能把旧修改伪装成本 action commit。
 
-### Quick Commit
+## Git Failure And Recovery
 
-关闭自动提交后，UI 必须提供随时可用的快捷提交入口，让用户可以在任何想提交的时候提交当前 dirty 变更。
+Git add/commit 失败时：
 
-快捷提交要求：
+- accepted canonical change 保持不变；
+- 不回滚文件 transaction；
+- receipt 记录 `staged-not-committed` 或 `failed` 与稳定 error code；
+- UI 显示 dirty/staged state 和 quick commit/recovery 入口。
 
-- 入口可出现在 workspace toolbar、Git 页面和 PendingAction accept 成功后的 dirty 状态提示中。
-- 点击后展示当前 dirty 文件列表和 diff。
-- 用户必须能确认 commit message。
-- 默认提交范围可以是当前 dirty files，但 UI 必须清楚展示将被提交的文件。
-- 提交前必须再次读取 Git status，避免提交用户未看到的新变更。
-- Quick commit files 必须来自 backend 返回的 dirty file list 或 accepted PendingAction touched files，不能接受 frontend 任意路径。
-- 快捷提交是用户显式 Git 操作，不属于 AI 自主行为。
-- 快捷提交成功后刷新 Git status / Git history。
-- 快捷提交失败时展示错误，并保留 dirty 状态。
+journal 持久化 `autoCommitRequested`。若 commit 已成功但 receipt 尚未 durable，恢复通过 repository/commit action identity 对账，再补 receipt，不能重复提交。
 
-### Manual Git Operations
+## Quick Commit
 
-用户可以通过外部编辑器或 Git 页面手动执行 Git 操作。这类操作属于用户显式手动行为，不属于 PendingAction auto commit。
+`git.autoCommitOnAccept: false` 或自动提交失败时，UI 提供显式 quick commit：
 
-示例：
+- Backend 重新读取 Git status/diff。
+- 用户看见并确认 file scope 与 message。
+- files 来自 accepted action paths 或 backend 当前 dirty file list，不能接受 frontend 任意 path。
+- commit 前再次验证 repository/branch/index。
+- 默认不自动 sync。
+- success 后刷新 status/history；failure 保留 dirty state。
 
-```text
-User opens workspace in VS Code / Zed / WebStorm.
-User uses editor Git UI.
-Application later refreshes Git status/history.
-```
+关闭 auto commit 时系统不得自动 commit 或 sync。
 
-手动 Git 操作不能绕过 PendingAction 写入链路：AI 发起的文件修改仍必须先进入 `.workspace` shadow write，并等待用户 Accept。
+## Manual Git Operations
 
-Phase A 中，外部编辑器入口和内置 Git 页面都可以复用用户系统 Git。Phase B 切换到 bundled Git 后，外部编辑器仍然使用编辑器自身 Git 能力；OAN 内置 Git 页面使用 bundled Git。
+用户可以通过外部编辑器或 Git CLI 手动 commit/branch/restore。这属于显式用户行为，不属于 AI 自动操作。OAN 后续刷新 repository state；现有 PendingAction 因 branch/HEAD/baseline 漂移应变 stale，而不是自动适配。
 
-### Assisted Commit Message
+手动 Git 能力不能让 AI 绕过 PendingAction。
 
-可选后续能力：AI 可以建议 commit message 文案，但不能决定是否提交，也不能扩大提交文件范围。
+## Validation And Policy Before Write
 
-## Rejection
+- path 在 exact workspace policy 内，拒绝 `.git`、internal/hidden path 与 symlink。
+- final file 通过完整 domain validator，而不只是语法 parse。
+- Constitution 等 proposal-only families 只有专门 trusted workflow 才可写。
+- Reference/Play action 重验 source/origin freshness 与 exact targets。
+- mode policy：update 保留 baseline mode，create 固定 `0o644`，v1 不支持 chmod。
 
-用户 Reject 后：
-
-- 不写文件。
-- 保留 action log。
-- 可让 AI 重新生成更小的 patch。
-
-## Partial Acceptance
-
-Chapter Completion Assistant 可能生成多个 patch。
-
-用户应能逐个接受：
+## Internal Records
 
 ```text
-[x] state/characters.yaml
-[x] timeline/events.yaml
-[ ] foreshadow/active.yaml
-[x] summaries/chapter/0001/0003.md
+.workspace/change-engine/v1/
+  pending/
+  drafts/
+  terminal/accepted/
+  terminal/rejected/
+  receipts/
+  transactions/
+  locks/
+  previews/
 ```
 
-实现方式：
+这些 records 是 approval/recovery infrastructure，不是 novel truth。无版本、unknown version 或 unsupported shape 返回 `UNSUPPORTED_PENDING_ACTION_SCHEMA`，UI 应提示开发内部状态需要 reset，不能谎报“没有待审批项”。
 
-- 每个 patch 独立 action。
-- 或一个 action 内支持 patch selection。
+## Audit
 
-MVP 优先前者。
+推荐 audit 只记录不可执行摘要：action id、source kind、capability、change paths/operations、timestamps、decision、Git receipt id/result。不得记录 secrets、candidate full content、artifact relative path 或可重放 bash args。
 
-## Rollback
-
-由于 Git 是历史引擎，回滚优先使用 Git。
-
-系统可以提供辅助工具：
-
-- `git.status`
-- `git.diff`
-- `git.restoreFile`
-- `git.commit`
-
-但这些也应走用户确认。
-
-## Validation Before Write
-
-写入前必须验证：
-
-- YAML 语法有效。
-- Markdown frontmatter 有效。
-- touched files 在小说项目根目录内。
-- patch 没有修改 `.git/`。
-- patch 没有修改 Constitution，除非是明确的 human-approved constitution update。
-- patch 没有超出 Tool allowed files。
-
-## Audit Log
-
-建议记录：
-
-```text
-.oan/logs/actions.jsonl
-```
-
-每行：
-
-```json
-{
-  "id": "action_001",
-  "tool": "state.set",
-  "status": "applied",
-  "touchedFiles": ["state/characters.yaml"],
-  "createdAt": "...",
-  "appliedAt": "..."
-}
-```
-
-注意：日志不是事实源。事实源仍是文件和 Git。
+事实源仍是 canonical files 与 Git；audit 不能覆盖它们。

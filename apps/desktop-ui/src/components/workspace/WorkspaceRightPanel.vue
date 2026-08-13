@@ -22,8 +22,7 @@ defineProps<{
   fileLoading: boolean;
   fileError: string;
   pendingActions: Array<PendingActionView & {
-    touchedFiles?: string[];
-    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+    decision?: 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected';
     decisionError?: string;
   }>;
   selectedPendingAction?: PendingActionView;
@@ -41,6 +40,7 @@ const emit = defineEmits<{
   close: [];
   acceptPendingAction: [action: PendingActionView];
   rejectPendingAction: [action: PendingActionView];
+  quickCommitPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   reviewPendingActionId: [pendingActionId: string];
@@ -76,6 +76,7 @@ const emit = defineEmits<{
       :error="pendingActionsError"
       @accept="emit('acceptPendingAction', $event)"
       @reject="emit('rejectPendingAction', $event)"
+      @quick-commit="emit('quickCommitPendingAction', $event)"
       @review="emit('reviewPendingAction', $event)"
       @open-diff="emit('openPendingActionDiff', $event)"
     />

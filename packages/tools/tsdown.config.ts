@@ -11,6 +11,6 @@ export default defineConfig({
   clean: true,
   platform: 'node',
   deps: {
-    neverBundle: [/^ai$/, /^yaml$/],
+    neverBundle: [/^ai$/, /^bash-tool$/, /^diff$/, /^just-bash$/, /^yaml$/],
   },
 });

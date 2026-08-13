@@ -1,5 +1,7 @@
 # Align Apply Engine Implementation Order Implementation Plan
 
+> **Status: Superseded by ADR 0004 and `2026-08-12-migrate-semantic-patch-to-sandbox-change-engine.md`. Historical implementation plan only; do not execute or extend this plan.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Align the codebase with the documented implementation order: keep the completed write-intent/PendingAction path working now, then implement the full SemanticPatch Apply Engine under task `0800`.

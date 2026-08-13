@@ -16,6 +16,8 @@
 
 目标是让 AI、作者和 Git 都能精确理解每一次修改。
 
+本规格只定义 canonical novel workspace。候选、审批、恢复、chat/tool log 等内部状态不属于小说事实，固定使用 `.workspace/change-engine/v1/` 或 `.oan/sessions/`，且不得被模型当作可读写目标。
+
 ## Canonical Layout
 
 项目内部运行目录统一使用 `.oan/`。早期讨论中的 `.storyforge/` 不是有效 workspace 目录，不需要兼容层。
@@ -189,9 +191,9 @@ Git-visible 的原子配置操作。
 - 有场景、段落、chunk。
 - 修改时不能全文重写。
 
-Outline 也是当前小说的 Project Truth。W3a 材料采用第一版只允许对
-`outline/**/*.md` 生成整文件候选，仍必须经过 diff / PendingAction / Accept；
-后续局部 scene / beat patch 由 `0800` 收敛。
+Outline 也是当前小说的 Project Truth。材料 adoption 第一版只允许对
+`outline/**/*.md` 生成整文件候选，仍必须经过 CandidateChangeSet、diff、
+PendingAction 与 Accept；后续局部 scene / beat 编辑也必须保持相同审批边界。
 
 ## Character Format
 
@@ -451,13 +453,40 @@ AI 修改 Constitution 时只能生成 proposal，不能直接写。
 
 ## File Granularity Rule
 
-一个 AI Tool 一次最好只修改一个物理文件。
+普通单领域 workflow 应优先修改一个小型物理文件；作者明确发起的结算、Reference /
+Play adoption 或 multi-file edit 可以在一个固定 sandbox session 中形成多个变更。
 
 允许例外：
 
-- Chapter Completion Assistant 可生成多个 PendingAction。
-- 每个 PendingAction 仍对应独立文件 patch。
-- 用户可以逐个 Accept / Reject。
+- Chapter Completion Assistant 可生成多个 PendingAction，或在边界清晰时生成一个
+  bounded multi-file CandidateChangeSet。
+- 每个 PendingAction 的 `changes` 都必须按 path 稳定排序，并逐项展示
+  `create | update | delete`。
+- 需要逐项决策时，producer 应在 proposal 前拆成多个 immutable action。
+
+## Canonical And Internal State Boundary
+
+Canonical、Git-visible 数据包括：
+
+- `.oan/config.yaml`、Workflow、Constitution、Skills 与 Writing Profiles；
+- chapters、characters、world、outline、state、timeline、foreshadow、summaries；
+- accepted reference bundles 与其它明确登记的小说对象文件。
+
+Disposable internal state：
+
+```text
+.workspace/change-engine/v1/
+.oan/sessions/
+```
+
+`.workspace/change-engine/v1/` 保存 immutable draft、PendingAction、terminal、receipt、
+transaction、lock 与 prepared preview。`.oan/sessions/` 保存可丢弃的 agent session
+artifact。二者都不能作为 ContextPackage source、sandbox projection target 或 Git history
+替代品。
+
+开发迁移 reset 只能在验证 realpath、Git tracked files、Git status 和 canonical SHA-256
+manifest 后删除上述两个精确目录；不得删除整个 `.oan/`、`.git/` 或任何 canonical
+object tree。
 
 ## Migration Note
 

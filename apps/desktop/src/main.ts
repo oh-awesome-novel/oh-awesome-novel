@@ -15,6 +15,12 @@ import type {
   ComposerSubmitShortcutPreference,
   ThemePreference,
 } from '@oh-awesome-novel/core';
+import {
+  createSandboxEditSession,
+  createWorkspaceChangePolicy,
+} from '@oh-awesome-novel/tools';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -22,6 +28,10 @@ if (started) {
 }
 
 let backend: NovelBackendHandle | undefined;
+const packagedMainSmokeEnabled = process.argv.some((argument) => (
+  argument === '--oan-packaged-main-smoke'
+  || argument === '--oan-packaged-main-smoke=1'
+));
 
 ipcMain.handle('oan:app:get-version', () => app.getVersion());
 
@@ -124,11 +134,22 @@ const getRendererIndexPath = () => {
 };
 
 app.on('ready', async () => {
+  if (packagedMainSmokeEnabled) {
+    return;
+  }
+
   backend = await startNovelHttpBackend({
     seedWorkspaceRoot: resolveWorkspaceRoot(),
   });
   createWindow();
 });
+
+if (packagedMainSmokeEnabled) {
+  void runPackagedMainSmoke().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    app.exit(1);
+  });
+}
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
@@ -182,4 +203,72 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+async function runPackagedMainSmoke(): Promise<void> {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'oan-packaged-main-smoke-'));
+  let session: Awaited<ReturnType<typeof createSandboxEditSession>> | undefined;
+  let output: Record<string, unknown> | undefined;
+  let exitCode = 0;
+  try {
+    const relativePath = 'summaries/smoke.md';
+    const canonicalPath = path.join(workspaceRoot, relativePath);
+    const original = '# Smoke\n\nbefore\n';
+    await mkdir(path.dirname(canonicalPath), { recursive: true });
+    await writeFile(canonicalPath, original, 'utf8');
+    session = await createSandboxEditSession({
+      workspaceRoot,
+      sessionId: 'packaged-main-smoke',
+      policy: createWorkspaceChangePolicy({ capability: 'summary.edit' }),
+      repositoryReader: async () => ({
+        repositoryId: '0'.repeat(64),
+        branch: 'smoke',
+        head: '0'.repeat(40),
+      }),
+    });
+    const bash = session.tools.bash as {
+      execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
+    };
+    if (!bash.execute) throw new Error('Packaged sandbox bash tool is unavailable.');
+    const result = await bash.execute({
+      command: "printf '# Smoke\\n\\nafter\\n' > summaries/smoke.md",
+    }, {});
+    if (!isRecord(result) || result.exitCode !== 0) {
+      throw new Error('Packaged sandbox command failed.');
+    }
+    const preview = await session.preview();
+    const candidate = await session.finalizeCandidate({ finalization: 'runtime-fallback' });
+    const canonical = await readFile(canonicalPath, 'utf8');
+    if (
+      canonical !== original
+      || preview.changes.length !== 1
+      || preview.changes[0]?.operation !== 'update'
+      || preview.changes[0]?.path !== relativePath
+      || candidate?.changes.length !== 1
+    ) {
+      throw new Error('Packaged sandbox smoke assertions failed.');
+    }
+    await session.dispose();
+    try {
+      await session.preview();
+      throw new Error('Disposed packaged sandbox session remained usable.');
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('disposed')) throw error;
+    }
+    session = undefined;
+    output = {
+      ok: true,
+      component: 'sandbox-change-engine',
+      operation: candidate.changes[0]?.operation,
+      path: candidate.changes[0]?.path,
+    };
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    exitCode = 1;
+  } finally {
+    await session?.dispose();
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+  if (output) process.stdout.write(`${JSON.stringify(output)}\n`);
+  app.exit(exitCode);
 }

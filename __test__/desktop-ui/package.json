@@ -10,7 +10,8 @@
     "test:run": "vitest run",
     "pretest:renderer-smoke": "npm run typecheck:renderer-smoke",
     "typecheck:renderer-smoke": "vue-tsc --noEmit -p ./renderer-smoke/tsconfig.json",
-    "test:renderer-smoke": "node ./renderer-smoke/run.cjs"
+    "test:renderer-smoke": "node ./renderer-smoke/run.cjs",
+    "test:packaged-main-smoke": "node ./packaged-main-smoke/run.cjs"
   },
   "dependencies": {
     "@oh-awesome-novel/client": "^0.0.1",

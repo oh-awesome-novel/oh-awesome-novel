@@ -1,5 +1,7 @@
 # Play Mode UI And Adoption Workflow Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Use one world referee in the existing runtime. Do not implement multi-agent roleplay as the default.
 >
 > **Superseded UI boundary:** This plan originally allowed a Play panel or route, and the first implementation used a right-panel tab. The current target requires Play and Writing to be top-level sibling modes. Preserve the completed backend / adoption work, but use `docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md` for the replacement Play workspace; do not extend `PlayModeTab.vue` as the final UI.

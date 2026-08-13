@@ -45,7 +45,7 @@ V1 必须明确区分四层事实：
 - AI 是 Copilot，不是数据所有者。
 - ContextPackage、usage stats、session artifact 和 UI inspector 都是派生审计数据，不是小说事实源。
 - Runtime 保持 Aider-style 极简 tool loop，不加入 planner、后台自治或隐藏压缩循环。
-- 真实目标文件写入继续经过 SemanticPatch、PendingAction、diff 和 Human Approval。
+- 真实目标文件写入继续经过 `CandidateChangeSet`、PendingAction、diff 和 Human Approval。
 
 ### 2.2 `*_LESSONS.md` 共同结论
 
@@ -505,7 +505,7 @@ Agent builds ContextPackage evidence
 ├── run.yaml
 ├── context-package.yaml
 ├── outputs.yaml
-├── proposed-patches.yaml
+├── proposed-changes.yaml
 ├── unresolved.md
 └── usage-stats.jsonl
 ```

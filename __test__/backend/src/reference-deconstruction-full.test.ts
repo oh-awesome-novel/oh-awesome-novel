@@ -1,7 +1,9 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
@@ -23,6 +25,7 @@ import {
   rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
 } from '@oh-awesome-novel/core';
+
 import type {
   ReferenceChapterWorkUnitWindow,
   ReferenceDeconstructionFinding,
@@ -33,10 +36,11 @@ import type {
   ReferenceStoryMaterialKind,
 } from '@oh-awesome-novel/core';
 import {
-  acceptPendingAction,
-  rejectPendingAction,
+  createChangeMaterializer,
+  createPendingActionStore,
 } from '@oh-awesome-novel/tools';
 
+const execFileAsync = promisify(execFile);
 const tempRoots: string[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
 
@@ -400,17 +404,14 @@ describe('reference full deconstruction backend', () => {
       'timeline',
     ].map((materialKind) =>
       `examples/references/${referenceId}/materials/${materialKind}.yaml`);
-    expect(published.pendingAction.touchedFiles).toEqual(
+    const publishedPaths = published.pendingAction.changes.map((change) => change.path);
+    expect(publishedPaths).toEqual(
       expect.arrayContaining(materialPaths),
     );
-    expect(published.pendingAction.touchedFiles.filter((path) =>
+    expect(publishedPaths.filter((path) =>
       path.includes('/distilled/'))).toEqual([]);
 
-    await acceptPendingAction({
-      workspaceRoot,
-      id: published.pendingAction.id,
-      autoCommitOnAccept: false,
-    });
+    await materializePendingAction(workspaceRoot, published.pendingAction.id);
     await expect(fetchJson<RunEnvelope>(restartedRunUrl)).resolves.toMatchObject({
       run: { status: 'completed' },
     });
@@ -1345,13 +1346,15 @@ describe('reference full deconstruction backend', () => {
       { method: 'POST' },
     );
     expect(accepted).toMatchObject({
-      id: published.pendingAction.id,
-      status: 'accepted',
+      pendingAction: {
+        id: published.pendingAction.id,
+        status: 'accepted',
+      },
       referencePublish: {
         run: { status: 'completed' },
       },
     });
-    for (const target of published.pendingAction.touchedFiles) {
+    for (const target of published.pendingAction.changes.map((change) => change.path)) {
       await expect(readFile(join(workspaceRoot, target), 'utf-8'))
         .resolves.toEqual(expect.any(String));
     }
@@ -1425,11 +1428,7 @@ describe('reference full deconstruction backend', () => {
       ready.run.runRevision,
       idempotencyKey,
     );
-    await acceptPendingAction({
-      workspaceRoot,
-      id: published.pendingAction.id,
-      autoCommitOnAccept: false,
-    });
+    await materializePendingAction(workspaceRoot, published.pendingAction.id);
     const runArtifacts = join(
       workspaceRoot,
       '.workspace',
@@ -1477,12 +1476,10 @@ describe('reference full deconstruction backend', () => {
       ready.run.runRevision,
       'publish-terminal-tamper',
     );
-    await acceptPendingAction({
-      workspaceRoot,
-      id: published.pendingAction.id,
-      autoCommitOnAccept: false,
-    });
-    const tamperedTarget = published.pendingAction.touchedFiles.find((file) =>
+    await materializePendingAction(workspaceRoot, published.pendingAction.id);
+    const tamperedTarget = published.pendingAction.changes
+      .map((change) => change.path)
+      .find((file) =>
       file.endsWith('/progress.yaml'))!;
     await writeFile(
       join(workspaceRoot, tamperedTarget),
@@ -1550,8 +1547,10 @@ describe('reference full deconstruction backend', () => {
       { method: 'POST' },
     );
     expect(rejected).toMatchObject({
-      id: published.pendingAction.id,
-      status: 'rejected',
+      pendingAction: {
+        id: published.pendingAction.id,
+        status: 'rejected',
+      },
       referencePublish: {
         run: { status: 'reviewReady' },
       },
@@ -1585,11 +1584,15 @@ describe('reference full deconstruction backend', () => {
     const pendingPath = join(
       workspaceRoot,
       '.workspace',
-      'pending-actions',
+      'change-engine',
+      'v1',
+      'pending',
       `${published.pendingAction.id}.json`,
     );
     const originalStored = JSON.parse(await readFile(pendingPath, 'utf-8')) as {
-      patches: Array<Record<string, unknown>>;
+      changes: Array<{
+        draft: null | { sha256: string; byteLength: number; relativePath: string };
+      }>;
       origin: { runRevision: number };
     };
     const revisionTampered = structuredClone(originalStored);
@@ -1606,10 +1609,8 @@ describe('reference full deconstruction backend', () => {
     expect([409, 422]).toContain(revisionAcceptResponse.status);
 
     const stored = structuredClone(originalStored);
-    stored.patches[0] = {
-      ...stored.patches[0],
-      value: 'version: 1\nreferences: forged\n',
-    };
+    expect(stored.changes[0]?.draft).not.toBeNull();
+    stored.changes[0]!.draft!.sha256 = '0'.repeat(64);
     await writeFile(
       pendingPath,
       `${JSON.stringify(stored, null, 2)}\n`,
@@ -1636,7 +1637,7 @@ describe('reference full deconstruction backend', () => {
       `${backend.url}/api/workspace/pending-actions/${published.pendingAction.id}/reject`,
       { method: 'POST' },
     )).resolves.toMatchObject({
-      status: 'rejected',
+      pendingAction: { status: 'rejected' },
       referencePublish: { run: { status: 'reviewReady' } },
     });
   });
@@ -1696,7 +1697,7 @@ describe('reference full deconstruction backend', () => {
       preview: {
         id: string;
         fingerprint: string;
-        touchedFiles: string[];
+        changes: Array<{ operation: 'create' | 'update' | 'delete'; path: string }>;
         canonicalUnchanged: true;
       };
     }>(`${backend.url}/api/workspace/references/${referenceId}/material-adoption-previews`, {
@@ -1710,11 +1711,18 @@ describe('reference full deconstruction backend', () => {
     const preview = await createPreview();
     expect(preview).toMatchObject({
       status: 'ready',
-      preview: { touchedFiles: [targetFile], canonicalUnchanged: true },
+      preview: {
+        changes: [{ operation: 'create', path: targetFile }],
+        canonicalUnchanged: true,
+      },
     });
     await expect(readOptionalFile(targetPath)).resolves.toBeUndefined();
     const pending = await fetchJson<{
-      pendingAction: { id: string; status: 'pending'; touchedFiles: string[] };
+      pendingAction: {
+        id: string;
+        status: 'pending';
+        changes: Array<{ operation: 'create' | 'update' | 'delete'; path: string }>;
+      };
     }>(
       `${backend.url}/api/workspace/references/${referenceId}`
         + `/material-adoption-previews/${preview.preview.id}/pending-action`,
@@ -1725,14 +1733,14 @@ describe('reference full deconstruction backend', () => {
     );
     expect(pending.pendingAction).toMatchObject({
       status: 'pending',
-      touchedFiles: [targetFile],
+      changes: [{ operation: 'create', path: targetFile }],
     });
     await expect(readOptionalFile(targetPath)).resolves.toBeUndefined();
 
-    await expect(fetchJson<{ status: string }>(
+    await expect(fetchJson<{ pendingAction: { status: string } }>(
       `${backend.url}/api/workspace/pending-actions/${pending.pendingAction.id}/accept`,
       { method: 'POST' },
-    )).resolves.toMatchObject({ status: 'accepted' });
+    )).resolves.toMatchObject({ pendingAction: { status: 'accepted' } });
     await expect(readFile(targetPath, 'utf8')).resolves.toContain('# Adopted Rain Gate');
 
     const updatePreview = await createPreview();
@@ -1786,8 +1794,12 @@ interface PublishEnvelope extends RunEnvelope {
   replayed: boolean;
   pendingAction: {
     id: string;
+    description: string;
     status: 'pending' | 'accepted' | 'rejected';
-    touchedFiles: string[];
+    changes: Array<{
+      operation: 'create' | 'update' | 'delete';
+      path: string;
+    }>;
     origin: {
       candidateFingerprint: string;
     };
@@ -1795,8 +1807,10 @@ interface PublishEnvelope extends RunEnvelope {
 }
 
 interface PendingActionDecisionEnvelope {
-  id: string;
-  status: 'accepted' | 'rejected';
+  pendingAction: {
+    id: string;
+    status: 'accepted' | 'rejected';
+  };
   referencePublish: RunEnvelope;
 }
 
@@ -1963,11 +1977,10 @@ async function publishAndAcceptReferenceRun(input: {
     input.run.runRevision,
     input.idempotencyKey,
   );
-  await acceptPendingAction({
-    workspaceRoot: input.workspaceRoot,
-    id: published.pendingAction.id,
-    autoCommitOnAccept: false,
-  });
+  await fetchJson(
+    `${input.backendUrl}/api/workspace/pending-actions/${published.pendingAction.id}/accept`,
+    { method: 'POST' },
+  );
   const reconciled = (await fetchJson<RunEnvelope>(runUrl)).run;
   expect(reconciled.status).toBe('completed');
   return reconciled;
@@ -2517,7 +2530,13 @@ async function createOanWorkspace(): Promise<string> {
   await mkdir(join(root, 'chapters/0001'), { recursive: true });
   await writeFile(
     join(root, '.oan/config.yaml'),
-    'version: 1\nnovelName: backend-full-sample\n',
+    [
+      'version: 1',
+      'novelName: backend-full-sample',
+      'git:',
+      '  autoCommitOnAccept: false',
+      '',
+    ].join('\n'),
     'utf-8',
   );
   await writeFile(
@@ -2526,7 +2545,34 @@ async function createOanWorkspace(): Promise<string> {
     'utf-8',
   );
   await writeFile(join(root, 'chapters/0001/0001.md'), '# 第一章\n\n正文。\n', 'utf-8');
+  await initializeGitRepository(root);
   return root;
+}
+
+async function initializeGitRepository(workspaceRoot: string): Promise<void> {
+  await execFileAsync('git', ['init'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd: workspaceRoot,
+  });
+  await execFileAsync('git', ['config', 'user.name', 'Test User'], {
+    cwd: workspaceRoot,
+  });
+  await execFileAsync('git', ['add', '.'], { cwd: workspaceRoot });
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspaceRoot });
+}
+
+async function materializePendingAction(
+  workspaceRoot: string,
+  actionId: string,
+): Promise<void> {
+  const store = await createPendingActionStore({ workspaceRoot });
+  const materializer = createChangeMaterializer({
+    store,
+    assertOriginFresh(action) {
+      expect(action.origin?.kind).toBe('referenceDeconstructionPublish');
+    },
+  });
+  await materializer.accept({ actionId, autoCommitOnAccept: false });
 }
 
 async function createTemporaryRoot(): Promise<string> {

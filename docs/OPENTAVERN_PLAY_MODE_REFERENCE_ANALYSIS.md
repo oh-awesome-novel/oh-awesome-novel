@@ -491,7 +491,7 @@ Writing Mode 和 Play Mode 可以共享 workspace shell、provider gate、pendin
 - 用户选择目标：章节素材 / state / timeline / foreshadow。
 - UI 根据目标显示领域表单。
 - 自动带入 evidence turn ids 与原文摘录。
-- 最后预览将调用的 write-intent 与目标文件。
+- 最后预览将调用的 change-proposal 与目标文件。
 - 创建 PendingAction 后切换到现有 diff / approval UI。
 
 ## 建议吸收矩阵

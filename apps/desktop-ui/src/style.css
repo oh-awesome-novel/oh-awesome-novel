@@ -455,6 +455,10 @@
     @apply mt-3 flex flex-col gap-2;
   }
 
+  .diff-change-list {
+    @apply m-0 flex list-none flex-col gap-2 p-0;
+  }
+
   .diff-file-block {
     @apply overflow-hidden rounded-card border border-gray-200 bg-white dark:border-neutral-700 dark:bg-neutral-900;
   }

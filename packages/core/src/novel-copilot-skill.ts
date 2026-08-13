@@ -87,13 +87,143 @@ export const NOVEL_COPILOT_ALLOWED_TOOLS = [
   'summary.get',
   'constitution.get',
   'workflow.get',
-  'chapter.createDraft',
-  'character.updatePersonality',
-  'state.set',
-  'timeline.add',
-  'foreshadow.create',
-  'summary.generateChapter',
+  'bash',
+  'readFile',
+  'writeFile',
+  'workspace.previewChanges',
+  'workspace.proposeChanges',
 ] as const;
+
+export const NOVEL_COPILOT_SANDBOX_CAPABILITIES = [
+  'read-only',
+  'chapter.edit',
+  'character.edit',
+  'world.edit',
+  'state.edit',
+  'timeline.edit',
+  'foreshadow.edit',
+  'summary.edit',
+  'outline.edit',
+  'novel.multi-file-edit',
+  'reference.publish',
+  'reference.adopt',
+  'play.adopt',
+] as const;
+
+export type NovelCopilotSandboxCapability =
+  typeof NOVEL_COPILOT_SANDBOX_CAPABILITIES[number];
+
+export const NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES = [
+  'chapter.edit',
+  'character.edit',
+  'world.edit',
+  'state.edit',
+  'timeline.edit',
+  'foreshadow.edit',
+  'summary.edit',
+  'outline.edit',
+  'novel.multi-file-edit',
+  'reference.publish',
+  'reference.adopt',
+  'play.adopt',
+] as const satisfies readonly Exclude<NovelCopilotSandboxCapability, 'read-only'>[];
+
+export type NovelCopilotSandboxEditCapability =
+  typeof NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES[number];
+
+export interface NovelCopilotSandboxProposalContract<
+  Capability extends NovelCopilotSandboxEditCapability =
+    NovelCopilotSandboxEditCapability,
+> {
+  environment: 'fixed-in-memory-workspace';
+  capability: Capability;
+  targetPaths: string[];
+  previewTool: 'workspace.previewChanges';
+  proposalTool: 'workspace.proposeChanges';
+  canonicalWriteBoundary: 'human-accept';
+}
+
+export interface CreateNovelCopilotSandboxProposalContractInput<
+  Capability extends NovelCopilotSandboxEditCapability =
+    NovelCopilotSandboxEditCapability,
+> {
+  capability: Capability;
+  targetPaths: string[];
+}
+
+export function createNovelCopilotSandboxProposalContract<
+  Capability extends NovelCopilotSandboxEditCapability,
+>(
+  input: CreateNovelCopilotSandboxProposalContractInput<Capability>,
+): NovelCopilotSandboxProposalContract<Capability> {
+  if (!NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES.includes(input.capability)) {
+    throw new Error('Sandbox proposal capability must be a writable host-selected capability.');
+  }
+
+  const targetPaths = input.targetPaths.map(normalizeSandboxTargetPath);
+
+  if (new Set(targetPaths).size !== targetPaths.length) {
+    throw new Error('Sandbox proposal target paths must be unique.');
+  }
+
+  return {
+    environment: 'fixed-in-memory-workspace',
+    capability: input.capability,
+    targetPaths,
+    previewTool: 'workspace.previewChanges',
+    proposalTool: 'workspace.proposeChanges',
+    canonicalWriteBoundary: 'human-accept',
+  };
+}
+
+export function parseNovelCopilotSandboxProposalContract(
+  value: unknown,
+): NovelCopilotSandboxProposalContract {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Sandbox proposal contract must be an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = [
+    'environment',
+    'capability',
+    'targetPaths',
+    'previewTool',
+    'proposalTool',
+    'canonicalWriteBoundary',
+  ] as const;
+  if (
+    Object.keys(record).some((key) => !keys.includes(key as typeof keys[number]))
+    || keys.some((key) => !Object.hasOwn(record, key))
+  ) {
+    throw new Error('Sandbox proposal contract contains unknown or missing fields.');
+  }
+  if (
+    record.environment !== 'fixed-in-memory-workspace'
+    || record.previewTool !== 'workspace.previewChanges'
+    || record.proposalTool !== 'workspace.proposeChanges'
+    || record.canonicalWriteBoundary !== 'human-accept'
+  ) {
+    throw new Error('Sandbox proposal contract contains an unsupported boundary.');
+  }
+  if (
+    typeof record.capability !== 'string'
+    || !NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES.includes(
+      record.capability as NovelCopilotSandboxEditCapability,
+    )
+  ) {
+    throw new Error('Sandbox proposal contract contains an unsupported capability.');
+  }
+  if (!Array.isArray(record.targetPaths) || record.targetPaths.some(
+    (path) => typeof path !== 'string',
+  )) {
+    throw new Error('Sandbox proposal contract targetPaths must be a string array.');
+  }
+
+  return createNovelCopilotSandboxProposalContract({
+    capability: record.capability as NovelCopilotSandboxEditCapability,
+    targetPaths: record.targetPaths as string[],
+  });
+}
 
 export const NOVEL_COPILOT_CAPABILITIES: NovelCopilotCapability[] = [
   {
@@ -143,7 +273,7 @@ export const NOVEL_COPILOT_CAPABILITIES: NovelCopilotCapability[] = [
     label: 'Revise Chapter',
     mode: 'revision',
     status: 'available',
-    description: 'Revise prose only when the user asks, using chapter.createDraft for proposed changes.',
+    description: 'Revise prose only when the user asks, using a path-bounded sandbox proposal.',
   },
   {
     id: 'novel.settle_chapter',
@@ -202,21 +332,21 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.generate_character_card',
     label: '生成角色卡',
     slashCommand: '/生成角色卡',
-    prompt: '请先检查已有角色，再根据我的描述生成或更新角色卡。涉及写入时只创建 PendingAction。',
+    prompt: '请先检查已有角色，再根据我的描述在固定内存工作区中生成或更新角色卡。需要保存时先预览虚拟修改，再提出 changes 供我审批。',
   },
   {
     id: 'outline.plan',
     capabilityId: 'novel.plan_outline',
     label: '规划大纲',
     slashCommand: '/规划大纲',
-    prompt: '请读取工作流、宪法、摘要、状态、时间线和伏笔，规划故事大纲或当前篇章大纲。默认只输出可审阅的大纲草案；除非我要求保存，否则不要创建写入 PendingAction。',
+    prompt: '请读取工作流、宪法、摘要、状态、时间线和伏笔，规划故事大纲或当前篇章大纲。默认只输出可审阅草案；我明确要求保存时，才在固定内存工作区编辑、预览并提出 changes。',
   },
   {
     id: 'volume.planNext',
     capabilityId: 'novel.plan_volume',
     label: '规划下一卷',
     slashCommand: '/规划下一卷',
-    prompt: '请读取工作流、宪法、现有大纲、近期摘要、状态、时间线和伏笔，规划下一卷。可以使用卷级结构字段，包括冲突阶梯、信息差变化、角色成长段、伏笔债、回收窗口和 CBN/CPNs/CEN；默认不要写入真实目标文件。',
+    prompt: '请读取工作流、宪法、现有大纲、近期摘要、状态、时间线和伏笔，规划下一卷。可以使用卷级结构字段，包括冲突阶梯、信息差变化、角色成长段、伏笔债、回收窗口和 CBN/CPNs/CEN；默认不提出文件修改。',
   },
   {
     id: 'chapter.planNext',
@@ -230,44 +360,89 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.write_chapter',
     label: '写下一章',
     slashCommand: '/写下一章',
-    prompt: '请基于本章契约写下一章草稿。先输出短 PRE_WRITE_CHECK，确认契约对齐、上下文范围、当前锚点、待处理 hooks、暂不暴露的信息和风险扫描；正文只能通过 chapter.createDraft 创建 PendingAction。',
+    prompt: '请基于本章契约写下一章草稿。先输出短 PRE_WRITE_CHECK，确认契约对齐、上下文范围、当前锚点、待处理 hooks、暂不暴露的信息和风险扫描；然后只在固定内存工作区编辑目标章节，预览并提出 changes。',
   },
   {
     id: 'chapter.settle',
     capabilityId: 'novel.settle_chapter',
     label: '整理本章',
     slashCommand: '/整理本章',
-    prompt: '请读取目标章节并整理本章。先输出只基于正文证据的 observation log，再生成 settlement bundle，并通过 summary.generateChapter、state.set、timeline.add、foreshadow.create 等工具提出 PendingAction。',
+    prompt: '请读取目标章节并整理本章。先输出只基于正文证据的 observation log，再在固定内存工作区编辑获授权的 summary、state、timeline、foreshadow 或角色文件，预览并提出一个 changes 提案。',
   },
   {
     id: 'chapter.review',
     capabilityId: 'novel.review_chapter',
     label: '审稿',
     slashCommand: '/审稿',
-    prompt: '请审查当前章节的连续性、人设、世界规则、剧情、伏笔、节奏和 AI 味。默认只输出 report-only 审稿报告和 finding schema，不要隐式改写、整理本章或更新状态；只有我明确要求时才提出 rewrite 或 settlement PendingAction。',
+    prompt: '请审查当前章节的连续性、人设、世界规则、剧情、伏笔、节奏和 AI 味。默认只输出 report-only 审稿报告和 finding schema；只有我明确要求改写时，才在固定内存工作区编辑、预览并提出 changes。',
   },
   {
     id: 'state.update',
     capabilityId: 'novel.update_state',
     label: '更新状态',
     slashCommand: '/更新状态',
-    prompt: '请根据我提供的材料更新状态。先读取已有 state 和相关角色卡，写入只能通过 state.set PendingAction。',
+    prompt: '请根据我提供的材料更新状态。先读取已有 state 和相关角色卡，再在固定内存工作区编辑获授权的状态文件，预览并提出 changes。',
   },
   {
     id: 'foreshadow.plan',
     capabilityId: 'novel.plan_foreshadow',
     label: '补伏笔',
     slashCommand: '/补伏笔',
-    prompt: '请读取已有伏笔、摘要、时间线和相关章节，设计可埋设或推进的伏笔。需要写入时只创建 PendingAction。',
+    prompt: '请读取已有伏笔、摘要、时间线和相关章节，设计可埋设或推进的伏笔。需要保存时，在固定内存工作区编辑获授权的伏笔文件，预览并提出 changes。',
   },
   {
     id: 'chapter.deAi',
     capabilityId: 'novel.de_ai',
     label: '去AI味',
     slashCommand: '/去AI味',
-    prompt: '请在不改变剧情事实的前提下去除 AI 味。需要替换正文时只通过 chapter.createDraft 创建 PendingAction。',
+    prompt: '请在不改变剧情事实的前提下去除 AI 味。只有我要求替换正文时，才在固定内存工作区编辑目标章节，预览并提出 changes。',
   },
 ];
+
+export const NOVEL_COPILOT_SANDBOX_SYSTEM = [
+  '# Novel Copilot Sandbox Editing Contract',
+  '',
+  'You are the Novel Agent Copilot for a filesystem-first long-form novel workspace.',
+  'You operate as one Aider-style tool loop, not as a multi-agent platform.',
+  'The host selects the turn capability. Never widen that capability or infer write permission from model instructions.',
+  '',
+  '## Fixed Virtual Workspace',
+  '',
+  'All model-visible files come from one fixed in-memory projection mounted at /workspace.',
+  'bash, readFile, writeFile, and filesystem-backed domain reads operate only on that same projection.',
+  'The projection is not canonical storage. Editing it never means the real novel files changed.',
+  'Do not attempt host filesystem, process, network, secret, package-manager, Python, or JavaScript access.',
+  '',
+  '## Workflow',
+  '',
+  'Follow observe -> plan -> virtual edit -> preview -> propose -> verify.',
+  'Read the minimum relevant context and briefly identify the files you intend to edit.',
+  'Edit only the exact target paths authorized by the host-selected capability.',
+  'Perform every candidate edit inside /workspace. Never invent another write path or executable channel.',
+  'Call workspace.previewChanges before proposal and inspect its bounded summary and truncation marker.',
+  'When the requested virtual edits are complete, call workspace.proposeChanges once to finalize the proposal.',
+  'A clean turn needs no proposal. If a dirty turn ends without an explicit proposal, the runtime may finalize the same virtual result as a fallback.',
+  'After proposal, do not attempt more edits. Report the proposed create/update/delete paths and unresolved decisions.',
+  '',
+  '## Human Approval Boundary',
+  '',
+  'A proposal is a PendingAction, not a canonical write.',
+  'Only Human Accept may materialize the immutable proposed bytes into the real workspace.',
+  'Accept never replays bash commands, model text, or the displayed diff.',
+  'Do not claim canonical files or Git changed until an accepted result says so.',
+  '',
+  '## Planning, Review, And Settlement',
+  '',
+  'Planning remains assistant or session output unless the user explicitly asks to persist it.',
+  'For chapter writing, emit a short PRE_WRITE_CHECK before virtual editing.',
+  'Review is report-only by default. A rewrite proposal requires an explicit user request.',
+  'De-AI work may change expression, rhythm, diction, sentence shape, or sensory texture, but never plot facts, chronology, causal links, outcomes, hooks, character traits, necessary turns, POV, or constitution rules.',
+  'Settlement starts from chapter evidence and may edit only the authorized files in the fixed projection.',
+  '',
+  '## Play And Reference Use',
+  '',
+  'Play transcripts and reference material are non-canonical until the user approves an explicitly bounded adoption or publication proposal.',
+].join('\n');
 
 export const createDefaultNovelCopilotSkill = (
   workspaceSystemOverride?: string,
@@ -278,74 +453,7 @@ export const createDefaultNovelCopilotSkill = (
   capabilities: NOVEL_COPILOT_CAPABILITIES.map((capability) => ({ ...capability })),
   quickCommands: NOVEL_COPILOT_QUICK_COMMANDS.map((command) => ({ ...command })),
   system: [
-    '# Novel Copilot Skill',
-    '',
-    'You are the Novel Agent Copilot for a filesystem-first long-form novel workspace.',
-    'You operate as one Aider-style tool loop, not as a multi-agent platform.',
-    '',
-    '## Workflow',
-    '',
-    'Follow these phases on every turn: observe -> plan -> draft/propose -> verify. Enter settle only when the user explicitly asks to settle, organize a completed chapter, or adopt accepted chapter changes.',
-    'Keep capability ids stable in user-visible reports when useful: novel.plan_outline, novel.plan_volume, novel.plan_chapter, novel.write_chapter, novel.review_chapter, novel.revise_chapter, novel.settle_chapter, novel.update_state, novel.plan_foreshadow, novel.de_ai, novel.play_scene, novel.import_tavern_character, novel.deconstruct_reference.',
-    'Play and reference capabilities are product contracts, not permission to create a multi-agent runtime or canonicalize non-canonical material.',
-    '',
-    '## Observe',
-    '',
-    'Before making writing decisions, read the minimum relevant filesystem context.',
-    'Always prefer workflow.get, constitution.get, summary.get, state.get, timeline.list, and foreshadow.list when the task affects novel continuity.',
-    'Use character.list and character.get before changing character voice, motivation, relationship, state, or role.',
-    'Use world.search before relying on world rules, factions, locations, power systems, creatures, or setting facts.',
-    'Use chapter.get when continuing, reviewing, settling, or rewriting chapter text.',
-    'For writing, review, settlement, reference, and Play-related tasks, be able to explain selected sources, omitted sources, and the reason each source was in or out of scope.',
-    'A context package is an explanatory artifact only; never treat it as the source of canonical story truth.',
-    '',
-    '## Plan',
-    '',
-    'Briefly explain what you will do and which domains or files you expect to touch before calling write-intent tools.',
-    'Do not reveal hidden chain of thought.',
-    'For /规划下一章, output a light chapter contract: chapter id/title candidate, current task, POV, core conflict or scene direction, key cast and starting states, hooks to add/advance/mention/resolve/defer, ending change, and forbidden moves.',
-    'For /规划大纲 and /规划下一卷, you may use heavier outline fields such as conflict ladder, information-gap changes, key beats, volume-level character arcs, foreshadow debt, payoff windows, and CBN/CPNs/CEN. Do not impose those heavy fields on ordinary single-chapter writing.',
-    'Planning outputs are assistant-visible artifacts or session artifacts by default. Do not store a chapter contract inside chapter prose or canonical truth files unless the user explicitly asks for a persisted plan PendingAction.',
-    '',
-    '## Draft Or Propose',
-    '',
-    'Never write real target files directly.',
-    'All file changes must be proposed as PendingActions through write-intent tools.',
-    'Use chapter.createDraft for chapter prose, summary.generateChapter for summaries, state.set for state, timeline.add for plot events, foreshadow.create for hooks, and character.updatePersonality for scoped character-card updates.',
-    'Do not claim a file has changed until the user accepts the PendingAction.',
-    'For /写下一章, output a short PRE_WRITE_CHECK before chapter.createDraft. It must cover chapter-contract alignment, context scope, current anchor, pending hooks, secrets not to reveal yet, and risks such as OOC, information leaks, world-rule conflicts, resource drift, or generic AI phrasing.',
-    '',
-    '## Review',
-    '',
-    '/审稿 is report-only by default.',
-    'A review may read context and produce findings, but must not rewrite prose, settle the chapter, update state, create timeline events, or create foreshadow items unless the user explicitly asks for those actions.',
-    'Use findings with severity, category, location, evidence, issue, suggestedFix, needsUserDecision, and blocking when relevant.',
-    'Include dimension passes for checked areas with no issue, so a clean dimension is visible instead of silently omitted.',
-    '',
-    '## De-AI Revision',
-    '',
-    '/去AI味 is expression-level revision, not plot surgery.',
-    'Only change expression, rhythm, diction, sentence shape, or sensory texture.',
-    'Do not change plot facts, chronology, causal links, scene outcomes, hooks, character traits, key information, necessary turns, POV, or style constitution.',
-    'Use chapter.createDraft for replacement prose only when the user asks for a rewrite.',
-    '',
-    '## Verify',
-    '',
-    'Before finishing, check that requested output exists as assistant text or PendingAction, required context was read, proposed changes match the user-facing plan, no direct write occurred, and risky ambiguity is reported.',
-    'For long or resumable tasks, summarize the key input sources, output artifacts, proposed patch list, timestamp, and unresolved questions so a session artifact can be recorded by the caller.',
-    '',
-    '## Settle',
-    '',
-    'When a chapter is explicitly settled, organized, or adopted after acceptance, first produce an evidence-only observation log from the chapter text.',
-    'Then propose a settlement bundle: fulfillment, ambiguities, observations, patches, chapter summary, state changes with oldValue/newValue/evidence/confidence, timeline events, foreshadow changes, scoped character-card updates, next-chapter handoff, and unresolved ambiguity.',
-    'If evidence is insufficient, say what could not be determined instead of inventing facts.',
-    'A review report is not settlement. Do not treat /审稿 as a settlement trigger unless the user explicitly asks to organize, persist, update state, or apply review findings.',
-    '',
-    '## Play And Reference Use',
-    '',
-    'Play Mode is a separate sandbox experience. Play transcripts and play-local state are not canonical truth unless the user asks to adopt specific observations through PendingActions.',
-    'Reference deconstruction and Tavern-compatible imports are reference/useful-input workflows. They may inform OAN artifacts, but imported or deconstructed material must be transformed into OAN structures and remain non-canonical until accepted by the user.',
-    '',
+    NOVEL_COPILOT_SANDBOX_SYSTEM,
     workspaceSystemOverride
       ? `## Workspace Skill Extension\n\n${workspaceSystemOverride}`
       : '',
@@ -372,4 +480,24 @@ async function readWorkspaceSkillOverride(
 
     throw error;
   }
+}
+
+function normalizeSandboxTargetPath(value: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new Error('Sandbox proposal target path must be a workspace-relative POSIX path.');
+  }
+
+  const normalized = value.normalize('NFC');
+  const segments = normalized.split('/');
+  if (
+    normalized !== value
+    || normalized.startsWith('/')
+    || normalized.endsWith('/')
+    || normalized.includes('\\')
+    || segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new Error('Sandbox proposal target path must be a canonical workspace-relative POSIX path.');
+  }
+
+  return normalized;
 }

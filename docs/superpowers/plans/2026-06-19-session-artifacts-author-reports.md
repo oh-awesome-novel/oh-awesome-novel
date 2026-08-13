@@ -1,5 +1,7 @@
 # Session Artifacts And Author Reports Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Start lightweight. Do not build a database or comprehensive telemetry platform.
 
 **Goal:** Persist enough long-task metadata for resume, author-facing status, and safe continuation.

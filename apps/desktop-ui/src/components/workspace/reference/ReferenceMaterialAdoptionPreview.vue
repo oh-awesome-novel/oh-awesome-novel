@@ -60,7 +60,9 @@ const decisions = computed(() =>
     <template v-if="preview">
       <div class="material-adoption-targets">
         <span>Target files</span>
-        <code v-for="file in preview.touchedFiles" :key="file">{{ file }}</code>
+        <code v-for="change in preview.changes" :key="change.path">
+          {{ change.operation }} · {{ change.path }}
+        </code>
       </div>
       <pre aria-label="Story Material adoption diff">{{ preview.diff }}</pre>
       <p class="material-adoption-boundary">

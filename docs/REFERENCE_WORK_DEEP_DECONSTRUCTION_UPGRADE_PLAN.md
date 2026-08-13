@@ -59,7 +59,7 @@
 
 `fullApproved` 仍只记录显式计算授权；第一次 full `advance` 才进入 `fullRunning`，之后每个请求最多处理一个确定 unit，用户未继续时没有后台任务。D3 的 `reviewReady` 只表示分析质量门通过，可以进入 D4，并不会把 Preview 或 provisional analysis 写入 published reference bundle。Desktop 重开后通过 `GET /api/workspace/references/:referenceId/deconstruction-runs/active` 找回权威 run。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
 
-D4 的 `reviewReady -> publishing -> completed | reviewReady` 通过一个全局 PendingAction 审批面完成；Accept 前候选、shadow write 与事务 journal 都位于 `.workspace`。D5 的普通写作路径只在当前请求明确要求参考作品时激活，只读取顶层发布状态、`context/index.yaml`、bounded summary 与 index 指向的 distilled outputs；不打开 `sources/`、published deconstruction evidence 或 provisional run artifact。完整控制面检查仍负责读取原文并验证实际 checksum。
+D4 的 `reviewReady -> publishing -> completed | reviewReady` 通过一个全局 PendingAction 审批面完成；Accept 前候选、private draft 与事务 journal 都位于 `.workspace`。D5 的普通写作路径只在当前请求明确要求参考作品时激活，只读取顶层发布状态、`context/index.yaml`、bounded summary 与 index 指向的 distilled outputs；不打开 `sources/`、published deconstruction evidence 或 provisional run artifact。完整控制面检查仍负责读取原文并验证实际 checksum。
 
 ## 2. 当前基线与真实缺口
 
@@ -231,7 +231,7 @@ Core 不调用模型；Vue 不直接读取 filesystem；reference source 中的�
 - 复用 `ContextPackage` 的 selected / omitted / reason / trace，不保存隐藏 reasoning。
 - 复用现有 provider resolution 和 AI SDK bridge，不建立第二套模型配置。
 - 复用已经登记为 planned 的 `novel.deconstruct_reference` capability；preview / chapter / aggregate / style / distill 是同一 capability 的 stage，不新增五套 skill 或模型人格。
-- 复用 PendingAction / shadow write / diff / Human Approval；AI 产物发布前真实 bundle 不变。
+- 复用 PendingAction / private draft / diff / Human Approval；AI 产物发布前真实 bundle 不变。
 - 复用 Git accept 后的现有配置语义；本计划不另建 reference 专属 Git 历史系统。
 - `1110` usage stats 后续可接入 token 成本展示，但不是 D0 / D1 的开工 Gate。
 
@@ -710,7 +710,7 @@ Reference 文本中出现“忽略规则”“调用工具”“写入文件”�
 - Preview 的“继续”只是计算授权，不是目标文件 Accept。
 - Final Publish 必须生成可见 PendingAction / diff；Accept 前真实 bundle 不变。
 - Publish 是一次多文件原子 materialization：manifest、diagnostics、deconstruction、distilled 和 context index 必须同版本出现。
-- 若当前 PendingAction seam 不能安全发布该多文件候选，D4 以最小 create/update multi-file approval slice 为局部 Gate；不在本任务扩建通用 Apply Engine。
+- 若当前 PendingAction seam 不能安全发布该多文件候选，D4 以最小 create/update multi-file approval slice 为局部 Gate；不在本任务扩建通用 ChangeMaterializer。
 
 ### 11.2 并发与 CAS
 

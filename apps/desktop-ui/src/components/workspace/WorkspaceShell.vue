@@ -14,7 +14,6 @@ import type {
   ChapterIndexChapter,
   ChapterIndexStatus,
   FileTreeNode,
-  PendingAction,
   ProjectHealth,
   WorkspaceOnboardingInput,
   WorkspaceStatus,
@@ -43,11 +42,13 @@ interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
 }
 
 const api = useWorkspaceApi();
-const conversations = useAgentConversationSessions();
 const searchOpen = shallowRef(false);
 const searchQuery = shallowRef('');
 const layout = useWorkspaceLayoutState(props.workspace.path);
 const activeFilePath = shallowRef('');
+const conversations = useAgentConversationSessions({
+  getExactWritablePaths: () => activeFilePath.value ? [activeFilePath.value] : [],
+});
 const fileContent = shallowRef('');
 const fileLoading = shallowRef(false);
 const fileError = shallowRef('');
@@ -60,12 +61,12 @@ const projectHealth = shallowRef<ProjectHealth>();
 const chaptersLoading = shallowRef(false);
 const chaptersError = shallowRef('');
 const workspaceStatus = shallowRef<WorkspaceStatus>();
-const workspacePendingActions = shallowRef<PendingAction[]>([]);
+const workspacePendingActions = shallowRef<PendingActionView[]>([]);
 const pendingActionsLoading = shallowRef(false);
 const pendingActionsError = shallowRef('');
 const selectedPendingActionId = shallowRef('');
 const decisionErrors = shallowRef<Record<string, string>>({});
-const decisions = shallowRef<Record<string, 'accepting' | 'rejecting' | 'accepted' | 'rejected'>>({});
+const decisions = shallowRef<Record<string, 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected'>>({});
 const queuedPrompt = shallowRef('');
 const guideVisible = shallowRef(props.startGuide);
 const guideSaving = shallowRef(false);
@@ -188,7 +189,7 @@ async function loadPendingActions() {
   pendingActionsError.value = '';
 
   try {
-    workspacePendingActions.value = (await api.listPendingActions()).pendingActions;
+    workspacePendingActions.value = [...(await api.listPendingActions()).pendingActions];
   } catch (error) {
     pendingActionsError.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -277,9 +278,8 @@ async function acceptPendingAction(action: PendingActionView) {
   decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
 
   try {
-    const result = await api.acceptPendingAction(action.id);
+    await api.acceptPendingAction(action.id);
     decisions.value = { ...decisions.value, [action.id]: 'accepted' };
-    applyDecisionRefresh(result.refresh);
     await refreshAfterPendingAction();
   } catch (error) {
     const nextDecisions = { ...decisions.value };
@@ -297,9 +297,29 @@ async function rejectPendingAction(action: PendingActionView) {
   decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
 
   try {
-    const result = await api.rejectPendingAction(action.id);
+    await api.rejectPendingAction(action.id);
     decisions.value = { ...decisions.value, [action.id]: 'rejected' };
-    applyDecisionRefresh(result.refresh);
+    await refreshAfterPendingAction();
+  } catch (error) {
+    const nextDecisions = { ...decisions.value };
+    delete nextDecisions[action.id];
+    decisions.value = nextDecisions;
+    decisionErrors.value = {
+      ...decisionErrors.value,
+      [action.id]: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function quickCommitPendingAction(action: PendingActionView) {
+  decisions.value = { ...decisions.value, [action.id]: 'quick-committing' };
+  decisionErrors.value = { ...decisionErrors.value, [action.id]: '' };
+
+  try {
+    await api.quickCommitPendingAction(action.id);
+    const nextDecisions = { ...decisions.value };
+    delete nextDecisions[action.id];
+    decisions.value = nextDecisions;
     await refreshAfterPendingAction();
   } catch (error) {
     const nextDecisions = { ...decisions.value };
@@ -410,15 +430,10 @@ async function refreshAfterPendingAction() {
     loadTree(),
     loadChapters(),
     loadPendingActions(),
+    loadWorkspaceStatus(),
+    loadProjectHealth(),
     activeFilePath.value ? openFile(activeFilePath.value) : Promise.resolve(),
   ]);
-
-  if (!workspaceStatus.value || !projectHealth.value) {
-    await Promise.all([
-      loadWorkspaceStatus(),
-      loadProjectHealth(),
-    ]);
-  }
 }
 
 async function refreshPendingActionSurface() {
@@ -429,16 +444,6 @@ async function refreshPendingActionSurface() {
   ]);
 }
 
-function applyDecisionRefresh(
-  refresh: Awaited<ReturnType<typeof api.acceptPendingAction>>['refresh'] | undefined,
-) {
-  if (!refresh) {
-    return;
-  }
-
-  workspaceStatus.value = refresh.workspaceStatus;
-  projectHealth.value = refresh.projectHealth;
-}
 </script>
 
 <template>
@@ -532,6 +537,7 @@ function applyDecisionRefresh(
       @prompt-consumed="clearQueuedPrompt"
       @accept-pending-action="acceptPendingAction"
       @reject-pending-action="rejectPendingAction"
+      @quick-commit-pending-action="quickCommitPendingAction"
       @review-pending-action="reviewPendingAction"
       @open-pending-action-diff="openPendingActionDiff"
       @review-pending-action-id="reviewPendingActionById"

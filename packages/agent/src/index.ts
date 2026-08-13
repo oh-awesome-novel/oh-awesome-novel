@@ -28,9 +28,24 @@ import type {
   SemanticBoundary,
   WritingProfile,
 } from '@oh-awesome-novel/core';
-import { createReadTools, createWriteIntentTools } from '@oh-awesome-novel/tools';
+import {
+  createPendingActionStore,
+  createReadTools,
+  createSandboxEditSession,
+  createWorkspaceChangePolicy,
+} from '@oh-awesome-novel/tools';
+import type {
+  PathRule,
+  SandboxPendingActionOrigin,
+  WorkspaceChangePolicy,
+  WorkspaceEditCapability,
+} from '@oh-awesome-novel/tools';
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import { createAgentSessionStore } from './session-store';
+import {
+  sanitizeRuntimeResult,
+  sanitizeRuntimeToolCall,
+} from './ui-stream';
 import type {
   RunTurnResult,
   RunTurnInput,
@@ -44,6 +59,7 @@ import type {
   RuntimeModelStreamEvent,
   RuntimeSkill,
   RuntimeToolCall,
+  RuntimeTurnFinalizer,
 } from '@oh-awesome-novel/runtime';
 import type {
   AgentSessionMetadata,
@@ -199,7 +215,68 @@ export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
   workspaceRoot: string;
   tools?: ToolSet;
   maxToolLoops?: number;
+  turnFinalizer?: RuntimeTurnFinalizer;
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
+}
+
+export interface NovelAgentTurnEditEnvironment {
+  tools: ToolSet;
+  finalizer?: RuntimeTurnFinalizer;
+  dispose(): void | Promise<void>;
+}
+
+export interface NovelAgentTurnEditEnvironmentFactoryInput {
+  workspaceRoot: string;
+  capability?: NovelCopilotCapabilityId;
+  exactWritablePaths: readonly string[];
+  sessionId: string;
+  turnId: string;
+  abortSignal?: AbortSignal;
+  /**
+   * Explicit tools when the caller supplied them, otherwise the current read
+   * tools. The injected factory decides how to compose these with edit tools.
+   */
+  baseTools: ToolSet;
+}
+
+export type NovelAgentTurnEditEnvironmentFactory = (
+  input: NovelAgentTurnEditEnvironmentFactoryInput,
+) => Promise<NovelAgentTurnEditEnvironment>;
+
+export interface CreateSandboxNovelAgentEditEnvironmentFactoryInput {
+  capability: WorkspaceEditCapability;
+  exactWritablePaths?: readonly string[];
+  readable?: readonly PathRule[];
+  referenceId?: string;
+  policy?: WorkspaceChangePolicy;
+  sessionId?: string;
+  turnId?: string;
+  origin?: SandboxPendingActionOrigin;
+}
+
+export interface NovelAgentTurnEditEnvironmentInput {
+  workspaceRoot: string;
+  capability?: NovelCopilotCapabilityId;
+  exactWritablePaths?: readonly string[];
+  sessionId?: string;
+  turnId?: string;
+  abortSignal?: AbortSignal;
+  tools?: ToolSet;
+  turnFinalizer?: RuntimeTurnFinalizer;
+  editEnvironmentFactory?: NovelAgentTurnEditEnvironmentFactory;
+}
+
+export interface NovelAgentTurnInput
+  extends NovelAgentRuntimeInput, NovelAgentMessageInput {
+  session?: NovelAgentSessionInput;
+  /** Trusted host-selected canonical targets; model text never supplies these. */
+  exactWritablePaths?: readonly string[];
+  editEnvironmentFactory?: NovelAgentTurnEditEnvironmentFactory;
+}
+
+export interface NovelAgentSandboxPolicySelection {
+  capability: WorkspaceEditCapability;
+  exactWritablePaths: readonly string[];
 }
 
 export const createAiSdkModelAdapter = (
@@ -273,72 +350,268 @@ export const createNovelAgentRuntime = (
       tools: input.tools,
     }),
     maxToolLoops: input.maxToolLoops,
+    turnFinalizer: input.turnFinalizer,
     onEvent: input.onEvent,
   });
 
+export const createNovelAgentTurnEditEnvironment = async (
+  input: NovelAgentTurnEditEnvironmentInput,
+): Promise<NovelAgentTurnEditEnvironment> => {
+  if (input.tools && !input.editEnvironmentFactory) {
+    return {
+      tools: input.tools,
+      ...(input.turnFinalizer ? { finalizer: input.turnFinalizer } : {}),
+      dispose() {},
+    };
+  }
+
+  const sessionId = input.sessionId ?? `agent_${crypto.randomUUID()}`;
+  const turnId = input.turnId ?? `turn_${crypto.randomUUID()}`;
+  const selection = selectNovelAgentSandboxPolicy({
+    capability: input.capability,
+    exactWritablePaths: input.exactWritablePaths,
+  });
+  const factory = input.editEnvironmentFactory
+    ?? createSandboxNovelAgentEditEnvironmentFactory(selection);
+  const environment = await factory({
+    workspaceRoot: input.workspaceRoot,
+    ...(input.capability ? { capability: input.capability } : {}),
+    exactWritablePaths: input.exactWritablePaths ?? [],
+    sessionId,
+    turnId,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    baseTools: input.tools ?? createNovelAgentReadTools(input.workspaceRoot),
+  });
+
+  if (!environment.finalizer && input.turnFinalizer) {
+    return {
+      ...environment,
+      finalizer: input.turnFinalizer,
+    };
+  }
+
+  return environment;
+};
+
+export const createSandboxNovelAgentEditEnvironmentFactory = (
+  configuration: CreateSandboxNovelAgentEditEnvironmentFactoryInput,
+): NovelAgentTurnEditEnvironmentFactory => async (input) => {
+  const configuredExactPaths = configuration.exactWritablePaths
+    ?? configuration.policy?.writable.map((rule) => {
+      if (rule.kind !== 'exact') {
+        throw new Error('Agent sandbox policies may grant exact targets only.');
+      }
+      return rule.path;
+    })
+    ?? [];
+  const effectiveCapability = configuration.capability === 'read-only'
+    || configuredExactPaths.length === 0
+    ? 'read-only'
+    : configuration.capability;
+  const policy = configuration.policy ?? createWorkspaceChangePolicy({
+    capability: effectiveCapability,
+    exactWritablePaths: configuredExactPaths,
+    ...(configuration.readable ? { readable: configuration.readable } : {}),
+    ...(configuration.referenceId ? { referenceId: configuration.referenceId } : {}),
+  });
+  if (
+    policy.capability !== effectiveCapability
+    || policy.writable.some((rule) => rule.kind !== 'exact')
+  ) {
+    throw new Error('Sandbox edit environment capability does not match its host policy.');
+  }
+  const store = await createPendingActionStore({ workspaceRoot: input.workspaceRoot });
+  const sessionId = configuration.sessionId ?? input.sessionId;
+  const origin = configuration.origin ?? {
+    kind: 'agentTurn' as const,
+    sessionId,
+    turnId: configuration.turnId ?? input.turnId,
+  };
+  const session = await createSandboxEditSession({
+    workspaceRoot: input.workspaceRoot,
+    policy,
+    sessionId,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    pendingActionStore: store,
+    ...(origin ? { proposalOrigin: origin } : {}),
+  });
+
+  return {
+    tools: session.tools,
+    finalizer: {
+      async finalizeTurn(finalizeInput) {
+        if (finalizeInput.stoppedReason === 'aborted') {
+          await session.discard();
+          return finalizeInput.pendingActions;
+        }
+        if (
+          session.isSealed()
+          || !session.isDirty()
+          || finalizeInput.stoppedReason === 'error'
+        ) {
+          return finalizeInput.pendingActions;
+        }
+        const proposed = await session.proposeChanges({
+          title: 'Review sandbox workspace changes',
+          description: 'Turn-scoped virtual edits finalized by the runtime for human approval.',
+          finalization: 'runtime-fallback',
+        });
+        return [
+          ...finalizeInput.pendingActions,
+          ...proposed.pendingActions.map((action) => ({
+            ...action,
+            changes: action.changes.map((change) => ({ ...change })),
+          })),
+        ];
+      },
+    },
+    dispose: () => session.dispose(),
+  };
+};
+
+/**
+ * Maps a trusted product capability to one sandbox family. A write capability
+ * is granted only when the host also supplies at least one exact target.
+ */
+export function selectNovelAgentSandboxPolicy(input: {
+  capability?: NovelCopilotCapabilityId;
+  exactWritablePaths?: readonly string[];
+}): NovelAgentSandboxPolicySelection {
+  const exactWritablePaths = input.exactWritablePaths
+    ? [...new Set(input.exactWritablePaths)]
+    : [];
+  const capability = editCapabilityForNovelCapability(input.capability);
+  if (!capability || exactWritablePaths.length === 0) {
+    return { capability: 'read-only', exactWritablePaths: [] };
+  }
+  return { capability, exactWritablePaths };
+}
+
+function editCapabilityForNovelCapability(
+  capability: NovelCopilotCapabilityId | undefined,
+): WorkspaceEditCapability | undefined {
+  switch (capability) {
+    case 'novel.generate_character_card': return 'character.edit';
+    case 'novel.plan_outline':
+    case 'novel.plan_volume':
+    case 'novel.plan_chapter': return 'outline.edit';
+    case 'novel.write_chapter':
+    case 'novel.review_chapter':
+    case 'novel.revise_chapter':
+    case 'novel.de_ai': return 'chapter.edit';
+    case 'novel.settle_chapter': return 'novel.multi-file-edit';
+    case 'novel.update_state': return 'state.edit';
+    case 'novel.plan_foreshadow': return 'foreshadow.edit';
+    case 'novel.play_scene':
+    case 'novel.import_tavern_character':
+    case 'novel.deconstruct_reference':
+    case undefined: return undefined;
+  }
+}
+
 export const runNovelAgentTurn = async (
-  input: NovelAgentRuntimeInput & NovelAgentMessageInput & {
-    session?: NovelAgentSessionInput;
-  },
+  input: NovelAgentTurnInput,
 ): Promise<RunTurnResult & { session?: AgentSessionMetadata }> => {
   const session = await prepareAgentSession(input);
   const contextPackage = input.contextPackage
     ?? createBaselineNovelAgentContextPackage(input);
-  const runtime = createNovelAgentRuntime({
-    ...input,
-    onEvent: composeRuntimeEventHandlers(input.onEvent, session?.onEvent),
-  });
-  const result = await runtime.runTurn(createRuntimeTurnInput({
-    ...input,
-    contextPackage,
-  }));
-  await maybeWriteNovelAgentSessionArtifacts({
+  const environment = await createNovelAgentTurnEditEnvironment({
     workspaceRoot: input.workspaceRoot,
-    request: input.request,
-    contextPackage,
-    result,
-    session: session?.metadata,
+    capability: input.capability ?? contextPackage?.capability,
+    exactWritablePaths: input.exactWritablePaths,
+    sessionId: session?.metadata.id,
+    abortSignal: input.abortSignal,
+    tools: input.tools,
+    turnFinalizer: input.turnFinalizer,
+    editEnvironmentFactory: input.editEnvironmentFactory,
   });
 
-  return {
-    ...result,
-    ...(session ? { session: session.metadata } : {}),
-  };
-};
-
-export async function* streamNovelAgentTurn(
-  input: NovelAgentRuntimeInput & NovelAgentMessageInput & {
-    session?: NovelAgentSessionInput;
-  },
-): AsyncIterable<RuntimeEvent> {
-  const session = await prepareAgentSession(input);
-  const contextPackage = input.contextPackage
-    ?? createBaselineNovelAgentContextPackage(input);
-  const runtime = createNovelAgentRuntime({
-    ...input,
-    onEvent: composeRuntimeEventHandlers(input.onEvent, session?.onEvent),
-  });
-  let finalResult: RunTurnResult | undefined;
-
-  for await (const event of runtime.streamTurn(createRuntimeTurnInput({
-    ...input,
-    contextPackage,
-  }))) {
-    if (event.type === 'message_finish') {
-      finalResult = event.result;
-    }
-
-    yield event;
-  }
-
-  if (finalResult) {
+  try {
+    const runtime = createNovelAgentRuntime({
+      ...input,
+      tools: environment.tools,
+      turnFinalizer: environment.finalizer,
+      onEvent: composeRuntimeEventHandlers(
+        input.onEvent
+          ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
+          : undefined,
+        session?.onEvent,
+      ),
+    });
+    const result = await runtime.runTurn(createRuntimeTurnInput({
+      ...input,
+      contextPackage,
+    }));
     await maybeWriteNovelAgentSessionArtifacts({
       workspaceRoot: input.workspaceRoot,
       request: input.request,
       contextPackage,
-      result: finalResult,
+      result,
       session: session?.metadata,
     });
+
+    return {
+      ...sanitizeRuntimeResult(result),
+      ...(session ? { session: session.metadata } : {}),
+    };
+  } finally {
+    await environment.dispose();
+  }
+};
+
+export async function* streamNovelAgentTurn(
+  input: NovelAgentTurnInput,
+): AsyncIterable<RuntimeEvent> {
+  const session = await prepareAgentSession(input);
+  const contextPackage = input.contextPackage
+    ?? createBaselineNovelAgentContextPackage(input);
+  const environment = await createNovelAgentTurnEditEnvironment({
+    workspaceRoot: input.workspaceRoot,
+    capability: input.capability ?? contextPackage?.capability,
+    exactWritablePaths: input.exactWritablePaths,
+    sessionId: session?.metadata.id,
+    abortSignal: input.abortSignal,
+    tools: input.tools,
+    turnFinalizer: input.turnFinalizer,
+    editEnvironmentFactory: input.editEnvironmentFactory,
+  });
+
+  try {
+    const runtime = createNovelAgentRuntime({
+      ...input,
+      tools: environment.tools,
+      turnFinalizer: environment.finalizer,
+      onEvent: composeRuntimeEventHandlers(
+        input.onEvent
+          ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
+          : undefined,
+        session?.onEvent,
+      ),
+    });
+    let finalResult: RunTurnResult | undefined;
+
+    for await (const event of runtime.streamTurn(createRuntimeTurnInput({
+      ...input,
+      contextPackage,
+    }))) {
+      if (event.type === 'message_finish') {
+        finalResult = event.result;
+      }
+
+      yield sanitizeRuntimeEventForPublic(event);
+    }
+
+    if (finalResult) {
+      await maybeWriteNovelAgentSessionArtifacts({
+        workspaceRoot: input.workspaceRoot,
+        request: input.request,
+        contextPackage,
+        result: finalResult,
+        session: session?.metadata,
+      });
+    }
+  } finally {
+    await environment.dispose();
   }
 }
 
@@ -346,7 +619,12 @@ export {
   createAgentSessionStore,
 } from './session-store';
 export {
-  createNovelAgentValidationTools,
+  DEFAULT_BASH_COMMAND_PREVIEW_BYTES,
+  DEFAULT_BASH_TURN_PREVIEW_BYTES,
+  createBashCommandAudit,
+  normalizeBashCommandAudit,
+} from './bash-command-audit';
+export {
   streamNovelAgentCheckpointTurn,
 } from './checkpoint-runner';
 export {
@@ -422,6 +700,8 @@ export type {
 } from './reference-material-adoption.js';
 export { runtimeEventsToUiMessageStream } from './ui-stream';
 export type {
+  AgentSessionAuditedToolCall,
+  AgentSessionCommandAudit,
   AgentSessionMetadata,
   AgentSessionMetadataInput,
   AgentSessionRecovery,
@@ -430,6 +710,10 @@ export type {
   AgentSessionStoreOptions,
   RecoveredAgentSession,
 } from './session-store';
+export type {
+  BashCommandAudit,
+  CreateBashCommandAuditOptions,
+} from './bash-command-audit';
 export type {
   CheckpointLevel,
   NovelAgentCheckpointInput,
@@ -535,13 +819,42 @@ function composeRuntimeEventHandlers(
   };
 }
 
+function sanitizeRuntimeEventForPublic(event: RuntimeEvent): RuntimeEvent {
+  if (event.type === 'tool_call_start' || event.type === 'tool_call_finish') {
+    return {
+      ...event,
+      toolCall: sanitizeRuntimeToolCall(event.toolCall),
+    };
+  }
+  if (event.type === 'message_start') {
+    return {
+      ...event,
+      messages: event.messages.map((message) => message.toolCalls?.length
+        ? {
+            ...message,
+            toolCalls: message.toolCalls.map(sanitizeRuntimeToolCall),
+          }
+        : message),
+    };
+  }
+  if (event.type === 'message_finish') {
+    return {
+      ...event,
+      result: sanitizeRuntimeResult(event.result),
+    };
+  }
+  return event;
+}
+
 export const createNovelAgentSystemPrompt = (
   input: NovelAgentMessageInput,
 ): string => {
   const lines = [
     'You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.',
-    'Use tools to inspect or edit the active workspace.',
-    'Do not operate outside the active workspace.',
+    'Use tools only inside the fixed in-memory /workspace projection.',
+    'Virtual edits are candidates, not canonical writes.',
+    'Preview changes before proposing them; only Human Accept may materialize final bytes.',
+    'Never widen the host-selected capability or exact target set.',
     'Do not target hidden files or hidden directories.',
     'Prefer structured workspace context over broad file loading.',
     `Workspace root: ${input.workspace.workspaceRoot}`,
@@ -592,10 +905,7 @@ export const createRuntimeTurnInput = (
 
 export const createNovelAgentToolSet = (
   input: NovelAgentToolSetInput,
-): ToolSet => input.tools ?? {
-  ...createReadTools({ workspaceRoot: input.workspaceRoot }),
-  ...createWriteIntentTools({ workspaceRoot: input.workspaceRoot }),
-};
+): ToolSet => input.tools ?? createReadTools({ workspaceRoot: input.workspaceRoot });
 
 export const createNovelAgentReadTools = (workspaceRoot: string): ToolSet =>
   createReadTools({ workspaceRoot });
@@ -940,7 +1250,8 @@ export const createAgentSessionArtifactFromRunResult = async (input: {
     ? appendToolTraceToContextPackage(input.contextPackage, input.result, updatedAt)
     : undefined;
   const touchedFiles = uniqueStrings(
-    input.result.pendingActions.flatMap((action) => action.touchedFiles),
+    input.result.pendingActions.flatMap((action) =>
+      action.changes.map((change) => change.path)),
   );
   const resumeBoundary = touchedFiles.length
     ? await createSessionResumeBoundary(
@@ -1000,11 +1311,13 @@ export const createAgentSessionArtifactFromRunResult = async (input: {
           summary: formatAuthorReportMarkdown(authorReport),
         },
       ],
-      proposedPatches: input.result.pendingActions.map((action) => ({
+      proposedChanges: input.result.pendingActions.map((action) => ({
         id: action.id,
         title: action.title,
-        touchedFiles: action.touchedFiles,
-        status: 'pending',
+        createdAt: action.createdAt,
+        ...(action.decidedAt ? { decidedAt: action.decidedAt } : {}),
+        changes: action.changes.map((change) => ({ ...change })),
+        status: action.status,
       })),
       unresolved: input.result.stoppedReason === 'completed'
         ? []
@@ -1262,7 +1575,7 @@ function appendToolTraceToContextPackage(
       type: 'toolCall',
       sourceId: source?.sourceId,
       toolName: entry.toolCall.name,
-      path: pendingAction?.touchedFiles[0] ?? inferPathFromToolResult(entry.result.content),
+      path: pendingAction?.changes[0]?.path ?? inferPathFromToolResult(entry.result.content),
       reason,
       budgetLayer: source?.budgetLayer,
       semanticBoundary: source?.semanticBoundary,
@@ -1335,31 +1648,6 @@ function inferSourceFromTool(toolName: string): {
       sourceId: 'worldRules',
       budgetLayer: 'L1',
       semanticBoundary: 'protected',
-    },
-    'chapter.createDraft': {
-      sourceId: 'chapterContract',
-      budgetLayer: 'L1',
-      semanticBoundary: 'protected',
-    },
-    'state.set': {
-      sourceId: 'latestState',
-      budgetLayer: 'L1',
-      semanticBoundary: 'protected',
-    },
-    'timeline.add': {
-      sourceId: 'timeline',
-      budgetLayer: 'L2',
-      semanticBoundary: 'compressible',
-    },
-    'foreshadow.create': {
-      sourceId: 'foreshadowLedger',
-      budgetLayer: 'L2',
-      semanticBoundary: 'compressible',
-    },
-    'summary.generateChapter': {
-      sourceId: 'previousChapterEnding',
-      budgetLayer: 'L1',
-      semanticBoundary: 'compressible',
     },
   };
 
@@ -1454,9 +1742,9 @@ function inferPathFromToolResult(content: unknown): string | undefined {
 
   const pendingActions = content.pendingActions;
   if (Array.isArray(pendingActions) && isRecord(pendingActions[0])) {
-    const touchedFiles = pendingActions[0].touchedFiles;
-    if (Array.isArray(touchedFiles) && typeof touchedFiles[0] === 'string') {
-      return touchedFiles[0];
+    const changes = pendingActions[0].changes;
+    if (Array.isArray(changes) && isRecord(changes[0]) && typeof changes[0].path === 'string') {
+      return changes[0].path;
     }
   }
 

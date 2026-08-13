@@ -17,7 +17,7 @@ This spec turns the current runtime pieces into a production workflow:
 User request or quick command
     -> load workspace context and active Novel Copilot skill
     -> stream model turn
-    -> run read tools or write-intent tools
+    -> run read tools or turn-scoped sandbox edit tools
     -> show tool activity and PendingAction cards
     -> accept/reject writes through backend approval APIs
     -> refresh file viewer, workspace status, and git diff
@@ -35,8 +35,8 @@ The core loop is mostly complete.
 - Runtime events are observable: message deltas, tool start/finish, pending
   actions, and final message.
 - Tool errors are recoverable and returned to the model as tool results.
-- Pending actions are collected from write-intent tool results without applying
-  writes.
+- Pending actions are collected from finalized `CandidateChangeSet` results
+  without applying canonical writes.
 
 Remaining runtime concern:
 
@@ -51,7 +51,8 @@ Remaining runtime concern:
   runtime input assembly, and UI stream compatibility.
 - `RuntimeSkill.system` can already be injected through the runtime context
   builder.
-- Read tools and restricted write-intent tools can be assembled into a ToolSet.
+- Read tools and the turn-scoped Sandbox Change Engine tools can be assembled
+  into one AI SDK ToolSet.
 
 Remaining pieces:
 
@@ -63,8 +64,8 @@ Remaining pieces:
   discipline is a follow-up task.
 - Chapter settlement exists as a skill contract, but observation log,
   settlement bundle, and session artifact materialization are follow-up tasks.
-- The write tool set includes write-intent tools and must continue to keep all
-  real writes behind PendingAction approval.
+- The edit tool set uses a fixed in-memory projection and must keep all real
+  writes behind PendingAction approval.
 
 ### Backend And Desktop
 
@@ -123,7 +124,7 @@ The skill must define:
 - `name`: `novel-copilot`
 - `displayName`: `Novel Copilot`
 - `system`: the workflow and behavior instructions injected as skill context.
-- `allowedTools`: read tools plus write-intent tools.
+- `allowedTools`: read tools plus the capability-scoped sandbox tools.
 - `capabilities`: stable capability metadata used by prompts, session
   artifacts, and future UI surfaces.
 - `quickCommands`: command contracts described below.
@@ -169,7 +170,7 @@ Conditionally read:
 #### plan
 
 The Copilot must briefly explain what it will do and which files or domains it
-expects to touch before calling write-intent tools.
+expects to touch before calling sandbox edit tools.
 
 The plan should be concise and user-facing. It must not include hidden chain of
 thought or internal tool policy.
@@ -178,14 +179,15 @@ thought or internal tool policy.
 
 All file changes must be proposed as PendingActions.
 
-Allowed write-intent tools:
+Allowed edit tools operate only on the fixed in-memory projection:
 
-- `chapter.createDraft` for chapter draft creation or replacement.
-- `character.updatePersonality` for scoped character-card section updates.
-- `state.set` for YAML state changes.
-- `timeline.add` for timeline events.
-- `foreshadow.create` for new active foreshadow items.
-- `summary.generateChapter` for chapter summaries.
+- bounded domain reads plus `bash` for allowlisted file/text commands;
+- bounded `readFile` / `writeFile` wrappers;
+- `workspace.previewChanges` for display-only review data;
+- `workspace.proposeChanges` to seal the session and persist one PendingAction.
+
+The host selects the chapter, character, state, timeline, foreshadow, summary or
+multi-file capability. Tool arguments cannot widen the writable path policy.
 
 The Copilot must not claim that a file has been modified until the corresponding
 PendingAction is accepted.
@@ -205,11 +207,10 @@ Before finishing a turn, the Copilot checks whether its proposals are complete:
 When a chapter draft is accepted or the user explicitly asks to "整理本章", the
 Copilot must propose the chapter settlement bundle:
 
-- chapter summary through `summary.generateChapter`.
-- state updates for changed character state, relationship, location, items, or
-  power level through `state.set`.
-- timeline events for plot-changing beats through `timeline.add`.
-- foreshadow creation or follow-up notes through `foreshadow.create`.
+- chapter-summary candidates under the `summary.edit` capability.
+- evidence-backed state candidates under the `state.edit` capability.
+- timeline candidates under the `timeline.edit` capability.
+- foreshadow candidates under the `foreshadow.edit` capability.
 
 Settlement can be partial only when the Copilot states what could not be
 determined from the available text.
@@ -251,8 +252,8 @@ storage and UI materialization are split into later tasks.
   review, settlement, reference, or Play action. It is not a source of truth.
 - Chapter contract: `/规划下一章` output used by `/写下一章`; it stays light for
   ordinary chapters and does not force volume-level structure.
-- `PRE_WRITE_CHECK`: short calibration table before `/写下一章` calls
-  `chapter.createDraft`.
+- `PRE_WRITE_CHECK`: short calibration table before `/写下一章` opens a
+  `chapter.edit` sandbox session.
 - Review finding: structured report item with severity, category, location,
   evidence, issue, suggested fix, user-decision flag, and blocking flag.
 - Observation log: evidence-only notes extracted from a completed chapter before
@@ -281,8 +282,8 @@ allowed tools, and completion criteria.
   - `world.search` when role depends on setting, faction, or power system.
 - allowed tools:
   - read tools.
-  - `character.updatePersonality` for updates.
-  - future `character.createCard` when available.
+  - a `character.edit` sandbox session for updates or new cards when the host
+    grants an exact target policy.
 - completion:
   - reports whether this is a new character or an update.
   - proposes a PendingAction when a write tool supports the target.
@@ -305,7 +306,7 @@ allowed tools, and completion criteria.
   - `foreshadow.list`
 - allowed tools:
   - read tools only by default.
-  - write-intent tools only when the user asks to persist the plan.
+  - sandbox proposal tools only when the user asks to persist the plan.
 - completion:
   - returns an outline draft with assumptions and open questions.
   - does not canonicalize new facts unless the user asks to save them.
@@ -327,7 +328,7 @@ allowed tools, and completion criteria.
   - `foreshadow.list`
 - allowed tools:
   - read tools only by default.
-  - write-intent tools only when the user asks to persist the volume plan.
+  - sandbox proposal tools only when the user asks to persist the volume plan.
 - completion:
   - returns conflict ladder, information-gap changes, key beats, volume-level
     character arcs, foreshadow debt, payoff windows, and optional
@@ -352,7 +353,7 @@ allowed tools, and completion criteria.
   - previous `chapter.get` when available.
 - allowed tools:
   - read tools only by default.
-  - write-intent tools only when the user asks to persist the plan.
+  - sandbox proposal tools only when the user asks to persist the plan.
 - completion:
   - returns a light chapter contract: chapter id/title candidate, current task,
     POV, core conflict or scene direction, key cast and starting states, hooks
@@ -370,8 +371,8 @@ allowed tools, and completion criteria.
   - `world.search` for setting and rules used in the chapter.
 - allowed tools:
   - read tools.
-  - `chapter.createDraft`.
-  - optional settlement tools when the user also asks to finish/settle.
+  - a `chapter.edit` sandbox session.
+  - optional settlement capabilities when the user also asks to finish/settle.
 - completion:
   - outputs a short `PRE_WRITE_CHECK` before drafting.
   - creates a chapter draft PendingAction.
@@ -394,10 +395,8 @@ allowed tools, and completion criteria.
   - `foreshadow.list`
   - `summary.get` for neighboring summaries.
 - allowed tools:
-  - `summary.generateChapter`
-  - `state.set`
-  - `timeline.add`
-  - `foreshadow.create`
+  - exact `summary.edit`, `state.edit`, `timeline.edit`, and `foreshadow.edit`
+    sandbox capabilities selected by the host workflow.
 - completion:
   - returns an evidence-only observation log before settlement.
   - returns a settlement bundle.
@@ -420,7 +419,7 @@ allowed tools, and completion criteria.
   - recent `summary.get`
 - allowed tools:
   - read tools.
-  - `chapter.createDraft` only when the user asks for a revised draft.
+  - `chapter.edit` only when the user asks for a revised draft.
 - completion:
   - returns review findings grouped by severity and dimension pass results.
   - does not rewrite, settle, or update state unless requested.
@@ -438,8 +437,8 @@ allowed tools, and completion criteria.
   - relevant `character.get`
   - target `chapter.get` when chapter-derived.
 - allowed tools:
-  - `state.set`
-  - `timeline.add` when the update is plot-significant.
+  - `state.edit`.
+  - `timeline.edit` when the update is plot-significant.
 - completion:
   - proposes state PendingActions.
   - summarizes old value, new value, and source evidence.
@@ -457,8 +456,8 @@ allowed tools, and completion criteria.
   - relevant `chapter.get`
   - relevant `character.get`
 - allowed tools:
-  - `foreshadow.create`
-  - `chapter.createDraft` when user asks to insert prose.
+  - `foreshadow.edit`.
+  - `chapter.edit` when user asks to insert prose.
 - completion:
   - recommends hook seed, expected payoff, risk, and target chapter range.
   - creates PendingActions only when user asks to persist.
@@ -475,7 +474,7 @@ allowed tools, and completion criteria.
   - relevant style or writing constitution when present.
 - allowed tools:
   - read tools.
-  - `chapter.createDraft` for replacement proposals.
+  - `chapter.edit` for replacement proposals.
 - completion:
   - preserves plot facts.
   - returns a PendingAction for replacement text.
@@ -508,7 +507,7 @@ The Novel Copilot loop is complete when all criteria below are true.
 
 ### PendingAction Approval
 
-- Write-intent tools create PendingActions with diff previews.
+- Change-proposal tools create PendingActions with diff previews.
 - UI shows PendingAction cards from streamed data and from workspace status.
 - Accept/reject calls backend APIs and does not mutate only local UI state.
 - Accept writes the real files through `packages/tools` approval functions.
@@ -537,7 +536,7 @@ Responses:
 
 ```ts
 interface PendingActionsResponse {
-  pendingActions: WriteIntentPendingAction[];
+  pendingActions: PendingActionViewV1[];
 }
 
 interface AcceptPendingActionResponse {
@@ -575,45 +574,24 @@ interface NovelCopilotClient {
 The implementation may use HTTP in the web renderer and Electron IPC in desktop
 later; Vue components must not depend on that distinction.
 
-## Writing Tool Spec
+## Sandbox Chapter Edit Spec
 
-### `chapter.createDraft`
-
-Purpose: create a PendingAction for a narrative chapter draft or replacement.
-
-Input:
-
-```ts
-interface ChapterCreateDraftInput {
-  chapterId: string;       // 0001/0001
-  title?: string;
-  content: string;
-  file?: string;           // optional override under chapters/
-  mode?: 'create' | 'replace';
-}
-```
+Purpose: create a PendingAction for a narrative chapter draft or replacement
+without exposing canonical files to model commands.
 
 Rules:
 
-- `chapterId` must be a narrative chapter id; `0000` is reserved for volume
-  metadata.
-- Target file must stay under `chapters/`.
-- Hidden paths and `.workspace` targets are rejected.
-- The tool writes only shadow drafts and returns PendingActions.
-- Accepting the PendingAction materializes the chapter file.
-
-Output patch:
-
-```ts
-interface ChapterDraftPatch {
-  kind: 'narrative';
-  domain: 'chapter';
-  file: string;
-  operation: 'replaceFile';
-  selector: { chapterId: string };
-  value: string;
-}
-```
+- The host selects `chapter.edit` and fixes the readable/writable chapter paths
+  before the turn begins.
+- `chapterId` must be a narrative chapter id; `0000` remains reserved for
+  volume metadata.
+- `PolicyFs` rejects hidden/internal paths, symlinks, non-regular files and
+  paths outside the fixed projection.
+- The model edits only `InMemoryFs`; finalize produces a normalized create or
+  update `CandidateChangeSet`.
+- `workspace.proposeChanges` persists immutable draft bytes and a PendingAction.
+- Accepting the PendingAction invokes `ChangeMaterializer`; it never replays
+  model commands or parses the display diff.
 
 ## Desktop UI Spec
 
@@ -689,7 +667,7 @@ Given a configured provider and a workspace with previous chapter context:
 
 - command reads workflow, constitution, recent summary, state, timeline,
   foreshadow, previous chapter, and planned cast.
-- command creates a `chapter.createDraft` PendingAction.
+- command creates a chapter `CandidateChangeSet` and PendingAction.
 - no real chapter file is written before accept.
 - accept writes the chapter file and refreshes the right viewer.
 

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   fingerprintReferenceMaterialAdoptionContext,
   prepareReferenceMaterialAdoptionContext,
@@ -10,26 +12,30 @@ import type {
   ReferenceMaterialAdoptionSelection,
 } from '@oh-awesome-novel/core';
 import {
-  createReferenceMaterialAdoptionPatches,
-  prepareWriteIntentPreview,
-  promoteWriteIntentPreview,
-  readPendingAction,
+  createPendingActionStore,
+  createReferenceMaterialAdoptionChangeProposal,
+  readRepositoryBaseline,
 } from '@oh-awesome-novel/tools';
 import type {
-  ReferenceMaterialAdoptionPendingActionOrigin,
-  WriteIntentPendingAction,
+  PendingActionStore,
+  PendingActionView,
+  PreparedChangePreviewV1,
+  SandboxPendingActionOrigin,
 } from '@oh-awesome-novel/tools';
-import {
-  generateReferenceMaterialAdoption,
-} from '@oh-awesome-novel/agent';
+import { generateReferenceMaterialAdoption } from '@oh-awesome-novel/agent';
 import type {
   ReferenceDeconstructionModelResolver,
   ReferenceMaterialAdoptionGenerationResult,
 } from '@oh-awesome-novel/agent';
 
 import {
+  fingerprintCandidateProjection,
+  readCandidateTargetSnapshots,
+} from './candidate-snapshot.js';
+import {
   assertReferenceMaterialAdoptionPreviewCurrent,
   createStoredReferenceMaterialAdoptionPreview,
+  fingerprintReferenceMaterialAdoptionPreviewBinding,
   projectReferenceMaterialAdoptionPreview,
   promoteStoredReferenceMaterialAdoptionPreview,
   readStoredReferenceMaterialAdoptionPreview,
@@ -40,6 +46,11 @@ import type {
   StoredReferenceMaterialAdoptionPreview,
 } from './reference-material-adoption-preview.js';
 
+type ReferenceMaterialAdoptionOrigin = Extract<
+  SandboxPendingActionOrigin,
+  { kind: 'referenceMaterialAdoption' }
+>;
+
 export interface ReferenceMaterialAdoptionModelRuntime {
   providerConfig: LlmProviderConfig;
   resolveModel: ReferenceDeconstructionModelResolver;
@@ -48,6 +59,7 @@ export interface ReferenceMaterialAdoptionModelRuntime {
 export interface CreateReferenceMaterialAdoptionControllerOptions {
   getWorkspaceRoot(): string;
   getModelRuntime(): Promise<ReferenceMaterialAdoptionModelRuntime>;
+  getPendingActionStore?(workspaceRoot: string): Promise<PendingActionStore>;
   runAdoption?: (
     input: Parameters<typeof generateReferenceMaterialAdoption>[0],
   ) => Promise<ReferenceMaterialAdoptionGenerationResult>;
@@ -68,8 +80,7 @@ export type ReferenceMaterialAdoptionPreviewResult =
   | ReferenceMaterialAdoptionNoChanges;
 
 export interface ReferenceMaterialAdoptionPendingActionResult {
-  pendingAction: Pick<WriteIntentPendingAction,
-    'id' | 'title' | 'description' | 'touchedFiles' | 'diff' | 'createdAt' | 'status'>;
+  pendingAction: PendingActionView;
 }
 
 export interface ReferenceMaterialAdoptionController {
@@ -86,16 +97,26 @@ export interface ReferenceMaterialAdoptionController {
     previewId: string,
     input: { fingerprint: string },
   ): Promise<ReferenceMaterialAdoptionPendingActionResult>;
+  assertPreparedPreviewCurrent(
+    previewId: string,
+    origin: ReferenceMaterialAdoptionOrigin,
+  ): Promise<void>;
   assertPendingActionCurrent(
     pendingActionId: string,
-    origin: ReferenceMaterialAdoptionPendingActionOrigin,
+    origin: ReferenceMaterialAdoptionOrigin,
   ): Promise<void>;
 }
 
 export class ReferenceMaterialAdoptionRequestError extends Error {
+  readonly code:
+    | 'invalidRequest'
+    | 'providerNotConfigured'
+    | 'generationFailed'
+    | 'stalePreview';
+
   constructor(
     message: string,
-    readonly code:
+    code:
       | 'invalidRequest'
       | 'providerNotConfigured'
       | 'generationFailed'
@@ -103,6 +124,7 @@ export class ReferenceMaterialAdoptionRequestError extends Error {
   ) {
     super(message);
     this.name = 'ReferenceMaterialAdoptionRequestError';
+    this.code = code;
   }
 }
 
@@ -135,6 +157,36 @@ export function createReferenceMaterialAdoptionController(
         referenceId,
       ),
     };
+  }
+
+  async function getStore(workspaceRoot: string): Promise<PendingActionStore> {
+    if (options.getPendingActionStore) return options.getPendingActionStore(workspaceRoot);
+    return createPendingActionStore({
+      workspaceRoot,
+      assertOriginFresh: ({ origin, preview }) =>
+        assertPreparedPreviewOriginCurrent(workspaceRoot, origin, preview),
+    });
+  }
+
+  async function assertPreparedPreviewOriginCurrent(
+    workspaceRoot: string,
+    origin: SandboxPendingActionOrigin,
+    preview: PreparedChangePreviewV1,
+  ): Promise<void> {
+    if (origin.kind !== 'referenceMaterialAdoption') {
+      throw stalePreview('Reference Material preview has the wrong origin kind.');
+    }
+    const stored = await readStoredReferenceMaterialAdoptionPreview(workspaceRoot, preview.id);
+    if (
+      stored.id !== preview.id
+      || stored.context.referenceId !== origin.referenceId
+      || stored.context.manifestRevision !== origin.manifestRevision
+      || stored.context.sourceChecksumSha256 !== origin.sourceChecksumSha256
+      || stored.contextFingerprint !== origin.contextFingerprint
+      || stored.previewFingerprint !== origin.previewFingerprint
+    ) throw stalePreview('Reference Material adoption preview origin is stale.');
+    projectReferenceMaterialAdoptionPreview(stored, preview);
+    await assertReferenceMaterialAdoptionPreviewCurrent(workspaceRoot, stored);
   }
 
   async function createPreview(
@@ -174,57 +226,71 @@ export function createReferenceMaterialAdoptionController(
           'generationFailed',
         );
       }
-      const patches = createReferenceMaterialAdoptionPatches(context, generated.plan);
+
       const decisions = generated.plan.decisions.map(({ draft: _draft, ...decision }) =>
         structuredClone(decision));
-      if (!patches.length) {
-        return {
-          status: 'noChanges',
-          referenceId: context.referenceId,
-          referenceTitle: context.referenceTitle,
-          catalogFingerprint: context.catalogFingerprint,
-          decisions,
-          warnings: structuredClone(context.warnings),
-          canonicalUnchanged: true,
-        };
-      }
-      const prepared = await prepareWriteIntentPreview({
-        workspaceRoot,
-        toolName: 'reference.adoptMaterials',
-        args: {
-          title: `Adopt Story Materials from ${context.referenceTitle}`,
-          description: [
-            `Adopt ${context.targets.flatMap((target) => target.entries).length} selected Story Material entries`,
-            `from reference ${context.referenceId} into ${patches.length} workspace target(s).`,
-            `Published warnings: ${context.warnings.length}.`,
-          ].join(' '),
-          patches,
+      const targetFiles = generated.plan.decisions
+        .filter((decision) => decision.decision !== 'skip')
+        .map((decision) => decision.targetFile);
+      if (targetFiles.length === 0) return noChanges(context, decisions);
+
+      const id = `pa_${randomUUID()}`;
+      const createdAt = new Date().toISOString();
+      const contextFingerprint = fingerprintReferenceMaterialAdoptionContext(context);
+      const previewFingerprint = fingerprintReferenceMaterialAdoptionPreviewBinding({
+        id,
+        context,
+        plan: generated.plan,
+        createdAt,
+      });
+      const origin: ReferenceMaterialAdoptionOrigin = {
+        kind: 'referenceMaterialAdoption',
+        referenceId,
+        manifestRevision: context.manifestRevision,
+        sourceChecksumSha256: context.sourceChecksumSha256,
+        contextFingerprint,
+        previewFingerprint,
+      };
+      const baselineFiles = await readCandidateTargetSnapshots(workspaceRoot, targetFiles);
+      const proposal = createReferenceMaterialAdoptionChangeProposal({
+        adoptionContext: context,
+        plan: generated.plan,
+        context: {
+          sessionId: `reference-adoption-${id.slice(3)}`,
+          repository: await readRepositoryBaseline(workspaceRoot),
+          projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+          baselineFiles,
+          origin,
+          createdAt,
+          finalizedAt: createdAt,
         },
       });
-      if (!prepared.diff.trim()) {
-        return {
-          status: 'noChanges',
-          referenceId: context.referenceId,
-          referenceTitle: context.referenceTitle,
-          catalogFingerprint: context.catalogFingerprint,
-          decisions: decisions.map((decision) => ({
-            ...decision,
-            decision: 'skip' as const,
-            reason: 'Generated target already matches the current workspace baseline.',
-          })),
-          warnings: structuredClone(context.warnings),
-          canonicalUnchanged: true,
-        };
+      if (!proposal) {
+        return noChanges(context, decisions.map((decision) => ({
+          ...decision,
+          decision: 'skip' as const,
+          reason: 'Generated target already matches the current workspace baseline.',
+        })));
       }
+      const store = await getStore(workspaceRoot);
+      const prepared = await store.prepareChangePreview({
+        candidate: proposal.candidate,
+        origin,
+        allowedTargets: proposal.allowedTargets,
+        id,
+        createdAt,
+      });
       const stored = createStoredReferenceMaterialAdoptionPreview({
         context,
         plan: generated.plan,
-        preparedWriteIntent: prepared,
+        preparedChangePreview: prepared,
+        createdAt,
       });
-      await writeStoredReferenceMaterialAdoptionPreview(workspaceRoot, stored, {
-        create: true,
-      });
-      return { status: 'ready', preview: projectReferenceMaterialAdoptionPreview(stored) };
+      await writeStoredReferenceMaterialAdoptionPreview(workspaceRoot, stored, { create: true });
+      return {
+        status: 'ready',
+        preview: projectReferenceMaterialAdoptionPreview(stored, prepared),
+      };
     });
   }
 
@@ -235,104 +301,103 @@ export function createReferenceMaterialAdoptionController(
   ): Promise<ReferenceMaterialAdoptionPendingActionResult> {
     return withReferenceLock(referenceId, async () => {
       const workspaceRoot = options.getWorkspaceRoot();
-      const stored = await readStoredReferenceMaterialAdoptionPreview(
-        workspaceRoot,
-        previewId,
-      );
+      const stored = await readStoredReferenceMaterialAdoptionPreview(workspaceRoot, previewId);
       if (
         stored.context.referenceId !== referenceId
         || stored.previewFingerprint !== input.fingerprint
         || stored.status !== 'prepared'
-      ) {
-        throw new ReferenceMaterialAdoptionRequestError(
-          'Reference Material adoption preview fingerprint is stale.',
-          'stalePreview',
-        );
-      }
+      ) throw stalePreview('Reference Material adoption preview fingerprint is stale.');
       try {
         await assertReferenceMaterialAdoptionPreviewCurrent(workspaceRoot, stored);
       } catch (error) {
-        throw new ReferenceMaterialAdoptionRequestError(
-          error instanceof Error ? error.message : String(error),
-          'stalePreview',
-        );
+        throw stalePreview(error instanceof Error ? error.message : String(error));
       }
-      const origin: ReferenceMaterialAdoptionPendingActionOrigin = {
-        kind: 'referenceMaterialAdoption',
-        referenceId,
-        manifestRevision: stored.context.manifestRevision,
-        sourceChecksumSha256: stored.context.sourceChecksumSha256,
-        catalogFingerprint: stored.context.catalogFingerprint,
-        contextFingerprint: stored.contextFingerprint,
-        previewFingerprint: stored.previewFingerprint,
-      };
-      const pendingAction = await promoteWriteIntentPreview({
-        workspaceRoot,
-        preview: stored.preparedWriteIntent,
+      const store = await getStore(workspaceRoot);
+      const prepared = await store.readPreparedChangePreview(previewId);
+      const origin = prepared.origin;
+      if (
+        origin.kind !== 'referenceMaterialAdoption'
+        || origin.previewFingerprint !== stored.previewFingerprint
+      ) throw stalePreview('Reference Material adoption preview origin is stale.');
+      const pendingAction = await store.promotePreparedChangePreview({
+        id: previewId,
+        title: `Adopt Story Materials from ${stored.context.referenceTitle}`,
+        description: [
+          `Adopt ${stored.context.targets.flatMap((target) => target.entries).length} selected Story Material entries`,
+          `from reference ${stored.context.referenceId} into ${prepared.allowedTargets.length} workspace target(s).`,
+          `Published warnings: ${stored.context.warnings.length}.`,
+        ].join(' '),
+        source: {
+          kind: 'deterministic-builder',
+          producer: 'reference-material-adoption',
+          capability: 'reference.adopt',
+        },
         origin,
+        allowedTargets: prepared.allowedTargets,
       });
       await writeStoredReferenceMaterialAdoptionPreview(
         workspaceRoot,
-        promoteStoredReferenceMaterialAdoptionPreview(stored, pendingAction),
+        promoteStoredReferenceMaterialAdoptionPreview(stored, prepared, pendingAction),
       );
-      return {
-        pendingAction: {
-          id: pendingAction.id,
-          title: pendingAction.title,
-          description: pendingAction.description,
-          touchedFiles: [...pendingAction.touchedFiles],
-          diff: pendingAction.diff,
-          createdAt: pendingAction.createdAt,
-          status: pendingAction.status,
-        },
-      };
+      return { pendingAction };
     });
+  }
+
+  async function assertPreparedPreviewCurrent(
+    previewId: string,
+    origin: ReferenceMaterialAdoptionOrigin,
+  ): Promise<void> {
+    const workspaceRoot = options.getWorkspaceRoot();
+    const store = await getStoreWithoutValidator(workspaceRoot);
+    const preview = await store.readPreparedChangePreview(previewId);
+    if (preview.id !== previewId) {
+      throw stalePreview('Reference Material adoption preview id is stale.');
+    }
+    await assertPreparedPreviewOriginCurrent(workspaceRoot, origin, preview);
   }
 
   async function assertPendingActionCurrent(
     pendingActionId: string,
-    origin: ReferenceMaterialAdoptionPendingActionOrigin,
+    origin: ReferenceMaterialAdoptionOrigin,
   ): Promise<void> {
     const workspaceRoot = options.getWorkspaceRoot();
-    const stored = await readStoredReferenceMaterialAdoptionPreview(
-      workspaceRoot,
-      pendingActionId,
-    );
-    const live = await readPendingAction({ workspaceRoot, id: pendingActionId });
+    const stored = await readStoredReferenceMaterialAdoptionPreview(workspaceRoot, pendingActionId);
+    const store = await getStoreWithoutValidator(workspaceRoot);
+    const [prepared, live] = await Promise.all([
+      store.readPreparedChangePreview(pendingActionId),
+      store.readView(pendingActionId),
+    ]);
     if (
       stored.status !== 'promoted'
-      || !stored.pendingAction
+      || stored.pendingActionId !== pendingActionId
       || live.status !== 'pending'
       || live.origin?.kind !== 'referenceMaterialAdoption'
-      || stableSerialize(live) !== stableSerialize(stored.pendingAction)
+      || stableSerialize(live.origin) !== stableSerialize(origin)
       || origin.referenceId !== stored.context.referenceId
       || origin.manifestRevision !== stored.context.manifestRevision
       || origin.sourceChecksumSha256 !== stored.context.sourceChecksumSha256
-      || origin.catalogFingerprint !== stored.context.catalogFingerprint
       || origin.contextFingerprint !== stored.contextFingerprint
       || origin.previewFingerprint !== stored.previewFingerprint
-      || fingerprintReferenceMaterialAdoptionContext(stored.context)
-        !== stored.contextFingerprint
-    ) {
-      throw new ReferenceMaterialAdoptionRequestError(
-        'Reference Material adoption PendingAction is stale.',
-        'stalePreview',
-      );
-    }
+      || fingerprintReferenceMaterialAdoptionContext(stored.context) !== stored.contextFingerprint
+    ) throw stalePreview('Reference Material adoption PendingAction is stale.');
+    projectReferenceMaterialAdoptionPreview(stored, prepared);
     try {
       await assertReferenceMaterialAdoptionPreviewCurrent(workspaceRoot, stored);
     } catch (error) {
-      throw new ReferenceMaterialAdoptionRequestError(
-        error instanceof Error ? error.message : String(error),
-        'stalePreview',
-      );
+      throw stalePreview(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function getStoreWithoutValidator(workspaceRoot: string): Promise<PendingActionStore> {
+    if (options.getPendingActionStore) return options.getPendingActionStore(workspaceRoot);
+    return createPendingActionStore({ workspaceRoot });
   }
 
   return {
     readCatalog,
     createPreview,
     createPendingAction,
+    assertPreparedPreviewCurrent,
     assertPendingActionCurrent,
   };
 }
@@ -355,6 +420,25 @@ export function toReferenceMaterialAdoptionErrorResponse(error: unknown): {
       code: code === 'ENOENT' ? 'notFound' : 'validationFailed',
     },
   };
+}
+
+function noChanges(
+  context: Awaited<ReturnType<typeof prepareReferenceMaterialAdoptionContext>>,
+  decisions: Array<Omit<ReferenceMaterialAdoptionDecision, 'draft'>>,
+): ReferenceMaterialAdoptionNoChanges {
+  return {
+    status: 'noChanges',
+    referenceId: context.referenceId,
+    referenceTitle: context.referenceTitle,
+    catalogFingerprint: context.catalogFingerprint,
+    decisions,
+    warnings: structuredClone(context.warnings),
+    canonicalUnchanged: true,
+  };
+}
+
+function stalePreview(message: string): ReferenceMaterialAdoptionRequestError {
+  return new ReferenceMaterialAdoptionRequestError(message, 'stalePreview');
 }
 
 function stableSerialize(value: unknown): string {

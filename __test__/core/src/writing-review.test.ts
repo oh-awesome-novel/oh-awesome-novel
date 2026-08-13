@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DE_AI_PROTECTION_RULES,
+  createNovelCopilotSandboxProposalContract,
   formatDeAiProtectionRulesMarkdown,
   formatReviewReportMarkdown,
+  formatReviewSandboxProposalMarkdown,
   type ReviewDimensionResult,
   type ReviewFinding,
+  type ReviewSandboxProposal,
 } from '@oh-awesome-novel/core';
 
 describe('writing review workflow', () => {
@@ -54,6 +57,25 @@ describe('writing review workflow', () => {
       ]),
     );
     expect(markdown).toContain('去 AI 味保护规则');
-    expect(markdown).toContain('chapter.createDraft');
+    expect(markdown).toContain('chapter.edit sandbox proposal');
+  });
+
+  it('requires an explicit user rewrite request for a review sandbox proposal', () => {
+    const proposal: ReviewSandboxProposal = {
+      userRequestedRewrite: true,
+      findingLocations: ['chapters/0001/0003.md#scene-2'],
+      sandboxProposal: createNovelCopilotSandboxProposalContract({
+        capability: 'chapter.edit',
+        targetPaths: ['chapters/0001/0003.md'],
+      }),
+    };
+
+    const markdown = formatReviewSandboxProposalMarkdown(proposal);
+
+    expect(markdown).toContain('用户已明确要求改写: yes');
+    expect(markdown).toContain('chapter.edit');
+    expect(markdown).toContain('workspace.previewChanges');
+    expect(markdown).toContain('workspace.proposeChanges');
+    expect(markdown).toContain('chapters/0001/0003.md');
   });
 });

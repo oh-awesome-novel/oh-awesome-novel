@@ -5,8 +5,7 @@ import type { PendingActionView } from '../../composables/useAgentCheckpointChat
 
 const props = defineProps<{
   actions: Array<PendingActionView & {
-    touchedFiles?: string[];
-    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+    decision?: 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected';
     decisionError?: string;
   }>;
 }>();
@@ -18,7 +17,10 @@ const emit = defineEmits<{
 }>();
 
 const latestAction = computed(() => props.actions[0]);
-const canQuickAccept = computed(() => (latestAction.value?.touchedFiles ?? []).length <= 1);
+const canQuickAccept = computed(() => (latestAction.value?.changes.length ?? 0) <= 1);
+const decisionDisabled = computed(() => (
+  latestAction.value?.status !== 'pending' || Boolean(latestAction.value?.decision)
+));
 </script>
 
 <template>
@@ -34,7 +36,7 @@ const canQuickAccept = computed(() => (latestAction.value?.touchedFiles ?? []).l
       <button
         class="secondary-button tight-button"
         type="button"
-        :disabled="Boolean(latestAction.decision)"
+        :disabled="decisionDisabled"
         @click="emit('reject', latestAction)"
       >
         Reject
@@ -43,7 +45,7 @@ const canQuickAccept = computed(() => (latestAction.value?.touchedFiles ?? []).l
         v-if="canQuickAccept"
         class="primary-button tight-button"
         type="button"
-        :disabled="Boolean(latestAction.decision)"
+        :disabled="decisionDisabled"
         @click="emit('accept', latestAction)"
       >
         Accept

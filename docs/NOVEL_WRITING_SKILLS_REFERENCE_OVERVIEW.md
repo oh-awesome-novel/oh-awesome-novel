@@ -50,7 +50,7 @@
 
 ### oh-awesome-novel-skill
 
-该目录仍只有一个轻量 `SKILL.md`，没有版本历史可用于可靠增量比较。本轮以文件指纹固定当前快照。其单 Agent、低摩擦、作者接受后再更新记忆的设计仍成立，但它仍是直接写文件的通用 Agent 指引，没有 OAN 的 SemanticPatch、PendingAction 或 Git approval。
+该目录仍只有一个轻量 `SKILL.md`，没有版本历史可用于可靠增量比较。本轮以文件指纹固定当前快照。其单 Agent、低摩擦、作者接受后再更新记忆的设计仍成立，但它仍是直接写文件的通用 Agent 指引，没有 OAN 的 CandidateChangeSet、PendingAction 或 Git approval。
 
 ### oh-story-claudecode
 
@@ -192,7 +192,7 @@ v4.8.4 会根据 Skill 安装位置判断 Claude Code / OpenCode，把 Agent 部
 
 ### 当前限制
 
-- 正式正文、设定、记忆和归档由 Agent 直接写入，没有 SemanticPatch / PendingAction。
+- 正式正文、设定、记忆和归档由 Agent 直接写入，没有 CandidateChangeSet / PendingAction。
 - README 的“全部授权”允许 Agent 代按流程确认，与 OAN Human Approval 根本冲突。
 - 初始化和迁移脚本会创建、移动和清理大量文件；其确认不是逐文件 diff approval。
 - prompt / scene-craft 规则非常细，容易把 Writer 变成规则执行器并提高上下文成本。
@@ -547,7 +547,7 @@ OAN 已有 constitution、workflow、Skill、Writing Profile reminder、referenc
 
 ### 5. 人类编辑器继续使用 optimistic concurrency
 
-Dashboard 的 expected version、409 conflict、realpath、symlink 拒绝和同文件串行 mutation 对 OAN 的人类直接编辑器有参考意义。但 AI 写入不应改走这条直接保存 API；它必须继续经过 Apply Engine。
+Dashboard 的 expected version、409 conflict、realpath、symlink 拒绝和同文件串行 mutation 对 OAN 的人类直接编辑器有参考意义。但 AI 写入不应改走这条直接保存 API；它必须继续经过 ChangeMaterializer。
 
 ### 6. 安装资产必须有版本与漂移诊断
 

@@ -13,6 +13,10 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config = {
   packagerConfig: {
     asar: true,
+    extraResource: ['THIRD_PARTY_NOTICES.md'],
+    // Fuses mutate the Electron binary during packageAfterCopy. Signing at the
+    // packager's final step keeps the finished macOS bundle internally valid.
+    osxSign: { identity: '-', identityValidation: false },
   },
   rebuildConfig: {},
   makers: [
@@ -27,6 +31,19 @@ const config = {
         {
           entry: 'src/main.ts',
           target: 'main',
+          config: {
+            deps: {
+              alwaysBundle: [
+                /^@oh-awesome-novel\//,
+                /^ai(?:\/|$)/,
+                /^bash-tool(?:\/|$)/,
+                /^diff(?:\/|$)/,
+                /^just-bash(?:\/|$)/,
+                /^yaml(?:\/|$)/,
+              ],
+              onlyBundle: false,
+            },
+          },
         },
         {
           entry: 'src/preload.ts',

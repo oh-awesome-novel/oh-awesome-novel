@@ -1,72 +1,41 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue';
+import { computed } from 'vue';
+
+import type { PendingActionViewV1 } from '@oh-awesome-novel/client';
 
 const props = defineProps<{
   diff: string;
-  touchedFiles?: string[];
+  changes: PendingActionViewV1['changes'];
 }>();
 
-const expanded = reactive<Record<string, boolean>>({});
+const rows = computed(() => props.changes.map((change) => ({
+  operation: change.operation,
+  path: change.path,
+  label: operationLabel(change.operation),
+})));
 
-const fileBlocks = computed(() => {
-  const lines = props.diff.split('\n');
-  const blocks: Array<{ path: string; status: string; body: string }> = [];
-  let current: { path: string; status: string; body: string[] } | undefined;
-
-  for (const line of lines) {
-    if (line.startsWith('diff --git ')) {
-      if (current) {
-        blocks.push({ ...current, body: current.body.join('\n') });
-      }
-
-      const match = / b\/(.+)$/u.exec(line);
-      const path = match?.[1] ?? props.touchedFiles?.[blocks.length] ?? 'unknown';
-      current = {
-        path,
-        status: readStatus(path, props.touchedFiles ?? []),
-        body: [line],
-      };
-      expanded[path] ??= blocks.length === 0;
-      continue;
-    }
-
-    current?.body.push(line);
-  }
-
-  if (current) {
-    blocks.push({ ...current, body: current.body.join('\n') });
-  }
-
-  if (blocks.length === 0 && props.diff.trim()) {
-    return [{
-      path: props.touchedFiles?.[0] ?? 'diff',
-      status: 'modified',
-      body: props.diff,
-    }];
-  }
-
-  return blocks;
-});
-
-function toggle(path: string) {
-  expanded[path] = !expanded[path];
-}
-
-function readStatus(path: string, touchedFiles: string[]): string {
-  return touchedFiles.includes(path) ? 'modified' : 'changed';
+function operationLabel(operation: 'create' | 'update' | 'delete'): string {
+  if (operation === 'create') return 'created';
+  if (operation === 'delete') return 'deleted';
+  return 'updated';
 }
 </script>
 
 <template>
   <div class="structured-diff" aria-label="PendingAction diff">
-    <article v-for="block in fileBlocks" :key="block.path" class="diff-file-block">
-      <button class="diff-file-header" type="button" @click="toggle(block.path)">
-        <span>{{ expanded[block.path] ? '▾' : '▸' }}</span>
-        <strong>{{ block.path }}</strong>
-        <small>{{ block.status }}</small>
-      </button>
-      <pre v-if="expanded[block.path]" class="diff-preview">{{ block.body }}</pre>
-    </article>
-    <p v-if="fileBlocks.length === 0" class="empty-copy">No diff available.</p>
+    <ul v-if="rows.length" class="diff-change-list" aria-label="PendingAction file changes">
+      <li
+        v-for="row in rows"
+        :key="`${row.operation}:${row.path}`"
+        class="diff-file-header"
+        :data-operation="row.operation"
+      >
+        <strong>{{ row.path }}</strong>
+        <small>{{ row.label }}</small>
+      </li>
+    </ul>
+    <p v-else class="empty-copy">No file changes.</p>
+    <pre v-if="diff" class="diff-preview" aria-label="PendingAction diff text">{{ diff }}</pre>
+    <p v-else class="empty-copy">No diff available.</p>
   </div>
 </template>

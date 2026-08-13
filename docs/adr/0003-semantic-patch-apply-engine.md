@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0004: Sandbox Change Engine](0004-sandbox-change-engine.md)
 
 ## Context
 
@@ -69,4 +69,3 @@ PendingAction
 Apply Engine 可以先 deterministic 实现。
 
 未来可选接入 Morph-like apply model。
-

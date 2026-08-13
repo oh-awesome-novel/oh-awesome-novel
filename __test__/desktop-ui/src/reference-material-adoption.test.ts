@@ -56,7 +56,11 @@ describe('Reference Material adoption UI', () => {
             reason: 'Controlled destination.',
           }],
           warnings: [],
-          touchedFiles: ['world/adopted/world-entry.md'],
+          changes: [{
+            operation: 'create',
+            path: 'world/adopted/world-entry.md',
+            newHash: 'f'.repeat(64),
+          }],
           diff: 'diff --git a/world/adopted/world-entry.md b/world/adopted/world-entry.md',
           fingerprint: 'e'.repeat(64),
           createdAt: '2026-08-01T00:00:00.000Z',

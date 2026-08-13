@@ -86,7 +86,7 @@ OAN 与 Eve 在 filesystem-first 层面高度同向，但产品边界不同。
 - Git 是历史引擎。
 - Runtime 是 Aider-style 极简 loop。
 - Tool calling 使用 Vercel AI SDK `ToolSet`，不是自建重型工具框架。
-- 写入链路是 SemanticPatch / PendingAction / diff preview / Human Approval。
+- 写入链路是 CandidateChangeSet / PendingAction / diff preview / Human Approval。
 - `0900` 和 `1080` 已经实现第一版 reference bundle、source/distilled 分离、reference context selector、no-copy warnings、enable/disable。
 
 主要冲突：
@@ -94,7 +94,7 @@ OAN 与 Eve 在 filesystem-first 层面高度同向，但产品边界不同。
 - Eve 是通用 durable agent framework；OAN 是 filesystem-first Novel IDE，不能扩展成通用 agent 框架。
 - Eve 支持 subagents 和 autonomous schedules；OAN 当前架构明确不做 multi-agent runtime、background autonomous agent。
 - Eve 拥有完整 compiler/runtime/deployment surface；OAN 已有 `packages/core/tools/agent/runtime/backend/ui` 边界，不应替换。
-- Eve sandbox 允许 agent shell/file work；OAN 真实小说文件写入必须走 SemanticPatch、diff 和 Human Approval。
+- Eve sandbox 允许 agent shell/file work；OAN 真实小说文件写入必须走 CandidateChangeSet、diff 和 Human Approval。
 - Eve channels 面向 Slack、Discord、Teams、Telegram、Twilio、GitHub、Linear 等生产渠道；OAN 当前第一入口是本地 desktop/backend/Vue。
 
 结论：吸收模式，不吸收框架。优先吸收文件化发现、diagnostics artifacts、显式 context loading map、HITL 事件词汇、eval 形态、trust boundary 文档表达。
@@ -242,7 +242,7 @@ Eve 的 `.eval.ts` 文件驱动真实 session 并断言 tool usage / reply。OAN
 
 - planning command smoke evals
 - reference selector evals
-- write-intent / PendingAction evals
+- change-proposal / PendingAction evals
 - no-copy guardrail evals
 - review / settlement workflow evals
 
@@ -318,5 +318,5 @@ Eve 的 channel file 适合多渠道生产 agent。OAN 目前不需要 Slack/Dis
 2. 在 `1080` 中把 selector 从 reference summary 扩展到单个 distilled entry。
 3. 增加 OAN workspace/reference inspector artifact，优先落 session artifacts 或 `.oan/inspect/`。
 4. 增加 reference selector、no-copy guardrail、missing diagnostics 的测试。
-5. 新增一份 OAN trust boundary 设计说明，明确 truth files、shadow write、PendingAction、backend、frontend、Git 的权限分割。
+5. 新增一份 OAN trust boundary 设计说明，明确 truth files、private draft、PendingAction、backend、frontend、Git 的权限分割。
 

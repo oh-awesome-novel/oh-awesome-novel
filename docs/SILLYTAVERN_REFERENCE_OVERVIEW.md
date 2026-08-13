@@ -222,7 +222,7 @@ SillyTavern 不只处理文本。默认内容中包含：
 - SillyTavern 的 transcript 本身就是主要结果；InkOS Play 更重视把回合结果结算成世界状态。
 - OAN 的核心写作面仍然是长篇小说写作：章节、摘要、最新状态、时间线、伏笔和 Git diff 审批。但 OAN 可以有独立 Play 面，用于沉浸体验小说世界；Play 中产生的变化依据可以作为写作草稿或 agent 参考，而不能自动改 canonical truth。
 
-因此，如果 OAN 后续要做独立 Play 功能，更合理的组合是：学习 SillyTavern 的角色卡、lore 激活、多候选回复和沉浸式交互体验；学习 InkOS Play 的事务式结算思想；再按 OAN 的 Object File Tree、PendingAction、SemanticPatch 和 Git diff 边界，把 Play 结果转成可审阅的写作参考。
+因此，如果 OAN 后续要做独立 Play 功能，更合理的组合是：学习 SillyTavern 的角色卡、lore 激活、多候选回复和沉浸式交互体验；学习 InkOS Play 的事务式结算思想；再按 OAN 的 Object File Tree、PendingAction、CandidateChangeSet 和 Git diff 边界，把 Play 结果转成可审阅的写作参考。
 
 ## 功能特色
 
@@ -262,7 +262,7 @@ SillyTavern 当前特色可以概括为：
    对话中发生了什么，需要用户自己判断和整理。系统不会强制生成 evidence-only settlement bundle。
 
 3. **没有 Git diff 级人类确认**  
-   聊天和设置会直接保存到数据目录。它不提供 OAN 需要的 PendingAction / SemanticPatch / Git diff approval。
+   聊天和设置会直接保存到数据目录。它不提供 OAN 需要的 PendingAction / CandidateChangeSet / Git diff approval。
 
 4. **prompt 与扩展能力很重**  
    SillyTavern 追求 power user 控制，功能面巨大。OAN 不应把这套复杂扩展生态搬进核心 runtime。

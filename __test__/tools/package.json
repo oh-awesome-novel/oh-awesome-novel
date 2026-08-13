@@ -10,6 +10,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1"
   },
   "devDependencies": {

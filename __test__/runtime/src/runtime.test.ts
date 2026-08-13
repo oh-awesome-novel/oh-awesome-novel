@@ -90,18 +90,22 @@ describe('RuntimeSession', () => {
     expect(model.requests[1].messages.at(-1)?.role).toBe('tool');
   });
 
-  it('collects pending actions from write intent tools without applying them', async () => {
+  it('collects pending actions from proposal tools without applying them', async () => {
     const pendingAction = {
       id: 'action_1',
       title: 'Update state',
       description: 'Preview state update.',
-      patches: [{ kind: 'collection', operation: 'yamlSet' }],
-      touchedFiles: ['state/characters.yaml'],
+      changes: [{
+        operation: 'update' as const,
+        path: 'state/characters.yaml',
+        oldHash: 'a'.repeat(64),
+        newHash: 'b'.repeat(64),
+      }],
       diff: '- old\n+ new',
       createdAt: '2026-06-06T00:00:00.000Z',
       status: 'pending' as const,
     };
-    const tools = createTool('state.set', async () => ({
+    const tools = createTool('example.updateState', async () => ({
       actionId: pendingAction.id,
       pendingActions: [pendingAction],
     }));
@@ -110,7 +114,7 @@ describe('RuntimeSession', () => {
         toolCalls: [
           {
             id: 'call_1',
-            name: 'state.set',
+            name: 'example.updateState',
             args: { path: 'characters.heroine.hp', value: 'injured' },
           },
         ],
@@ -236,24 +240,134 @@ describe('RuntimeSession', () => {
     expect(result.toolLog).toHaveLength(2);
   });
 
+  it('finalizes a dirty completed turn before message_finish', async () => {
+    const events: string[] = [];
+    const fallbackAction = {
+      id: 'fallback_1',
+      title: 'Fallback proposal',
+      description: 'Finalized at the turn boundary.',
+      changes: [{
+        operation: 'update' as const,
+        path: 'state/value.yaml',
+        oldHash: 'a'.repeat(64),
+        newHash: 'b'.repeat(64),
+      }],
+      diff: '+value: new',
+      createdAt: '2026-08-12T00:00:00.000Z',
+      status: 'pending' as const,
+    };
+    const finalizeTurn = vi.fn(async () => [fallbackAction]);
+    const runtime = createRuntime({
+      model: createFakeModel([{
+        message: { role: 'assistant', content: 'Done.' },
+      }]),
+      tools: {},
+      turnFinalizer: { finalizeTurn },
+      onEvent(event) {
+        events.push(event.type);
+      },
+    });
+
+    const result = await runtime.runTurn({ message: 'Edit' });
+
+    expect(finalizeTurn).toHaveBeenCalledWith(expect.objectContaining({
+      stoppedReason: 'completed',
+      pendingActions: [],
+    }));
+    expect(result.pendingActions).toEqual([fallbackAction]);
+    expect(events.slice(-2)).toEqual(['pending_action', 'message_finish']);
+  });
+
+  it('calls the finalizer on max-loop and aborted turns without duplicating actions', async () => {
+    const pendingAction = {
+      id: 'action_1',
+      title: 'Existing',
+      description: 'Already proposed.',
+      changes: [{
+        operation: 'update' as const,
+        path: 'state/value.yaml',
+        oldHash: 'a'.repeat(64),
+        newHash: 'b'.repeat(64),
+      }],
+      diff: '',
+      createdAt: '2026-08-12T00:00:00.000Z',
+      status: 'pending' as const,
+    };
+    const finalizeTurn = vi.fn(async ({ pendingActions }) => pendingActions);
+    const tools = createTool('state.get', async () => ({ pendingActions: [pendingAction] }));
+    const runtime = createRuntime({
+      model: createFakeModel([{
+        toolCalls: [{ id: 'call_1', name: 'state.get', args: {} }],
+      }]),
+      tools,
+      maxToolLoops: 1,
+      turnFinalizer: { finalizeTurn },
+    });
+
+    const maxLoopResult = await runtime.runTurn({ message: 'Loop' });
+    expect(maxLoopResult.pendingActions).toEqual([pendingAction]);
+    expect(finalizeTurn).toHaveBeenLastCalledWith(expect.objectContaining({
+      stoppedReason: 'max_tool_loops',
+    }));
+
+    const controller = new AbortController();
+    controller.abort();
+    const abortedResult = await runtime.runTurn({
+      message: 'Abort',
+      abortSignal: controller.signal,
+    });
+    expect(abortedResult.stoppedReason).toBe('aborted');
+    expect(finalizeTurn).toHaveBeenLastCalledWith(expect.objectContaining({
+      stoppedReason: 'aborted',
+    }));
+  });
+
+  it('fails closed without message_finish when the finalizer fails', async () => {
+    const events: string[] = [];
+    const runtime = createRuntime({
+      model: createFakeModel([{
+        message: { role: 'assistant', content: 'Done.' },
+      }]),
+      tools: {},
+      turnFinalizer: {
+        async finalizeTurn() {
+          throw new Error('proposal persistence failed');
+        },
+      },
+      onEvent(event) {
+        events.push(event.type);
+      },
+    });
+
+    await expect(runtime.runTurn({ message: 'Edit' })).rejects.toThrow(
+      'proposal persistence failed',
+    );
+    expect(events).toContain('error');
+    expect(events).not.toContain('message_finish');
+  });
+
   it('emits observable runtime events', async () => {
     const events: string[] = [];
     const pendingAction = {
       id: 'action_1',
       title: 'Update',
       description: 'Update preview.',
-      patches: [],
-      touchedFiles: ['state.yaml'],
+      changes: [{
+        operation: 'update' as const,
+        path: 'state/value.yaml',
+        oldHash: 'a'.repeat(64),
+        newHash: 'b'.repeat(64),
+      }],
       diff: '',
       createdAt: '2026-06-06T00:00:00.000Z',
       status: 'pending' as const,
     };
-    const tools = createTool('state.set', async () => ({
+    const tools = createTool('example.updateState', async () => ({
       pendingActions: [pendingAction],
     }));
     const model = createFakeModel([
       {
-        toolCalls: [{ id: 'call_1', name: 'state.set', args: {} }],
+        toolCalls: [{ id: 'call_1', name: 'example.updateState', args: {} }],
       },
       {
         message: { role: 'assistant', content: 'Done.' },
@@ -277,6 +391,74 @@ describe('RuntimeSession', () => {
       'pending_action',
       'message_finish',
     ]);
+  });
+
+  it('never retains or emits raw bash command arguments', async () => {
+    const rawCommand = "cat <<'EOF' > summaries/private.md\nsecret body\nEOF";
+    const observed: unknown[] = [];
+    const tools = createTool('bash', async () => ({ exitCode: 0 }));
+    const runtime = createRuntime({
+      model: createFakeModel([
+        {
+          toolCalls: [{ id: 'bash_1', name: 'bash', args: { command: rawCommand } }],
+        },
+        { message: { role: 'assistant', content: 'Done.' } },
+      ]),
+      tools,
+      onEvent(event) {
+        observed.push(event);
+      },
+    });
+
+    const result = await runtime.runTurn({ message: 'Edit' });
+
+    expect(result.toolLog[0]?.toolCall).toMatchObject({
+      id: 'bash_1',
+      name: 'bash',
+      args: {
+        commandHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        commandPreview: expect.any(String),
+      },
+    });
+    expect(JSON.stringify(result.toolLog)).not.toContain('"command"');
+    expect(JSON.stringify(observed)).not.toContain('"command"');
+  });
+
+  it('audits bash calls embedded in the model response message before retaining or emitting it', async () => {
+    const rawCommand = "printf 'response-message-secret\u202Egnidliub'";
+    const observed: unknown[] = [];
+    const runtime = createRuntime({
+      model: createFakeModel([{
+        message: {
+          role: 'assistant',
+          content: 'Done.',
+          toolCalls: [{
+            id: 'bash_in_message',
+            name: 'bash',
+            args: { command: rawCommand },
+          }],
+        },
+      }]),
+      tools: {},
+      onEvent(event) {
+        observed.push(event);
+      },
+    });
+
+    const result = await runtime.runTurn({ message: 'Finish' });
+
+    expect(result.assistantMessage?.toolCalls?.[0]).toMatchObject({
+      id: 'bash_in_message',
+      name: 'bash',
+      args: {
+        commandHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        commandPreview: expect.any(String),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('"command"');
+    expect(JSON.stringify(runtime.getState())).not.toContain('"command"');
+    expect(JSON.stringify(observed)).not.toContain('"command"');
+    expect(JSON.stringify(result)).toContain('\\\\u202e');
   });
 
   it('streams assistant message deltas before finish', async () => {
@@ -332,7 +514,7 @@ describe('AI SDK ToolSet filtering', () => {
       model,
       tools: {
         ...createTool('character.get', async () => ({})),
-        ...createTool('state.set', async () => ({})),
+        ...createTool('example.updateState', async () => ({})),
       },
     });
 

@@ -4,6 +4,8 @@ import type { Ref } from 'vue';
 import { useWorkspaceApi } from './useWorkspaceApi';
 import type {
   CreatePlayAdoptionPreviewInput,
+  PendingActionViewChange,
+  PendingActionViewV1,
   PlayAdoptionCandidate,
   PlayAdoptionSessionUpdate,
   PlayAdoptionPreview,
@@ -30,21 +32,13 @@ export interface PlayAdoptionPreviewView {
   suggestions: PlayAdoptionTargetSuggestion[];
   target: PlayAdoptionTarget;
   payload: Record<string, unknown>;
-  touchedFiles: string[];
+  changes: PendingActionViewChange[];
   diff: string;
   fingerprint: string;
   canonicalUnchanged: true;
 }
 
-export interface PlayAdoptionPendingActionView {
-  id: string;
-  title: string;
-  description: string;
-  touchedFiles: readonly string[];
-  diff: string;
-  createdAt: string;
-  status: string;
-}
+export type PlayAdoptionPendingActionView = PendingActionViewV1;
 
 export type PlayAdoptionPreviewRequest = Pick<
   CreatePlayAdoptionPreviewInput,
@@ -85,7 +79,7 @@ export function usePlayAdoptionPreview(options: UsePlayAdoptionPreviewOptions) {
       })),
       target: value.target,
       payload: { ...value.payload },
-      touchedFiles: [...value.touchedFiles],
+      changes: value.changes.map((change) => ({ ...change })),
       diff: value.diff,
       fingerprint: value.fingerprint,
       canonicalUnchanged: true,
@@ -207,7 +201,7 @@ export function usePlayAdoptionPreview(options: UsePlayAdoptionPreviewOptions) {
         return false;
       }
 
-      pendingAction.value = toPendingActionView(result.pendingAction);
+      pendingAction.value = structuredClone(result.pendingAction);
       preserveConfirmedContextChange = true;
       try {
         options.onSessionUpdated?.(applyPlayAdoptionSessionUpdate(
@@ -293,20 +287,6 @@ function cloneSeed(seed: Readonly<PlayAdoptionSeed>): PlayAdoptionSeed {
     kind: 'outcome',
     outcomeItemId: seed.outcomeItemId,
     outcomeReportFingerprint: seed.outcomeReportFingerprint,
-  };
-}
-
-function toPendingActionView(
-  value: Readonly<PlayAdoptionPendingActionView>,
-): PlayAdoptionPendingActionView {
-  return {
-    id: value.id,
-    title: value.title,
-    description: value.description,
-    touchedFiles: [...value.touchedFiles],
-    diff: value.diff,
-    createdAt: value.createdAt,
-    status: value.status,
   };
 }
 

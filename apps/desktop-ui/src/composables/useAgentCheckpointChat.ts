@@ -1,17 +1,12 @@
 import { Chat } from '@ai-sdk/vue';
+import { parsePendingActionView } from '@oh-awesome-novel/client';
+import type { PendingActionViewV1 } from '@oh-awesome-novel/client';
 import type { UIMessage } from 'ai';
 import { computed, shallowRef } from 'vue';
 
 import { oanClient } from '../client';
 
-export interface PendingActionView {
-  id: string;
-  title: string;
-  description: string;
-  touchedFiles?: string[];
-  diff: string;
-  status: string;
-}
+export type PendingActionView = PendingActionViewV1;
 
 export function useAgentCheckpointChat() {
   const input = shallowRef('');
@@ -57,23 +52,11 @@ export function useAgentCheckpointChat() {
 export function collectPendingActions(messages: UIMessage[]): PendingActionView[] {
   return messages.flatMap((message) =>
     message.parts.flatMap((part) => {
-      if (part.type !== 'data-pending-action' || !isPendingAction(part.data)) {
+      if (part.type !== 'data-pending-action') {
         return [];
       }
 
-      return [part.data];
+      return [parsePendingActionView(part.data)];
     }),
-  );
-}
-
-function isPendingAction(value: unknown): value is PendingActionView {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as PendingActionView).id === 'string' &&
-    typeof (value as PendingActionView).title === 'string' &&
-    typeof (value as PendingActionView).description === 'string' &&
-    typeof (value as PendingActionView).diff === 'string' &&
-    typeof (value as PendingActionView).status === 'string'
   );
 }

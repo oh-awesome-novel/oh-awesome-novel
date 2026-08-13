@@ -561,7 +561,7 @@ StoryForge 和 OAN 现在都关心：
 但底层哲学仍然不同：
 
 - StoryForge：浏览器 local-first；IndexedDB 是数据库；UI、Dexie schema 和多个创作执行器是中心。
-- OAN：filesystem-first；Object File Tree 是数据库；Git 是历史引擎；SemanticPatch、PendingAction 和 Git diff 是正式写入边界。
+- OAN：filesystem-first；Object File Tree 是数据库；Git 是历史引擎；CandidateChangeSet、PendingAction 和 Git diff 是正式写入边界。
 
 StoryForge 的最新变化没有推翻 OAN 的架构选择，反而强化了 OAN 保持简单核心的必要性。StoryForge 已增长到 58 张注册表、47 个上下文源和多套 runtime；OAN 不应为了追随功能表面而引入同等复杂度。
 
@@ -573,7 +573,7 @@ StoryForge 的最新变化没有推翻 OAN 的架构选择，反而强化了 OAN
    OAN 已有 `ContextPackage.trace`、selected / omitted 和 session artifacts，可以在 UI 中进一步展示 included / omitted / compressed、预算和候选依赖。
 
 2. **把 `/整理本章` 做成具体的多域确认界面**
-   OAN 已有 `ObservationLog`、`SettlementBundle` 和 PendingAction 设计。可以对照 StoryForge 的六领域候选、逐字证据、正文 hash、逐项采纳和部分失败状态，复核端到端 UI / Apply Engine 是否完整。
+   OAN 已有 `ObservationLog`、`SettlementBundle` 和 PendingAction 设计。可以对照 StoryForge 的六领域候选、逐字证据、正文 hash、逐项采纳和部分失败状态，复核端到端 UI / ChangeMaterializer 是否完整。
 
 3. **参考分析版本的 active / ready 隔离**
    OAN 已有 run store、resume、source drift、publication 和 accepted bundle。可借鉴“新 run 失败不覆盖 active、版本差异、显式激活 / 回滚”，但继续使用 filesystem-first run 与 publication 文件，而不是 Dexie 表。
@@ -611,7 +611,7 @@ OAN 已经具备或超过 StoryForge 对应能力的部分包括：
 - `ContextPackage.trace` 与 session artifact autowiring。
 - reference distilled selector、included / omitted reason、no-copy guardrail。
 - Observation-first review / settlement schema。
-- PendingAction、shadow recovery、SemanticPatch Apply Engine 和 Git diff approval。
+- PendingAction、shadow recovery、CandidateChangeSet ChangeMaterializer 和 Git diff approval。
 - Play Mode 的 branch-local knowledge、world referee、typed intervention、variant、checkpoint、settlement 和明确 adoption path。
 
 StoryForge 目前更适合作为 OAN 的：

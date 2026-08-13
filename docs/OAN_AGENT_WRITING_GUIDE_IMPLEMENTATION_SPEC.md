@@ -40,7 +40,7 @@ intake
 - `packages/core/src/novel-copilot-skill.ts`
   - `observe -> plan -> draft/propose -> verify -> settle`
   - quick commands：`/生成角色卡`、`/规划下一章`、`/写下一章`、`/整理本章`、`/审稿`、`/更新状态`、`/补伏笔`、`/去AI味`
-  - write-intent tools：`chapter.createDraft`、`summary.generateChapter`、`state.set`、`timeline.add`、`foreshadow.create`、`character.updatePersonality`
+  - capability-scoped sandbox editing：fixed projection + `bash-tool` / `just-bash` + `workspace.proposeChanges`
 - `docs/NOVEL_AGENT_COPILOT_SPEC.md`
   - 当前 Copilot workflow 与 UI / approval 规格
 - `docs/HUMAN_APPROVAL_AND_GIT.md`
@@ -155,7 +155,7 @@ ruleStack:
 - 待处理 hooks
 - 暂不暴露的秘密、底牌和设定
 - 风险扫描：OOC、信息越界、世界规则冲突、战力/资源异常、AI 味高危点
-- 写入方式确认：只能通过 `chapter.createDraft` PendingAction
+- 写入方式确认：只能通过 `chapter.edit` fixed sandbox 产生 CandidateChangeSet / PendingAction
 
 ### Review Finding
 
@@ -286,7 +286,7 @@ Play Mode 是独立产品面，不只是写作前草稿。
 | Prompt behavior | `novel-copilot` distinguishes planning, writing, review, settle, Play and reference use |
 | Context | Every writing action can explain selected and omitted sources |
 | Planning | `/规划下一章` emits light chapter contract; `/规划下一卷` and `/规划大纲` hold heavier structure |
-| Drafting | `/写下一章` emits short `PRE_WRITE_CHECK` before `chapter.createDraft` |
+| Drafting | `/写下一章` emits short `PRE_WRITE_CHECK` before opening a `chapter.edit` sandbox session |
 | Review | `/审稿` reports findings and does not implicitly settle or rewrite |
 | Settlement | `/整理本章` uses evidence-only observation log before PendingAction bundle |
 | Session | Long tasks write resumable artifacts under `.workspace` or session area |

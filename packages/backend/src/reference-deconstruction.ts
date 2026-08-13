@@ -68,18 +68,24 @@ import type {
   ReferenceStoryMaterialProjectionResult,
 } from '@oh-awesome-novel/core';
 import {
-  acceptPendingAction,
-  createPendingAction,
-  readPendingAction,
-  rejectPendingAction,
+  createPendingActionStore,
+  createReferencePublicationChangeProposal,
+  readRepositoryBaseline,
 } from '@oh-awesome-novel/tools';
 import type {
-  AcceptedPendingAction,
-  RejectedPendingAction,
-  ReferenceArtifactPatch,
-  ReferenceDeconstructionPublishPendingActionOrigin,
-  StoredWriteIntentAction,
+  PendingActionRecord,
+  PendingActionView,
+  SandboxPendingActionOrigin,
 } from '@oh-awesome-novel/tools';
+import {
+  fingerprintCandidateProjection,
+  readCandidateTargetSnapshots,
+} from './candidate-snapshot.js';
+
+type ReferenceDeconstructionPublishPendingActionOrigin = Extract<
+  SandboxPendingActionOrigin,
+  { kind: 'referenceDeconstructionPublish' }
+>;
 import {
   generateReferenceAggregateAnalysis,
   generateReferenceChapterAnalysis,
@@ -174,22 +180,9 @@ export interface ReferenceDeconstructionMutationTransportResult {
   readonly replayed: boolean;
 }
 
-export interface ReferenceDeconstructionPublishPendingActionReceipt {
-  readonly id: string;
-  readonly title: string;
-  readonly description: string;
-  readonly touchedFiles: string[];
-  readonly diff: string;
-  readonly createdAt: string;
-  readonly status: 'pending' | 'accepted' | 'rejected';
-  readonly acceptedAt?: string;
-  readonly rejectedAt?: string;
-  readonly origin: ReferenceDeconstructionPublishPendingActionOrigin;
-}
-
 export interface ReferenceDeconstructionPublishTransportResult
   extends ReferenceDeconstructionMutationTransportResult {
-  readonly pendingAction: ReferenceDeconstructionPublishPendingActionReceipt;
+  readonly pendingAction: PendingActionView;
 }
 
 export interface ReferenceDeconstructionBackendController {
@@ -244,15 +237,6 @@ export interface ReferenceDeconstructionBackendController {
     pendingActionId: string,
     origin: ReferenceDeconstructionPublishPendingActionOrigin,
   ): Promise<void>;
-  decidePublishPendingAction(
-    pendingActionId: string,
-    origin: ReferenceDeconstructionPublishPendingActionOrigin,
-    decision: 'accept' | 'reject',
-    autoCommitOnAccept: boolean,
-  ): Promise<{
-    action: AcceptedPendingAction | RejectedPendingAction;
-    referencePublish: ReferenceDeconstructionMutationTransportResult;
-  }>;
   completePublishPendingAction(
     pendingActionId: string,
     origin: ReferenceDeconstructionPublishPendingActionOrigin,
@@ -549,13 +533,11 @@ export function createReferenceDeconstructionBackendController(
         );
       }
       let pendingActionStatus: 'pending' | 'accepted' | 'rejected';
-      try {
-        pendingActionStatus = (await readPendingAction({
-          workspaceRoot,
-          id: pendingActionId,
-        })).status;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const pendingRecord = await readNewPendingRecord(
+        await createPendingActionStore({ workspaceRoot }),
+        pendingActionId,
+      );
+      if (!pendingRecord) {
         const reservedAt = Date.parse(run.updatedAt);
         if (
           Number.isFinite(reservedAt)
@@ -569,6 +551,8 @@ export function createReferenceDeconstructionBackendController(
         // materialization can still occur. Returning to reviewReady is the
         // only fail-closed recovery.
         pendingActionStatus = 'rejected';
+      } else {
+        pendingActionStatus = pendingRecord.status;
       }
       return reconcileReferenceDeconstructionPublish({
         workspaceRoot,
@@ -1125,9 +1109,9 @@ export function createReferenceDeconstructionBackendController(
   async function projectReferencePublishResult(
     workspaceRoot: string,
     mutation: ReferenceDeconstructionMutationResult,
-    pendingAction: StoredWriteIntentAction,
+    pendingRecord: PendingActionRecord,
   ): Promise<ReferenceDeconstructionPublishTransportResult> {
-    if (pendingAction.status === 'rejected') {
+    if (pendingRecord.status === 'rejected') {
       await reconcileReferenceDeconstructionPublish({
         workspaceRoot,
         referenceId: mutation.run.referenceId,
@@ -1136,9 +1120,10 @@ export function createReferenceDeconstructionBackendController(
       });
       throw new ReferenceDeconstructionConflictError(
         'Reference publish PendingAction was rejected; use a new idempotency key.',
+        'idempotencyConflict',
       );
     }
-    const run = pendingAction.status === 'accepted'
+    const run = pendingRecord.status === 'accepted'
       ? await reconcileReferenceDeconstructionPublish({
           workspaceRoot,
           referenceId: mutation.run.referenceId,
@@ -1150,7 +1135,8 @@ export function createReferenceDeconstructionBackendController(
       run: projectRun(run),
       receipt: { ...mutation.receipt },
       replayed: mutation.replayed,
-      pendingAction: projectReferencePublishPendingAction(pendingAction),
+      pendingAction: await (await createPendingActionStore({ workspaceRoot }))
+        .readView(pendingRecord.action.id),
     };
   }
 
@@ -1161,32 +1147,29 @@ export function createReferenceDeconstructionBackendController(
   ): Promise<ReferenceDeconstructionPublishTransportResult> {
     const workspaceRoot = options.getWorkspaceRoot();
     return withReferenceLock(workspaceRoot, referenceId, async () => {
+      const store = await createPendingActionStore({ workspaceRoot });
       const stablePendingActionId = referencePublishPendingActionId(
         referenceId,
         runId,
         input.idempotencyKey,
       );
-      try {
-        const terminalReplay = await readPendingAction({
-          workspaceRoot,
-          id: stablePendingActionId,
-        });
+      const terminalReplay = await readNewPendingRecord(store, stablePendingActionId);
+      if (terminalReplay) {
         if (terminalReplay.status === 'rejected') {
           if (
-            !isReferencePublishPendingActionOrigin(terminalReplay.origin)
-            || terminalReplay.origin.referenceId !== referenceId
-            || terminalReplay.origin.runId !== runId
+            !isReferencePublishPendingActionOrigin(terminalReplay.action.origin)
+            || terminalReplay.action.origin.referenceId !== referenceId
+            || terminalReplay.action.origin.runId !== runId
           ) {
             throw new ReferenceDeconstructionValidationError(
-              `PendingAction ${terminalReplay.id} is not owned by this reference run.`,
+              `PendingAction ${terminalReplay.action.id} is not owned by this reference run.`,
             );
           }
           throw new ReferenceDeconstructionConflictError(
             'Reference publish PendingAction was rejected; use a new idempotency key.',
+            'idempotencyConflict',
           );
         }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       const current = await readReferenceDeconstructionRun(
         workspaceRoot,
@@ -1201,26 +1184,19 @@ export function createReferenceDeconstructionBackendController(
         if (!publication?.pendingActionId) {
           throw new ReferenceDeconstructionConflictError(
             'Reference publish command was already rejected; use a new idempotency key.',
+            'idempotencyConflict',
           );
         }
-        let storedAction: StoredWriteIntentAction | undefined;
-        try {
-          storedAction = await readPendingAction({
-            workspaceRoot,
-            id: publication.pendingActionId,
-          });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
+        const storedAction = await readNewPendingRecord(store, publication.pendingActionId);
         if (storedAction && storedAction.status !== 'pending') {
-          if (!isReferencePublishPendingActionOrigin(storedAction.origin)) {
+          if (!isReferencePublishPendingActionOrigin(storedAction.action.origin)) {
             throw new ReferenceDeconstructionValidationError(
-              `PendingAction ${storedAction.id} is not a reference publication.`,
+              `PendingAction ${storedAction.action.id} is not a reference publication.`,
             );
           }
           assertStoredReferencePublishActionOwnership(
             storedAction,
-            storedAction.origin,
+            storedAction.action.origin,
             current,
             { allowCompleted: true },
           );
@@ -1263,8 +1239,13 @@ export function createReferenceDeconstructionBackendController(
           warningCount: current.diagnostics.filter((diagnostic) =>
             !diagnostic.blocking).length,
         });
-        assertStoredReferencePublishAction(pendingAction, pendingAction.origin as
-          ReferenceDeconstructionPublishPendingActionOrigin, replayed.run, candidate);
+        await assertStoredReferencePublishAction(
+          workspaceRoot,
+          pendingAction,
+          pendingAction.action.origin as ReferenceDeconstructionPublishPendingActionOrigin,
+          replayed.run,
+          candidate,
+        );
         return projectReferencePublishResult(workspaceRoot, replayed, pendingAction);
       }
 
@@ -1276,9 +1257,13 @@ export function createReferenceDeconstructionBackendController(
       if (candidate.runRevision !== input.baseRunRevision) {
         throw new ReferenceDeconstructionConflictError(
           `Reference run revision conflict: expected ${input.baseRunRevision}, current ${candidate.runRevision}.`,
+          'revisionConflict',
+          {
+            expectedRevision: input.baseRunRevision,
+            actualRevision: candidate.runRevision,
+          },
         );
       }
-      const patches = referencePublicationPatches(referenceId, candidate.files);
       const pendingActionId = stablePendingActionId;
       let begun: ReferenceDeconstructionMutationResult | undefined;
       let createdPendingAction = false;
@@ -1299,15 +1284,15 @@ export function createReferenceDeconstructionBackendController(
           runRevision: candidate.runRevision,
           pendingActionId,
           candidate,
-          patches,
           warningCount: begun.run.diagnostics.filter((diagnostic) =>
             !diagnostic.blocking).length,
         });
         const pendingAction = pending.action;
         createdPendingAction = pending.created;
-        assertStoredReferencePublishAction(
+        await assertStoredReferencePublishAction(
+          workspaceRoot,
           pendingAction,
-          pendingAction.origin as ReferenceDeconstructionPublishPendingActionOrigin,
+          pendingAction.action.origin as ReferenceDeconstructionPublishPendingActionOrigin,
           begun.run,
           candidate,
         );
@@ -1316,15 +1301,10 @@ export function createReferenceDeconstructionBackendController(
         if (begun) {
           let canReleaseReservation = !createdPendingAction;
           if (createdPendingAction) {
-            await rejectPendingAction({
-              workspaceRoot,
-              id: pendingActionId,
-            }).then(
-              () => {
-                canReleaseReservation = true;
-              },
-              () => undefined,
-            );
+            // A proposal is the final durable step in this path. If a later
+            // projection assertion fails, keep it visible for explicit reset
+            // instead of mutating immutable review evidence in the catch path.
+            canReleaseReservation = false;
           }
           if (canReleaseReservation) {
             await rejectReferenceDeconstructionPublish({
@@ -1355,16 +1335,24 @@ export function createReferenceDeconstructionBackendController(
         candidateFingerprint: origin.candidateFingerprint,
         pendingActionId,
       });
-      const action = await readPendingAction({ workspaceRoot, id: pendingActionId });
+      const action = await (await createPendingActionStore({ workspaceRoot }))
+        .readRecord(pendingActionId);
       const candidate = await prepareReferenceDeconstructionPublicationCandidate({
         workspaceRoot,
         referenceId: origin.referenceId,
         runId: origin.runId,
       });
-      assertStoredReferencePublishAction(action, origin, current, candidate);
+      await assertStoredReferencePublishAction(
+        workspaceRoot,
+        action,
+        origin,
+        current,
+        candidate,
+      );
       if (action.status !== 'pending') {
         throw new ReferenceDeconstructionConflictError(
           `Reference publish PendingAction ${pendingActionId} is already ${action.status}.`,
+          'invalidTransition',
         );
       }
     });
@@ -1383,15 +1371,11 @@ export function createReferenceDeconstructionBackendController(
         candidateFingerprint: origin.candidateFingerprint,
         pendingActionId,
       });
-      assertStoredReferencePublishAction(
-        await readPendingAction({ workspaceRoot, id: pendingActionId }),
+      assertStoredReferencePublishActionOwnership(
+        await (await createPendingActionStore({ workspaceRoot }))
+          .readRecord(pendingActionId),
         origin,
         current,
-        await prepareReferenceDeconstructionPublicationCandidate({
-          workspaceRoot,
-          referenceId: origin.referenceId,
-          runId: origin.runId,
-        }),
       );
       return projectMutationResult(await completeReferenceDeconstructionPublish({
         workspaceRoot,
@@ -1402,102 +1386,6 @@ export function createReferenceDeconstructionBackendController(
         candidateFingerprint: origin.candidateFingerprint,
         pendingActionId,
       }));
-    });
-  }
-
-  async function decidePublishPendingAction(
-    pendingActionId: string,
-    origin: ReferenceDeconstructionPublishPendingActionOrigin,
-    decision: 'accept' | 'reject',
-    autoCommitOnAccept: boolean,
-  ): Promise<{
-    action: AcceptedPendingAction | RejectedPendingAction;
-    referencePublish: ReferenceDeconstructionMutationTransportResult;
-  }> {
-    const workspaceRoot = options.getWorkspaceRoot();
-    return withReferenceLock(workspaceRoot, origin.referenceId, async () => {
-      if (decision === 'accept') {
-        const current = await assertReferenceDeconstructionPublishCurrent({
-          workspaceRoot,
-          referenceId: origin.referenceId,
-          runId: origin.runId,
-          candidateFingerprint: origin.candidateFingerprint,
-          pendingActionId,
-        }).catch((error) => {
-          if (error instanceof ReferenceDeconstructionValidationError) {
-            throw new ReferenceDeconstructionConflictError(error.message);
-          }
-          throw error;
-        });
-        const candidate = await prepareReferenceDeconstructionPublicationCandidate({
-          workspaceRoot,
-          referenceId: origin.referenceId,
-          runId: origin.runId,
-        });
-        const stored = await readPendingAction({
-          workspaceRoot,
-          id: pendingActionId,
-        });
-        assertStoredReferencePublishAction(stored, origin, current, candidate);
-        if (stored.status !== 'pending') {
-          throw new ReferenceDeconstructionConflictError(
-            `Reference publish PendingAction ${pendingActionId} is already ${stored.status}.`,
-          );
-        }
-        const action = await acceptPendingAction({
-          workspaceRoot,
-          id: pendingActionId,
-          autoCommitOnAccept,
-        }).catch((error) => {
-          throw new ReferenceDeconstructionConflictError(
-            error instanceof Error ? error.message : String(error),
-          );
-        });
-        const referencePublish = projectMutationResult(
-          await completeReferenceDeconstructionPublish({
-            workspaceRoot,
-            referenceId: origin.referenceId,
-            runId: origin.runId,
-            baseRunRevision: current.revision,
-            idempotencyKey: `accept-${pendingActionId}`,
-            candidateFingerprint: origin.candidateFingerprint,
-            pendingActionId,
-          }),
-        );
-        return { action, referencePublish };
-      }
-
-      const current = await readReferenceDeconstructionRun(
-        workspaceRoot,
-        origin.referenceId,
-        origin.runId,
-        { reconcile: false },
-      );
-      const stored = await readPendingAction({
-        workspaceRoot,
-        id: pendingActionId,
-      });
-      assertStoredReferencePublishActionOwnership(stored, origin, current);
-      if (stored.status !== 'pending') {
-        throw new ReferenceDeconstructionConflictError(
-          `Reference publish PendingAction ${pendingActionId} is already ${stored.status}.`,
-        );
-      }
-      const action = await rejectPendingAction({
-        workspaceRoot,
-        id: pendingActionId,
-      });
-      const referencePublish = projectMutationResult(
-        await rejectReferenceDeconstructionPublish({
-          workspaceRoot,
-          referenceId: origin.referenceId,
-          runId: origin.runId,
-          baseRunRevision: current.revision,
-          idempotencyKey: `reject-${pendingActionId}`,
-          pendingActionId,
-        }),
-      );
-      return { action, referencePublish };
     });
   }
 
@@ -1514,7 +1402,8 @@ export function createReferenceDeconstructionBackendController(
         { reconcile: false },
       );
       assertStoredReferencePublishActionOwnership(
-        await readPendingAction({ workspaceRoot, id: pendingActionId }),
+        await (await createPendingActionStore({ workspaceRoot }))
+          .readRecord(pendingActionId),
         origin,
         current,
       );
@@ -1548,47 +1437,10 @@ export function createReferenceDeconstructionBackendController(
     cancelRun,
     publishRun,
     assertPublishPendingActionCurrent,
-    decidePublishPendingAction,
     completePublishPendingAction,
     rejectPublishPendingAction,
     hasActiveExecution,
   };
-}
-
-function referencePublicationPatches(
-  referenceId: string,
-  files: readonly ReferenceDeconstructionPublicationCandidateFile[],
-): ReferenceArtifactPatch[] {
-  const bundlePrefix = `examples/references/${referenceId}/`;
-  const patches = files.map((file): ReferenceArtifactPatch => {
-    const patchFile = file.path === 'examples/references.yaml'
-      ? 'references.yaml'
-      : file.path.startsWith(bundlePrefix)
-        ? file.path.slice(bundlePrefix.length)
-        : '';
-    if (!patchFile) {
-      throw new ReferenceDeconstructionValidationError(
-        `Reference publication candidate escaped its bundle: ${file.path}.`,
-      );
-    }
-    return {
-      kind: 'referenceArtifact',
-      referenceId,
-      file: patchFile,
-      operation: 'replaceFile',
-      value: file.content,
-    };
-  });
-  if (new Set(patches.map((patch) => patch.file)).size !== patches.length) {
-    throw new ReferenceDeconstructionValidationError(
-      'Reference publication candidate contains duplicate target files.',
-    );
-  }
-  return patches.sort((left, right) => {
-    const leftManifest = left.file === 'deconstruction-manifest.yaml';
-    const rightManifest = right.file === 'deconstruction-manifest.yaml';
-    return Number(leftManifest) - Number(rightManifest);
-  });
 }
 
 async function createOrReadReferencePublishPendingAction(input: {
@@ -1599,8 +1451,7 @@ async function createOrReadReferencePublishPendingAction(input: {
   pendingActionId: string;
   candidate: ReferenceDeconstructionPublicationCandidate;
   warningCount: number;
-  patches?: ReferenceArtifactPatch[];
-}): Promise<{ action: StoredWriteIntentAction; created: boolean }> {
+}): Promise<{ action: PendingActionRecord; created: boolean }> {
   const origin: ReferenceDeconstructionPublishPendingActionOrigin = {
     kind: 'referenceDeconstructionPublish',
     referenceId: input.referenceId,
@@ -1608,30 +1459,62 @@ async function createOrReadReferencePublishPendingAction(input: {
     runRevision: input.runRevision,
     candidateFingerprint: input.candidate.candidateFingerprint,
   };
+  const paths = input.candidate.files.map((file) => file.path);
+  const baselineFiles = await readCandidateTargetSnapshots(input.workspaceRoot, paths);
+  const proposal = createReferencePublicationChangeProposal({
+    publication: input.candidate,
+    context: {
+      sessionId: input.pendingActionId,
+      repository: await readRepositoryBaseline(input.workspaceRoot),
+      projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+      baselineFiles,
+      origin,
+    },
+  });
+  if (!proposal) {
+    throw new ReferenceDeconstructionValidationError(
+      'Reference publication candidate contains no changes.',
+    );
+  }
+  const store = await createPendingActionStore({ workspaceRoot: input.workspaceRoot });
   try {
-    return {
-      action: await createPendingAction(input.workspaceRoot, {
+    await store.proposeCandidate({
       id: input.pendingActionId,
       title: `Publish reference ${input.referenceId}`,
       description: referencePublishDescription(input.runId, input.warningCount),
-      patches: input.patches
-        ?? referencePublicationPatches(input.referenceId, input.candidate.files),
+      candidate: proposal.candidate,
       origin,
-      }),
+    });
+    return {
+      action: await store.readRecord(input.pendingActionId),
       created: true,
     };
   } catch (createError) {
     try {
       return {
-        action: await readPendingAction({
-          workspaceRoot: input.workspaceRoot,
-          id: input.pendingActionId,
-        }),
+        action: await store.readRecord(input.pendingActionId),
         created: false,
       };
     } catch {
       throw createError;
     }
+  }
+}
+
+async function readNewPendingRecord(
+  store: Awaited<ReturnType<typeof createPendingActionStore>>,
+  id: string,
+): Promise<PendingActionRecord | undefined> {
+  try {
+    return await store.readRecord(id);
+  } catch (error) {
+    if (
+      typeof error === 'object'
+      && error !== null
+      && 'code' in error
+      && error.code === 'PENDING_ACTION_NOT_FOUND'
+    ) return undefined;
+    throw error;
   }
 }
 
@@ -1645,43 +1528,27 @@ function referencePublishPendingActionId(
     .digest('hex')}`;
 }
 
-function projectReferencePublishPendingAction(
-  action: StoredWriteIntentAction,
-): ReferenceDeconstructionPublishPendingActionReceipt {
-  const origin = action.origin;
-  if (!isReferencePublishPendingActionOrigin(origin)) {
-    throw new ReferenceDeconstructionValidationError(
-      `PendingAction ${action.id} is not a reference publication.`,
-    );
-  }
-  return {
-    id: action.id,
-    title: action.title,
-    description: action.description,
-    touchedFiles: [...action.touchedFiles],
-    diff: action.diff,
-    createdAt: action.createdAt,
-    status: action.status,
-    ...(action.acceptedAt ? { acceptedAt: action.acceptedAt } : {}),
-    ...(action.rejectedAt ? { rejectedAt: action.rejectedAt } : {}),
-    origin: structuredClone(origin),
-  };
-}
-
-function assertStoredReferencePublishAction(
-  action: StoredWriteIntentAction,
+async function assertStoredReferencePublishAction(
+  workspaceRoot: string,
+  record: PendingActionRecord,
   origin: ReferenceDeconstructionPublishPendingActionOrigin,
   run: ReferenceDeconstructionRun,
   candidate: ReferenceDeconstructionPublicationCandidate,
-): void {
-  const expectedPatches = referencePublicationPatches(
-    run.referenceId,
-    candidate.files,
-  );
-  const expectedTouchedFiles = expectedPatches.map((patch) =>
-    patch.file === 'references.yaml'
-      ? 'examples/references.yaml'
-      : `examples/references/${run.referenceId}/${patch.file}`);
+): Promise<void> {
+  const action = record.action;
+  const candidatePaths = candidate.files.map((file) => file.path);
+  const baselineFiles = await readCandidateTargetSnapshots(workspaceRoot, candidatePaths);
+  const expectedProposal = createReferencePublicationChangeProposal({
+    publication: candidate,
+    context: {
+      sessionId: action.id,
+      repository: action.repository,
+      projectionFingerprint: fingerprintCandidateProjection(baselineFiles),
+      baselineFiles,
+      origin,
+    },
+  });
+  const expectedChanges = expectedProposal?.candidate.changes ?? [];
   if (
     action.id !== run.publication?.pendingActionId
     || action.description !== referencePublishDescription(
@@ -1697,12 +1564,16 @@ function assertStoredReferencePublishAction(
     || candidate.candidateFingerprint !== run.publication.candidateFingerprint
     || action.origin.runRevision !== candidate.runRevision
     || action.origin.runRevision + 1 !== run.revision
-    || JSON.stringify(action.patches) !== JSON.stringify(expectedPatches)
-    || JSON.stringify(action.touchedFiles) !== JSON.stringify(expectedTouchedFiles)
-    || action.shadowWrites.length !== expectedPatches.length
-    || action.shadowWrites.some((write, index) =>
-      write.targetFile !== expectedTouchedFiles[index]
-      || write.draftHash !== sha256Text(expectedPatches[index]!.value))
+    || action.source.kind !== 'deterministic-builder'
+    || action.source.producer !== 'reference-deconstruction-publish'
+    || action.source.capability !== 'reference.publish'
+    || action.changes.length !== expectedChanges.length
+    || action.changes.some((change, index) =>
+      change.operation !== expectedChanges[index]!.operation
+      || change.path !== expectedChanges[index]!.path
+      || JSON.stringify(change.baseline) !== JSON.stringify(expectedChanges[index]!.baseline)
+      || change.draft?.sha256 !== expectedChanges[index]!.draft?.sha256
+      || change.draft?.byteLength !== expectedChanges[index]!.draft?.byteLength)
   ) {
     throw new ReferenceDeconstructionValidationError(
       `Reference publish PendingAction ${action.id} no longer matches its run.`,
@@ -1715,13 +1586,14 @@ function referencePublishDescription(runId: string, warningCount: number): strin
 }
 
 function assertStoredReferencePublishActionOwnership(
-  action: StoredWriteIntentAction,
+  record: PendingActionRecord,
   origin: ReferenceDeconstructionPublishPendingActionOrigin,
   run: ReferenceDeconstructionRun,
   options: {
     allowCompleted?: boolean;
   } = {},
 ): void {
+  const action = record.action;
   if (
     action.id !== run.publication?.pendingActionId
     || (
@@ -1734,9 +1606,12 @@ function assertStoredReferencePublishActionOwnership(
     || origin.runId !== run.runId
     || origin.candidateFingerprint !== run.publication.candidateFingerprint
     || origin.runRevision + (run.status === 'completed' ? 2 : 1) !== run.revision
-    || action.patches.some((patch) =>
-      patch.kind !== 'referenceArtifact'
-      || patch.referenceId !== run.referenceId)
+    || action.source.kind !== 'deterministic-builder'
+    || action.source.producer !== 'reference-deconstruction-publish'
+    || action.source.capability !== 'reference.publish'
+    || action.changes.some((change) =>
+      change.path !== 'examples/references.yaml'
+      && !change.path.startsWith(`examples/references/${run.referenceId}/`))
   ) {
     throw new ReferenceDeconstructionValidationError(
       `Reference publish PendingAction ${action.id} is not owned by its run.`,

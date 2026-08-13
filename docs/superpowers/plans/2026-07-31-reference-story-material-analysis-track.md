@@ -1,5 +1,7 @@
 # Reference Story Material Analysis Track Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-07-31). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 **Task:** `docs/tasks/1210.md`
 
 ## Delivery Boundary

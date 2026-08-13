@@ -30,7 +30,9 @@ export interface AgentConversationSummary {
   active: boolean;
 }
 
-export function useAgentConversationSessions() {
+export function useAgentConversationSessions(options: {
+  getExactWritablePaths?: () => string[];
+} = {}) {
   const initialSession = createConversationSession();
   const sessions = shallowRef<AgentConversationSession[]>([initialSession]);
   const activeSessionId = shallowRef(initialSession.id);
@@ -145,7 +147,14 @@ export function useAgentConversationSessions() {
     ];
     await session.chat.sendMessage(
       { text },
-      { body: { writingReferenceAttachmentIds } },
+      {
+        body: {
+          writingReferenceAttachmentIds,
+          editContext: {
+            exactWritablePaths: options.getExactWritablePaths?.() ?? [],
+          },
+        },
+      },
     );
     session.input.value = '';
     clearSelectedWritingReferences();

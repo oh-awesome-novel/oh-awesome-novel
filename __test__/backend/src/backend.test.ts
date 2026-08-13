@@ -29,8 +29,12 @@ import {
   reserveReferenceQuickPreview,
 } from '@oh-awesome-novel/core';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
-import { createWriteIntentTools } from '@oh-awesome-novel/tools';
-import type { ToolSet } from 'ai';
+import {
+  createCandidateChangeSet,
+  createPendingActionStore,
+  fingerprintFileSnapshots,
+  readRepositoryBaseline,
+} from '@oh-awesome-novel/tools';
 
 const tempRoots: string[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -64,9 +68,13 @@ describe('novel HTTP backend', () => {
 
   it('streams AI SDK UI message SSE chunks for an agent chat request', async () => {
     const workspaceRoot = await createTempWorkspace();
+    let receivedExactWritablePaths: readonly string[] | undefined;
     const backend = await startNovelHttpBackend({
       workspaceRoot,
-      runAgent: () => scriptedRuntimeEvents(),
+      runAgent: (input) => {
+        receivedExactWritablePaths = input.exactWritablePaths;
+        return scriptedRuntimeEvents();
+      },
     });
     servers.push(backend);
 
@@ -81,6 +89,12 @@ describe('novel HTTP backend', () => {
             parts: [{ type: 'text', text: 'hello' }],
           },
         ],
+        editContext: {
+          exactWritablePaths: [
+            'chapters/0001/0001.md',
+            'chapters/0001/0001.md',
+          ],
+        },
       }),
     });
     const body = await response.text();
@@ -90,6 +104,37 @@ describe('novel HTTP backend', () => {
     expect(body).toContain('"type":"text-delta"');
     expect(body).toContain('Hello from backend');
     expect(body).toContain('"type":"data-tool-log"');
+    expect(receivedExactWritablePaths).toEqual(['chapters/0001/0001.md']);
+  });
+
+  it.each([
+    '../outside.md',
+    '.workspace/change-engine/action.json',
+    'chapters\\0001\\0001.md',
+    '/absolute.md',
+  ])('rejects an unsafe trusted agent exact target: %s', async (target) => {
+    const workspaceRoot = await createTempWorkspace();
+    let invoked = false;
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runAgent: () => {
+        invoked = true;
+        return scriptedRuntimeEvents();
+      },
+    });
+    servers.push(backend);
+
+    const response = await fetch(`${backend.url}/api/agent/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        request: 'Edit the active document.',
+        editContext: { exactWritablePaths: [target] },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(invoked).toBe(false);
   });
 
   it('uses the default AI SDK model resolver when provider config is present', async () => {
@@ -223,8 +268,8 @@ describe('novel HTTP backend', () => {
           autoCommitOnAccept: true,
         },
         git: {
-          status: 'unknown',
-          dirty: null,
+          status: 'clean',
+          dirty: false,
         },
       });
     await expect(fetchJson(`${backend.url}/api/workspace/project-health`))
@@ -1533,12 +1578,32 @@ describe('novel HTTP backend', () => {
     const workspaceRoot = await createOanWorkspace();
     const backend = await startNovelHttpBackend({ workspaceRoot });
     servers.push(backend);
-    const tools = createWriteIntentTools({ workspaceRoot });
-    const result = await executeTool(tools, 'summary.generateChapter', {
-      chapterId: '0001/0001',
-      content: '# 第一章\n\n审批接口生成的新摘要。\n',
+    const path = 'summaries/chapter/0001/0001.md';
+    const baselineContent = await readFile(join(workspaceRoot, path), 'utf-8');
+    const baselineFiles = [{ path, content: baselineContent, mode: 0o644 }];
+    const candidate = createCandidateChangeSet({
+      sessionId: 'backend-approval-test',
+      projectionFingerprint: fingerprintFileSnapshots(baselineFiles),
+      repository: await readRepositoryBaseline(workspaceRoot),
+      source: {
+        kind: 'deterministic-builder',
+        producer: 'backend-approval-test',
+        capability: 'summary.edit',
+      },
+      baselineFiles,
+      finalFiles: [{
+        path,
+        content: '# 第一章\n\n审批接口生成的新摘要。\n',
+        mode: 0o644,
+      }],
     });
-    const action = expectSinglePendingAction(result);
+    expect(candidate).toBeDefined();
+    const action = await (await createPendingActionStore({ workspaceRoot }))
+      .proposeCandidate({
+        candidate: candidate!,
+        title: 'Generate chapter summary',
+        description: 'Review the generated chapter summary.',
+      });
 
     await expect(fetchJson<{ pendingActions: Array<{ id: string }> }>(
       `${backend.url}/api/workspace/pending-actions`,
@@ -1553,8 +1618,10 @@ describe('novel HTTP backend', () => {
     }))
       .resolves
       .toMatchObject({
-        id: action.id,
-        status: 'accepted',
+        pendingAction: {
+          id: action.id,
+          status: 'accepted',
+        },
         appliedFiles: ['summaries/chapter/0001/0001.md'],
       });
 
@@ -1566,6 +1633,164 @@ describe('novel HTTP backend', () => {
     await expect(
       readFile(join(workspaceRoot, 'summaries/chapter/0001/0001.md'), 'utf-8'),
     ).resolves.toContain('新摘要');
+  });
+
+  it.each([
+    'reference.publish',
+    'reference.adopt',
+    'play.adopt',
+  ] as const)('fails closed when restricted capability %s has no trusted origin', async (capability) => {
+    const workspaceRoot = await createOanWorkspace();
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const path = 'summaries/chapter/0001/0001.md';
+    const baselineContent = await readFile(join(workspaceRoot, path), 'utf-8');
+    const baselineFiles = [{ path, content: baselineContent, mode: 0o644 }];
+    const candidate = createCandidateChangeSet({
+      sessionId: `missing-origin-${capability}`,
+      projectionFingerprint: fingerprintFileSnapshots(baselineFiles),
+      repository: await readRepositoryBaseline(workspaceRoot),
+      source: {
+        kind: 'deterministic-builder',
+        producer: 'missing-origin-test',
+        capability,
+      },
+      baselineFiles,
+      finalFiles: [{
+        path,
+        content: `# 第一章\n\n${capability} must not materialize without origin.\n`,
+        mode: 0o644,
+      }],
+    });
+    const action = await (await createPendingActionStore({ workspaceRoot }))
+      .proposeCandidate({
+        candidate: candidate!,
+        title: 'Missing restricted origin',
+        description: 'This action must fail closed.',
+      });
+
+    const response = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${action.id}/accept`,
+      { method: 'POST' },
+    );
+    const body = await response.json() as { code?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('PENDING_ACTION_ORIGIN_VALIDATOR_REQUIRED');
+    await expect(readFile(join(workspaceRoot, path), 'utf-8')).resolves.toBe(baselineContent);
+  });
+
+  it('quick commits only the accepted PendingAction paths through the exact action route', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    await writeFile(
+      join(workspaceRoot, '.oan/config.yaml'),
+      [
+        'version: 1',
+        'novelName: backend-sample',
+        'git:',
+        '  autoCommitOnAccept: false',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const backend = await startNovelHttpBackend({ workspaceRoot });
+    servers.push(backend);
+    const path = 'summaries/chapter/0001/0001.md';
+    const baselineContent = await readFile(join(workspaceRoot, path), 'utf-8');
+    const candidate = createCandidateChangeSet({
+      sessionId: 'backend-quick-commit-test',
+      projectionFingerprint: fingerprintFileSnapshots([{
+        path,
+        content: baselineContent,
+        mode: 0o644,
+      }]),
+      repository: await readRepositoryBaseline(workspaceRoot),
+      source: {
+        kind: 'deterministic-builder',
+        producer: 'backend-quick-commit-test',
+        capability: 'summary.edit',
+      },
+      baselineFiles: [{ path, content: baselineContent, mode: 0o644 }],
+      finalFiles: [{
+        path,
+        content: '# 第一章\n\n仅提交这个 action 的摘要。\n',
+        mode: 0o644,
+      }],
+    });
+    const action = await (await createPendingActionStore({ workspaceRoot }))
+      .proposeCandidate({
+        candidate: candidate!,
+        title: 'Generate chapter summary',
+        description: 'Review the generated chapter summary.',
+      });
+
+    const accepted = await fetchJson<{
+      pendingAction: { status: string; git: { status: string } };
+    }>(`${backend.url}/api/workspace/pending-actions/${action.id}/accept`, {
+      method: 'POST',
+    });
+    expect(accepted.pendingAction).toMatchObject({
+      status: 'accepted',
+      git: { status: 'not-requested' },
+    });
+
+    const response = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${action.id}/quick-commit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          files: ['.oan/config.yaml'],
+          message: 'must not control the action-scoped commit',
+        }),
+      },
+    );
+    const body = await response.json() as {
+      pendingAction: { id: string; status: string; git: { status: string } };
+      receipt: { actionId: string; git: { status: string } };
+      refresh: unknown;
+    };
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(['pendingAction', 'receipt', 'refresh']);
+    expect(body).toMatchObject({
+      pendingAction: {
+        id: action.id,
+        status: 'accepted',
+        git: { status: 'committed' },
+      },
+      receipt: {
+        actionId: action.id,
+        git: { status: 'committed' },
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('.workspace/change-engine');
+
+    const { stdout: committedFiles } = await execFileAsync(
+      'git',
+      ['show', '--pretty=format:', '--name-only', 'HEAD'],
+      { cwd: workspaceRoot },
+    );
+    expect(committedFiles.trim()).toBe(path);
+    const { stdout: commitMessage } = await execFileAsync(
+      'git',
+      ['log', '-1', '--pretty=%B'],
+      { cwd: workspaceRoot },
+    );
+    expect(commitMessage).toContain(`Pending-Action-Id: ${action.id}`);
+    expect(commitMessage).not.toContain('must not control');
+    const { stdout: status } = await execFileAsync(
+      'git',
+      ['status', '--short'],
+      { cwd: workspaceRoot },
+    );
+    expect(status).toContain(' M .oan/config.yaml');
+
+    const notExact = await fetch(
+      `${backend.url}/api/workspace/pending-actions/${action.id}/quick-commit/extra`,
+      { method: 'POST' },
+    );
+    expect(notExact.status).toBe(404);
   });
 
   it('rebuilds projections through an explicit workspace endpoint', async () => {
@@ -1689,12 +1914,12 @@ describe('novel HTTP backend', () => {
     }))
       .resolves
       .toMatchObject({
-        pendingActionResult: {
-          pendingActions: [
-            expect.objectContaining({
-              touchedFiles: ['chapters/0001/0002.md'],
-            }),
-          ],
+        pendingAction: {
+          status: 'pending',
+          changes: [{
+            operation: 'create',
+            path: 'chapters/0001/0002.md',
+          }],
         },
         refresh: {
           workspaceStatus: {
@@ -4609,11 +4834,18 @@ async function createOanWorkspace(): Promise<string> {
   await writeFile(join(root, 'chapters/0001/0000.md'), '# 第一卷\n', 'utf-8');
   await writeFile(join(root, 'chapters/0001/0001.md'), '# 第一章\n\n正文。\n', 'utf-8');
   await writeFile(join(root, 'summaries/chapter/0001/0001.md'), '# 第一章\n\n旧摘要。\n', 'utf-8');
+  await initGitRepo(root);
 
   return root;
 }
 
 async function initGitRepo(workspaceRoot: string): Promise<void> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: workspaceRoot });
+    return;
+  } catch {
+    // Initialize the immutable repository baseline required by the change engine.
+  }
   await execFileAsync('git', ['init'], { cwd: workspaceRoot });
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: workspaceRoot });
   await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: workspaceRoot });
@@ -4981,30 +5213,6 @@ function parseSseDataEvents(body: string): Array<Record<string, unknown>> {
       .join('\n'))
     .filter((data) => data && data !== '[DONE]')
     .map((data) => JSON.parse(data) as Record<string, unknown>);
-}
-
-async function executeTool(
-  tools: ToolSet,
-  name: string,
-  args: unknown,
-): Promise<unknown> {
-  const executable = tools[name] as {
-    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-  };
-
-  if (!executable?.execute) {
-    throw new Error(`Tool ${name} is not executable.`);
-  }
-
-  return executable.execute(args, {});
-}
-
-function expectSinglePendingAction(result: unknown): { id: string } {
-  expect(result).toMatchObject({
-    pendingActions: [expect.any(Object)],
-  });
-
-  return (result as { pendingActions: Array<{ id: string }> }).pendingActions[0];
 }
 
 async function* scriptedRuntimeEvents(): AsyncIterable<RuntimeEvent> {

@@ -346,7 +346,14 @@ export function referencePublishPendingActionFixture(): ReferencePublishPendingA
     id: 'pending-reference-publish-1',
     title: 'Publish Reference One deconstruction',
     description: 'Publish the accepted deep-deconstruction candidate.',
-    touchedFiles: referencePublicationFixture().files.map((file) => file.path),
+    changes: referencePublicationFixture().files
+      .map((file) => ({
+        operation: 'update' as const,
+        path: file.path,
+        oldHash: '0'.repeat(64),
+        newHash: file.checksumSha256,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
     diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
     createdAt: '2026-07-22T00:09:00.000Z',
     status: 'pending',

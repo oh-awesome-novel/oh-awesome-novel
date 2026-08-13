@@ -1,5 +1,7 @@
 # Review And Settlement Workflow Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Review reports are not writes. Settlement writes only evidence-supported facts through PendingAction.
 
 **Goal:** Stabilize review findings, de-AI protection, observation log, and settlement bundle.

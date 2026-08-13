@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createNovelCopilotSandboxProposalContract,
   formatChapterContractMarkdown,
+  formatPlanningSandboxProposalMarkdown,
   formatPreWriteCheckMarkdown,
   formatVolumePlanningPacketMarkdown,
   type ChapterContract,
   type PreWriteCheck,
+  type PlanningSandboxProposal,
   type VolumePlanningPacket,
 } from '@oh-awesome-novel/core';
 
@@ -72,10 +75,10 @@ describe('writing planning artifacts', () => {
     expect(markdown).toContain('卷级中心转折');
   });
 
-  it('formats a short PRE_WRITE_CHECK before chapter.createDraft', () => {
+  it('formats the path-bounded sandbox PRE_WRITE_CHECK', () => {
     const check: PreWriteCheck = {
       chapterContractAligned: true,
-      contextScope: ['constitution', 'previousChapterEnding', 'latestState'],
+      contextScope: ['constitution', 'previousChapterEnding'],
       currentAnchor: '上一章停在女主收到旧信',
       pendingHooks: ['black_mark'],
       secretsToWithhold: ['旧信真正寄件人'],
@@ -84,17 +87,40 @@ describe('writing planning artifacts', () => {
         informationLeak: true,
         worldRuleConflict: false,
         resourceDrift: false,
-        genericAiPhrasing: true,
-        notes: ['避免解释性独白'],
+        genericAiPhrasing: false,
       },
-      writeTool: 'chapter.createDraft',
+      sandboxProposal: createNovelCopilotSandboxProposalContract({
+        capability: 'chapter.edit',
+        targetPaths: ['chapters/0001/0004.md'],
+      }),
     };
 
     const markdown = formatPreWriteCheckMarkdown(check);
 
     expect(markdown).toContain('## PRE_WRITE_CHECK');
-    expect(markdown).toContain('- 写入方式: chapter.createDraft');
+    expect(markdown).toContain('- 虚拟编辑能力: chapter.edit');
+    expect(markdown).toContain('- 预览工具: workspace.previewChanges');
+    expect(markdown).toContain('- 提案工具: workspace.proposeChanges');
+    expect(markdown).toContain('chapters/0001/0004.md');
     expect(markdown).toContain('- 信息越界: risk');
-    expect(markdown).toContain('- AI 味高危: risk');
+  });
+
+  it('keeps planning conversational until an explicit sandbox persistence contract exists', () => {
+    const proposal: PlanningSandboxProposal = {
+      userRequestedPersistence: true,
+      granularity: 'volume',
+      sandboxProposal: createNovelCopilotSandboxProposalContract({
+        capability: 'outline.edit',
+        targetPaths: ['outline/volume-0002.md'],
+      }),
+    };
+
+    const markdown = formatPlanningSandboxProposalMarkdown(proposal);
+
+    expect(markdown).toContain('用户已明确要求保存: yes');
+    expect(markdown).toContain('outline.edit');
+    expect(markdown).toContain('workspace.previewChanges');
+    expect(markdown).toContain('workspace.proposeChanges');
+    expect(markdown).toContain('outline/volume-0002.md');
   });
 });

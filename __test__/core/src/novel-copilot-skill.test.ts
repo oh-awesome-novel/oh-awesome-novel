@@ -1,10 +1,17 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
   NOVEL_COPILOT_ALLOWED_TOOLS,
   NOVEL_COPILOT_CAPABILITIES,
   NOVEL_COPILOT_QUICK_COMMANDS,
+  NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES,
+  createNovelCopilotSandboxProposalContract,
   createDefaultNovelCopilotSkill,
+  loadNovelCopilotSkill,
+  parseNovelCopilotSandboxProposalContract,
   type NovelCopilotQuickCommandId,
 } from '@oh-awesome-novel/core';
 
@@ -32,12 +39,11 @@ const implementedToolNames = [
   'summary.get',
   'constitution.get',
   'workflow.get',
-  'chapter.createDraft',
-  'character.updatePersonality',
-  'state.set',
-  'timeline.add',
-  'foreshadow.create',
-  'summary.generateChapter',
+  'bash',
+  'readFile',
+  'writeFile',
+  'workspace.previewChanges',
+  'workspace.proposeChanges',
 ];
 
 describe('novel copilot skill contract', () => {
@@ -87,7 +93,7 @@ describe('novel copilot skill contract', () => {
     );
   });
 
-  it('keeps allowed tools limited to implemented read and write-intent tools', () => {
+  it('keeps allowed tools limited to projected reads and sandbox editing', () => {
     expect([...NOVEL_COPILOT_ALLOWED_TOOLS]).toEqual(implementedToolNames);
   });
 
@@ -99,7 +105,7 @@ describe('novel copilot skill contract', () => {
 
     expect(writeNextCommand?.prompt).toContain('PRE_WRITE_CHECK');
     expect(skill.system).toContain('PRE_WRITE_CHECK');
-    expect(skill.system).toContain('chapter.createDraft');
+    expect(skill.system).toContain('fixed in-memory projection');
     expect(writeNextCommand?.prompt).not.toContain('precommit');
     expect(writeNextCommand?.prompt).not.toContain('postcommit');
   });
@@ -116,8 +122,7 @@ describe('novel copilot skill contract', () => {
     expect(planNextCommand?.prompt).toContain('轻量本章契约');
     expect(planNextCommand?.prompt).not.toContain('CBN/CPNs/CEN');
     expect(volumeCommand?.prompt).toContain('CBN/CPNs/CEN');
-    expect(skill.system).toContain('Do not impose those heavy fields');
-    expect(skill.system).toContain('Planning outputs are assistant-visible artifacts');
+    expect(skill.system).toContain('Planning remains assistant or session output');
   });
 
   it('makes review report-only and separates it from settlement', () => {
@@ -127,9 +132,8 @@ describe('novel copilot skill contract', () => {
     );
 
     expect(reviewCommand?.prompt).toContain('默认只输出 report-only');
-    expect(reviewCommand?.prompt).toContain('不要隐式改写、整理本章或更新状态');
-    expect(skill.system).toContain('/审稿 is report-only by default.');
-    expect(skill.system).toContain('A review report is not settlement.');
+    expect(reviewCommand?.prompt).toContain('默认只输出 report-only');
+    expect(skill.system).toContain('Review is report-only by default.');
   });
 
   it('protects plot facts when reducing AI-like prose', () => {
@@ -139,10 +143,8 @@ describe('novel copilot skill contract', () => {
     );
 
     expect(deAiCommand?.prompt).toContain('不改变剧情事实');
-    expect(skill.system).toContain('/去AI味 is expression-level revision');
-    expect(skill.system).toContain('Do not change plot facts');
-    expect(skill.system).toContain('Do not change plot facts, chronology');
-    expect(skill.system).toContain('hooks, character traits, key information');
+    expect(skill.system).toContain('De-AI work may change expression');
+    expect(skill.system).toContain('never plot facts, chronology');
   });
 
   it('returns fresh command and capability arrays for each default skill', () => {
@@ -153,5 +155,81 @@ describe('novel copilot skill contract', () => {
     expect(first.quickCommands[0]).not.toBe(second.quickCommands[0]);
     expect(first.capabilities).not.toBe(second.capabilities);
     expect(first.capabilities[0]).not.toBe(second.capabilities[0]);
+  });
+
+  it('uses the sandbox contract as the only default skill', () => {
+    const skill = createDefaultNovelCopilotSkill();
+
+    expect(skill.allowedTools).toEqual([...NOVEL_COPILOT_ALLOWED_TOOLS]);
+    expect(skill.allowedTools).toEqual(expect.arrayContaining([
+      'bash',
+      'readFile',
+      'writeFile',
+      'workspace.previewChanges',
+      'workspace.proposeChanges',
+    ]));
+    expect(skill.system).toContain('fixed in-memory projection');
+    expect(skill.system).toContain('/workspace');
+    expect(skill.system).toContain('workspace.previewChanges');
+    expect(skill.system).toContain('workspace.proposeChanges');
+    expect(skill.system).toContain('Human Accept');
+    expect(
+      skill.quickCommands.find((command) => command.id === 'chapter.writeNext')?.prompt,
+    ).toContain('固定内存工作区');
+  });
+
+  it('creates a host-selected, path-bounded sandbox proposal contract', () => {
+    expect(NOVEL_COPILOT_SANDBOX_EDIT_CAPABILITIES).toContain('chapter.edit');
+    const contract = createNovelCopilotSandboxProposalContract({
+      capability: 'chapter.edit',
+      targetPaths: ['chapters/0001/0004.md'],
+    });
+
+    expect(contract).toEqual({
+      environment: 'fixed-in-memory-workspace',
+      capability: 'chapter.edit',
+      targetPaths: ['chapters/0001/0004.md'],
+      previewTool: 'workspace.previewChanges',
+      proposalTool: 'workspace.proposeChanges',
+      canonicalWriteBoundary: 'human-accept',
+    });
+    expect(() => createNovelCopilotSandboxProposalContract({
+      capability: 'chapter.edit',
+      targetPaths: ['../escape.md'],
+    })).toThrow('workspace-relative POSIX');
+    expect(() => createNovelCopilotSandboxProposalContract({
+      capability: 'chapter.edit',
+      targetPaths: ['chapters/a.md', 'chapters/a.md'],
+    })).toThrow('unique');
+    expect(parseNovelCopilotSandboxProposalContract(contract)).toEqual(contract);
+    expect(() => parseNovelCopilotSandboxProposalContract({
+      ...contract,
+      proposalTool: 'workspace.invalidProposal',
+    })).toThrow('unsupported boundary');
+    expect(() => parseNovelCopilotSandboxProposalContract({
+      ...contract,
+      extra: true,
+    })).toThrow('unknown or missing fields');
+  });
+
+  it('loads the sandbox skill through the default loader', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-sandbox-skill-'));
+
+    try {
+      await mkdir(join(workspaceRoot, '.oan', 'skills'), { recursive: true });
+      await writeFile(
+        join(workspaceRoot, '.oan', 'skills', 'novel-copilot.md'),
+        'Prefer terse scene summaries.',
+        'utf-8',
+      );
+
+      const skill = await loadNovelCopilotSkill({ workspaceRoot });
+
+      expect(skill.name).toBe('novel-copilot');
+      expect(skill.system).toContain('Prefer terse scene summaries.');
+      expect(skill.allowedTools).toContain('workspace.proposeChanges');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -214,7 +214,7 @@ describe('reference deconstruction client', () => {
       'reference-1',
       'run-1',
       input,
-    )).rejects.toThrow('invalid payload');
+    )).rejects.toThrow('inconsistent payload');
     await expect(client.publishReferenceDeconstructionRun(
       'reference-1',
       'run-1',
@@ -1725,7 +1725,12 @@ function publishResult(): ReferenceDeconstructionPublishResult {
       id: pendingActionId,
       title: 'Publish reference reference-1',
       description: 'Publish reviewed deconstruction run run-1.',
-      touchedFiles: files.map((file) => file.path),
+      changes: [...files].sort((left, right) => left.path.localeCompare(right.path)).map((file) => ({
+        operation: 'update' as const,
+        path: file.path,
+        oldHash: '1'.repeat(64),
+        newHash: file.checksumSha256,
+      })),
       diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
       createdAt: '2026-07-22T00:09:01.000Z',
       status: 'pending',

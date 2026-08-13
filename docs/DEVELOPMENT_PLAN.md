@@ -2,482 +2,229 @@
 
 ## Planning Principle
 
-先打稳文件系统、AI SDK ToolSet、Aider-style Runtime、write-intent、Human Approval 和 `.workspace` shadow write，再用 `0800 SemanticPatch Apply Engine` 收敛正式写入核心。
+当前唯一正式写入方向是：
 
-Apply Engine 是最终写入架构，但完整实现不属于早期已完成 milestone。当前任务索引以 `0400 -> 0600 -> 0800` 为准：
+```text
+bash-tool + just-bash fixed sandbox
+  -> CandidateChangeSet
+  -> PendingAction
+  -> Human Accept
+  -> ChangeMaterializer
+  -> Git
+```
 
-- `0400 Restricted File Write Tool`：只用于快速验证 agent loop。
-- `0600 Write Intent And Human Approval`：已完成 PendingAction / shadow write / Accept-Reject 过渡链路。
-- `0800 SemanticPatch Apply Engine`：后续正式实现，用 SemanticPatch executor 替换早期候选全文 / 简化写入路径。
+确定性 Reference/Play producer 可直接生成同一种 ChangeSet。项目不实现 feature flag 双写、dual-run、旧记录 migrator 或 runtime fallback engine。
 
-不要一开始做：
-
-- Multi-Agent
-- Background autonomous agent
-- Extension marketplace
-- Vector database memory
-- Rich text editor
+优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database。
 
 ## Milestone Overview
 
 ```text
-M0  Documentation Foundation
-M1  Project Scaffolding
-M2  Filesystem Spec And Example Novel
-M3  Markdown / YAML Engine
-M4  SemanticPatch Apply Engine Design Target
-M5  AI SDK ToolSet And Read Tools
-M6  Write Intent Tools And Human Approval
-M7  Aider-style Copilot Runtime
-M8  Minimal Copilot Interface
-M9  Summary And Memory Layer
-M10 Workflow And Skills
-M11 Extension System
-M12 Polish, Tests, Import / Export
+M0   Documentation Foundation
+M1   Project Scaffolding
+M2   Filesystem Spec And Example Novel
+M3   Markdown / YAML Engine
+M4   Historical Write-engine Design (superseded)
+M5   AI SDK ToolSet And Read Tools
+M6   Human Approval Vertical Slice
+M7   Aider-style Copilot Runtime
+M8   Minimal Copilot Interface
+M9   Summary And Memory Layer
+M10  Workflow And Skills
+M11  Extension System
+M12  Polish, Tests, Import / Export
+M13  Sandbox Change Engine And Unified Producers
 ```
 
 ## M0. Documentation Foundation
 
-Goal:
+Goal: 建立稳定蓝图，让后续开发不漂移到数据库优先、Repository Layer 或重型 Agent 平台。
 
-建立项目稳定蓝图，让后续 Codex 不漂移。
+Delivered:
 
-Deliverables:
-
-- `docs/README.md`
 - `docs/PROJECT_VISION.md`
 - `docs/REQUIREMENTS.md`
 - `docs/ARCHITECTURE.md`
 - `docs/FILESYSTEM_SPEC.md`
-- `docs/APPLY_ENGINE.md`
-- `docs/DEVELOPMENT_PLAN.md`
-- ADRs
+- `docs/SANDBOX_CHANGE_ENGINE.md`
+- `docs/AGENT_RUNTIME_AND_TOOLS.md`
+- `docs/HUMAN_APPROVAL_AND_GIT.md`
+- `docs/AGENT_OPERATING_MANUAL.md`
+- ADRs and task index
 
-Done Criteria:
-
-- 所有核心设计都围绕 filesystem first。
-- 不再保留 Repository Layer 作为最终架构。
-- Apply Engine 被明确为核心模块。
+Done: stable docs agree on fixed in-memory editing, ChangeSet authority, PendingAction approval and Git boundary.
 
 ## M1. Project Scaffolding
 
-Goal:
-
-建立 `oh-awesome-novel` 应用源码骨架。
-
-Deliverables:
-
-- TypeScript 项目。
-- 基础测试框架。
-- 项目配置。
-- npm workspace / monorepo 包结构。
-- Electron desktop app skeleton。
-- Vue renderer app skeleton。
-- 根目录 `__test__/*` 测试 workspace。
-
-Canonical Layout:
+Canonical source layout：
 
 ```text
-packages/
-├── core/
-├── tools/
-├── runtime/
-├── agent/
-├── backend/
-└── ui-vue/
-
-apps/
-├── desktop/
-└── desktop-ui/
-
-__test__/
-├── core/
-├── tools/
-├── runtime/
-├── agent/
-└── backend/
+packages/{core,tools,runtime,agent,backend,client}
+apps/{desktop,desktop-ui,http-backend}
+__test__/<module>/
 ```
 
-Done Criteria:
-
-- 可以运行测试。
-- 可以读取一个小说项目目录。
-- 新增核心模块优先落在 `packages/*`，不要回到旧的单体 `src/` 布局。
-- App shell 和 renderer 落在 `apps/*`。
-- 测试按模块放在根目录 `__test__/*` workspace。
+Done: monorepo packages/apps and root test workspaces exist; new implementation must not return to a root `src/` tree.
 
 ## M2. Filesystem Spec And Example Novel
 
-Goal:
+Goal: 把 Object File Tree 变成可验证 workspace。
 
-把文档中的目录结构变成可验证样例。
+Done criteria:
 
-Deliverables:
-
-- `examples/sample-novel/`
-- Object Domain 样例。
-- Collection Domain 样例。
-- Narrative Domain 样例。
-- JSON Schema 或 Zod schema。
-
-Done Criteria:
-
-- 样例包含 Character、World、Chapter、State、Timeline、Foreshadow、Summary、Constitution。
-- 测试能验证基础文件存在和 YAML 有效。
+- Character、World、Chapter、Outline、State、Timeline、Foreshadow、Summary 与 Constitution 样例。
+- stable numbered chapter paths。
+- YAML/frontmatter/path identity validation。
+- canonical vs derived vs disposable state 明确分离。
 
 ## M3. Markdown / YAML Engine
 
-Goal:
+Goal: 提供 deterministic 读取、parse、serialize 与 final-document validation primitives。
 
-实现文件读写基础能力。
+原则：engine 可以在内存中产生 draft，但 canonical 写入只能由 accepted materializer 完成。
 
-Deliverables:
+## M4. Historical Write-engine Design (Superseded)
 
-- Markdown Engine
-- YAML Engine
-- Frontmatter parser
-- Heading section parser
-- Basic serializer
+本里程碑只保留早期专用 patch DSL 的历史事实。当前实现和后续 task 均不得据此恢复专用 executor、typed canonical-write tools 或双协议。
 
-Initial API:
-
-```ts
-loadMarkdown(file)
-parseSections(markdown)
-replaceSection(file, section, content)
-appendSection(file, section, content)
-loadYaml(file)
-yamlGet(file, path)
-yamlSetDraft(file, path, value)
-```
-
-Done Criteria:
-
-- 能解析 `characters/heroine/personality.md`。
-- 能更新 `state/characters.yaml` 的某个 path。
-- 更新前不直接写盘，只返回 draft。
-
-## M4. SemanticPatch Apply Engine Design Target
-
-Goal:
-
-明确正式写入核心的目标形态：`SemanticPatch -> diff -> PendingAction`。
-
-注意：这一阶段描述的是架构目标，不表示完整 Apply Engine 已实现。完整代码实现由后续 `0800 SemanticPatch Apply Engine` 任务承接。
-
-Deliverables:
-
-- SemanticPatch 类型设计。
-- ObjectPatch executor 设计。
-- CollectionPatch executor 设计。
-- NarrativePatch 初版设计。
-- Diff generator 设计。
-- Patch validator 设计。
-- PendingAction store 设计。
-- 与 `0600 Write Intent And Human Approval` 的迁移边界。
-
-Done Criteria:
-
-- Apply Engine 被确认为正式写入方向。
-- 早期 write-intent 工具可以先生成 PendingAction 和 shadow write。
-- `0800` 明确负责把现有正式写入工具迁移到 SemanticPatch executor。
-- 用户确认前不写真实目标文件。
+有长期价值的路径限制、baseline、diff、人类审批、事务、恢复与 Git 语义已经迁移到 M13。
 
 ## M5. AI SDK ToolSet And Read Tools
 
-Goal:
+Goal: 使用 Vercel AI SDK `ToolSet` 暴露领域读取能力，不定义第二套 Tool abstraction。
 
-暴露只读领域工具。
+Current read families：character、world、chapter、state、timeline、foreshadow、summary、constitution、workflow，以及 bounded workspace/sandbox reads。
 
-Deliverables:
+写 turn 中所有文件读取必须来自同一个 fixed projection。
 
-- AI SDK `ToolSet`
-- 基于 AI SDK `tool()` / `jsonSchema()` 的 read tools
-- `createReadTools()`
-- 如 UI 后续需要，增加 `ToolSet` 外围薄 metadata map
-- Read tools
+## M6. Human Approval Vertical Slice
 
-Initial Tools:
+Goal: 先证明“候选 -> PendingAction -> Accept/Reject -> Git diff”闭环。
 
-```text
-character.get
-character.list
-world.search
-chapter.get
-state.get
-timeline.list
-foreshadow.list
-summary.get
-constitution.get
-workflow.get
-```
-
-Done Criteria:
-
-- CLI 可以调用 read tools。
-- Tool result 结构化。
-- Tool call log 可记录。
-- 不实现 `defineStoryTool()`、`StoryTool` 或独立 `RuntimeToolRegistry`。
-
-## M6. Write Intent Tools And Human Approval
-
-Goal:
-
-把写操作转成 PendingAction。
-
-Deliverables:
-
-- `character.updatePersonality`
-- `state.set`
-- `timeline.add`
-- `foreshadow.create`
-- `summary.generateChapter` 初版
-- Approval CLI
-
-Done Criteria:
-
-- 所有写工具只返回 PendingAction。
-- Accept 后写文件。
-- Reject 不写文件。
-- 写入后 `git diff` 可见。
+历史 vertical slice 已完成；其临时专用 write API 和内部 candidate layout 不再是 current architecture。M13 保留审批不变量并统一到 strict ChangeSet/store/materializer。
 
 ## M7. Aider-style Copilot Runtime
 
-Goal:
+Goal: provider-agnostic tool loop、streaming、max-loop guard、tool error result、bounded audit 与 turn finalizer。
 
-接入模型，实现 Tool Calling Loop。
+Done criteria:
 
-Deliverables:
-
-- OpenAI compatible model client。
-- Vercel AI SDK integration。
-- Tool loop。
-- Context builder。
-- Max loop guard。
-
-Done Criteria:
-
-- 用户可以自然语言请求。
-- Runtime 能调用 read tool。
-- Runtime 能调用 write intent tool。
-- Tool calls 可见。
+- natural-language request can call read/edit tools。
+- one sandbox session per turn。
+- explicit/fallback proposal exactly once。
+- abort/error discard unpersisted candidate。
+- events/tool logs never persist raw bash args。
+- runtime does not import provider/domain infrastructure。
 
 ## M8. Minimal Copilot Interface
 
-Goal:
-
-先做最小可用交互，不追求完整 IDE。
-
-Preferred Shape:
-
 ```text
-HTTP backend
-  -> SSE agent chat endpoint
-  -> Vercel AI UI stream compatibility
-  -> Vue frontend using @ai-sdk/vue
-  -> Electron main process composition
+Electron
+  -> localhost HTTP backend
+  -> SSE / AI SDK UI stream
+  -> Vue + @ai-sdk/vue
 ```
 
-MVP 优先使用本地 HTTP backend，而不是单独实现 Electron-only UI stream。
-
-Electron main process 启动 backend，Vue renderer 通过 `@ai-sdk/vue` 连接 backend。这样 Web panel、Electron renderer、后续调试页面可以复用同一套 agent 接入协议。
-
-Deliverables:
-
-- Chat input。
-- Streaming assistant message。
-- HTTP SSE transport。
-- Vercel AI frontend compatibility layer。
-- Vue `@ai-sdk/vue` agent 对话闯卡。
-- Electron main process + Vue frontend + HTTP backend 组合。
-- Tool log。
-- Pending action list。
-- Diff preview。
-- Accept / Reject。
-
-Post-MVP UI Tasks:
-
-- Global workspace launcher, similar to a JetBrains / WebStorm project list.
-- Workspace entry LLM provider configuration gate.
-- NoteGen-inspired workspace shell: left file tree, center plain-text file viewer, right Copilot.
-- Chapter navigation view: derive readable volume/chapter list from stable numbered chapter files.
-- Workspace home state: no file selected, Copilot hidden, quick actions visible.
-- Workspace global search using MiniSearch over current workspace text files.
-- Git history and sync page, preferably by reusing a lightweight open-source Git UI.
-
-Done Criteria:
-
-- 能跑完整 vertical slice。
-- 前端通过 HTTP SSE 获取 agent 流式消息。
-- Vue frontend 可以直接使用 `@ai-sdk/vue`。
-- Electron 启动后能组合 Vue frontend 和本地 HTTP backend。
-- 后续 UI 任务仍不得让 frontend 绕过 backend / agent 直接写 filesystem。
+Deliverables: chat streaming、tool activity、PendingAction list/detail、create/update/delete diff、Accept/Reject、Git result。Frontend 不接触 filesystem、internal artifact、Git process 或 materializer。
 
 ## M9. Summary And Memory Layer
 
-Goal:
-
-建立文件型 Memory。
-
-Deliverables:
-
-- Chapter summary generator。
-- Volume summary generator。
-- Global summary generator。
-- Context assembler。
-
-Done Criteria:
-
-- 生成新章节时不加载整本小说。
-- Context 来自摘要、状态、时间线、伏笔。
+Goal: 使用 chapter/volume/global summaries、state、timeline 与 foreshadow 构造 bounded context，不加载整本小说，不把向量数据库当事实源。
 
 ## M10. Workflow And Skills
 
-Goal:
+Goal: 作者可控的 Workflow、Writing Profile、Skill Prompt Pack 和 allowed tool filter。
 
-实现作者可控的创作流程和 Skill。
+tool filter 不能扩大 host-selected capability；Workflow 不能变成隐藏 planner。
 
-Deliverables:
-
-- `.oan/workflow.yaml` loader。
-- Skill loader。
-- Allowed tool filter。
-- Prompt pack support。
-
-Done Criteria:
-
-- 不同 Skill 可限制工具。
-- Workflow 不变成隐藏 planner。
-
-Detailed vNext split:
-
-`docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md` 把参考项目吸收后的 agent 写作指引拆成后续可执行任务：
-
-- `1000` Agent Writing Guide vNext Spec And Skill Contracts。（Completed）
-- `1010` Context Package And Source Discipline。（Completed）
-- `1020` Planning Commands And Prewrite Calibration。（Completed）
-- `1030` Review And Settlement Workflow。（Completed）
-- `1040` Session Artifacts And Author Reports。（Completed）
-- `1050` Projections And Project Health。（Completed）
-- `1060` Play Mode And Tavern Character Import。（Completed）
-
-这些任务必须继续遵守：单 agent Aider-style runtime、filesystem-first、PendingAction / Human Approval、reference 只作为可追溯写作参考。
+Related completed split: tasks `1000`–`1100` cover context discipline、review/settlement、session artifacts、projections、Play 与 reference selection。
 
 ## M11. Extension System
 
-Goal:
+Goal: 轻量 extension manifest、Tool/Prompt/Workflow/Constitution template registration。
 
-参考 Goose 的扩展思想。
-
-Deliverables:
-
-- Extension manifest。
-- Tool registration。
-- Prompt pack registration。
-- Workflow template registration。
-- Constitution template registration。
-
-Done Criteria:
-
-- Extension 可插拔。
-- 不引入复杂 runtime。
+Extensions 不得获得 host shell、绕过 sandbox policy、直接写 canonical 文件或引入复杂 runtime。
 
 ## M12. Polish, Tests, Import / Export
 
-Goal:
+Goal: old manuscript import、readable export、Git UI、validation、跨平台 package 与真实 workspace polish。
 
-提高真实可用性。
+Import/export 是显式用户 workflow；AI 导入产生 canonical change 时仍走 PendingAction。
 
-Deliverables:
+## M13. Sandbox Change Engine And Unified Producers
 
-- Import old flat Markdown。
-- Export readable manuscript。
-- Git helper。
-- Better validation。
-- UI polish。
+Task `0800` 冻结并验证：
 
-Done Criteria:
+1. pinned `bash-tool` / `just-bash` / diff dependencies and packaged resources；
+2. fixed `InMemoryFs` projection、`TrackingFs`、`PolicyFs`；
+3. host-selected capability 与 complete final validators；
+4. normalized create/update/delete `CandidateChangeSet`；
+5. strict schema v1 PendingAction/prepared preview/store/public DTO；
+6. durable `ChangeMaterializer` transaction、crash recovery、Git receipts；
+7. Runtime/Agent shared session、fallback finalizer、abort/dispose 与 audit secrecy；
+8. Reference publication/adoption、Play adoption deterministic producers；
+9. Backend/Client/Desktop atomic production cut；
+10. one-time disposable state reset；
+11. stable docs and legacy architecture checker；
+12. full tests/build/package/real Electron smoke。
 
-- 可以管理一个小型真实小说项目。
-- 可被 Codex / Aider / Crush 外部工具编辑。
+M13 done criteria:
+
+- Accept 前任意 model command 不改变 canonical bytes。
+- Accept 不依赖 shell runtime 或 diff parsing。
+- multi-file create/update/delete rollback and recovery are deterministic。
+- every writable family has complete final validator。
+- public DTO never exposes candidate bytes/internal artifact paths。
+- no compatibility engine or old state reader remains。
+- packaged desktop uses pinned notices/resources and passes smoke。
 
 ## MVP Vertical Slice
 
-最小可验证场景：
-
 ```text
-1. 初始化 sample novel。
-2. 用户输入：女主在第 3 章重伤。
-3. Runtime 读取 character、chapter、state。
-4. Runtime 调用 state.set、timeline.add、foreshadow.create。
-5. write-intent / PendingAction 预览链路生成 diff。
-6. 用户 Accept。
-7. 文件写入。
-8. git diff 显示修改。
+1. 初始化或打开 novel workspace。
+2. 作者明确请求编辑章节/角色/状态/时间线等。
+3. Host 选择 exact capability 并创建 fixed projection。
+4. Runtime 读取并在内存 VFS 中迭代修改。
+5. finalize 生成 CandidateChangeSet 和 PendingAction。
+6. UI 展示 structured changes + diff。
+7. 作者 Accept。
+8. ChangeMaterializer 事务化写入。
+9. Git auto-commit 或显式 quick commit。
 ```
 
-后续 `0800 SemanticPatch Apply Engine` 完成后，第 5 步应收敛为 Apply Engine 生成 diff。
+## Risks And Mitigations
 
-## Risks
+### Coarse Files
 
-### R1. 文件粒度过粗
+Risk: 候选退化为巨大全文 rewrite。Mitigation: Object File Tree、bounded file size、diff review 与针对性 prompt/policy。
 
-风险：
+### Sandbox Boundary Drift
 
-AI 修改会变成大文件 rewrite。
+Risk: 逐渐变成通用 host shell。Mitigation: fixed in-memory projection、exact command/capability allowlists、full IFS policy、packaged dependency gates。
 
-缓解：
+### Incomplete Validation
 
-采用 Object File Tree。
+Risk: 只 parse YAML，却破坏 domain invariant。Mitigation: validator inventory；缺失 validator 的 family 保持 read-only。
 
-### R2. Apply Engine 过度泛化
+### Transaction Ambiguity
 
-风险：
+Risk: crash 后猜测 rollback/finalize。Mitigation: durable terminal commit point、operation-aware journal、pre/post-commit deterministic recovery。
 
-变成通用 patch 引擎，复杂但不好用。
+### Runtime Framework Drift
 
-缓解：
+Risk: 加入 Planner、多 Agent 或 hidden retry。Mitigation: runtime dependency boundary and focused tests。
 
-只做小说七个固定领域。
+### UI Authority Drift
 
-### R3. Runtime 漂移成 Agent Framework
+Risk: UI 从 diff/artifact 推断 path 或决定 materialization。Mitigation: strict public DTO，changes-derived labels，Backend owns decisions。
 
-风险：
-
-加入 Planner、多 Agent、复杂 retry。
-
-缓解：
-
-保留 Aider-style loop。
-
-### R4. UI 过早扩大
-
-风险：
-
-核心写入链路没稳就做复杂界面。
-
-缓解：
-
-先 CLI vertical slice。
-
-### R5. Memory 变成上下文垃圾桶
-
-风险：
-
-把所有文件塞 prompt。
-
-缓解：
-
-Summary + Context Assembler，不用 vector DB 当事实源。
-
-## Development Rules For Codex
-
-每个实现任务都应带上：
+## Development Rules
 
 ```text
-Do NOT introduce LangChain, AutoGen, CrewAI, Semantic Kernel or heavy agent frameworks.
-Prefer simple TypeScript.
-Keep runtime understandable.
-Never bypass Human Approval.
-Never rewrite entire files when SemanticPatch can express the change.
+Do not introduce heavy agent frameworks.
+Prefer explicit TypeScript and strict schemas.
+Never expose host shell or filesystem to the model.
+Never materialize candidate files before human Accept.
+Never parse diff or replay commands during Accept.
+Never maintain a compatibility write engine.
 ```

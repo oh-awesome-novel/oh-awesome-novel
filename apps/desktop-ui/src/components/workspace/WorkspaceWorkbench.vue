@@ -13,7 +13,6 @@ import type {
   ChapterIndexChapter,
   ChapterIndexStatus,
   FileTreeNode,
-  PendingAction,
   PlayWritingReferenceAttachment,
   ProjectHealth,
   WorkspaceOnboardingInput,
@@ -51,8 +50,8 @@ defineProps<{
   queuedPrompt: string;
   rightShown: boolean;
   rightTab: WorkspaceRightTab;
-  pendingActions: Array<PendingAction & {
-    decision?: 'accepting' | 'rejecting' | 'accepted' | 'rejected';
+  pendingActions: Array<PendingActionView & {
+    decision?: 'accepting' | 'rejecting' | 'quick-committing' | 'accepted' | 'rejected';
     decisionError?: string;
   }>;
   selectedPendingAction?: PendingActionView;
@@ -86,6 +85,7 @@ const emit = defineEmits<{
   promptConsumed: [];
   acceptPendingAction: [action: PendingActionView];
   rejectPendingAction: [action: PendingActionView];
+  quickCommitPendingAction: [action: PendingActionView];
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   reviewPendingActionId: [pendingActionId: string];
@@ -189,6 +189,7 @@ const emit = defineEmits<{
         @configure-provider="emit('configureProvider')"
         @accept-pending-action="emit('acceptPendingAction', $event)"
         @reject-pending-action="emit('rejectPendingAction', $event)"
+        @quick-commit-pending-action="emit('quickCommitPendingAction', $event)"
         @review-pending-action="emit('reviewPendingAction', $event)"
         @open-pending-action-diff="emit('openPendingActionDiff', $event)"
         @refresh-writing-references="emit('refreshWritingReferences')"
@@ -216,6 +217,7 @@ const emit = defineEmits<{
       @close="emit('closeRight')"
       @accept-pending-action="emit('acceptPendingAction', $event)"
       @reject-pending-action="emit('rejectPendingAction', $event)"
+      @quick-commit-pending-action="emit('quickCommitPendingAction', $event)"
       @review-pending-action="emit('reviewPendingAction', $event)"
       @open-pending-action-diff="emit('openPendingActionDiff', $event)"
       @review-pending-action-id="emit('reviewPendingActionId', $event)"

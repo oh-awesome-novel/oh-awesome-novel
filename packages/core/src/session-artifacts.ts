@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 export const SESSION_ARTIFACT_FILES = [
   'run.yaml',
   'context-package.yaml',
   'outputs.yaml',
-  'proposed-patches.yaml',
+  'proposed-changes.yaml',
   'unresolved.md',
 ] as const;
 
@@ -40,18 +40,51 @@ export interface SessionOutputArtifact {
   summary: string;
 }
 
-export interface SessionProposedPatch {
+export const SESSION_PROPOSED_CHANGES_SCHEMA_VERSION = 1 as const;
+export const UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA =
+  'UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA' as const;
+
+export type SessionProposedChangeStatus = 'pending' | 'accepted' | 'rejected';
+export type SessionProposedFileOperation = 'create' | 'update' | 'delete';
+
+export interface SessionProposedFileChange {
+  operation: SessionProposedFileOperation;
+  path: string;
+  oldHash?: string;
+  newHash?: string;
+}
+
+export interface SessionProposedChange {
   id: string;
   title: string;
-  touchedFiles: string[];
-  status: 'pending' | 'accepted' | 'rejected';
+  status: SessionProposedChangeStatus;
+  createdAt: string;
+  decidedAt?: string;
+  changes: SessionProposedFileChange[];
+}
+
+export interface SessionProposedChangesDocument {
+  schemaVersion: typeof SESSION_PROPOSED_CHANGES_SCHEMA_VERSION;
+  kind: 'session-proposed-changes';
+  sessionId: string;
+  proposedChanges: SessionProposedChange[];
 }
 
 export interface AgentSessionArtifact {
   run: SessionRunMetadata;
   outputs: SessionOutputArtifact[];
-  proposedPatches: SessionProposedPatch[];
+  proposedChanges: SessionProposedChange[];
   unresolved: string[];
+}
+
+export class SessionProposedChangesSchemaError extends Error {
+  readonly code: typeof UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionProposedChangesSchemaError';
+    this.code = UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA;
+  }
 }
 
 export interface SessionResumeFileSnapshot {
@@ -118,14 +151,83 @@ export const writeSessionOutputs = async (
   outputs: SessionOutputArtifact[],
 ): Promise<string> => writeSessionYaml(workspaceRoot, sessionId, 'outputs.yaml', { outputs });
 
-export const writeSessionProposedPatches = async (
+export const writeSessionProposedChanges = async (
   workspaceRoot: string,
   sessionId: string,
-  patches: SessionProposedPatch[],
-): Promise<string> =>
-  writeSessionYaml(workspaceRoot, sessionId, 'proposed-patches.yaml', {
-    proposedPatches: patches,
+  proposedChanges: SessionProposedChange[],
+): Promise<string> => {
+  const document = parseSessionProposedChanges({
+    schemaVersion: SESSION_PROPOSED_CHANGES_SCHEMA_VERSION,
+    kind: 'session-proposed-changes',
+    sessionId,
+    proposedChanges,
   });
+
+  return writeSessionYaml(
+    workspaceRoot,
+    sessionId,
+    'proposed-changes.yaml',
+    document,
+  );
+};
+
+export const readSessionProposedChanges = async (
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<SessionProposedChangesDocument> => {
+  const filePath = resolveSessionArtifactPath(
+    workspaceRoot,
+    sessionId,
+    'proposed-changes.yaml',
+  );
+  const value = parse(await readFile(filePath, 'utf-8'));
+  const document = parseSessionProposedChanges(value);
+  if (document.sessionId !== sessionId) {
+    throw new Error('Session proposed changes sessionId does not match its artifact path.');
+  }
+  return document;
+};
+
+export function parseSessionProposedChanges(
+  value: unknown,
+): SessionProposedChangesDocument {
+  if (!isRecord(value)) {
+    throwUnsupportedSessionProposedChanges('Session proposed changes must be an object.');
+  }
+  if (
+    value.schemaVersion !== SESSION_PROPOSED_CHANGES_SCHEMA_VERSION
+    || value.kind !== 'session-proposed-changes'
+  ) {
+    throwUnsupportedSessionProposedChanges(
+      'Unsupported session proposed changes schemaVersion or kind.',
+    );
+  }
+
+  assertExactKeys(value, [
+    'schemaVersion',
+    'kind',
+    'sessionId',
+    'proposedChanges',
+  ], 'Session proposed changes');
+  const sessionId = requireSafeSessionId(value.sessionId);
+  if (!Array.isArray(value.proposedChanges)) {
+    throw new Error('Session proposed changes proposedChanges must be an array.');
+  }
+
+  const proposedChanges = value.proposedChanges.map((change, index) =>
+    parseSessionProposedChange(change, index));
+  assertUnique(
+    proposedChanges.map((change) => change.id),
+    'Session proposed change id',
+  );
+
+  return {
+    schemaVersion: SESSION_PROPOSED_CHANGES_SCHEMA_VERSION,
+    kind: 'session-proposed-changes',
+    sessionId,
+    proposedChanges,
+  };
+}
 
 export const writeSessionUnresolved = async (
   workspaceRoot: string,
@@ -149,10 +251,10 @@ export const writeAgentSessionArtifact = async (
 ): Promise<string[]> => Promise.all([
   writeSessionRunMetadata(workspaceRoot, artifact.run),
   writeSessionOutputs(workspaceRoot, artifact.run.sessionId, artifact.outputs),
-  writeSessionProposedPatches(
+  writeSessionProposedChanges(
     workspaceRoot,
     artifact.run.sessionId,
-    artifact.proposedPatches,
+    artifact.proposedChanges,
   ),
   writeSessionUnresolved(workspaceRoot, artifact.run.sessionId, artifact.unresolved),
 ]);
@@ -169,6 +271,21 @@ export const createSessionResumeBoundary = async (
     touchedFiles.map((file) => snapshotWorkspaceFile(workspaceRoot, file)),
   ),
 });
+
+export const createSessionResumeBoundaryFromProposedChanges = async (
+  workspaceRoot: string,
+  sessionId: string,
+  proposedChanges: SessionProposedChange[],
+  capturedAt = new Date().toISOString(),
+): Promise<SessionResumeBoundary> => createSessionResumeBoundary(
+  workspaceRoot,
+  sessionId,
+  [...new Set(
+    proposedChanges.flatMap((proposal) =>
+      proposal.changes.map((change) => normalizeSessionChangePath(change.path))),
+  )].toSorted(),
+  capturedAt,
+);
 
 export const checkSessionResumeBoundary = async (
   workspaceRoot: string,
@@ -289,6 +406,14 @@ function assertSafeSessionId(sessionId: string): void {
   }
 }
 
+function requireSafeSessionId(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('Session proposed changes sessionId must be a string.');
+  }
+  assertSafeSessionId(value);
+  return value;
+}
+
 function assertSessionArtifactFile(file: SessionArtifactFile): void {
   if (!SESSION_ARTIFACT_FILES.includes(file)) {
     throw new Error('Unsupported session artifact file.');
@@ -310,4 +435,182 @@ function formatResumePrompt(changedFiles: string[], missingFiles: string[]): str
 
 function formatList(items: string[]): string {
   return items.length ? items.map((item) => `- ${item}`).join('\n') : '- none';
+}
+
+function parseSessionProposedChange(
+  value: unknown,
+  index: number,
+): SessionProposedChange {
+  const label = `Session proposed change ${index}`;
+  const record = requireRecord(value, label);
+  assertExactKeys(
+    record,
+    ['id', 'title', 'status', 'createdAt', 'changes'],
+    label,
+    ['decidedAt'],
+  );
+  const id = requireOpaqueId(record.id, `${label} id`);
+  const title = requireNonEmptyString(record.title, `${label} title`);
+  const status = requireEnum(
+    record.status,
+    ['pending', 'accepted', 'rejected'],
+    `${label} status`,
+  );
+  const createdAt = requireIsoTimestamp(record.createdAt, `${label} createdAt`);
+  const decidedAt = record.decidedAt === undefined
+    ? undefined
+    : requireIsoTimestamp(record.decidedAt, `${label} decidedAt`);
+  if (status === 'pending' && decidedAt !== undefined) {
+    throw new Error(`${label} pending status must not have decidedAt.`);
+  }
+  if (status !== 'pending' && decidedAt === undefined) {
+    throw new Error(`${label} terminal status requires decidedAt.`);
+  }
+  if (!Array.isArray(record.changes) || record.changes.length === 0) {
+    throw new Error(`${label} changes must be a non-empty array.`);
+  }
+  const changes = record.changes.map((change, changeIndex) =>
+    parseSessionProposedFileChange(change, `${label} file change ${changeIndex}`));
+  assertUnique(changes.map((change) => change.path), `${label} path`);
+
+  return {
+    id,
+    title,
+    status,
+    createdAt,
+    ...(decidedAt ? { decidedAt } : {}),
+    changes,
+  };
+}
+
+function parseSessionProposedFileChange(
+  value: unknown,
+  label: string,
+): SessionProposedFileChange {
+  const record = requireRecord(value, label);
+  assertExactKeys(record, ['operation', 'path'], label, ['oldHash', 'newHash']);
+  const operation = requireEnum(
+    record.operation,
+    ['create', 'update', 'delete'],
+    `${label} operation`,
+  );
+  const path = normalizeSessionChangePath(
+    requireNonEmptyString(record.path, `${label} path`),
+  );
+  const oldHash = record.oldHash === undefined
+    ? undefined
+    : requireSha256(record.oldHash, `${label} oldHash`);
+  const newHash = record.newHash === undefined
+    ? undefined
+    : requireSha256(record.newHash, `${label} newHash`);
+
+  if (
+    (operation === 'create' && (oldHash !== undefined || newHash === undefined))
+    || (operation === 'update' && (oldHash === undefined || newHash === undefined))
+    || (operation === 'delete' && (oldHash === undefined || newHash !== undefined))
+  ) {
+    throw new Error(`${label} hashes do not match ${operation} semantics.`);
+  }
+
+  return {
+    operation,
+    path,
+    ...(oldHash ? { oldHash } : {}),
+    ...(newHash ? { newHash } : {}),
+  };
+}
+
+function normalizeSessionChangePath(value: string): string {
+  const normalized = value.normalize('NFC');
+  const segments = normalized.split('/');
+  if (
+    value !== normalized
+    || normalized.startsWith('/')
+    || normalized.endsWith('/')
+    || normalized.includes('\\')
+    || normalized.includes('\0')
+    || segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new Error('Session proposed change path must be a canonical workspace-relative POSIX path.');
+  }
+  return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value;
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  label: string,
+  optional: readonly string[] = [],
+): void {
+  const allowed = new Set([...required, ...optional]);
+  if (
+    required.some((key) => !Object.hasOwn(value, key))
+    || Object.keys(value).some((key) => !allowed.has(key))
+  ) {
+    throw new Error(`${label} contains unknown or missing fields.`);
+  }
+}
+
+function requireNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function requireOpaqueId(value: unknown, label: string): string {
+  const id = requireNonEmptyString(value, label);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id) || id.includes('..')) {
+    throw new Error(`${label} must be a safe opaque id.`);
+  }
+  return id;
+}
+
+function requireEnum<const T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    throw new Error(`${label} is unsupported.`);
+  }
+  return value as T;
+}
+
+function requireIsoTimestamp(value: unknown, label: string): string {
+  const timestamp = requireNonEmptyString(value, label);
+  if (Number.isNaN(Date.parse(timestamp)) || new Date(timestamp).toISOString() !== timestamp) {
+    throw new Error(`${label} must be a canonical ISO timestamp.`);
+  }
+  return timestamp;
+}
+
+function requireSha256(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new Error(`${label} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
+}
+
+function assertUnique(values: string[], label: string): void {
+  if (new Set(values).size !== values.length) {
+    throw new Error(`${label} values must be unique.`);
+  }
+}
+
+function throwUnsupportedSessionProposedChanges(message: string): never {
+  throw new SessionProposedChangesSchemaError(
+    `${UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA}: ${message}`,
+  );
 }

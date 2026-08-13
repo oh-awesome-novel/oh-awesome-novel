@@ -470,6 +470,11 @@ export function createPlayRehearsalBackendController(
               () => recovery.remove(attemptId),
             );
             const attempt = await recovery.read(attemptId);
+            assertAttemptRevisionForNewMutation(
+              attempt,
+              common.expectedAttemptRevision,
+              common.idempotencyKey,
+            );
             const session = body.kind === 'grantKnowledge'
               ? await readPlaySessionFiles(workspaceRoot, sessionId)
               : undefined;
@@ -612,6 +617,11 @@ export function createPlayRehearsalBackendController(
               () => recovery.remove(attemptId),
             );
             const attempt = await recovery.read(attemptId);
+            assertAttemptRevisionForNewMutation(
+              attempt,
+              input.expectedAttemptRevision,
+              input.idempotencyKey,
+            );
             const result = cancelPlayTurnAttempt(attempt, input);
             if (!result.replayed) {
               await recovery.write(result.attempt, {
@@ -1668,6 +1678,17 @@ function assertAttemptRevision(attempt: PlayTurnAttempt, expected: number): void
       { expectedRevision: expected, currentRevision: attempt.attemptRevision },
     );
   }
+}
+
+function assertAttemptRevisionForNewMutation(
+  attempt: PlayTurnAttempt,
+  expected: number,
+  idempotencyKey: string,
+): void {
+  if (attempt.mutationReceipts.some((receipt) => receipt.idempotencyKey === idempotencyKey)) {
+    return;
+  }
+  assertAttemptRevision(attempt, expected);
 }
 
 async function readActiveAttempt(

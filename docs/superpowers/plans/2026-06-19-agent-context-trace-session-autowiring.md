@@ -1,5 +1,7 @@
 # Agent Context Trace And Session Artifact Autowiring Implementation Plan
 
+> **Status: Historical implementation record (dated 2026-06-19). Current write architecture is governed by ADR 0004; do not reuse legacy write APIs from this plan.**
+
 > **For agentic workers:** Extend the existing lightweight contracts. Do not build a telemetry platform or heavy context registry.
 
 **Goal:** Automatically create context trace and session artifacts for writing-related agent runs.
@@ -61,4 +63,3 @@
 - [ ] Agent test proves baseline context package appears in model-visible context.
 - [ ] Agent test proves PendingAction run writes session artifact files.
 - [ ] Resume test proves manual change prompt is surfaced.
-

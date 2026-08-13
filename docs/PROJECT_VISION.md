@@ -1,247 +1,113 @@
 # Project Vision
 
-## Name
-
-`oh-awesome-novel`
-
 ## One Sentence Vision
 
-`oh-awesome-novel` 是一个 filesystem-first 的长篇小说 AI Copilot，让作者用 Markdown、YAML、Git 和可审阅 diff 管理小说工程，而不是把小说困在聊天记录、富文本数据库或黑箱 Agent 里。
+`oh-awesome-novel` 是一个 filesystem-first 的长篇小说 AI Copilot，让作者用 Markdown、YAML、Git 和可审阅 diff 管理小说工程，而不是把小说困在聊天记录、富文本数据库或黑箱 Agent 中。
 
 ## What It Is
 
-`oh-awesome-novel` 是：
+- 小说工程管理器与本地 Novel IDE。
+- Markdown / YAML first 的长篇小说 Copilot。
+- 能读取、分析、总结并提出跨文件修改的透明 Agent。
+- 对 Codex、Aider、Claude Code、Obsidian、VS Code 与普通 Git 工具友好的文件系统项目。
 
-- 一个小说工程管理器。
-- 一个长篇小说 Copilot。
-- 一个 Markdown / YAML first 的 Novel IDE。
-- 一个能读取、分析、修改、总结、同步小说项目文件的本地 Agent。
-- 一个对 Codex、Crush、Aider、Claude Code、Obsidian、VSCode 友好的文件系统项目。
-
-它应该让作者可以这样工作：
+典型体验：
 
 ```text
-用户：
+作者：
 女主在第 12 章重伤，后续性格开始外冷内热。
 
 Copilot：
-读取 chapters/0001/0012.md
-读取 characters/heroine/personality.md
-读取 state/characters.yaml
-读取 timeline/events.yaml
-生成以下修改：
-
-- 更新第 12 章某一场景
-- 更新女主状态
-- 增加时间线事件
-- 创建一个伏笔
-
+读取固定 workspace 投影中的章节、人设、状态与时间线
+在受限内存沙箱中迭代修改
+生成 create / update / delete CandidateChangeSet
 展示 Git-style diff
 
-用户：
+作者：
 Accept
+
+系统：
+事务化写入候选并按配置创建 Git commit
 ```
 
 ## What It Is Not
 
-`oh-awesome-novel` 不是：
-
-- 通用 AI Agent Framework。
-- 编程助手平台。
-- 多 Agent 编排平台。
-- 纯聊天 UI。
-- 角色扮演前端。
-- 富文本小说数据库。
-- 自动代笔系统。
-- 隐藏 prompt 和隐藏审查规则的黑箱。
+- 通用 AI Agent Framework 或多 Agent 编排平台。
+- 隐藏自治循环、后台自动代笔或无确认写作系统。
+- 纯聊天 UI、角色扮演前端或富文本小说数据库。
+- 以私有数据库、向量数据库或运行时记忆作为事实源的产品。
+- 把真实 host shell、host filesystem 或 network 暴露给模型的 coding sandbox。
 
 ## Core Principles
 
 ### Filesystem First
 
-小说项目的永久数据必须落在文件系统中。
-
-优先使用：
-
-- Markdown
-- YAML
-- Git
-- Object File Tree
-
-避免使用：
-
-- IndexedDB
-- SQLite
-- PostgreSQL
-- MySQL
-- Redis
-- Vector database as source of truth
+小说永久数据优先使用 Markdown、YAML 与细粒度 Object File Tree。SQLite、IndexedDB、云数据库和向量索引不得成为小说事实源；可重建索引必须明确标记为派生状态。
 
 ### Git Is The History Engine
 
-Git 不只是版本控制。它承担：
-
-- 历史记录
-- diff
-- undo
-- branch
-- merge
-- human approval
-- 回滚
-- 与 Aider / Codex / Crush / Obsidian 的兼容
+Git 负责历史、diff、commit、branch、merge、undo 与 rollback。任何内部日志或 PendingAction 记录都不能替代 canonical 文件与 Git 历史。
 
 ### AI Is The Copilot
 
-AI 可以：
+AI 可以读取固定投影、搜索设定、分析上下文、在 `bash-tool` / `just-bash` 内存环境中编辑候选、生成摘要并解释 diff。
 
-- 读取文件
-- 搜索设定
-- 分析上下文
-- 提出修改
-- 生成 SemanticPatch
-- 生成摘要
-- 生成 diff
-
-AI 不可以：
-
-- 静默写入真实目标文件
-- 绕过确认
-- 全自动重写项目
-- 隐藏修改内容
-- 直接拥有数据
-
-审批前允许系统内部写入 `workspace/.workspace` shadow recovery / PendingAction 数据，用于 diff preview 和崩溃恢复；这不等于把修改 materialize 到小说 workspace 正式内容路径。
+AI 不可以静默修改 canonical 文件、扩大 host-selected capability、访问隐藏内部目录、解析 secrets、执行宿主进程或决定是否提交。
 
 ### Human Is Always In Control
 
-所有写入必须进入：
-
 ```text
-Tool Call
+fixed snapshot
     ↓
-SemanticPatch
+in-memory editing
     ↓
-Apply Engine
+CandidateChangeSet
     ↓
-Diff Preview
+PendingAction + diff
     ↓
 Accept / Reject
     ↓
-Write
+ChangeMaterializer
     ↓
-Git Commit
+Git
 ```
+
+Accept 前允许 OAN 在 `.workspace/change-engine/v1/` 保存 immutable draft、proposal 与 recovery 数据；这些内部文件不是小说事实，也不代表候选已经写入 canonical 目标。
 
 ### Simple Runtime
 
-Runtime 学 Aider：
+Runtime 保持 Aider-style 循环：
 
 ```text
-messages
-    ↓
-LLM
-    ↓
-tool_calls?
-    ↓
-execute tools
-    ↓
-append tool results
-    ↓
-LLM
+messages -> LLM -> tool calls -> execute -> append results -> LLM
 ```
 
-明确避免：
+不引入 Planner、Multi-Agent Runtime、Autonomous Loop、隐藏重试引擎、LangChain、AutoGen、CrewAI 或 Semantic Kernel。
 
-- Planner
-- Multi-Agent Runtime
-- Autonomous Loop
-- Hidden Retry Engine
-- LangChain
-- AutoGen
-- CrewAI
-- Semantic Kernel
+### One Change Authority
 
-## Inspirations
-
-### Aider
-
-借鉴：
-
-- 极简 Tool Loop
-- Git diff preview
-- Accept / Reject
-- 文件编辑体验
-
-不借鉴：
-
-- 代码专用 UI
-
-### StoryForge Reference
-
-StoryForge 只作为历史参考来源，不是当前产品名、组件名、运行时目录名或兼容目标。
-
-借鉴：
-
-- 小说领域模型
-- 角色、世界、章节、伏笔、状态、时间线、摘要等结构
-- Workflow 思路
-
-不照搬：
-
-- 数据库优先的存储方式
-- StoryForge 运行时目录、数据库模型或兼容层
-
-### NovelBot
-
-借鉴：
-
-- 长篇一致性
-- Memory / Summary 思路
-- Agent 对章节状态的反提取
-
-不照搬：
-
-- 整套框架
-
-### StoryWriter
-
-只参考：
-
-- Recursive Summary
-- Hierarchical Summary
-- Context Compression
-
-不参考：
-
-- Multi-Agent 论文架构
-- Planner / Reviewer Agent
-
-### Morph Fast Apply
-
-借鉴：
-
-- 主模型输出意图
-- Apply 层负责精准合并
-- 避免全文重写
-- 避免脆弱 search/replace
-
-本项目不一定接外部 Morph API，而是实现小说领域专用的 Apply Engine。
+`CandidateChangeSet.changes` 是候选修改的唯一权威。diff、bash command preview 和 mutation log 只服务展示、调试与审计；Accept 不解析 diff，也不重放模型命令。
 
 ## Product Shape
 
-MVP 可以先是 CLI / local dev harness。
+产品成熟形态是桌面 Novel IDE：
 
-成熟形态是一个 Novel IDE：
+- workspace / file tree
+- Writing 与 Play 顶级模式
+- Copilot chat 与 tool activity
+- context / source inspector
+- create / update / delete diff review
+- PendingAction approval
+- Reference deconstruction 与显式 adoption
+- Git status、history、commit 与 sync
 
-- 文件树
-- Copilot Chat
-- Tool Log
-- Patch Preview
-- Memory Preview
-- Summary Panel
-- Workflow Panel
-- Git History
+Writing 与 Play 可以产生候选修改，但都必须汇入相同的 ChangeSet、PendingAction、materializer 与 Git 边界。确定性 producer 可直接构造 ChangeSet，不必伪造 shell 命令。
 
-第一阶段不要急着做完整 UI。先把文件系统、AI SDK ToolSet、Aider-style Runtime、write-intent、`.workspace` shadow write 和人类确认链路跑通。
+## Inspirations
 
-SemanticPatch + Apply Engine 仍是正式写入核心，但完整实现作为后续 `0800 SemanticPatch Apply Engine` 收敛任务，不要求早期 vertical slice 一开始就完成。
+- Aider：极简 loop、Git-aware 人机协作与可见修改。
+- NovelBot / StoryWriter：长篇一致性、分层摘要与上下文压缩。
+- Obsidian / VS Code：文件系统工作台和外部工具互操作。
+- `bash-tool` / `just-bash`：模型熟悉的文本编辑方式，但只连接 OAN 构造的固定内存投影。
+
+参考项目只提供可吸收设计，不决定 OAN 的数据所有权、安全边界或运行时架构。

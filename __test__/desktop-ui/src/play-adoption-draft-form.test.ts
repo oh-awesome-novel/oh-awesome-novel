@@ -31,6 +31,7 @@ describe('PlayAdoptionDraftForm', () => {
       .toEqual(['chapterDraft', 'state', 'timeline', 'foreshadow']);
     expect(wrapper.text()).toContain('Server suggestion');
     expect(wrapper.text()).toContain('recommended');
+    expect(wrapper.text()).toContain('Chapter Markdown');
     expect(wrapper.text()).toContain('Append the selected evidence to a chapter draft.');
     expect(wrapper.text()).toContain('chapters/0001.md');
     expect(wrapper.get('[aria-label="Canonical diff preview"]').text()).toContain(
@@ -44,6 +45,7 @@ describe('PlayAdoptionDraftForm', () => {
     expect(wrapper.emitted('confirm')).toHaveLength(1);
 
     await wrapper.get('select').setValue('state');
+    expect(wrapper.text()).toContain('Canonical state YAML');
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toContain(
       'characters.heroine.location',
     );
@@ -65,7 +67,12 @@ describe('PlayAdoptionDraftForm', () => {
       id: 'pa_adoption_1',
       title: 'Adopt Play evidence',
       description: 'Prepare the chapter change.',
-      touchedFiles: ['chapters/0001.md'],
+      changes: [{
+        operation: 'update',
+        path: 'chapters/0001.md',
+        oldHash: 'a'.repeat(64),
+        newHash: 'b'.repeat(64),
+      }],
       diff: preview.diff,
       createdAt: '2026-07-16T05:00:00.000Z',
       status: 'pending',
@@ -99,7 +106,6 @@ function createPreview(): PlayAdoptionPreviewView {
     visibility: 'playerVisible',
     suggestions: [{
       target: 'chapterDraft',
-      toolName: 'chapter.createDraft',
       recommended: true,
       reason: 'Append the selected evidence to a chapter draft.',
       defaultPayload: {
@@ -108,7 +114,6 @@ function createPreview(): PlayAdoptionPreviewView {
       },
     }, {
       target: 'state',
-      toolName: 'state.set',
       recommended: false,
       reason: 'Record the lasting location state.',
       defaultPayload: {
@@ -118,7 +123,6 @@ function createPreview(): PlayAdoptionPreviewView {
       },
     }, {
       target: 'timeline',
-      toolName: 'timeline.add',
       recommended: false,
       reason: 'Record a dated event.',
       defaultPayload: {
@@ -126,7 +130,6 @@ function createPreview(): PlayAdoptionPreviewView {
       },
     }, {
       target: 'foreshadow',
-      toolName: 'foreshadow.create',
       recommended: false,
       reason: 'Preserve it as a future callback.',
       defaultPayload: {
@@ -138,7 +141,12 @@ function createPreview(): PlayAdoptionPreviewView {
       chapterId: '0001',
       content: 'The public gate is locked.',
     },
-    touchedFiles: ['chapters/0001.md'],
+    changes: [{
+      operation: 'update',
+      path: 'chapters/0001.md',
+      oldHash: 'a'.repeat(64),
+      newHash: 'b'.repeat(64),
+    }],
     diff: '--- a/chapters/0001.md\n+++ b/chapters/0001.md\n+The public gate is locked.',
     fingerprint: 'd'.repeat(64),
     canonicalUnchanged: true,

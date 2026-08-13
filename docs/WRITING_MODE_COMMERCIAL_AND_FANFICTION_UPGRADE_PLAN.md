@@ -19,9 +19,9 @@
 > 的 D5 Profile gate、1205 的 quality gate warning 语义，以及 1210 已完成的
 > per-track publish / manifest v2、provenance 与纯 material context 契约。
 >
-> W3a 收敛结果：材料采用复用已落地的 Apply Engine；`relationships` 使用角色对象
+> W3a 收敛结果：材料采用复用已落地的 ChangeMaterializer；`relationships` 使用角色对象
 > `relationships.yaml` 整文件候选，`outline` 登记受限的
-> `NarrativePatch{domain:'outline', operation:'replaceFile'}`。细粒度 patch 仍留给
+> `CandidateChange{domain:'outline', operation:'replaceFile'}`。细粒度 patch 仍留给
 > `docs/tasks/0800.md`，详见 §8.2。
 >
 > 产品阶段说明：OAN 仍处于未发布的早期开发阶段。本计划不处理旧 endpoint、旧 workspace / reference bundle migration 或系统化无障碍支持；开发期旧数据可以重建，未知 schema 明确报错。
@@ -111,7 +111,7 @@ Writing Profile 不创建新的 Agent、Runtime、数据库或工具循环。
 - capability 是否可见。
 - capability 推断逻辑本身。
 - 文件、工具或 source 权限。
-- SemanticPatch、PendingAction、Human Approval 和 Git 工作流。
+- CandidateChangeSet、PendingAction、Human Approval 和 Git 工作流。
 - 当前小说 Project Truth 的所有权。
 
 ### 2.2 Writing Profile 不是小说题材或 workspace 类型
@@ -195,7 +195,7 @@ D5 不是 pipeline stage，而是发布后的 `selectReferenceContext()`。已�
 - Quick Preview、分章分析、聚合、Style Profile 和 quality gate。
 - run lock（进程内 mutex + 文件锁）、pause / resume / retry。
 - 五类 typed distilled technique entries：`writingStyle`、`pacing`、`hooks`、`scene`、`character`。
-- 多文件 `ReferenceArtifactPatch` PendingAction 原子发布。
+- 多文件 `CandidateChange` PendingAction 原子发布。
 - request-local accepted distilled entry selector。
 
 已发布 bundle 的真实布局（实现 `materials/` 前必须先了解，见 §7.5 的重名风险）：
@@ -820,15 +820,15 @@ References 页面为已发布的 `materials/*` 提供：
 
 ### 8.2 目标映射
 
-现有 `SemanticPatch` 的 domain 是闭合枚举：`ObjectPatch.domain` 为 `character | world | constitution`，`CollectionPatch.domain` 为 `state | timeline | foreshadow`，`NarrativePatch.domain` 为 `chapter | summary`。对照后有两个 material kind 没有落点：
+现有 `CandidateChangeSet` 的 domain 是闭合枚举：`CandidateChange.domain` 为 `character | world | constitution`，`CandidateChange.domain` 为 `state | timeline | foreshadow`，`CandidateChange.domain` 为 `chapter | summary`。对照后有两个 material kind 没有落点：
 
 | Story Material | Workspace 候选目标 | W3a 落法 |
 | --- | --- | --- |
-| `world` | `world/` 下的新文件或 `ObjectPatch{domain:'world'}` | 已支持 |
-| `characters` | `characters/<id>/` 角色卡候选，`ObjectPatch{domain:'character'}` | 已支持 |
-| `relationships` | `characters/<id>/relationships.yaml` | 角色 ObjectPatch 整文件候选 |
-| `outline` | `outline/**/*.md` | 受限 NarrativePatch `outline + replaceFile` |
-| `timeline` | `timeline/` 候选，`CollectionPatch{domain:'timeline'}` | 已支持 |
+| `world` | `world/` 下的新文件或 `CandidateChange{domain:'world'}` | 已支持 |
+| `characters` | `characters/<id>/` 角色卡候选，`CandidateChange{domain:'character'}` | 已支持 |
+| `relationships` | `characters/<id>/relationships.yaml` | 角色 CandidateChange 整文件候选 |
+| `outline` | `outline/**/*.md` | 受限 CandidateChange `outline + replaceFile` |
+| `timeline` | `timeline/` 候选，`CandidateChange{domain:'timeline'}` | 已支持 |
 
 W3a 已选择“先闭环、后细化”：
 
@@ -1106,7 +1106,7 @@ adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实�
 - 单 reference、selected entries 的 adoption preview。
 - current target baseline + selected materials prompt。
 - create / update / skip。
-- `world` / `characters` / `timeline` 走现有 SemanticPatch domain；`relationships` / `outline` 按 §8.2 的决策走整文件候选或新增 domain。
+- `world` / `characters` / `timeline` 走现有 CandidateChangeSet domain；`relationships` / `outline` 按 §8.2 的决策走整文件候选或新增 domain。
 - multi-file PendingAction。
 - Profile、拆书、材料审阅和采用的 Desktop 旅程。
 
@@ -1123,7 +1123,7 @@ adoption 与 workspace truth-file 写入仍属于 W3，没有在 W2b 提前实�
 实现结果：task `1220` 已落地单 reference、selected entries 的受控 adoption。
 Catalog 只接受 current、checksum 闭合的已发布 `materials/*`；模型输入只包含选中
 entry、对应材料文件身份和当前 target baseline。逐目标 `create | update | skip`
-结果转换为受限 SemanticPatch，prepare preview 与 PendingAction promotion 分离，确认
+结果转换为受限 CandidateChangeSet，prepare preview 与 PendingAction promotion 分离，确认
 和 Accept 前都会复核 reference identity、catalog fingerprint 与 target baseline。
 Desktop 已提供选择、目标映射、warning、decision 与 diff 审阅入口，并复用全局
 Review 完成 Accept。Accept 前真实文件不变，Accept 后成为普通 Project Truth；后续

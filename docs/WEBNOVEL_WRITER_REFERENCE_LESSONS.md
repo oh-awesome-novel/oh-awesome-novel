@@ -23,7 +23,7 @@ OAN 的稳定边界仍然是：
 - AI 是 Copilot，不是数据所有者。
 - 真实目标文件写入必须经过 PendingAction / diff / Human Approval。
 - Runtime 保持 Aider-style 极简 tool loop，不引入重型多 Agent 平台。
-- 文件修改核心采用 SemanticPatch + Apply Engine。
+- 文件修改核心采用 CandidateChangeSet + ChangeMaterializer。
 
 因此，Webnovel Writer 中可以吸收的是 **写作流程中每一步该读什么、产出什么、如何校验、如何失败恢复**。不能吸收的是完整 `.story-system + .webnovel + projection` 平台、直接写文件行为、固定多 agent 调度、SQLite / vector read-model 作为核心事实层，或 GPL prompt / 模板原文。
 
@@ -142,7 +142,7 @@ OAN 可吸收方式：
 
 - `/审稿` 输出 findings list + dimension_results。
 - 默认只产出报告，不自动改正文。
-- 用户选择要修的问题后，才生成 `chapter.createDraft` 或局部 SemanticPatch。
+- 用户选择要修的问题后，才生成 `workspace.proposeChanges` 或局部 CandidateChangeSet。
 
 ### 6. 写后结算使用三类 artifacts 思路
 
@@ -159,7 +159,7 @@ OAN 可吸收为 settlement bundle：
 - `fulfillment`：本章契约中哪些项已实现，哪些遗漏。
 - `ambiguities`：新增名词、别名、角色身份、地点归属、信息边界的待确认项。
 - `observations`：正文证据支持的状态、关系、时间、伏笔和世界事实。
-- `patches`：由 observations 转成的 PendingAction / SemanticPatch。
+- `patches`：由 observations 转成的 PendingAction / CandidateChangeSet。
 
 关键边界：OAN 的 bundle 只提出候选 patch，不直接写真实目标文件。
 
@@ -240,7 +240,7 @@ OAN 可吸收方式：
 
 - 增加只读 project health panel：缺失角色卡、未整理章节、active hooks、最新状态过期、时间线断层、PendingAction 未处理。
 - Dashboard / Inspector 读取 Object File Tree 和派生索引。
-- 所有修复仍回到 PendingAction / Apply Engine，不在 Dashboard 里静默写。
+- 所有修复仍回到 PendingAction / ChangeMaterializer，不在 Dashboard 里静默写。
 
 这可以让 OAN 桌面应用更像 Novel IDE，而不是只有聊天窗口。
 
@@ -290,7 +290,7 @@ Webnovel Writer 当前要求 context-agent、reviewer、data-agent 等 subagent�
 
 ### 2. `.story-system` 提交链
 
-Webnovel Writer 的 `CHAPTER_COMMIT` 在它的 v6 架构中很重要，但 OAN 已有 Git + PendingAction + SemanticPatch。
+Webnovel Writer 的 `CHAPTER_COMMIT` 在它的 v6 架构中很重要，但 OAN 已有 Git + PendingAction + CandidateChangeSet。
 
 建议：只吸收“写后结算 artifact”结构，不吸收平行 commit chain。
 
@@ -304,7 +304,7 @@ Webnovel Writer 的 `state.json`、`index.db`、`vectors.db`、`memory_scratchpa
 
 Webnovel Writer skill 会运行 runtime 命令直接写文件、数据库和备份。OAN 必须改写为 PendingAction / diff / Human Approval。
 
-建议：任何写入启发都要转成 SemanticPatch proposal。
+建议：任何写入启发都要转成 CandidateChangeSet proposal。
 
 ### 5. 复制 GPL prompt、schema 文案或模板
 
@@ -337,7 +337,7 @@ Webnovel Writer 用 `CHAPTER_COMMIT` 驱动投影。OAN 已规定 Git 是历史�
 建议合并口径：
 
 - OAN 可以有 `settlement bundle`，但它不是历史 commit。
-- 用户接受后由 Apply Engine 修改 Object File Tree，再由 Git 记录历史。
+- 用户接受后由 ChangeMaterializer 修改 Object File Tree，再由 Git 记录历史。
 
 ### 冲突 3：投影链 vs Object File Tree 事实源
 

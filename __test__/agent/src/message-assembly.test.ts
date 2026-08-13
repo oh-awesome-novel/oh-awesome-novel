@@ -92,8 +92,10 @@ describe('Novel agent message assembly', () => {
       CURRENT_PROJECT_TRUTH
 
       You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.
-      Use tools to inspect or edit the active workspace.
-      Do not operate outside the active workspace.
+      Use tools only inside the fixed in-memory /workspace projection.
+      Virtual edits are candidates, not canonical writes.
+      Preview changes before proposing them; only Human Accept may materialize final bytes.
+      Never widen the host-selected capability or exact target set.
       Do not target hidden files or hidden directories.
       Prefer structured workspace context over broad file loading.
       Workspace root: /novel

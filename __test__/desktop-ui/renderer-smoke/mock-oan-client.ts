@@ -148,7 +148,14 @@ const methods = {
         id: pendingActionId,
         title: 'Publish renderer reference candidate',
         description: 'Publish the complete reviewed candidate.',
-        touchedFiles: activeReferenceRun.publication!.files.map((file) => file.path),
+        changes: activeReferenceRun.publication!.files
+          .map((file) => ({
+            operation: 'update' as const,
+            path: file.path,
+            oldHash: '0'.repeat(64),
+            newHash: file.checksumSha256,
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
         diff: 'diff --git a/examples/references.yaml b/examples/references.yaml',
         createdAt: '2026-07-26T08:00:00.000Z',
         status: 'pending',

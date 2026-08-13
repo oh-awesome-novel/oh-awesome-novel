@@ -4,6 +4,11 @@ import type {
   ReferenceStoryMaterialAssertionType,
   ReferenceStoryMaterialKind,
 } from './reference-deconstruction.js';
+import { parsePendingActionView } from './pending-action-view.js';
+import type {
+  PendingActionViewChange,
+  PendingActionViewV1,
+} from './pending-action-view.js';
 
 export interface ReferenceMaterialAdoptionEntry {
   id: string;
@@ -64,7 +69,7 @@ export interface ReferenceMaterialAdoptionPreview {
   sourceChecksumSha256: string;
   decisions: ReferenceMaterialAdoptionDecision[];
   warnings: ReferenceDeconstructionDiagnostic[];
-  touchedFiles: string[];
+  changes: readonly PendingActionViewChange[];
   diff: string;
   fingerprint: string;
   createdAt: string;
@@ -84,25 +89,7 @@ export type ReferenceMaterialAdoptionPreviewResult =
     };
 
 export interface ReferenceMaterialAdoptionPendingActionResult {
-  pendingAction: {
-    id: string;
-    title: string;
-    description: string;
-    touchedFiles: string[];
-    diff: string;
-    createdAt: string;
-    status: 'pending';
-  };
-}
-
-export interface ReferenceMaterialAdoptionPendingActionOrigin {
-  kind: 'referenceMaterialAdoption';
-  referenceId: string;
-  manifestRevision: number;
-  sourceChecksumSha256: string;
-  catalogFingerprint: string;
-  contextFingerprint: string;
-  previewFingerprint: string;
+  pendingAction: PendingActionViewV1;
 }
 
 const MATERIAL_KINDS: readonly ReferenceStoryMaterialKind[] = [
@@ -185,34 +172,26 @@ export function parseReferenceMaterialAdoptionPreviewResult(
 export function parseReferenceMaterialAdoptionPendingActionResult(
   value: unknown,
 ): ReferenceMaterialAdoptionPendingActionResult {
-  if (!isRecord(value) || !hasFields(value, ['pendingAction'])) {
-    throw new Error('Reference Material adoption PendingAction response is invalid.');
-  }
-  const action = value.pendingAction;
   if (
-    !isRecord(action)
-    || !hasFields(action, [
-      'id',
-      'title',
-      'description',
-      'touchedFiles',
-      'diff',
-      'createdAt',
-      'status',
-    ])
-    || !isPendingActionId(action.id)
-    || !isBoundedText(action.title, 1_000)
-    || !isBoundedText(action.description, 4_000)
-    || !Array.isArray(action.touchedFiles)
-    || !action.touchedFiles.length
-    || !action.touchedFiles.every(isSafePath)
-    || typeof action.diff !== 'string'
-    || !isTimestamp(action.createdAt)
-    || action.status !== 'pending'
+    !isRecord(value)
+    || !hasFields(value, ['pendingAction'])
+    || Object.keys(value).length !== 1
   ) {
     throw new Error('Reference Material adoption PendingAction response is invalid.');
   }
-  return structuredClone(value) as unknown as ReferenceMaterialAdoptionPendingActionResult;
+  let pendingAction: PendingActionViewV1;
+  try {
+    pendingAction = parsePendingActionView(value.pendingAction);
+  } catch {
+    throw new Error('Reference Material adoption PendingAction response is invalid.');
+  }
+  if (
+    pendingAction.status !== 'pending'
+    || pendingAction.origin?.kind !== 'referenceMaterialAdoption'
+  ) {
+    throw new Error('Reference Material adoption PendingAction response is invalid.');
+  }
+  return { pendingAction };
 }
 
 function parseCatalog(value: unknown, referenceId: string): ReferenceMaterialAdoptionCatalog {
@@ -264,7 +243,7 @@ function parsePreview(value: unknown, referenceId: string): ReferenceMaterialAdo
       'sourceChecksumSha256',
       'decisions',
       'warnings',
-      'touchedFiles',
+      'changes',
       'diff',
       'fingerprint',
       'createdAt',
@@ -283,9 +262,7 @@ function parsePreview(value: unknown, referenceId: string): ReferenceMaterialAdo
     || !value.decisions.every(isDecision)
     || !Array.isArray(value.warnings)
     || !value.warnings.every(isDiagnostic)
-    || !Array.isArray(value.touchedFiles)
-    || !value.touchedFiles.length
-    || !value.touchedFiles.every(isSafePath)
+    || !isPreviewChanges(value.changes)
     || typeof value.diff !== 'string'
     || !value.diff.trim()
     || !isSha256(value.fingerprint)
@@ -295,6 +272,24 @@ function parsePreview(value: unknown, referenceId: string): ReferenceMaterialAdo
     throw new Error('Reference Material adoption preview response is invalid.');
   }
   return structuredClone(value) as unknown as ReferenceMaterialAdoptionPreview;
+}
+
+function isPreviewChanges(value: unknown): value is readonly PendingActionViewChange[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  try {
+    parsePendingActionView({
+      id: 'preview-shape',
+      title: 'Preview',
+      description: 'Preview changes',
+      status: 'pending',
+      createdAt: '2000-01-01T00:00:00.000Z',
+      changes: value,
+      diff: '',
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isEntry(value: unknown): boolean {

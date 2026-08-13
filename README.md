@@ -2,111 +2,80 @@
 
 `oh-awesome-novel` 是一个 filesystem-first 的长篇小说 AI Copilot / Novel IDE。
 
-它面向长篇小说创作，把小说项目保存在 Markdown、YAML、对象文件树和 Git 历史中；AI 作为 Copilot 读取上下文、调用工具、提出修改，并通过可审阅 diff 交给作者确认。
+小说正文、角色卡、世界观、状态、时间线、伏笔、摘要与项目规则保存在 Markdown、YAML、对象文件树和 Git 历史中。AI 读取固定快照、在受限内存沙箱中形成候选修改，作者审阅 diff 并明确 Accept 后，系统才把不可变候选事务化写入真实文件。
 
 ## 项目定位
 
-`oh-awesome-novel` 不是通用 Agent 框架，也不是黑箱自动代笔系统。它更接近一个为小说工程准备的本地 IDE：
+它不是通用 Agent 框架、黑箱自动代笔系统或私有数据库，而是为小说工程准备的本地 IDE：
 
-- 小说正文、角色卡、世界观、时间线、伏笔、摘要和状态都落在文件系统中。
-- Git 负责历史、diff、回滚、审阅和提交。
-- AI 只提出修改意图，不静默写入正式小说文件。
-- 文件修改走 `SemanticPatch -> Apply Engine -> Diff Preview -> Accept / Reject`。
-- Runtime 保持 Aider-style 极简循环，不引入重型多 Agent 平台。
+- Markdown / YAML / Object File Tree 是数据库。
+- Git 是历史引擎。
+- AI 是 Copilot，不是数据所有者。
+- Runtime 保持 Aider-style 极简 tool loop。
+- 文件修改统一走 `bash-tool + just-bash + CandidateChangeSet + PendingAction + Git approval`。
+- 任意 canonical 文件在作者 Accept 前必须保持字节不变。
 
 ## 核心能力
 
-- Filesystem-first 小说工作区
-- Markdown / YAML 对象文件树
-- Novel Constitution 与 Workflow 约束
-- 角色、世界观、章节、状态、时间线、伏笔、摘要等领域工具
-- Vercel AI SDK tool calling 接入
-- 本地 HTTP backend + Vue web workspace
-- Electron 桌面承载
-- PendingAction 审阅流
-- Git diff human approval
-- 参考作品导入与拆解
-- Play / Roleplay Sandbox 方向规划
+- Filesystem-first 小说工作区与细粒度对象文件树
+- Novel Constitution、Workflow、Writing Profile 与 Skill 约束
+- Vercel AI SDK Tool Calling 与 Aider-style Runtime
+- 固定 `InMemoryFs` 投影、host-selected capability 与最终文档校验
+- create / update / delete `CandidateChangeSet`
+- PendingAction、diff 审阅、Accept / Reject 与崩溃恢复
+- operation-aware `ChangeMaterializer` 与 Git auto-commit / quick commit
+- 本地 HTTP backend、Vue workspace 与 Electron 桌面承载
+- Reference Deconstruction、Reference Adoption 与 Play Adoption
 
 ## 架构概览
 
 ```text
-Novel Constitution
-    ↓
-Workflow
+Novel Constitution + Workflow
     ↓
 Copilot Runtime (Aider-style)
     ↓
-Vercel AI SDK Tool Calling
+Vercel AI SDK ToolSet
     ↓
-Tool Registry
+bash-tool / just-bash over fixed InMemoryFs
     ↓
-Markdown / YAML Engine
+CandidateChangeSet (create / update / delete)
     ↓
-SemanticPatch Apply Engine
+PendingAction + display-only diff
     ↓
-Object File Tree
+Human Accept
     ↓
-Git + Human Approval
+ChangeMaterializer transaction
+    ↓
+Object File Tree + Git
 ```
+
+确定性的 Reference / Play producer 不需要伪造 shell 命令；它们直接生成同一种 `CandidateChangeSet`，并复用相同的审批、materialization 与 Git 边界。
 
 ## Monorepo 结构
 
 ```text
 apps/
-  desktop-ui/      Vue + Vite web workspace
+  desktop-ui/      Vue + Vite renderer
   desktop/         Electron shell
-  http-backend/    Standalone HTTP backend launcher
+  http-backend/    standalone backend launcher
 
 packages/
-  core/            workspace/config/provider 纯核心能力
-  tools/           Markdown/YAML domain tools
-  runtime/         Aider-style runtime loop
-  agent/           prompt/context assembly + model bridge
+  core/            workspace/config/domain contracts
+  tools/           read tools + Sandbox Change Engine
+  runtime/         provider-agnostic Aider-style loop
+  agent/           prompt/context/model composition
   backend/         local HTTP/SSE transport
-  client/          frontend/backend client
+  client/          strict frontend/backend client
 
 __test__/          root-level test workspaces
 docs/              architecture, specs, plans, tasks
 examples/          local example workspaces and global config
-reference-only/    reference projects, not product code
+reference-only/    research inputs, never product code
 ```
-
-## 参考项目
-
-`reference-only/` 下的目录只作为调研和设计参考，不是产品代码的一部分。
-
-| 本地目录 | GitHub |
-| --- | --- |
-| `reference-only/MiMo-Code` | [XiaomiMiMo/MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code) |
-| `reference-only/OpenHands` | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) |
-| `reference-only/SillyTavern` | [SillyTavern/SillyTavern](https://github.com/SillyTavern/SillyTavern) |
-| `reference-only/StoryWriter` | [THU-KEG/StoryWriter](https://github.com/THU-KEG/StoryWriter) |
-| `reference-only/aider` | [Aider-AI/aider](https://github.com/Aider-AI/aider) |
-| `reference-only/awesome-novel-skill` | [modoojunko/awesome-novel-skill](https://github.com/modoojunko/awesome-novel-skill) |
-| `reference-only/bash-tool` | [vercel-labs/bash-tool](https://github.com/vercel-labs/bash-tool) |
-| `reference-only/chatbox` | [chatboxai/chatbox](https://github.com/chatboxai/chatbox) |
-| `reference-only/eve` | [vercel/eve](https://github.com/vercel/eve) |
-| `reference-only/forge` | [electron/forge](https://github.com/electron/forge) |
-| `reference-only/hello-agents` | [datawhalechina/hello-agents](https://github.com/datawhalechina/hello-agents) |
-| `reference-only/inkos` | [Narcooo/inkos](https://github.com/Narcooo/inkos) |
-| `reference-only/just-bash` | [vercel-labs/just-bash](https://github.com/vercel-labs/just-bash) |
-| `reference-only/mini-swe-agent` | [SWE-agent/mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) |
-| `reference-only/nanoAgent` | [sanbuphy/nanoAgent](https://github.com/sanbuphy/nanoAgent) |
-| `reference-only/nanobot` | [HKUDS/nanobot](https://github.com/HKUDS/nanobot) |
-| `reference-only/note-gen` | [codexu/note-gen](https://github.com/codexu/note-gen) |
-| `reference-only/novel-bot` | [xiaoxiaoxiaotao/novel-bot](https://github.com/xiaoxiaoxiaotao/novel-bot) |
-| `reference-only/novel-writer-skills` | [wordflowlab/novel-writer-skills](https://github.com/wordflowlab/novel-writer-skills) |
-| `reference-only/oh-story-claudecode` | [worldwonderer/oh-story-claudecode](https://github.com/worldwonderer/oh-story-claudecode) |
-| `reference-only/opencode` | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
-| `reference-only/sandbox` | [vercel/sandbox](https://github.com/vercel/sandbox) |
-| `reference-only/storyforge` | [yuanbw2025/storyforge](https://github.com/yuanbw2025/storyforge) |
-| `reference-only/webnovel-writer` | [lingfengQAQ/webnovel-writer](https://github.com/lingfengQAQ/webnovel-writer) |
-| `reference-only/oh-awesome-novel-skill` | 本地参考 skill，当前没有独立 GitHub remote。 |
 
 ## 本地开发
 
-优先使用独立 HTTP 后端 + Vite Web UI 进行开发：
+优先使用独立 HTTP backend + Vite Web UI：
 
 ```sh
 REPO_ROOT="$(pwd)"
@@ -117,39 +86,34 @@ npm run dev --workspace @oh-awesome-novel/http-backend -- \
   --port 3210
 ```
 
-另开一个终端：
+另开终端：
 
 ```sh
 npm run dev --workspace @oh-awesome-novel/desktop-ui
 ```
 
-打开：
-
-```text
-http://127.0.0.1:5173/
-```
-
-更完整的启动、配置、测试说明见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。
+打开 `http://127.0.0.1:5173/`。完整配置与测试说明见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。
 
 ## 关键文档
 
-- [docs/PROJECT_VISION.md](docs/PROJECT_VISION.md): 项目愿景、边界和非目标
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): 当前架构蓝图
-- [docs/FILESYSTEM_SPEC.md](docs/FILESYSTEM_SPEC.md): 小说项目文件系统规格
-- [docs/APPLY_ENGINE.md](docs/APPLY_ENGINE.md): SemanticPatch 与 Apply Engine
-- [docs/HUMAN_APPROVAL_AND_GIT.md](docs/HUMAN_APPROVAL_AND_GIT.md): 写入确认与 Git 工作流
-- [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md): 分阶段开发计划
-- [docs/tasks/README.md](docs/tasks/README.md): 可执行任务列表
-- [docs/AGENT_OPERATING_MANUAL.md](docs/AGENT_OPERATING_MANUAL.md): 开发 Agent 操作手册
+- [Project Vision](docs/PROJECT_VISION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Filesystem Specification](docs/FILESYSTEM_SPEC.md)
+- [Sandbox Change Engine](docs/SANDBOX_CHANGE_ENGINE.md)
+- [Agent Runtime And Tools](docs/AGENT_RUNTIME_AND_TOOLS.md)
+- [Human Approval And Git](docs/HUMAN_APPROVAL_AND_GIT.md)
+- [Development Plan](docs/DEVELOPMENT_PLAN.md)
+- [Development Tasks](docs/tasks/README.md)
+- [Agent Operating Manual](docs/AGENT_OPERATING_MANUAL.md)
 
 ## 开发原则
 
-- 不新增旧式根目录 `src/`。
-- 测试放在根目录 `__test__/` 对应 workspace 中。
-- 不让 frontend 绕过 backend 直接访问 filesystem/tools/apply engine。
-- 不把运行时私有状态当作小说项目的事实来源。
-- AI 生成的真实文件修改必须进入 PendingAction 审阅。
-- 接受 PendingAction 后，按配置进行 Git commit。
+- 不新增旧式根目录 `src/`；核心实现放在 `packages/*`，应用放在 `apps/*`。
+- 测试放在根目录 `__test__/<module>/` 独立 workspace。
+- frontend 不得直接访问 filesystem、tool execution 或 materializer。
+- host shell、host filesystem、network、Python 与 JavaScript 不暴露给模型。
+- diff、command log 与 mutation log 都不是 Accept authority。
+- AI 产生的真实文件修改必须进入 PendingAction；Accept 后再按配置进行 Git commit。
 
 ## License
 

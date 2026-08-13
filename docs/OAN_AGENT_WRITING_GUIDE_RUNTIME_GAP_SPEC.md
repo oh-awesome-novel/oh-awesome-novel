@@ -54,7 +54,7 @@ Source:
   - 支持可选 `contextPackage` 注入，并把 summary 放入 model-visible context。
   - 支持 session store 记录 runtime message / tool log。
 - `packages/backend/src/index.ts`
-  - model mode 会加载 workspace snapshot、`novel-copilot` skill 和 write-intent tool set。
+  - model mode 会加载 fixed workspace projection、`novel-copilot` skill 和 capability-scoped sandbox ToolSet。
   - 已有 PendingAction list / accept / reject 路由。
   - 已有 project health endpoint。
 
@@ -67,8 +67,8 @@ Source:
    - backend 的 workspace snapshot 仍是“读取前 12 个文件并拼接”，没有 selected / omitted / reason / budget 的来源说明。
    - runtime tool log 和 context package 之间没有自动关联。
 
-2. session artifact helper 已存在，但 agent run 结束时不会自动生成 `run.yaml` / `outputs.yaml` / `proposed-patches.yaml` / `unresolved.md`。
-   - `packages/agent/src/session-store.ts` 记录的是 runtime message / tool log / shadow recovery。
+2. session artifact helper 已存在，但 agent run 结束时不会自动生成 `run.yaml` / `outputs.yaml` / `proposed-changes.yaml` / `unresolved.md`。
+   - `packages/agent/src/session-store.ts` 记录的是 runtime message / bounded tool audit / recovery metadata。
    - `packages/core/src/session-artifacts.ts` 的 author report 和 resume boundary 还没有接到 backend / UI。
 
 3. reference loading map 仍停留在 `0900` 规划层。
@@ -138,7 +138,7 @@ Agent / backend 应能在写作相关 capability 中自动生成 context package
 
 - `run.yaml`：session id、capability、status、started/updated time、input sources、touched files。
 - `outputs.yaml`：assistant text、context package、review report、settlement bundle、Play transcript 或 import preview。
-- `proposed-patches.yaml`：PendingAction ids、touched files、pending / accepted / rejected status。
+- `proposed-changes.yaml`：PendingAction ids、structured changes、pending / accepted / rejected status。
 - `unresolved.md`：用户决策、ambiguity、blocked questions。
 - author report：最终给用户看的简明状态报告。
 
@@ -184,7 +184,8 @@ create Play session
   -> run world referee turn
   -> write transcript / play-local state / observations
   -> user selects adoption candidate
-  -> create PendingAction through existing write-intent tools
+  -> produce CandidateChangeSet through an exact `play.adopt` policy
+  -> create PendingAction through the shared change store
   -> accept/reject through Human Approval
 ```
 
@@ -234,4 +235,3 @@ Play session 自身只写 `.workspace/play-sessions/*`。只有 adoption Pending
 | Play workflow | Play sessions have backend/UI lifecycle and adoption candidates create PendingActions before truth files change |
 | Health guardrails | Project health and projection refresh are visible, read-only by default, and never replace canonical Object File Tree |
 | Human Approval | Every adoption or file change still goes through PendingAction / diff / Human Approval |
-
