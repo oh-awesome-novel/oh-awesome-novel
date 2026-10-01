@@ -17,7 +17,7 @@ async function input() {
       { path: 'chapters/0001/0001.md', missing: false, hash: 'a'.repeat(64) },
       { path: 'chapters/0001/0002.md', missing: false, hash: 'b'.repeat(64) },
     ] } });
-  streamText.mockImplementation(() => ({ textStream: (async function* () { yield '继续。'; })(), toolCalls: Promise.resolve([]) }));
+  streamText.mockImplementation(() => ({ stream: (async function* () { yield { type: 'text-delta', text: '继续。' }; })(), finalStep: Promise.resolve({ toolCalls: [] }) }));
   return {
     workspaceRoot: root, workspace: { workspaceRoot: root }, request: '继续对话',
     providerConfig: { id: 'mock', kind: 'custom' as const, model: 'mock' },
@@ -34,7 +34,7 @@ describe('resume boundary production wiring', () => {
     expect(result.assistantMessage?.content).toContain('会话恢复提示');
     expect(result.assistantMessage?.content).toContain('已变化：chapters/0001/0001.md');
     expect(result.assistantMessage?.content).toContain('已删除或不在当前可读范围：chapters/0001/0002.md');
-    expect(streamText.mock.calls[0][0].system).toContain('历史对话不代表当前事实');
+    expect(streamText.mock.calls[0][0].instructions).toContain('历史对话不代表当前事实');
     const recovered = await createAgentSessionStore({ workspaceRoot: options.workspaceRoot }).recoverSession('resume');
     expect(JSON.stringify(recovered)).toContain('会话恢复提示');
   });

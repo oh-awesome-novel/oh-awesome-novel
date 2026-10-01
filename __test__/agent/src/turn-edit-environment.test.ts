@@ -437,13 +437,13 @@ function modelStream(input: {
   }>;
 }) {
   return {
-    textStream: toAsyncIterable(input.text ?? []),
-    toolCalls: Promise.resolve(input.toolCalls ?? []),
+    stream: toAsyncIterable(input.text ?? []),
+    finalStep: Promise.resolve({ toolCalls: input.toolCalls ?? [] }),
   };
 }
 
-async function* toAsyncIterable(chunks: string[]): AsyncIterable<string> {
+async function* toAsyncIterable(chunks: string[]) {
   for (const chunk of chunks) {
-    yield chunk;
+    yield { type: 'text-delta', id: 'test-text', text: chunk };
   }
 }

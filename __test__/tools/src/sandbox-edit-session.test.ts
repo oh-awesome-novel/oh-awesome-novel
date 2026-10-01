@@ -254,9 +254,9 @@ function increasingClock(): () => Date {
 }
 
 async function executeTool(tools: ToolSet, name: string, args: unknown): Promise<any> {
-  const executable = tools[name] as {
-    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-  };
+  const executable = tools[name];
   if (!executable?.execute) throw new Error(`Tool ${name} is not executable.`);
-  return executable.execute(args, {});
+  return executable.execute(args as never, {
+    toolCallId: `test-${name}`, messages: [], context: undefined,
+  });
 }

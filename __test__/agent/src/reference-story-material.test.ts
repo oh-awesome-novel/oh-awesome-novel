@@ -354,7 +354,7 @@ function assertNoToolsCall(
     prompt?: unknown;
   };
   expect(call.tools).toBeUndefined();
-  expect(call.toolChoice).toBeUndefined();
+  expect(call.toolChoice).toEqual({ type: 'auto' });
   expect(call.responseFormat).toMatchObject({ type: 'json', name: schemaName });
   expect(JSON.stringify(call.prompt)).toContain(systemPrompt.split('\n')[0]);
   if (maxOutputTokens !== undefined) {

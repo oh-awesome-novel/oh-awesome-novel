@@ -68,6 +68,8 @@
 - [1210 Reference Story Material Analysis Track](1210.md)
 - [1220 Reference Material Adoption And Desktop Closure](1220.md)
 
+- [1240 AI SDK 7 Migration](1240.md)
+
 ## Needs Review Tasks
 
 - [0580 Git History And Sync Page](0580.md)

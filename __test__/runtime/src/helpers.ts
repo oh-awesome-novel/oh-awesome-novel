@@ -1,5 +1,5 @@
 import { jsonSchema, tool } from 'ai';
-import type { ToolSet } from 'ai';
+import type { ToolExecutionOptions, ToolSet } from 'ai';
 import type {
   RuntimeModelAdapter,
   RuntimeModelRequest,
@@ -63,7 +63,7 @@ export const createStreamingFakeModel = (
 
 export const createTool = (
   id: string,
-  execute: (args: unknown, context: unknown) => Promise<unknown> | unknown,
+  execute: (args: unknown, context: ToolExecutionOptions<undefined>) => Promise<unknown> | unknown,
 ): ToolSet => ({
   [id]: tool({
     description: `${id} test tool`,

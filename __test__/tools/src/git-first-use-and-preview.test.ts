@@ -44,7 +44,7 @@ describe('first workspace Git baseline', () => {
     });
     const write = session.tools.writeFile!;
     await write.execute!({ path: 'summaries/global.md', content: '# Global\n\nFirst summary.\n' }, {
-      toolCallId: 'first-write', messages: [],
+      toolCallId: 'first-write', messages: [], context: undefined,
     });
     const candidate = await session.finalizeCandidate({ finalization: 'runtime-fallback' });
     expect(candidate).toBeDefined();

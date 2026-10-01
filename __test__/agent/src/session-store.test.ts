@@ -262,18 +262,18 @@ describe('agent session persistence', () => {
 
     streamText
       .mockReturnValueOnce({
-        textStream: toAsyncIterable(['写入中']),
-        toolCalls: Promise.resolve([
+        stream: toAsyncIterable(['写入中']),
+        finalStep: Promise.resolve({ toolCalls: [
           {
             toolCallId: 'call_1',
             toolName: 'inspect',
             input: { path: 'chapters/0001.md' },
           },
-        ]),
+        ] }),
       })
       .mockReturnValueOnce({
-        textStream: toAsyncIterable(['完成']),
-        toolCalls: Promise.resolve([]),
+        stream: toAsyncIterable(['完成']),
+        finalStep: Promise.resolve({ toolCalls: [] }),
       });
 
     const result = await runNovelAgentTurn({
@@ -343,18 +343,18 @@ describe('agent session persistence', () => {
 
     streamText
       .mockReturnValueOnce({
-        textStream: toAsyncIterable(['准备草稿']),
-        toolCalls: Promise.resolve([
+        stream: toAsyncIterable(['准备草稿']),
+        finalStep: Promise.resolve({ toolCalls: [
           {
             toolCallId: 'call_1',
             toolName: 'workspace.proposeChanges',
             input: { chapterId: '0001/0002', content: '# 第二章\n\n正文' },
           },
-        ]),
+        ] }),
       })
       .mockReturnValueOnce({
-        textStream: toAsyncIterable(['已创建 PendingAction']),
-        toolCalls: Promise.resolve([]),
+        stream: toAsyncIterable(['已创建 PendingAction']),
+        finalStep: Promise.resolve({ toolCalls: [] }),
       });
 
     const result = await runNovelAgentTurn({
@@ -410,8 +410,8 @@ function fixedToolEnvironmentFactory(workspaceRoot: string) {
   });
 }
 
-async function* toAsyncIterable(chunks: string[]): AsyncIterable<string> {
+async function* toAsyncIterable(chunks: string[]) {
   for (const chunk of chunks) {
-    yield chunk;
+    yield { type: 'text-delta', id: 'test-text', text: chunk };
   }
 }

@@ -676,7 +676,7 @@ async function generateStructured<OUTPUT>(input: {
   try {
     const result = await generateText({
       model,
-      system: input.system,
+      instructions: input.system,
       prompt: input.prompt,
       output: input.output,
       abortSignal: input.abortSignal,
@@ -705,7 +705,9 @@ async function generateStructured<OUTPUT>(input: {
     ) {
       return failureResult(
         'invalid_output',
-        new Error(`${input.stageLabel} did not match the required schema.`),
+        new Error(NoObjectGeneratedError.isInstance(error) && error.finishReason && error.finishReason !== 'stop'
+          ? `${input.stageLabel} ended without a valid structured result.`
+          : `${input.stageLabel} did not match the required schema.`),
         false,
         input.stageLabel,
       );

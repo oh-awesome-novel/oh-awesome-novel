@@ -18,7 +18,7 @@ const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'simple-novel'
 const execFileAsync = promisify(execFile);
 const temporaryWorkspaces: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryWorkspaces.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryWorkspaces.splice(0).map((path) => rm(path, { recursive: true, force: true, maxRetries: 3 })));
 });
 
 describe('Novel agent tool assembly', () => {
@@ -119,7 +119,7 @@ describe('Novel agent tool assembly', () => {
       ['config', 'user.email', 'oan@example.test'],
       ['add', '--', '.'],
       ['commit', '-m', 'test fixture'],
-    ]) await execFileAsync('git', ['-C', sandboxRoot, ...args]);
+    ]) await execFileAsync('git', ['-c', 'maintenance.auto=false', '-c', 'core.fsmonitor=false', '-C', sandboxRoot, ...args]);
     const environment = await createNovelAgentTurnEditEnvironment({
       workspaceRoot: sandboxRoot,
       capability: 'novel.write_chapter',

@@ -1,5 +1,5 @@
 import { PriorityRuntimeContextBuilder } from './context-builder';
-import type { ToolSet } from 'ai';
+import type { ModelMessage, ToolExecutionOptions, ToolResultPart, ToolSet } from 'ai';
 import { createHash } from 'node:crypto';
 
 import type {
@@ -80,13 +80,14 @@ export class RuntimeSession {
         }
 
         const tools = this.listActiveTools(input);
+        const messages = this.contextBuilder.build({
+          doneMessages: this.state.doneMessages,
+          curMessages: this.state.curMessages,
+          context: input.context,
+          skill: input.skill,
+        });
         const response = await this.generateModelResponse({
-          messages: this.contextBuilder.build({
-            doneMessages: this.state.doneMessages,
-            curMessages: this.state.curMessages,
-            context: input.context,
-            skill: input.skill,
-          }),
+          messages,
           tools,
           abortSignal: input.abortSignal,
         });
@@ -104,7 +105,10 @@ export class RuntimeSession {
             content: auditedMessage?.content ?? '',
             toolCalls: response.toolCalls.map(auditRuntimeToolCall),
           });
-          await this.executeToolCalls(response, tools);
+          await this.executeToolCalls(response, tools, messages, input.abortSignal);
+          if (input.abortSignal?.aborted) {
+            return await this.finish('aborted', assistantMessage, input.abortSignal);
+          }
           continue;
         }
 
@@ -175,15 +179,30 @@ export class RuntimeSession {
   private async executeToolCalls(
     response: RuntimeModelResponse,
     tools: ToolSet,
+    messages: RuntimeMessage[],
+    abortSignal?: AbortSignal,
   ): Promise<void> {
     for (const toolCall of response.toolCalls ?? []) {
       const auditedToolCall = auditRuntimeToolCall(toolCall);
       await this.emit({ type: 'tool_call_start', toolCall: auditedToolCall });
 
       const tool = tools[toolCall.name];
-      const result = tool
-        ? await this.executeTool(tool, toolCall)
-        : this.unknownToolResult(toolCall);
+      const result: RuntimeToolResult = abortSignal?.aborted
+        ? {
+            ok: false,
+            error: {
+              code: 'TOOL_EXECUTION_ABORTED',
+              message: `Tool ${toolCall.name} was skipped because the turn was aborted.`,
+              recoverable: true,
+            },
+          }
+        : tool ? await this.executeTool(tool, toolCall, {
+            toolCallId: toolCall.id,
+            messages: toToolExecutionMessages(messages),
+            context: undefined,
+            ...(abortSignal ? { abortSignal } : {}),
+          })
+          : this.unknownToolResult(toolCall);
 
       const logEntry: RuntimeToolLogEntry = { toolCall: auditedToolCall, result };
       this.state.toolLog.push(logEntry);
@@ -214,13 +233,10 @@ export class RuntimeSession {
   private async executeTool(
     tool: ToolSet[string],
     toolCall: RuntimeToolCall,
+    options: ToolExecutionOptions<undefined>,
   ): Promise<RuntimeToolResult> {
     try {
-      const executable = tool as {
-        execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-      };
-
-      if (!executable.execute) {
+      if (!tool.execute) {
         return {
           ok: false,
           error: {
@@ -231,7 +247,7 @@ export class RuntimeSession {
         };
       }
 
-      const content = await executable.execute(toolCall.args, { toolCall });
+      const content = await tool.execute(toolCall.args as never, options);
       const pendingActions = extractPendingActions(content);
 
       return {
@@ -405,6 +421,41 @@ class RuntimeEventQueue implements AsyncIterable<RuntimeEvent> {
       },
     };
   }
+}
+
+/** SDK tool options describe the initiating prompt, without system instructions. */
+function toToolExecutionMessages(messages: RuntimeMessage[]): ModelMessage[] {
+  return structuredClone(messages.filter((message) => message.role !== 'system').map((message): ModelMessage => {
+    if (message.role === 'assistant' && message.toolCalls?.length) {
+      return {
+        role: 'assistant',
+        content: [
+          ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+          ...message.toolCalls.map((call) => ({
+            type: 'tool-call' as const,
+            toolCallId: call.id,
+            toolName: call.name,
+            input: call.args,
+          })),
+        ],
+      };
+    }
+    if (message.role === 'tool') {
+      let output: ToolResultPart['output'];
+      try { output = { type: 'json', value: JSON.parse(message.content) }; }
+      catch { output = { type: 'text', value: message.content }; }
+      return {
+        role: 'tool',
+        content: [{
+          type: 'tool-result',
+          toolCallId: message.toolCallId ?? message.name ?? 'tool-call',
+          toolName: message.name ?? 'tool',
+          output,
+        }],
+      };
+    }
+    return { role: message.role, content: message.content };
+  }));
 }
 
 function extractPendingActions(content: unknown): PendingAction[] {

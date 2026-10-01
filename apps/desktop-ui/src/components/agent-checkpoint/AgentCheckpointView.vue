@@ -9,7 +9,7 @@ import ToolActivityList from './ToolActivityList.vue';
 import { useAgentCheckpointChat, type PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 const {
-  chat,
+  status,
   input,
   messages,
   pendingActions,
@@ -45,7 +45,7 @@ function markPendingAction(action: PendingActionView, decision: 'accepted' | 're
       </div>
 
       <CheckpointControls
-        :status="chat.status"
+        :status="status"
         @run="runCheckpoint"
         @stop="stop"
       />
@@ -62,7 +62,7 @@ function markPendingAction(action: PendingActionView, decision: 'accepted' | 're
       <ToolActivityList :messages="messages" />
       <ChatComposer
         v-model="input"
-        :disabled="chat.status !== 'ready'"
+        :disabled="status !== 'ready'"
         @submit="sendCurrentInput"
       />
     </section>

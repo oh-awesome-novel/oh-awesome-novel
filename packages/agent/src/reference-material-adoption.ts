@@ -151,7 +151,7 @@ export async function generateReferenceMaterialAdoption(
   try {
     const result = await generateText({
       model,
-      system: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+      instructions: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
       prompt: formatReferenceMaterialAdoptionPrompt(input.context),
       output: Output.object({
         schema: jsonSchema<Record<string, unknown>>(ADOPTION_OUTPUT_SCHEMA),

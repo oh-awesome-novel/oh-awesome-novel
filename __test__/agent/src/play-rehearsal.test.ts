@@ -92,7 +92,7 @@ describe('Play rehearsal actor generation', () => {
     const abortController = new AbortController();
     const resolveModel = vi.fn(() => model);
     streamText.mockReturnValue({
-      fullStream: toAsyncIterable([
+      stream: toAsyncIterable([
         { type: 'start' },
         { type: 'text-delta', id: 'text-1', text: '她抬眼。' },
         { type: 'text-delta', id: 'text-1', text: '“出口在哪？”' },
@@ -116,7 +116,7 @@ describe('Play rehearsal actor generation', () => {
     const call = streamText.mock.calls[0]?.[0];
     expect(call).toMatchObject({
       model,
-      system: PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
+      instructions: PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
       maxRetries: 0,
       abortSignal: abortController.signal,
     });
@@ -129,13 +129,13 @@ describe('Play rehearsal actor generation', () => {
   it('keeps actor abort distinct from provider failure', async () => {
     streamText
       .mockReturnValueOnce({
-        fullStream: toAsyncIterable([
+        stream: toAsyncIterable([
           { type: 'text-delta', id: 'text-1', text: '半句' },
           { type: 'abort', reason: 'user-stop' },
         ]),
       })
       .mockReturnValueOnce({
-        fullStream: toAsyncIterable([
+        stream: toAsyncIterable([
           { type: 'text-delta', id: 'text-2', text: '另一半' },
           { type: 'error', error: new Error('provider exploded') },
         ]),
@@ -192,7 +192,7 @@ describe('Play rehearsal single referee completion', () => {
   it('collects bounded raw referee text without exposing tools or workspace loading', async () => {
     const resolveModel = vi.fn(() => model);
     streamText.mockReturnValue({
-      fullStream: toAsyncIterable([
+      stream: toAsyncIterable([
         { type: 'text-delta', id: 'referee-1', text: 'Observable narrative.\n' },
         { type: 'text-delta', id: 'referee-1', text: '```oan-play-settlement\n{}\n```' },
         { type: 'finish', finishReason: 'stop', rawFinishReason: 'stop', totalUsage: {} },
@@ -213,7 +213,7 @@ describe('Play rehearsal single referee completion', () => {
     const call = streamText.mock.calls[0]?.[0];
     expect(call).toMatchObject({
       model,
-      system: PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
+      instructions: PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
       prompt,
       maxRetries: 0,
     });
@@ -224,7 +224,7 @@ describe('Play rehearsal single referee completion', () => {
 
   it('fails closed at the referee output bound', async () => {
     streamText.mockReturnValue({
-      fullStream: toAsyncIterable([
+      stream: toAsyncIterable([
         { type: 'text-delta', id: 'referee-1', text: '123' },
         { type: 'text-delta', id: 'referee-1', text: '45' },
       ]),
@@ -249,13 +249,13 @@ describe('Play rehearsal single referee completion', () => {
   it('returns distinct referee abort and provider error results', async () => {
     streamText
       .mockReturnValueOnce({
-        fullStream: toAsyncIterable([
+        stream: toAsyncIterable([
           { type: 'text-delta', id: 'referee-1', text: 'partial' },
           { type: 'abort', reason: 'step-stop' },
         ]),
       })
       .mockReturnValueOnce({
-        fullStream: toAsyncIterable([
+        stream: toAsyncIterable([
           { type: 'error', error: new Error('referee unavailable') },
         ]),
       });

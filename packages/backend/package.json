@@ -22,7 +22,7 @@
     "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/runtime": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1",
-    "ai": "^6.0.197",
+    "ai": "^7.0.126",
     "hono": "^4.12.26"
   },
   "devDependencies": {

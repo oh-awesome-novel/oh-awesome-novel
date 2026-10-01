@@ -1,13 +1,15 @@
 // @vitest-environment happy-dom
 
 import type { ChatStatus, UIMessage } from 'ai';
+import { shallowRef, type ShallowRef } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PlayWritingReferenceAttachment } from '@oh-awesome-novel/client';
 
 interface MockChatInstance {
-  messages: UIMessage[];
-  status: ChatStatus;
+  messages: ShallowRef<UIMessage[]>;
+  status: ShallowRef<ChatStatus>;
+  error: ShallowRef<Error | undefined>;
   sendMessage: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 }
@@ -22,15 +24,16 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('@ai-sdk/vue', () => ({
-  Chat: class MockChat {
-    messages: UIMessage[] = [];
-    status: ChatStatus = 'ready';
-    sendMessage = vi.fn();
-    stop = vi.fn();
-
-    constructor() {
-      chatHarness.instances.push(this);
-    }
+  useChat: () => {
+    const chat: MockChatInstance = {
+      messages: shallowRef<UIMessage[]>([]),
+      status: shallowRef<ChatStatus>('ready'),
+      error: shallowRef<Error>(),
+      sendMessage: vi.fn(),
+      stop: vi.fn(),
+    };
+    chatHarness.instances.push(chat);
+    return chat;
   },
 }));
 
@@ -134,7 +137,7 @@ describe('agent conversation Play Writing References', () => {
     );
 
     const initialId = conversations.activeConversationId.value;
-    chatHarness.instances[0]!.messages.push({
+    chatHarness.instances[0]!.messages.value.push({
       id: 'message-1',
       role: 'user',
       parts: [{ type: 'text', text: 'Existing conversation' }],

@@ -30,14 +30,17 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     } as ToolSet;
 
     streamText.mockReturnValue({
-      textStream: toAsyncIterable(['你', '好']),
-      toolCalls: Promise.resolve([
+      stream: toAsyncIterable(['你', '好']),
+      get toolCalls() {
+        throw new Error('Use finalStep instead of aggregated tool calls.');
+      },
+      finalStep: Promise.resolve({ toolCalls: [
         {
           toolCallId: 'call_1',
           toolName: 'character.get',
           input: { id: 'heroine' },
         },
-      ]),
+      ] }),
     });
 
     const adapter = createAiSdkRuntimeModelAdapter({
@@ -94,8 +97,8 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
 
   it('uses the same stream bridge for generate()', async () => {
     streamText.mockReturnValue({
-      textStream: toAsyncIterable(['完成']),
-      toolCalls: Promise.resolve([]),
+      stream: toAsyncIterable(['完成']),
+      finalStep: Promise.resolve({ toolCalls: [] }),
     });
 
     const adapter = createAiSdkRuntimeModelAdapter({
@@ -122,7 +125,7 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
   });
 
   it('enforces the configured input reserve before every provider call and forwards output limits', async () => {
-    streamText.mockReturnValue({ textStream: toAsyncIterable(['done']), toolCalls: Promise.resolve([]) });
+    streamText.mockReturnValue({ stream: toAsyncIterable(['done']), finalStep: Promise.resolve({ toolCalls: [] }) });
     const resolveModel = vi.fn(() => ({ provider: 'mock', modelId: 'mock-model' }));
     const adapter = createAiSdkRuntimeModelAdapter({
       providerConfig: { id: 'mock-provider', kind: 'custom', model: 'mock-model',
@@ -139,7 +142,7 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
   });
 
   it('does not invent a budget when the output reserve is unknown', async () => {
-    streamText.mockReturnValue({ textStream: toAsyncIterable(['done']), toolCalls: Promise.resolve([]) });
+    streamText.mockReturnValue({ stream: toAsyncIterable(['done']), finalStep: Promise.resolve({ toolCalls: [] }) });
     const adapter = createAiSdkRuntimeModelAdapter({
       providerConfig: { id: 'mock-provider', kind: 'custom', model: 'mock-model',
         models: [{ id: 'mock-model', contextWindow: 32 }] },
@@ -151,8 +154,8 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
 
   it('maps runtime tool-call history to AI SDK model messages', async () => {
     streamText.mockReturnValue({
-      textStream: toAsyncIterable(['完成']),
-      toolCalls: Promise.resolve([]),
+      stream: toAsyncIterable(['完成']),
+      finalStep: Promise.resolve({ toolCalls: [] }),
     });
 
     const adapter = createAiSdkRuntimeModelAdapter({
@@ -228,10 +231,10 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     ]);
   });
 
-  it('passes runtime system messages through the AI SDK system option', async () => {
+  it('passes runtime system messages through the AI SDK instructions option', async () => {
     streamText.mockReturnValue({
-      textStream: toAsyncIterable(['完成']),
-      toolCalls: Promise.resolve([]),
+      stream: toAsyncIterable(['完成']),
+      finalStep: Promise.resolve({ toolCalls: [] }),
     });
 
     const adapter = createAiSdkRuntimeModelAdapter({
@@ -253,14 +256,15 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     });
 
     expect(streamText.mock.calls[0][0]).toMatchObject({
-      system: '你是小说 Copilot。\n\n遵守审阅保护。',
+      instructions: '你是小说 Copilot。\n\n遵守审阅保护。',
       messages: [{ role: 'user', content: '开始' }],
     });
+    expect(streamText.mock.calls[0][0]).not.toHaveProperty('system');
   });
 });
 
-async function* toAsyncIterable(chunks: string[]): AsyncIterable<string> {
+async function* toAsyncIterable(chunks: string[]) {
   for (const chunk of chunks) {
-    yield chunk;
+    yield { type: 'text-delta', id: 'test-text', text: chunk };
   }
 }

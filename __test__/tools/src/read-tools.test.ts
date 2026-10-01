@@ -147,15 +147,15 @@ async function executeTool(
   name: string,
   args: unknown,
 ): Promise<unknown> {
-  const executable = tools[name] as {
-    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-  };
+  const executable = tools[name];
 
   if (!executable?.execute) {
     throw new Error(`Tool ${name} is not executable.`);
   }
 
-  return executable.execute(args, {});
+  return executable.execute(args as never, {
+    toolCallId: `test-${name}`, messages: [], context: undefined,
+  });
 }
 
 function createMemoryReader(files: Record<string, string>): WorkspaceReader {

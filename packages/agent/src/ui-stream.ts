@@ -22,6 +22,9 @@ export function runtimeEventsToUiMessageStream(
 ): ReadableStream<UIMessageChunk> {
   return createUIMessageStream<UIMessage>({
     generateId: () => options.messageId ?? `oan-${Date.now().toString(36)}`,
+    // Runtime error events already carry an intentional public message below.
+    // Unexpected iterator/transport errors must not reveal raw server details.
+    onError: () => 'An error occurred.',
     async execute({ writer }) {
       let textPartId: string | undefined;
 

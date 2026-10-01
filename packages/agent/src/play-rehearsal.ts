@@ -364,13 +364,13 @@ export async function* streamPlayRehearsalActorGeneration(
   try {
     const result = streamText({
       model,
-      system: PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
+      instructions: PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
       prompt,
       abortSignal: input.abortSignal,
       maxRetries: 0,
     });
 
-    for await (const part of result.fullStream) {
+    for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         yield createAbortEvent(partialText, input.abortSignal.reason);
         return;
@@ -461,13 +461,13 @@ export async function completePlayRehearsalReferee(
   try {
     const result = streamText({
       model,
-      system: PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
+      instructions: PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
       prompt,
       abortSignal: input.abortSignal,
       maxRetries: 0,
     });
 
-    for await (const part of result.fullStream) {
+    for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         return createRefereeAbortResult(partialText, input.abortSignal.reason);
       }

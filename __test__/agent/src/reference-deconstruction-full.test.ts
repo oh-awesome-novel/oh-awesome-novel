@@ -215,7 +215,7 @@ describe('Reference deconstruction full-analysis runners', () => {
       },
     });
     expect(call.tools).toBeUndefined();
-    expect(call.toolChoice).toBeUndefined();
+    expect(call.toolChoice).toEqual({ type: 'auto' });
     expect(JSON.stringify(call.prompt)).toContain(
       REFERENCE_DISTILLATION_SYSTEM_PROMPT.split('\n')[0],
     );
@@ -305,7 +305,7 @@ describe('Reference deconstruction full-analysis runners', () => {
         },
       });
       expect(call.tools).toBeUndefined();
-      expect(call.toolChoice).toBeUndefined();
+      expect(call.toolChoice).toEqual({ type: 'auto' });
       expect(JSON.stringify(call.prompt)).toContain(
         REFERENCE_CHAPTER_ANALYSIS_SYSTEM_PROMPT.split('\n')[0],
       );

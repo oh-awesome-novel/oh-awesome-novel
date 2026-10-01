@@ -293,7 +293,7 @@ export async function generateReferenceQuickPreview(
   try {
     const result = await generateText({
       model,
-      system: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+      instructions: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
       prompt,
       output,
       abortSignal: input.abortSignal,
@@ -329,7 +329,9 @@ export async function generateReferenceQuickPreview(
     ) {
       return createFailureResult(
         'invalid_output',
-        new Error('Reference quick preview did not match the required schema.'),
+        new Error(NoObjectGeneratedError.isInstance(error) && error.finishReason && error.finishReason !== 'stop'
+          ? 'Reference quick preview ended without a valid structured result.'
+          : 'Reference quick preview did not match the required schema.'),
         false,
       );
     }

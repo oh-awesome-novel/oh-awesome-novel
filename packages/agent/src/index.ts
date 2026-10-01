@@ -348,10 +348,10 @@ async function* streamAiSdkModelResponse(
   assertModelRequestBudget(request, input.providerConfig);
   const { maxOutputTokens } = resolveContextBudget(input.providerConfig);
   const model = await input.resolveModel(input.providerConfig);
-  const system = toModelSystemPrompt(request.messages);
+  const instructions = toModelSystemPrompt(request.messages);
   const result = streamText({
     model,
-    ...(system ? { system } : {}),
+    ...(instructions ? { instructions } : {}),
     messages: request.messages
       .filter((message) => message.role !== 'system')
       .map(toModelMessage),
@@ -362,11 +362,21 @@ async function* streamAiSdkModelResponse(
   });
   let text = '';
 
-  for await (const textPart of result.textStream) {
-    text += textPart;
+  // v7's textStream omits error parts. Observe the complete stream so a
+  // provider failure still aborts the Runtime turn and discards its candidate.
+  for await (const part of result.stream) {
+    if (part.type === 'error') throw part.error;
+    if (part.type === 'abort') {
+      throw Object.assign(new Error(part.reason ?? 'Model generation was aborted.'), { name: 'AbortError' });
+    }
+    if (part.type === 'finish' && part.finishReason === 'error') {
+      throw new Error('Model generation finished with an error.');
+    }
+    if (part.type !== 'text-delta') continue;
+    text += part.text;
     yield {
       type: 'text_delta',
-      text: textPart,
+      text: part.text,
     };
   }
 
@@ -379,7 +389,7 @@ async function* streamAiSdkModelResponse(
             content: text,
           }
         : undefined,
-      toolCalls: (await result.toolCalls).map(toRuntimeToolCall),
+      toolCalls: (await result.finalStep).toolCalls.map(toRuntimeToolCall),
     },
   };
 }

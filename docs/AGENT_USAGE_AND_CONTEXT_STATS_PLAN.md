@@ -58,14 +58,14 @@ V1 必须明确区分四层事实：
 
 ### 2.3 AI SDK usage 事实
 
-当前本地 `ai` package 已提供：
+当前本地 `ai@7` package 已提供（2026-10-01 随 [1240](tasks/1240.md) 更新）：
 
-- `streamText().usage`：最后一个 SDK step 的 usage。
-- `streamText().totalUsage`：该次 `streamText` 调用聚合 usage。
+- `streamText().usage`：该次 `streamText` 调用所有 SDK steps 的聚合 usage。
+- `(await streamText().finalStep).usage`：最后一个 SDK step 的 usage。
 - `finishReason`。
 - `LanguageModelUsage` 中的 input、output、total、cache read/write、reasoning 等字段。
 
-OAN 应读取并规范化这些数据，不自造 provider-specific usage 采集协议，也不保存 AI SDK 的任意 raw payload。
+`totalUsage` 仍是 deprecated alias；新接线使用 `usage`，不能重复累加两者。OAN 应读取并规范化这些数据，不自造 provider-specific usage 采集协议，也不保存 AI SDK 的任意 raw payload。
 
 ## 3. 当前代码状态与缺口
 
@@ -92,7 +92,7 @@ OAN 应读取并规范化这些数据，不自造 provider-specific usage 采集
 - protected / compressible 目前是标签，尚未形成统一 overflow 语义。
 - Runtime 不记录每次实际 model request 的 message stats。
 - `RuntimeModelResponse`、`RunTurnResult` 和 `RuntimeEvent` 不包含 usage。
-- AI SDK adapter 没有读取 `totalUsage` 和 `finishReason`。
+- AI SDK adapter 没有读取 `usage` 和 `finishReason`。
 - session artifact 没有 step / turn usage 记录。
 - UI stream 没有 context evidence / usage data chunk。
 - UI 无法回答“本轮为什么这么贵”“哪类 source 占了最多上下文”“actual usage 是否可用”。
@@ -414,7 +414,7 @@ Runtime 按 step index 聚合 turn usage。它不解析 provider raw usage，也
 - 给 baseline ContextPackage source 补 workspace-relative path、source hash、payload hash 和 stats。
 - 将 Core ContextPackage provenance 映射到 `RuntimeContextItem` 通用 provenance。
 - 从 provider config 解析 provider id、kind、model、context budget 和安全 endpoint origin。
-- 在 `streamText` 完成后读取 `totalUsage` / `finishReason` 并规范化。
+- 在 `streamText` 完成后读取 `usage` / `finishReason` 并规范化。
 - 生成 ProviderEgressSummary。
 - 把 step / turn usage 写入 session artifact。
 - 保持 standard run 和 stream run 的统计语义一致。
@@ -481,7 +481,7 @@ Agent builds ContextPackage evidence
   -> Runtime context builder creates actual messages
   -> emit model_request_stats
   -> AI SDK streamText
-  -> normalize totalUsage + finishReason
+  -> normalize usage + finishReason
   -> emit usage_stats
   -> tool call may start next model step
   -> aggregate TurnUsageSummary
@@ -678,7 +678,7 @@ Context 8.2k estimated · Actual unavailable · 3 steps
 
 工作项：
 
-- 读取 `streamText.totalUsage` 和 `finishReason`。
+- 读取 `streamText.usage` 和 `finishReason`。
 - 归一化 AI SDK usage，不保留 raw。
 - standard generate / stream 结果一致。
 - 追加 `.workspace/sessions/<id>/usage-stats.jsonl`。
@@ -771,7 +771,7 @@ Context 8.2k estimated · Actual unavailable · 3 steps
 | --- | --- | --- |
 | Core | `__test__/core` | estimator、evidence、hash、budget、usage normalization、artifact parser |
 | Runtime | `__test__/runtime` | pre-call stats、step event、multi-loop aggregate、abort/error/missing usage |
-| Agent | `__test__/agent` | ContextPackage actual assembly、AI SDK totalUsage、egress redaction、session artifact |
+| Agent | `__test__/agent` | ContextPackage actual assembly、AI SDK usage、egress redaction、session artifact |
 | Backend | `__test__/backend` | SSE chunks、bounded history API、workspace/session boundary、no secret/raw content |
 | Client | `__test__/client` | strict parser、unknown schema、partial/unavailable usage |
 | Desktop UI | `__test__/desktop-ui` | compact summary、expanded inspector、labels、source routing、warning states |

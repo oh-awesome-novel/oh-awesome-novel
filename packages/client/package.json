@@ -17,7 +17,7 @@
     "test:watch": "npm run test --workspace @oh-awesome-novel/test-client"
   },
   "dependencies": {
-    "ai": "^6.0.197"
+    "ai": "^7.0.126"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

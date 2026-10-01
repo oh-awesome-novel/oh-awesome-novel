@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ToolSet } from 'ai';
 
 describe('sandbox dependency smoke', () => {
-  it('runs AI SDK 6 tools against a network-disabled in-memory Bash', async () => {
+  it('runs AI SDK 7 tools against a network-disabled in-memory Bash', async () => {
     const fs = new InMemoryFs({
       '/workspace/input.txt': 'hello\n',
     }, {
@@ -65,13 +65,13 @@ async function executeTool(
   name: string,
   args: unknown,
 ): Promise<unknown> {
-  const executable = tools[name] as {
-    execute?: (args: unknown, context: unknown) => Promise<unknown> | unknown;
-  };
+  const executable = tools[name];
 
   if (!executable?.execute) {
     throw new Error(`Tool ${name} is not executable.`);
   }
 
-  return executable.execute(args, {});
+  return executable.execute(args as never, {
+    toolCallId: `test-${name}`, messages: [], context: undefined,
+  });
 }

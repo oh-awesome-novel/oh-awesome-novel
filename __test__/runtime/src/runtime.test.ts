@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ModelMessage } from 'ai';
 
 import {
   PriorityRuntimeContextBuilder,
@@ -65,11 +66,9 @@ describe('RuntimeSession', () => {
     expect(execute).toHaveBeenCalledWith(
       { id: 'heroine' },
       {
-        toolCall: {
-          id: 'call_1',
-          name: 'character.get',
-          args: { id: 'heroine' },
-        },
+        toolCallId: 'call_1',
+        messages: [{ role: 'user', content: 'Read heroine' }],
+        context: undefined,
       },
     );
     expect(result.stoppedReason).toBe('completed');
@@ -88,6 +87,75 @@ describe('RuntimeSession', () => {
       ],
     });
     expect(model.requests[1].messages.at(-1)?.role).toBe('tool');
+  });
+
+  it('passes typed SDK execution options from the initiating prompt with prior tool history', async () => {
+    const controller = new AbortController();
+    const seen: Array<{ id: string; messages: ModelMessage[] }> = [];
+    const tools = createTool('inspect', async (_args, options) => {
+      expect(options.abortSignal).toBe(controller.signal);
+      expect(options.context).toBeUndefined();
+      seen.push({ id: options.toolCallId, messages: structuredClone(options.messages) });
+      // Tool-local mutation must not alter the prompt reused in the next loop.
+      options.messages.push({ role: 'user', content: 'Tool-local mutation' });
+      return { value: 'snapshot' };
+    });
+    const model = createFakeModel([
+      { toolCalls: [{ id: 'first-call', name: 'inspect', args: { step: 1 } }] },
+      { toolCalls: [{ id: 'second-call', name: 'inspect', args: { step: 2 } }] },
+      { message: { role: 'assistant', content: 'Done.' } },
+    ]);
+    const runtime = createRuntime({ model, tools });
+    await runtime.runTurn({
+      messages: [{ role: 'system', content: 'Trusted instructions' }],
+      message: 'Read context', abortSignal: controller.signal,
+    });
+
+    expect(seen[0]).toEqual({ id: 'first-call', messages: [{ role: 'user', content: 'Read context' }] });
+    expect(seen[1]).toEqual({
+      id: 'second-call',
+      messages: [
+        { role: 'user', content: 'Read context' },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'first-call', toolName: 'inspect', input: { step: 1 } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'first-call', toolName: 'inspect', output: {
+          type: 'json', value: { ok: true, content: { value: 'snapshot' } },
+        } }] },
+      ],
+    });
+    expect(JSON.stringify(model.requests)).not.toContain('Tool-local mutation');
+  });
+
+  it('propagates tool cancellation and skips remaining calls even at the loop limit', async () => {
+    const controller = new AbortController();
+    const afterAbort = vi.fn();
+    const finalizeTurn = vi.fn(async () => []);
+    const runtime = createRuntime({
+      model: createFakeModel([{ toolCalls: [
+        { id: 'slow-call', name: 'slow', args: {} },
+        { id: 'next-call', name: 'after-abort', args: {} },
+      ] }]),
+      tools: {
+        ...createTool('slow', async (_args, { abortSignal }) => {
+          expect(abortSignal).toBe(controller.signal);
+          controller.abort();
+          abortSignal!.throwIfAborted();
+        }),
+        ...createTool('after-abort', afterAbort),
+      },
+      maxToolLoops: 1,
+      turnFinalizer: { finalizeTurn },
+    });
+    const result = await runtime.runTurn({ message: 'Begin', abortSignal: controller.signal });
+    expect(result.stoppedReason).toBe('aborted');
+    expect(afterAbort).not.toHaveBeenCalled();
+    expect(result.toolLog.at(-1)?.result).toMatchObject({
+      ok: false, error: { code: 'TOOL_EXECUTION_ABORTED' },
+    });
+    expect(result.messages.filter((message) => message.role === 'tool').map((message) => message.toolCallId))
+      .toEqual(['slow-call', 'next-call']);
+    expect(finalizeTurn).toHaveBeenCalledWith({
+      stoppedReason: 'aborted', pendingActions: [], abortSignal: controller.signal,
+    });
   });
 
   it('collects pending actions from proposal tools without applying them', async () => {

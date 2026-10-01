@@ -1,6 +1,6 @@
-import { Chat } from '@ai-sdk/vue';
+import { useChat, type UseChatHelpers } from '@ai-sdk/vue';
 import type { ChatStatus, UIMessage } from 'ai';
-import { computed, shallowRef, type ShallowRef } from 'vue';
+import { computed, effectScope, getCurrentScope, onScopeDispose, shallowRef, type ShallowRef } from 'vue';
 
 import { oanClient } from '../client';
 import {
@@ -17,7 +17,8 @@ interface AgentConversationSession {
   createdAt: string;
   updatedAt: ShallowRef<string>;
   input: ShallowRef<string>;
-  chat: Chat<UIMessage>;
+  chat: UseChatHelpers<UIMessage>;
+  dispose(): void;
 }
 
 export interface AgentConversationSummary {
@@ -41,6 +42,11 @@ export function useAgentConversationSessions(options: {
   const writingReferencesError = shallowRef('');
   const selectedWritingReferenceAttachmentIds = shallowRef<string[]>([]);
 
+  function dispose() {
+    for (const session of sessions.value) session.dispose();
+  }
+  if (getCurrentScope()) onScopeDispose(dispose);
+
   const activeSession = computed(() =>
     sessions.value.find((session) => session.id === activeSessionId.value) ?? sessions.value[0],
   );
@@ -51,8 +57,8 @@ export function useAgentConversationSessions(options: {
       activeSession.value.input.value = value;
     },
   });
-  const activeMessages = computed(() => activeChat.value.messages);
-  const activeStatus = computed<ChatStatus>(() => activeChat.value.status);
+  const activeMessages = computed(() => activeChat.value.messages.value);
+  const activeStatus = computed<ChatStatus>(() => activeChat.value.status.value);
   const activePendingActions = computed<PendingActionView[]>(() =>
     collectPendingActions(activeMessages.value),
   );
@@ -62,10 +68,10 @@ export function useAgentConversationSessions(options: {
       .map((session) => ({
         id: session.id,
         title: session.title.value,
-        preview: getConversationPreview(session.chat.messages),
+        preview: getConversationPreview(session.chat.messages.value),
         createdAt: session.createdAt,
         updatedAt: session.updatedAt.value,
-        messageCount: session.chat.messages.length,
+        messageCount: session.chat.messages.value.length,
         active: session.id === activeSessionId.value,
       })),
   );
@@ -73,7 +79,7 @@ export function useAgentConversationSessions(options: {
   function createConversation() {
     clearSelectedWritingReferences();
     const current = activeSession.value;
-    if (current.chat.messages.length === 0 && current.input.value.trim().length === 0) {
+    if (current.chat.messages.value.length === 0 && current.input.value.trim().length === 0) {
       activeSessionId.value = current.id;
       return current.id;
     }
@@ -156,14 +162,17 @@ export function useAgentConversationSessions(options: {
         },
       },
     );
+    if (session.chat.status.value === 'error') {
+      throw session.chat.error.value ?? new Error('The conversation request failed.');
+    }
     session.input.value = '';
-    clearSelectedWritingReferences();
+    if (activeSessionId.value === session.id) clearSelectedWritingReferences();
     updateTitleFromPrompt(session, text);
     touchConversation(session);
   }
 
   function stop() {
-    activeChat.value.stop();
+    void activeChat.value.stop();
   }
 
   return {
@@ -178,6 +187,7 @@ export function useAgentConversationSessions(options: {
     writingReferencesError,
     selectedWritingReferenceAttachmentIds,
     createConversation,
+    dispose,
     refreshWritingReferences,
     selectConversation,
     sendCurrentInput,
@@ -192,15 +202,25 @@ export function useAgentConversationSessions(options: {
 
 function createConversationSession(): AgentConversationSession {
   const now = new Date().toISOString();
+  const id = createConversationId();
+  // Conversations can be created from click handlers outside setup's active
+  // scope. Each owns its SDK watchers and keeps its state while another is shown.
+  const scope = effectScope(true);
+  const chat = scope.run(() => useChat<UIMessage>({
+    id,
+    transport: oanClient.createAgentChatTransport(),
+  }))!;
   return {
-    id: createConversationId(),
+    id,
     title: shallowRef('新对话'),
     createdAt: now,
     updatedAt: shallowRef(now),
     input: shallowRef(''),
-    chat: new Chat<UIMessage>({
-      transport: oanClient.createAgentChatTransport(),
-    }),
+    chat,
+    dispose() {
+      void chat.stop();
+      scope.stop();
+    },
   };
 }
 

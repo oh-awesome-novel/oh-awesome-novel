@@ -1,8 +1,8 @@
-import { Chat } from '@ai-sdk/vue';
+import { useChat } from '@ai-sdk/vue';
 import { parsePendingActionView } from '@oh-awesome-novel/client';
 import type { PendingActionViewV1 } from '@oh-awesome-novel/client';
 import type { UIMessage } from 'ai';
-import { computed, shallowRef } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, shallowRef } from 'vue';
 
 import { oanClient } from '../client';
 
@@ -10,18 +10,16 @@ export type PendingActionView = PendingActionViewV1;
 
 export function useAgentCheckpointChat() {
   const input = shallowRef('');
-  const chat = shallowRef(
-    new Chat<UIMessage>({
-      transport: oanClient.createAgentChatTransport(),
-    }),
-  );
-
-  const messages = computed(() => chat.value.messages);
+  const chat = useChat<UIMessage>({
+    transport: oanClient.createAgentChatTransport(),
+  });
+  const { messages, status } = chat;
+  if (getCurrentScope()) onScopeDispose(() => { void chat.stop(); });
   const pendingActions = computed(() => collectPendingActions(messages.value));
 
   async function sendPrompt(prompt: string) {
     input.value = '';
-    await chat.value.sendMessage({ text: prompt });
+    await chat.sendMessage({ text: prompt });
   }
 
   async function sendCurrentInput() {
@@ -35,13 +33,14 @@ export function useAgentCheckpointChat() {
   }
 
   function stop() {
-    chat.value.stop();
+    void chat.stop();
   }
 
   return {
     chat,
     input,
     messages,
+    status,
     pendingActions,
     sendPrompt,
     sendCurrentInput,

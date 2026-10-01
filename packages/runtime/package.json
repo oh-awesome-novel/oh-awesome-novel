@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@oh-awesome-novel/core": "^0.0.1",
-    "ai": "^6.0.197"
+    "ai": "^7.0.126"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

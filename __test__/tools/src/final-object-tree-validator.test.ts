@@ -191,5 +191,5 @@ async function workspace(files: readonly CandidateFileSnapshot[]): Promise<strin
 async function execute(session: SandboxEditSession, name: string, input: unknown): Promise<unknown> {
   const tool = session.tools[name];
   if (!tool?.execute) throw new Error(`Tool unavailable: ${name}`);
-  return tool.execute(input as never, { toolCallId: `test-${name}`, messages: [] });
+  return tool.execute(input as never, { toolCallId: `test-${name}`, messages: [], context: undefined });
 }

@@ -108,7 +108,7 @@ describe('Reference deconstruction Quick Preview runner', () => {
       },
     });
     expect(call?.tools).toBeUndefined();
-    expect(call?.toolChoice).toBeUndefined();
+    expect(call?.toolChoice).toEqual({ type: 'auto' });
     expect(call?.responseFormat?.schema?.additionalProperties).toBe(false);
     expect(call?.responseFormat?.schema?.required).toContain('findings');
     expect(JSON.stringify(call?.prompt)).toContain(
