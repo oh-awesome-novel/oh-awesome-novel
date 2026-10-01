@@ -17,6 +17,12 @@ bash-tool + just-bash fixed sandbox
 
 优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database。
 
+## Current Delivery Priority (2026-10-01)
+
+按 [设计实现评审](DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md) 与 [1230 修正任务](tasks/1230.md) 推进：先完成首次使用、审批恢复、中文 Git 路径、最终树引用校验，再补上下文预算、会话恢复和 Play 可靠性。正文搜索、可读导出、旧稿导入与卷/全局摘要分别验收。
+
+**Extension 系统开发暂缓。** 不新增动态 Tool 注册、extension host code、更多 Director 控制或 Reference 分析层；保留已经交付的能力。恢复扩展前，先证明已有写作、审批、导出与 Play adoption 的真实创作旅程。
+
 ## Milestone Overview
 
 ```text
@@ -140,6 +146,8 @@ tool filter 不能扩大 host-selected capability；Workflow 不能变成隐藏 
 Related completed split: tasks `1000`–`1100` cover context discipline、review/settlement、session artifacts、projections、Play 与 reference selection。
 
 ## M11. Extension System
+
+Status: Deferred（2026-10-01 用户明确暂缓）；以下只保留未来边界，不是当前开发队列。
 
 Goal: 轻量 extension manifest、Tool/Prompt/Workflow/Constitution template registration。
 

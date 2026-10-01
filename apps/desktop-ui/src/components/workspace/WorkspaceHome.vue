@@ -83,6 +83,8 @@ const healthIssues = computed(() => props.health?.issues.slice(0, 3) ?? []);
       </div>
     </div>
 
+    <p v-if="status?.git.error" class="error-copy" role="status">{{ status.git.error.message }}</p>
+
     <div v-if="health" class="home-health-panel" aria-label="Project health summary">
       <div class="status-block">
         <span>Active hooks</span>

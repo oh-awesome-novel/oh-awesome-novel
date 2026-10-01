@@ -390,7 +390,8 @@ State 是随章节变化的动态变量。
 ```yaml
 events:
   - id: event_001
-    chapter: 0001/0003
+    order: 1
+    chapter: "0001/0003"
     title: 女主重伤
     description: 女主在战斗中被黑色纹路侵蚀。
     tags:
@@ -405,7 +406,8 @@ events:
 ```yaml
 active:
   - id: black_mark
-    firstChapter: 0001/0003
+    status: active
+    firstChapter: "0001/0003"
     description: 女主手臂出现黑色纹路。
     expectedResolution: 0002
     relatedCharacters:
@@ -417,10 +419,31 @@ active:
 ```yaml
 resolved:
   - id: dragon_eye
-    firstChapter: 0001/0001
-    resolvedChapter: 0001/0010
+    status: resolved
+    firstChapter: "0001/0001"
+    resolvedChapter: "0001/0010"
     description: 龙眼伏笔已揭示为古代契约。
 ```
+
+## Final Object Tree Reference Rules
+
+提案和 Accept 都用同一类型化引用校验：host 从 `chapters/`、`characters/`、`world/`、`state/`、`timeline/`、`foreshadow/` 的安全、有界快照出发，叠加本 action 的 create/update/delete 后检查最终树。Sandbox 的引用快照在 turn 开始时冻结；窄读取权限使用独立 host-only 快照，不增加模型可见范围。正式提案持久化前和 Accept 写入前再检查当前 host 最终树。
+
+| Namespace | Stable identity |
+| --- | --- |
+| character | `characters/<id>/` 下至少一个受支持 `.md` / `.yaml` 文件；目录中的多个组件共同属于一个角色。 |
+| chapter | `chapters/<volume>/<chapter>.md` 的 `<volume>/<chapter>`；`0000.md` 为卷元信息，不是章节。 |
+| world | `world/` 下文件的完整相对路径，去掉 `.md` / `.yaml`，例如 `locations/library`；同 stem 的两种扩展名不可并存。 |
+| event / arc | `timeline/*.yaml` 的 `events` / `timeline` 或 `arcs` 集合条目 `id`；同 namespace 跨文件唯一。 |
+| foreshadow | `foreshadow/*.yaml` 的 `foreshadow` / `active` / `resolved` / `entries` 集合条目 `id`；active/resolved 之间仍需唯一。 |
+
+明确的 `characterRef(s)`、`chapterRef(s)`、`worldRef(s)`、`locationRef(s)`、`eventRef(s)`、`arcRef(s)`、`foreshadowRef(s)` 按对应 namespace 校验，`location` 引用属于 world。复数字段必须为字符串数组，单数字段必须为字符串。相同字符串在其它 namespace 中存在不能满足引用。
+
+State/Timeline/Foreshadow YAML 还检查 `characterId`、`characterIds`、`relatedCharacters`、`chapter`、`chapterId`、`firstChapter`、`resolvedChapter`、`worldId`、`locationId`、`eventId`、`arcId`、`foreshadowId`。`state` 根 `characters` 字典的 key 是角色引用；chapter frontmatter 的 `characters` / `locations` 是角色/world 引用数组；character metadata 的 `firstAppearance` 是章节引用；world metadata 的 `parentId` 是 world 引用。章节引用始终使用完整且加引号的 `"0001/0003"` ID，不使用含糊的单一章节号。
+
+`location`、`expectedResolution`、描述文字、普通 Markdown 正文和未列出的字段不自动解释为外键。前者可保存自然语言或未来规划；不能据此声称文学语义完整。
+
+同 action 新建对象并引用它合法；删除对象必须同时删除或改写全部引用它的结构化文件。未改动的引用文件也参与检查。已有悬空引用的工程，对上述六个根内的写入会 fail closed，需在同一候选中修复；纯 summary/outline/Reference publication 的候选不触发这项 gate。语法与单文件领域校验继续独立执行，不因引用存在而跳过。
 
 ## Summary Format
 

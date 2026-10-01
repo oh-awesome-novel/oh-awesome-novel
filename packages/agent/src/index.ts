@@ -1,3 +1,7 @@
+import { assertModelRequestBudget, resolveContextBudget } from './context-budget';
+import { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
+export { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
+export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 import { parse as parseYaml } from 'yaml';
@@ -8,6 +12,8 @@ import {
   createContextPackageDraft,
   createDefaultNovelCopilotSkill,
   createSessionResumeBoundary,
+  checkSessionResumeBoundary,
+  readSessionResumeBoundary,
   formatAuthorReportMarkdown,
   formatContextPackageSummary,
   formatProjectHealthMarkdown,
@@ -83,17 +89,24 @@ export interface NovelAgentWorkspaceSnapshot {
   projectionFingerprint?: string;
   constitution?: string;
   workflow?: string;
-  summaries?: string[];
+  summaries?: readonly string[];
   state?: string;
   timeline?: string;
   foreshadow?: string;
-  contextFiles?: NovelAgentWorkspaceContextFile[];
+  contextFiles?: readonly NovelAgentWorkspaceContextFile[];
+  omittedContextFiles?: readonly NovelAgentWorkspaceContextFile[];
+  fixedFileHashes?: ReadonlyArray<{ path: string; hash: string }>;
 }
 
 export interface NovelAgentWorkspaceContextFile {
   sourceId: ContextSourceId | string;
   path: string;
   title?: string;
+  sourceHash?: string;
+  payloadHash?: string;
+  modelVisibleChars?: number;
+  estimatedTokens?: number;
+  selectionReason?: string;
 }
 
 export interface NovelAgentMessageInput {
@@ -332,6 +345,8 @@ async function* streamAiSdkModelResponse(
   input: AiSdkModelAdapterInput,
   request: RuntimeModelRequest,
 ): AsyncIterable<RuntimeModelStreamEvent> {
+  assertModelRequestBudget(request, input.providerConfig);
+  const { maxOutputTokens } = resolveContextBudget(input.providerConfig);
   const model = await input.resolveModel(input.providerConfig);
   const system = toModelSystemPrompt(request.messages);
   const result = streamText({
@@ -343,6 +358,7 @@ async function* streamAiSdkModelResponse(
     tools: toModelVisibleToolSet(request.tools),
     abortSignal: request.abortSignal,
     maxRetries: 0,
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
   });
   let text = '';
 
@@ -502,7 +518,9 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
 
   return {
     tools: session.tools,
-    workspace: createNovelAgentWorkspaceSnapshotFromProjection(projectionSnapshot),
+    workspace: createNovelAgentWorkspaceSnapshotFromProjection(projectionSnapshot, {
+      targetPaths: input.exactWritablePaths,
+    }),
     skill: createNovelAgentSkillFromProjection(projectionSnapshot),
     writingProfile: createDefaultProjectedWritingProfile(),
     projectHealth,
@@ -544,64 +562,6 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
     dispose: () => session.dispose(),
   };
 };
-
-export function createNovelAgentWorkspaceSnapshotFromProjection(
-  projection: SandboxProjectionSnapshot,
-): NovelAgentWorkspaceSnapshot {
-  const select = (root: string, extensions: readonly string[]) => projection.files
-    .filter((file) => (
-      file.path.startsWith(`${root}/`)
-      && extensions.some((extension) => file.path.endsWith(extension))
-      && file.content.length > 0
-    ))
-    .slice(0, 12);
-  const format = (root: string, file: { path: string; content: string }) =>
-    `# ${file.path.slice(root.length + 1)}\n\n${file.content}`;
-  const constitutionFiles = select('.oan/constitution', ['.md']);
-  const summaryFiles = select('summaries', ['.md']);
-  const stateFiles = select('state', ['.yaml', '.yml']);
-  const timelineFiles = select('timeline', ['.yaml', '.yml', '.md']);
-  const foreshadowFiles = select('foreshadow', ['.yaml', '.yml', '.md']);
-  const workflow = projection.files.find((file) => (
-    file.path === '.oan/workflow.yaml' && file.content.length > 0
-  ));
-  const contextFiles: NovelAgentWorkspaceContextFile[] = [
-    ...constitutionFiles.map((file) => ({ sourceId: 'constitution', path: file.path })),
-    ...(workflow ? [{ sourceId: 'workflow', path: workflow.path }] : []),
-    ...summaryFiles.map((file) => ({
-      sourceId: 'previousChapterEnding',
-      path: file.path,
-    })),
-    ...stateFiles.map((file) => ({ sourceId: 'latestState', path: file.path })),
-    ...timelineFiles.map((file) => ({ sourceId: 'timeline', path: file.path })),
-    ...foreshadowFiles.map((file) => ({
-      sourceId: 'foreshadowLedger',
-      path: file.path,
-    })),
-  ];
-
-  return Object.freeze({
-    workspaceRoot: projection.workspaceRoot,
-    projectionFingerprint: projection.projectionFingerprint,
-    ...(constitutionFiles.length > 0
-      ? { constitution: constitutionFiles.map((file) => format('.oan/constitution', file)).join('\n\n') }
-      : {}),
-    ...(workflow ? { workflow: workflow.content } : {}),
-    ...(summaryFiles.length > 0
-      ? { summaries: Object.freeze(summaryFiles.map((file) => format('summaries', file))) }
-      : {}),
-    ...(stateFiles.length > 0
-      ? { state: stateFiles.map((file) => format('state', file)).join('\n\n') }
-      : {}),
-    ...(timelineFiles.length > 0
-      ? { timeline: timelineFiles.map((file) => format('timeline', file)).join('\n\n') }
-      : {}),
-    ...(foreshadowFiles.length > 0
-      ? { foreshadow: foreshadowFiles.map((file) => format('foreshadow', file)).join('\n\n') }
-      : {}),
-    contextFiles: Object.freeze(contextFiles),
-  });
-}
 
 function createNovelAgentSkillFromProjection(
   projection: SandboxProjectionSnapshot,
@@ -830,6 +790,7 @@ export const runNovelAgentTurn = async (
 
   try {
     const projectedInput = bindNovelAgentTurnToEnvironment(input, environment, capability);
+    const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
     const runtime = createNovelAgentRuntime({
@@ -840,13 +801,16 @@ export const runNovelAgentTurn = async (
         input.onEvent
           ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
           : undefined,
-        session?.onEvent,
+        session ? (event) => session.onEvent(event.type === 'message_finish'
+          ? { ...event, result: withResumeNotice(event.result, resumeNotice) }
+          : event) : undefined,
       ),
     });
-    const result = await runtime.runTurn(createRuntimeTurnInput({
+    const rawResult = await runtime.runTurn(createRuntimeTurnInput({
       ...projectedInput,
       contextPackage,
     }));
+    const result = withResumeNotice(rawResult, resumeNotice);
     await maybeWriteNovelAgentSessionArtifacts({
       workspaceRoot: input.workspaceRoot,
       request: input.request,
@@ -887,6 +851,7 @@ export async function* streamNovelAgentTurn(
 
   try {
     const projectedInput = bindNovelAgentTurnToEnvironment(input, environment, capability);
+    const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
     const runtime = createNovelAgentRuntime({
@@ -897,7 +862,9 @@ export async function* streamNovelAgentTurn(
         input.onEvent
           ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
           : undefined,
-        session?.onEvent,
+        session ? (event) => session.onEvent(event.type === 'message_finish'
+          ? { ...event, result: withResumeNotice(event.result, resumeNotice) }
+          : event) : undefined,
       ),
     });
     let finalResult: RunTurnResult | undefined;
@@ -907,10 +874,14 @@ export async function* streamNovelAgentTurn(
       contextPackage,
     }))) {
       if (event.type === 'message_finish') {
-        finalResult = event.result;
+        finalResult = withResumeNotice(event.result, resumeNotice);
+        yield sanitizeRuntimeEventForPublic({ ...event, result: finalResult });
+      } else {
+        yield sanitizeRuntimeEventForPublic(event);
+        if (event.type === 'message_start' && resumeNotice) {
+          yield { type: 'message_delta', text: resumeNotice };
+        }
       }
-
-      yield sanitizeRuntimeEventForPublic(event);
     }
 
     if (finalResult) {
@@ -1085,6 +1056,35 @@ export type {
   ReferenceStoryMaterialGenerationResult,
 } from './reference-story-material.js';
 export type { RuntimeEventUiStreamOptions } from './ui-stream';
+
+async function prepareResumeContext(
+  input: NovelAgentTurnInput,
+  projected: NovelAgentMessageInput,
+  environment: NovelAgentTurnEditEnvironment,
+  sessionId: string | undefined,
+): Promise<string | undefined> {
+  if (!sessionId || !input.session?.id) return undefined;
+  const boundary = await readSessionResumeBoundary(input.workspaceRoot, sessionId);
+  if (!boundary || !environment.workspace.fixedFileHashes) return undefined;
+  const resume = await checkSessionResumeBoundary(input.workspaceRoot, boundary, environment.workspace.fixedFileHashes);
+  if (!resume.changedFiles.length && !resume.missingFiles.length) return undefined;
+  const notice = [
+    '会话恢复提示：相关文件已变化，本轮以当前文件快照为准，历史对话不代表当前事实。',
+    resume.changedFiles.length ? `已变化：${resume.changedFiles.join('、')}` : '',
+    resume.missingFiles.length ? `已删除或不在当前可读范围：${resume.missingFiles.join('、')}` : '',
+  ].filter(Boolean).join('\n') + '\n\n';
+  projected.selectedContext = [...(projected.selectedContext ?? []), {
+    kind: 'selected', title: 'Session resume warning', content: notice,
+  }];
+  return notice;
+}
+
+function withResumeNotice(result: RunTurnResult, notice: string | undefined): RunTurnResult {
+  if (!notice || !result.assistantMessage) return result;
+  const assistantMessage = { ...result.assistantMessage, content: notice + result.assistantMessage.content };
+  return { ...result, assistantMessage, messages: result.messages.map((message) =>
+    message === result.assistantMessage ? assistantMessage : message) };
+}
 
 async function prepareAgentSession(input: {
   workspaceRoot: string;
@@ -1316,7 +1316,7 @@ export const createBaselineNovelAgentContextPackage = (
 
   const addWorkspaceSource = (source: {
     sourceId: ContextSourceId;
-    content?: string | string[];
+    content?: string | readonly string[];
     reason: string;
     omittedReason: string;
     budgetLayer: ContextBudgetLayer;
@@ -1324,21 +1324,32 @@ export const createBaselineNovelAgentContextPackage = (
     path?: string;
     title?: string;
   }): void => {
-    const hasContent = Array.isArray(source.content)
-      ? source.content.length > 0
-      : Boolean(source.content?.trim());
+    const hasContent = typeof source.content === 'string'
+      ? Boolean(source.content.trim())
+      : Boolean(source.content?.some((value) => value.trim().length > 0));
     const paths = contextPathsForSource(input.workspace, source.sourceId);
     const path = source.path ?? paths[0];
 
     if (hasContent) {
-      selected.push({
-        sourceId: source.sourceId,
-        reason: source.reason,
-        budgetLayer: source.budgetLayer,
-        semanticBoundary: source.semanticBoundary,
-        ...(path ? { path } : {}),
-        ...(source.title ? { title: source.title } : {}),
-      });
+      const files = input.workspace.contextFiles?.filter((file) => file.sourceId === source.sourceId) ?? [];
+      for (const file of files.length ? files : [{ path }]) {
+        selected.push({
+          sourceId: source.sourceId,
+          reason: ('selectionReason' in file && file.selectionReason) || source.reason,
+          budgetLayer: source.budgetLayer,
+          semanticBoundary: source.semanticBoundary,
+          ...(file.path ? { path: file.path } : {}),
+          ...(source.title ? { title: source.title } : {}),
+          ...('sourceHash' in file && file.sourceHash ? {
+            sourceHash: file.sourceHash,
+            payloadHash: file.payloadHash,
+            modelVisibleChars: file.modelVisibleChars,
+            estimatedTokens: file.estimatedTokens,
+            estimator: 'utf8-bytes-div-3-v1' as const,
+            outcome: 'selected' as const,
+          } : {}),
+        });
+      }
       trace.push(createTraceEntry(trace.length, createdAt, {
         type: 'workspaceSnapshot',
         sourceId: source.sourceId,
@@ -1422,6 +1433,16 @@ export const createBaselineNovelAgentContextPackage = (
     semanticBoundary: 'compressible',
     path: 'foreshadow',
   });
+
+  for (const file of input.workspace.omittedContextFiles ?? []) {
+    omitted.push({
+      sourceId: file.sourceId, path: file.path,
+      reason: file.selectionReason ?? 'outside the selected context window',
+      budgetLayer: 'L1', semanticBoundary: 'compressible', outcome: 'omitted',
+      sourceHash: file.sourceHash, modelVisibleChars: 0, estimatedTokens: 0,
+      estimator: 'utf8-bytes-div-3-v1',
+    });
+  }
 
   if (input.referenceSelection) {
     for (const reference of input.referenceSelection.included) {
@@ -1577,6 +1598,12 @@ export const createAgentSessionArtifactFromRunResult = async (input: {
         updatedAt,
       )
     : undefined;
+  const evidenceFiles = (contextPackage?.selected ?? []).filter((source) => source.path && source.sourceHash)
+    .map((source) => ({ path: source.path!, hash: source.sourceHash!, missing: false }));
+  const recordedBoundary = resumeBoundary || evidenceFiles.length ? {
+    sessionId: input.session.id, capturedAt: updatedAt,
+    touchedFiles: [...new Map([...(resumeBoundary?.touchedFiles ?? []), ...evidenceFiles].map((file) => [file.path, file])).values()],
+  } : undefined;
   const authorReport = createAuthorReport({
     request: input.request,
     result: input.result,
@@ -1598,9 +1625,10 @@ export const createAgentSessionArtifactFromRunResult = async (input: {
         inputSources: (contextPackage?.selected ?? []).map((source) => ({
           sourceId: source.sourceId,
           ...(source.path ? { path: source.path } : {}),
+          ...(source.sourceHash ? { hash: source.sourceHash } : {}),
         })),
         touchedFiles,
-        ...(resumeBoundary ? { resumeBoundary } : {}),
+        ...(recordedBoundary ? { resumeBoundary: recordedBoundary } : {}),
       },
       outputs: [
         ...(input.result.assistantMessage?.content

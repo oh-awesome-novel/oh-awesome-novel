@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, shallowRef } from 'vue';
+import { computed, onMounted, shallowRef } from 'vue';
 
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type {
@@ -17,6 +17,9 @@ const loading = shallowRef(false);
 const error = shallowRef('');
 const commitMessage = shallowRef('chore(novel): manual quick commit');
 const syncStatus = shallowRef('');
+const previewReady = shallowRef(false);
+const dirtyFiles = computed(() => status.value?.files.flatMap((file) => file.originalPath
+  ? [file.originalPath, file.path] : [file.path]) ?? []);
 
 onMounted(() => {
   void refreshGit();
@@ -25,17 +28,17 @@ onMounted(() => {
 async function refreshGit() {
   loading.value = true;
   error.value = '';
+  previewReady.value = false;
+  dirtyDiff.value = '';
 
   try {
-    const [nextStatus, log] = await Promise.all([
-      api.getGitStatus(),
-      api.getGitLog(12),
-    ]);
+    const nextStatus = await api.getGitStatus();
     status.value = nextStatus;
-    commits.value = log.commits;
+    commits.value = nextStatus.head ? (await api.getGitLog(12)).commits : [];
     dirtyDiff.value = nextStatus.files.length
-      ? (await api.getGitDiff(nextStatus.files.map((file) => file.path))).diff
+      ? (await api.getGitDiff(dirtyFiles.value)).diff
       : '';
+    previewReady.value = nextStatus.repository && nextStatus.status !== 'unknown';
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {
@@ -54,10 +57,11 @@ async function showCommit(hash: string) {
 }
 
 async function quickCommit() {
+  if (!previewReady.value || loading.value) return;
   error.value = '';
   try {
     const result = await api.quickCommit({
-      files: status.value?.files.map((file) => file.path),
+      files: dirtyFiles.value,
       message: commitMessage.value,
     });
     if (result.status !== 'committed') {
@@ -121,7 +125,7 @@ async function sync() {
       <div v-if="status.files.length" class="git-file-list">
         <div v-for="file in status.files" :key="file.path" class="git-file-row">
           <span>{{ file.raw.slice(0, 2) }}</span>
-          <strong>{{ file.path }}</strong>
+          <strong>{{ file.originalPath ? `${JSON.stringify(file.originalPath)} → ` : '' }}{{ JSON.stringify(file.path) }}</strong>
         </div>
       </div>
 
@@ -136,12 +140,12 @@ async function sync() {
           <button
             class="primary-button"
             type="button"
-            :disabled="!status.files.length"
+            :disabled="loading || !previewReady || !dirtyFiles.length || !commitMessage.trim()"
             @click="quickCommit"
           >
             Commit dirty files
           </button>
-          <button class="secondary-button" type="button" @click="sync">Sync</button>
+          <button class="secondary-button" type="button" :disabled="loading || !status.head || !status.available" @click="sync">Sync</button>
         </div>
         <p v-if="syncStatus" class="empty-copy">{{ syncStatus }}</p>
       </div>
@@ -168,7 +172,7 @@ async function sync() {
       <div class="git-file-list">
         <div v-for="file in selectedCommit.files" :key="`${file.status}:${file.path}`" class="git-file-row">
           <span>{{ file.status }}</span>
-          <strong>{{ file.path }}</strong>
+          <strong>{{ file.originalPath ? `${JSON.stringify(file.originalPath)} → ` : '' }}{{ JSON.stringify(file.path) }}</strong>
         </div>
       </div>
       <pre class="diff-preview">{{ selectedCommit.diff }}</pre>

@@ -50,10 +50,8 @@
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
 - [1010 Context Package And Source Discipline](1010.md)
 - [1020 Planning Commands And Prewrite Calibration](1020.md)
-- [1030 Review And Settlement Workflow](1030.md)
 - [1040 Session Artifacts And Author Reports](1040.md)
 - [1050 Projections And Project Health](1050.md)
-- [1060 Play Mode And Tavern Character Import](1060.md)
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
 - [1090 Play Mode UI And Adoption Workflow](1090.md)
@@ -72,20 +70,27 @@
 
 ## Needs Review Tasks
 
+- [0580 Git History And Sync Page](0580.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
+- [1030 Review And Settlement Workflow](1030.md)
+- [1060 Play Mode And Tavern Character Import](1060.md)
+- [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
+- [1230 Review-driven Reliability Corrections](1230.md)
 
 ## Planned Tasks
 
 - [0570 Workspace Global Search](0570.md)
-- [0580 Git History And Sync Page](0580.md)
-- [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
+
+## Deferred Development (2026-10-01)
+
+Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。先执行 [1230](1230.md) 的可靠性交付，再按作者反馈推进 0570 与 0700 的搜索、导出、旧稿导入和摘要。合同/helper 完成不等于生产接线或真实旅程完成。
 
 ## Package Call Route
 
 ```text
 packages/core
-  -> workspace initialization, workspace config, LLM provider config pure functions
+  -> domain/config contracts plus isolated workspace, Play and Reference file storage
 packages/tools
   -> Markdown / YAML Engine, concrete domain tools, AI SDK ToolSet
 packages/agent

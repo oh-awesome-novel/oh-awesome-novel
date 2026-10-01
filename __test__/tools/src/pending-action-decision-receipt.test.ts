@@ -81,7 +81,7 @@ describe('PendingAction decision receipt protocol', () => {
     })).toThrowError(expect.objectContaining({ code: 'INVALID_PENDING_ACTION_SCHEMA' }));
   });
 
-  it('permits only a recovery transition to a committed Git result', () => {
+  it('updates failed retry outcomes while preserving decision and committed identity', () => {
     const failed = createPendingActionDecisionReceipt({
       id: 'receipt-1',
       actionId: 'pa-1',
@@ -100,7 +100,20 @@ describe('PendingAction decision receipt protocol', () => {
     });
 
     expect(isAllowedDecisionReceiptTransition(failed, committed)).toBe(true);
-    expect(isAllowedDecisionReceiptTransition(failed, anotherFailure)).toBe(false);
+    expect(isAllowedDecisionReceiptTransition(failed, anotherFailure)).toBe(true);
+    expect(isAllowedDecisionReceiptTransition(committed, anotherFailure)).toBe(false);
+    expect(isAllowedDecisionReceiptTransition(committed, createPendingActionDecisionReceipt({
+      ...committed,
+      git: { status: 'committed', commit: 'other-commit', branch: 'main' },
+    }))).toBe(false);
+    expect(isAllowedDecisionReceiptTransition(failed, createPendingActionDecisionReceipt({
+      ...anotherFailure,
+      id: 'different-receipt',
+    }))).toBe(false);
+    expect(isAllowedDecisionReceiptTransition(failed, createPendingActionDecisionReceipt({
+      ...failed,
+      git: { status: 'not-requested' },
+    }))).toBe(false);
     expect(PendingActionProtocolError).toBeTypeOf('function');
   });
 });

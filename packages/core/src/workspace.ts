@@ -400,6 +400,15 @@ writingProfile:
 `;
   await writeFile(join(oanDir, 'config.yaml'), defaultConfig, 'utf-8');
 
+  // Approval drafts and chat state are disposable, never novel history.
+  await writeFile(join(rootDir, '.gitignore'), [
+    '.DS_Store',
+    '/.workspace/',
+    '/.oan/sessions/',
+    '/.oan/indexes/',
+    '',
+  ].join('\n'), 'utf-8');
+
   if (options?.saveToWorkspaceList) {
     const globalConfigDir = resolveGlobalOanConfigDir(options);
     const list = await loadWorkspaceList(globalConfigDir);

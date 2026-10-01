@@ -1,6 +1,6 @@
 # OAN Agent Writing Guide Runtime Gap Spec
 
-Status: Draft Supplemental Spec
+Status: Historical audit (2026-06-19); current follow-up: [1230](tasks/1230.md).
 
 Source:
 
@@ -19,6 +19,8 @@ Source:
 - reference / Play / projection / health 是否只作为安全的派生层，而不是隐藏事实源。
 
 本 Spec 只定义补齐这些集成缺口的后续任务，不推翻已完成的 `1000`-`1060`。
+
+以下代码审计保留当时状态。trace/autowiring、reference selector、projection refresh 和 Play UI/adoption 已由 1070–1100 及后续 Play tasks 部分或全部交付；只按当前 task 的具体残余项继续实现。
 
 ## Code Audit Summary
 

@@ -102,7 +102,8 @@ prepared
   -> materializing
   -> accepted terminal written
   -> accepted-finalize-only
-  -> cleanup / Git / receipt
+  -> cleanup / accepted-git-only
+  -> Git / durable receipt / remove journal
 ```
 
 accepted terminal record 是文件事务 commit point：
@@ -112,6 +113,8 @@ accepted terminal record 是文件事务 commit point：
 - 唯一 backup 在 terminal durable 前不能删除。
 - terminal 缺失但 journal 已到 finalize-only 时，恢复先原子补 terminal。
 - terminal 已 accepted 但 journal 未 finalize 时，以 terminal 为准继续 finalize。
+- stage、backup 与 draft 清理完成后，durable `accepted-git-only` phase 表示文件事务已结束；此阶段仅做 Git identity / receipt 对账，不再要求 canonical files 永久保持 accepted bytes。
+- receipt durable 后无论 Git 成功与否均删除 journal；quick commit 若需执行 Git，会建立独立的 `accepted-git-only` 对账记录。真正未完成的 cleanup、损坏的 journal 或 terminal identity 不一致仍 fail closed。
 
 Git commit 不是文件事务 commit point。
 
@@ -161,7 +164,7 @@ git:
 4. stage only action paths；
 5. 使用确定性 message 与 action id metadata/trailer commit；
 6. 原子写 decision receipt；
-7. 成功后才允许可配置的 sync。
+7. 成功后刷新本地状态；sync 必须另由作者显式触发。
 
 建议 message：
 
@@ -184,6 +187,8 @@ Git add/commit 失败时：
 
 journal 持久化 `autoCommitRequested`。若 commit 已成功但 receipt 尚未 durable，恢复通过 repository/commit action identity 对账，再补 receipt，不能重复提交。
 
+已结束的 accepted 文件事务不因后续作者修改、删除或手动 commit 而阻断无关审批。精确 quick commit 仍重验该 action 的 approved bytes、mode 与 repository baseline；发生漂移时拒绝提交，避免混入作者的新修改。Git 失败遗留的 unrelated staged entries 仍受 Accept preflight 保护，作者显式处理 index 后方可继续 Accept；Reject 不因这些 staged entries 被阻断。
+
 ## Quick Commit
 
 `git.autoCommitOnAccept: false` 或自动提交失败时，UI 提供显式 quick commit：
@@ -192,8 +197,9 @@ journal 持久化 `autoCommitRequested`。若 commit 已成功但 receipt 尚未
 - 用户看见并确认 file scope 与 message。
 - files 来自 accepted action paths 或 backend 当前 dirty file list，不能接受 frontend 任意 path。
 - commit 前再次验证 repository/branch/index。
-- 默认不自动 sync。
+- 不自动 sync；同步由作者另行显式触发。
 - success 后刷新 status/history；failure 保留 dirty state。
+- 同一 accepted decision 的显式重试可更新 `failed` / `staged-not-committed` Git 结果；receipt identity、materialization 与 committed commit identity 不可更改，成功后不得回退为失败或替换成另一个 commit。
 
 关闭 auto commit 时系统不得自动 commit 或 sync。
 

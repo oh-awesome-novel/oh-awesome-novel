@@ -31,7 +31,6 @@ export type FinalDocumentValidatorId =
 
 export interface FinalDocumentValidationContext {
   maxFileBytes?: number;
-  knownObjectIds?: readonly string[];
   referenceId?: string;
   expectedReferenceRunId?: string;
   expectedSourceChecksumSha256?: string;
@@ -269,13 +268,13 @@ export function validateFinalDocument(
       validateWorldObject(path, content);
       break;
     case 'state-yaml':
-      validateStateYaml(path, content, input.context);
+      validateStateYaml(path, content);
       break;
     case 'timeline-yaml':
-      validateTimelineYaml(path, content, input.context);
+      validateTimelineYaml(path, content);
       break;
     case 'foreshadow-yaml':
-      validateForeshadowYaml(path, content, input.context);
+      validateForeshadowYaml(path, content);
       break;
     case 'summary-markdown':
       validateSummaryMarkdown(path, content);
@@ -435,7 +434,6 @@ function validateWorldObject(path: string, content: string): void {
 function validateStateYaml(
   path: string,
   content: string,
-  context?: FinalDocumentValidationContext,
 ): void {
   const data = parseYamlRecord(path, content);
   if (Object.keys(data).length === 0) {
@@ -445,13 +443,11 @@ function validateStateYaml(
   assertOptionalIdentity(data, ['documentId', 'stateId'], fileId, path, [fileId.split('/').at(-1) as string]);
   validateStructuredValue(data, path);
   assertUniqueCollectionIds(data, path);
-  validateKnownReferences(data, context?.knownObjectIds, path);
 }
 
 function validateTimelineYaml(
   path: string,
   content: string,
-  context?: FinalDocumentValidationContext,
 ): void {
   const data = parseYamlRecord(path, content);
   const collectionNames = ['events', 'arcs', 'timeline'];
@@ -509,13 +505,11 @@ function validateTimelineYaml(
     }
     validateStructuredValue(item, `${path}#${id}`);
   }
-  validateKnownReferences(data, context?.knownObjectIds, path);
 }
 
 function validateForeshadowYaml(
   path: string,
   content: string,
-  context?: FinalDocumentValidationContext,
 ): void {
   const data = parseYamlRecord(path, content);
   const collectionNames = ['foreshadow', 'active', 'resolved', 'entries'];
@@ -549,7 +543,6 @@ function validateForeshadowYaml(
     validateLifecycleDates(item, path, id);
     validateStructuredValue(item, `${path}#${id}`);
   }
-  validateKnownReferences(data, context?.knownObjectIds, path);
 }
 
 function validateReferencePublicationDocument(
@@ -855,42 +848,6 @@ function validateDelimitedMarkdownIds(
       throw new Error(`Markdown ${kind} markers are not balanced and ordered: ${path}.`);
     }
   }
-}
-
-function validateKnownReferences(
-  value: unknown,
-  knownObjectIds: readonly string[] | undefined,
-  path: string,
-): void {
-  if (!knownObjectIds) return;
-  const known = new Set(knownObjectIds.map((id) => requireSafeId(id, 'knownObjectId')));
-  const visit = (current: unknown, key?: string): void => {
-    if (Array.isArray(current)) {
-      if (key?.endsWith('Refs')) {
-        for (const ref of current) {
-          if (typeof ref !== 'string' || !known.has(ref)) {
-            throw new Error(`Document contains unknown reference ${String(ref)}: ${path}.`);
-          }
-        }
-      } else {
-        current.forEach((item) => visit(item));
-      }
-      return;
-    }
-    if (!isRecord(current)) return;
-    for (const [childKey, child] of Object.entries(current)) {
-      if (
-        typeof child === 'string'
-        && (childKey.endsWith('Ref') || childKey.endsWith('Id'))
-        && !['id', 'eventId', 'arcId', 'stateId', 'documentId'].includes(childKey)
-        && !known.has(child)
-      ) {
-        throw new Error(`Document contains unknown ${childKey} ${child}: ${path}.`);
-      }
-      visit(child, childKey);
-    }
-  };
-  visit(value);
 }
 
 function validateLifecycleDates(item: Record<string, unknown>, path: string, id: string): void {

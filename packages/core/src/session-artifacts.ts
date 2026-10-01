@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
 
@@ -290,8 +291,12 @@ export const createSessionResumeBoundaryFromProposedChanges = async (
 export const checkSessionResumeBoundary = async (
   workspaceRoot: string,
   boundary: SessionResumeBoundary,
+  fixedFiles?: ReadonlyArray<{ path: string; hash: string }>,
 ): Promise<SessionResumeCheck> => {
-  const current = await Promise.all(
+  const current = fixedFiles ? boundary.touchedFiles.map((file) => {
+    const next = fixedFiles.find((entry) => entry.path === file.path);
+    return { path: file.path, hash: next?.hash, missing: !next };
+  }) : await Promise.all(
     boundary.touchedFiles.map((file) => snapshotWorkspaceFile(workspaceRoot, file.path)),
   );
   const changedFiles: string[] = [];
@@ -301,11 +306,11 @@ export const checkSessionResumeBoundary = async (
     const next = current.find((file) => file.path === snapshot.path);
 
     if (!next || next.missing) {
-      missingFiles.push(snapshot.path);
+      if (!snapshot.missing) missingFiles.push(snapshot.path);
       continue;
     }
 
-    if (snapshot.hash !== next.hash || snapshot.mtimeMs !== next.mtimeMs) {
+    if (snapshot.hash !== next.hash) {
       changedFiles.push(snapshot.path);
     }
   }
@@ -317,6 +322,66 @@ export const checkSessionResumeBoundary = async (
     prompt: formatResumePrompt(changedFiles, missingFiles),
   };
 };
+
+/** Bounded host-only metadata read; rejects unsafe internal paths and file swaps. */
+export async function readSessionResumeBoundary(
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<SessionResumeBoundary | undefined> {
+  const path = resolveSessionArtifactPath(workspaceRoot, sessionId, 'run.yaml');
+  try {
+    let cursor = resolve(workspaceRoot);
+    for (const segment of ['.workspace', 'sessions', sessionId, 'run.yaml']) {
+      cursor = join(cursor, segment);
+      const info = await lstat(cursor);
+      if (info.isSymbolicLink() || (segment === 'run.yaml'
+        ? !info.isFile() || info.nlink !== 1 || info.size > 1_048_576
+        : !info.isDirectory())) throw new Error('Unsafe session resume artifact.');
+    }
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let content: string;
+    try {
+      const before = await handle.stat();
+      if (!before.isFile() || before.nlink !== 1 || before.size > 1_048_576) {
+        throw new Error('Unsafe session resume artifact.');
+      }
+      const buffer = Buffer.alloc(1_048_577);
+      let offset = 0;
+      while (offset < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
+      const after = await handle.stat();
+      const current = await lstat(path);
+      if (offset > 1_048_576 || before.size !== offset || before.size !== after.size
+        || before.mtimeMs !== after.mtimeMs || before.ino !== current.ino
+        || before.dev !== current.dev || current.isSymbolicLink()) {
+        throw new Error('Session resume artifact changed during read.');
+      }
+      content = buffer.subarray(0, offset).toString('utf8');
+    } finally { await handle.close(); }
+    const document = parse(content) as SessionRunMetadata;
+    const boundary = document?.resumeBoundary;
+    if (!boundary) return undefined;
+    if (document.sessionId !== sessionId || boundary.sessionId !== sessionId
+      || !Array.isArray(boundary.touchedFiles) || boundary.touchedFiles.length > 10_000) {
+      throw new Error('Invalid session resume boundary.');
+    }
+    for (const file of boundary.touchedFiles) {
+      if (!file || typeof file.path !== 'string' || typeof file.missing !== 'boolean'
+        || (file.hash !== undefined && !/^[a-f0-9]{64}$/u.test(file.hash))) {
+        throw new Error('Invalid session resume file.');
+      }
+      normalizeSessionChangePath(file.path);
+      if (/[\x00-\x1f\x7f]/u.test(file.path)) throw new Error('Unsafe session resume path.');
+    }
+    return boundary;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
 
 export const formatAuthorReportMarkdown = (report: AuthorReport): string => [
   '## Author Report',

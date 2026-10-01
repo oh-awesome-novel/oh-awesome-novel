@@ -54,6 +54,11 @@ import {
   decodeWorkspaceText,
 } from './workspace-projection';
 import type { WorkspaceProjection } from './workspace-projection';
+import {
+  NOVEL_REFERENCE_PROJECTION_RULES,
+  isNovelReferencePath,
+  validateFinalObjectTreeReferences,
+} from './final-object-tree-validator';
 import { validateCandidateChangeSetAgainstPolicy } from './workspace-change-policy';
 import type { WorkspaceChangePolicy } from './workspace-change-policy';
 
@@ -194,6 +199,20 @@ export async function createSandboxEditSession(
     maxTotalBytes: limits.maxProjectionBytes,
     maxInMemoryBytes: limits.maxInMemoryBytes,
   });
+  const needsReferenceClosure = options.policy.writable.some((rule) =>
+    isNovelReferencePath(`${rule.path}/`));
+  const includesReferenceClosure = NOVEL_REFERENCE_PROJECTION_RULES.every((required) =>
+    projection.manifest.rules.some((rule) => rule.kind === 'prefix' && rule.path === required.path));
+  const referenceProjection = !needsReferenceClosure || includesReferenceClosure
+    ? projection
+    : await createWorkspaceProjection({
+        workspaceRoot: options.workspaceRoot,
+        rules: NOVEL_REFERENCE_PROJECTION_RULES,
+        maxFileBytes: limits.maxProjectionFileBytes,
+        maxTotalBytes: limits.maxProjectionBytes,
+        maxInMemoryBytes: limits.maxInMemoryBytes,
+      });
+  if (referenceProjection !== projection) await projection.assertFresh();
   const repository = await (options.repositoryReader ?? readRepositoryBaseline)(
     projection.workspaceRoot,
   );
@@ -234,6 +253,7 @@ export async function createSandboxEditSession(
     options,
     limits,
     projection,
+    referenceProjection,
     repository,
     trackingFs,
     policyFs,
@@ -252,6 +272,7 @@ class FileSandboxEditSession implements SandboxEditSession {
   #options: CreateSandboxEditSessionOptions;
   #limits: SandboxEditSessionLimits;
   #projection: WorkspaceProjection;
+  #referenceProjection: WorkspaceProjection;
   #repository: RepositoryBaseline;
   #trackingFs: TrackingFs;
   #policyFs: PolicyFs;
@@ -280,6 +301,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     options: CreateSandboxEditSessionOptions;
     limits: SandboxEditSessionLimits;
     projection: WorkspaceProjection;
+    referenceProjection: WorkspaceProjection;
     repository: RepositoryBaseline;
     trackingFs: TrackingFs;
     policyFs: PolicyFs;
@@ -288,6 +310,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     this.#options = input.options;
     this.#limits = input.limits;
     this.#projection = input.projection;
+    this.#referenceProjection = input.referenceProjection;
     this.#repository = input.repository;
     this.#trackingFs = input.trackingFs;
     this.#policyFs = input.policyFs;
@@ -629,7 +652,16 @@ class FileSandboxEditSession implements SandboxEditSession {
         : {}),
     });
     if (!candidate) return undefined;
-    return validateCandidateChangeSetAgainstPolicy(candidate, this.policy);
+    validateCandidateChangeSetAgainstPolicy(candidate, this.policy);
+    validateFinalObjectTreeReferences({
+      baselineFiles: this.#referenceProjection.baselineFiles,
+      changes: candidate.changes.map((change) => ({
+        path: change.path,
+        operation: change.operation,
+        ...(change.operation === 'delete' ? {} : { content: change.draft.content }),
+      })),
+    });
+    return candidate;
   }
 
   #appendAudit(source: string, exitCode: number | 'error'): void {
@@ -680,6 +712,7 @@ class FileSandboxEditSession implements SandboxEditSession {
 
   async #assertAllSourcesFresh(): Promise<void> {
     await this.#projection.assertFresh();
+    if (this.#referenceProjection !== this.#projection) await this.#referenceProjection.assertFresh();
     for (const check of this.#options.freshnessChecks ?? []) {
       await check();
     }

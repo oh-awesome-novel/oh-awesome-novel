@@ -1,6 +1,6 @@
 # ContextPackage Evidence And Agent Usage Governance Plan
 
-> Status: Planned
+> Status: Partially implemented; remaining scope tracked in [1110](tasks/1110.md).
 >
 > Related Task: [1110 ContextPackage Evidence And Agent Usage Governance](tasks/1110.md)
 >
@@ -193,6 +193,8 @@ interface ContextSourceEvidence {
 - ContextPackage 仍分别保留 selected / omitted，`outcome` 用于区分 selected 原文、selected compressed、预算省略和策略排除。
 
 ### 7.2 Token estimator
+
+2026-10-01 实施调整：标准 Agent 当前使用 `utf8-bytes-div-3-v1`，并在请求估算上预留 20% 余量，以避免旧 chars/4 对中文明显偏低。它仍是启发式，尚未完成跨模型 tokenizer 校准，不能保证精确容量或计费。既有 Reference artifact 的 estimator 不变。下面的 chars/4 记录原计划，新增统计/inspector 应按实际 estimator id 展示。
 
 V1 统一复用项目已有的轻量基线：
 

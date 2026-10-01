@@ -49,7 +49,6 @@ export interface CreateWorkspaceChangePolicyInput {
   expectedReferenceRunId?: string;
   expectedSourceChecksumSha256?: string;
   expectedStructureFingerprint?: string;
-  knownObjectIds?: readonly string[];
   maxChangedFiles?: number;
   maxCandidateBytes?: number;
   maxFileBytes?: number;
@@ -158,9 +157,6 @@ export function createWorkspaceChangePolicy(
     : requireSafeSegment(input.referenceId, 'referenceId');
   const validationContext: FinalDocumentValidationContext = Object.freeze({
     maxFileBytes,
-    ...(input.knownObjectIds
-      ? { knownObjectIds: Object.freeze(input.knownObjectIds.map((id) => requireSafeId(id, 'knownObjectId'))) }
-      : {}),
     ...(referenceId ? { referenceId } : {}),
     ...(input.expectedReferenceRunId
       ? { expectedReferenceRunId: requireSafeId(input.expectedReferenceRunId, 'expectedReferenceRunId') }

@@ -46,6 +46,13 @@ Git Diff Human Approval
 
 专题规格与研究材料仍保留在 `docs/`，但不能覆盖上述稳定文档或 [ADR 0004](adr/0004-sandbox-change-engine.md) 的当前决策。`reference-only/` 与文件名包含 `REFERENCE` 的分析文档只用于比较和追溯，不是产品运行时合同。
 
+## 设计与实现评估
+
+- [简短说明](DESIGN_IMPLEMENTATION_REVIEW_SUMMARY.md)：2026-10-01 的取舍、优先级与建议开发顺序。
+- [详细说明](DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md)：对应文档与源码证据、真实缺口、修正建议和验收条件。
+
+评估文档是带日期的建议，不替代稳定合同；尚未实施的建议不能视为当前功能或已更新的 task 状态。
+
 ## ADR
 
 - [ADR 0001: Filesystem First](adr/0001-filesystem-first.md)
@@ -63,3 +70,5 @@ Git Diff Human Approval
 6. [AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md)
 
 早期讨论中的 `StoryForge` 只作为历史参考来源，不是当前产品名、组件名、目录名或兼容目标。
+
+当前修正交付与暂缓范围见 [1230 Review-driven Reliability Corrections](tasks/1230.md)。

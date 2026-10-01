@@ -305,7 +305,7 @@ deterministic producer
 - delete：backup original；materialize 删除；rollback 恢复 backup。
 - rename：同一 journal 中的 delete + create。
 
-journal 至少包含 `prepared | materializing | accepted-finalize-only`。commit point 前 crash recovery rollback；commit point 后只 finalize。
+journal 包含 `prepared | materializing | accepted-finalize-only | accepted-git-only`。commit point 前 crash recovery rollback；commit point 后只 finalize。stage、backup 与 draft 清理完成后才 durable 写入 `accepted-git-only`，此后只进行 Git / receipt 对账，不再重验 canonical bytes；未完成 cleanup 或损坏事务仍 fail closed。
 
 durable accepted terminal record 是文件事务 commit point。它写入前不得删除唯一 backup；写入后绝不因清理或 Git 失败 rollback。
 
@@ -314,6 +314,8 @@ durable accepted terminal record 是文件事务 commit point。它写入前不�
 `git.autoCommitOnAccept: true` 时只 stage action paths，并使用 action id metadata/trailer 对账。若 proposal 前 baseline 已相对 HEAD dirty、存在 unrelated index state、Git unavailable、identity 缺失或 commit 失败，则记录 `staged-not-committed`/`failed` receipt 并提供 explicit quick commit。
 
 commit 成功但 receipt 写入前 crash 时，恢复先按 action identity 对账再补 receipt，不重复 commit。关闭 auto commit 时不得自动 commit 或 sync。
+
+receipt durable 后无论 Git 结果均移除 journal，避免 Git 失败把已完成的文件事务永久留作全局审批前置条件。作者后续修改、恢复或删除 accepted target 不阻断无关事务恢复；该 action 的精确 quick commit 仍要求 approved bytes、mode 与 repository baseline 不变。quick commit 执行前另建 `accepted-git-only` journal，覆盖其 commit / receipt 中断窗口。
 
 Reject 只写 rejected terminal/receipt 并清理 draft，不修改 canonical target。
 

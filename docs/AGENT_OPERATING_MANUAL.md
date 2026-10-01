@@ -104,7 +104,7 @@ LLM -> Tool Call -> Execute -> Append Result -> LLM
 
 ## Package Boundaries
 
-- `core`：纯合同、config、domain validation。
+- `core`：纯合同、config、domain validation，以及明确隔离的 workspace / Play / Reference 文件存储。
 - `tools`：read tools、projection/sandbox、ChangeSet/store/materializer/producers。
 - `runtime`：provider-agnostic loop 与通用 finalizer seam。
 - `agent`：prompt/context/provider/tool/session composition。

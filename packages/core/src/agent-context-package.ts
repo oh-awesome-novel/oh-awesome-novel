@@ -33,6 +33,13 @@ export interface ContextSourceRef {
   semanticBoundary: SemanticBoundary;
   path?: string;
   title?: string;
+  /** Evidence for the selected source payload, not the whole provider request. */
+  sourceHash?: string;
+  payloadHash?: string;
+  modelVisibleChars?: number;
+  estimatedTokens?: number;
+  estimator?: 'utf8-bytes-div-3-v1';
+  outcome?: 'selected' | 'omitted';
 }
 
 export type ContextTraceType =

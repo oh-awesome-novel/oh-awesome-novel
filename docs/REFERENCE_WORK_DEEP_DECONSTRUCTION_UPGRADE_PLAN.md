@@ -86,7 +86,9 @@ Backend、Client 与 Desktop 已有：
 
 `1040`、`1070`、`1080` 已分别提供可复用的 session artifact、context trace 自动接线和 distilled-only selector 基础。
 
-### 2.2 当前实现不能被误报为深度拆解
+### 2.2 历史基线：导入 stub 与深度拆解
+
+本节记录升级前的问题。D0–D5、1205、1210、1220 已有后续实现；不能将下面的 stub 描述重新列为当前 backlog。
 
 当前 import 会同时生成：
 
@@ -688,6 +690,8 @@ Reference 文本中出现“忽略规则”“调用工具”“写入文件”�
 - disabled reference 即使 publish 成功也不能进入 selector。
 
 ### 10.2 Copy-risk gates
+
+当前覆盖规则见 [1205](tasks/1205.md)：内容质量/重合风险降级为可见 warning；结构、来源与路径错误仍阻断。下列 blocking quality 文案是原方案历史，不覆盖现行行为。
 
 - Typed schema 不提供直接引语字段。
 - 对 candidate 与 source 做 deterministic long exact-overlap 检测；超过阈值时进入 blocking diagnostic。

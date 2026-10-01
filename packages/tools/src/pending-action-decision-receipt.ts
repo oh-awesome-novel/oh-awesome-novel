@@ -117,10 +117,11 @@ export function isAllowedDecisionReceiptTransition(
     return false;
   }
   if (JSON.stringify(previous.git) === JSON.stringify(next.git)) return true;
-  if (previous.decision !== 'accepted' || next.git.status !== 'committed') return false;
-  return previous.git.status === 'not-requested'
-    || previous.git.status === 'staged-not-committed'
-    || previous.git.status === 'failed';
+  if (previous.decision !== 'accepted' || previous.git.status === 'committed') return false;
+  // An explicit retry can fail differently (for example add failure followed
+  // by a commit hook failure). Preserve decision identity while recording the
+  // latest attempt; successful commit identity remains terminal and immutable.
+  return next.git.status !== 'not-requested';
 }
 
 function assertSupportedReceiptEnvelope(

@@ -1625,6 +1625,7 @@ export interface GitCommandError {
     | 'git_unavailable'
     | 'not_git_repository'
     | 'identity_missing'
+    | 'head_missing'
     | 'remote_missing'
     | 'auth_failed'
     | 'conflict'
@@ -1636,6 +1637,7 @@ export interface GitCommandError {
 
 export interface GitFileStatus {
   path: string;
+  originalPath?: string;
   indexStatus: string;
   worktreeStatus: string;
   raw: string;
@@ -1667,6 +1669,7 @@ export interface GitCommitDetail extends GitCommitSummary {
   body: string;
   files: Array<{
     path: string;
+    originalPath?: string;
     status: string;
   }>;
   diff: string;
@@ -1768,6 +1771,7 @@ export interface OanClient extends PlayRehearsalClientMethods {
     workspace: WorkspaceSummary;
     providerConfigured: boolean;
     onboarding: { show: boolean };
+    git: GitWorkspaceStatus;
   }>;
   openWorkspace(path: string): Promise<{
     workspace: WorkspaceSummary;
@@ -2188,6 +2192,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         workspace: WorkspaceSummary;
         providerConfigured: boolean;
         onboarding: { show: boolean };
+        git: GitWorkspaceStatus;
       }>('/api/workspaces/create', {
         method: 'POST',
         body: { path },
@@ -4299,8 +4304,9 @@ function isGitWorkspaceStatusEnvelope(value: unknown): value is GitWorkspaceStat
 
 function isGitFileStatusEnvelope(value: unknown): value is GitFileStatus {
   return isRecord(value)
-    && hasOnlyKnownFields(value, ['path', 'indexStatus', 'worktreeStatus', 'raw'])
+    && hasOnlyKnownFields(value, ['path', 'originalPath', 'indexStatus', 'worktreeStatus', 'raw'])
     && isNonEmptyString(value.path)
+    && (value.originalPath === undefined || isNonEmptyString(value.originalPath))
     && typeof value.indexStatus === 'string'
     && typeof value.worktreeStatus === 'string'
     && typeof value.raw === 'string';
@@ -4313,6 +4319,7 @@ function isGitCommandErrorEnvelope(value: unknown): value is GitCommandError {
       value.code === 'git_unavailable'
       || value.code === 'not_git_repository'
       || value.code === 'identity_missing'
+      || value.code === 'head_missing'
       || value.code === 'remote_missing'
       || value.code === 'auth_failed'
       || value.code === 'conflict'

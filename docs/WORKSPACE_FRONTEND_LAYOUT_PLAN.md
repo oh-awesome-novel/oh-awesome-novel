@@ -36,7 +36,9 @@ Workspace mode navigation
 
 顶级模式切换改变主工作区，不是打开或选中某个 `rightTab`。
 
-## Current OAN State
+## Historical Design Baseline
+
+以下“当前状态”是实施前的设计背景，不是 2026-10-01 backlog。hover rail、多用途右栏、审批联动与结构化 timeline 已有实现；继续工作只针对实际缺口，例如 old/new view、响应式和键盘操作，不重做工作台。
 
 当前主要入口：
 

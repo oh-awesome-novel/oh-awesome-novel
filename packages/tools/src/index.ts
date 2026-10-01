@@ -93,6 +93,12 @@ export type {
 } from './policy-fs';
 
 export {
+  NOVEL_REFERENCE_PROJECTION_RULES,
+  isNovelReferencePath,
+  validateFinalObjectTreeReferences,
+} from './final-object-tree-validator';
+
+export {
   DEFAULT_MAX_DOCUMENT_DEPTH,
   DEFAULT_MAX_DOCUMENT_NODES,
   DEFAULT_MAX_FINAL_DOCUMENT_BYTES,
@@ -297,6 +303,7 @@ export {
   commitFiles,
   createPendingActionCommitMessage,
   gitDiff,
+  initializeWorkspaceRepository,
   gitStatusShort,
   inspectPendingActionGitPreflight,
   listGitCommits,

@@ -4,6 +4,11 @@ import { access, copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'yaml';
+import {
+  syncPlaySnapshotDirectory,
+  syncPlaySnapshotFile,
+  syncPlaySnapshotTree,
+} from './play-session-durability.js';
 
 import { assertSafePlayNarrativePrefix } from './play-narrative-stream.js';
 import { createPlayAdoptionSourceBase } from './play-adoption.js';
@@ -298,6 +303,14 @@ export interface PlaySessionMigrationPreview {
   backupRelativePath: string;
 }
 
+export type PlaySessionWriteFaultPoint =
+  | 'after-stage-files'
+  | 'after-ready'
+  | 'after-backup-rename'
+  | 'after-session-swap'
+  | 'after-publish-sync'
+  | 'after-cleanup';
+
 export interface WritePlaySessionFilesOptions {
   /**
    * Optional compare-and-swap guard for a staged write. The authoritative
@@ -316,6 +329,8 @@ export interface WritePlaySessionFilesOptions {
    * call the writer with this option.
    */
   contextTrace?: PlayTurnContextTrace;
+  /** Host-only fault injection; never accepted from a model or transport DTO. */
+  faultInjector?: (point: PlaySessionWriteFaultPoint) => Promise<void> | void;
 }
 
 export interface PlaySessionFileTransaction {
@@ -555,6 +570,7 @@ export const withPlaySessionFileTransaction = async <T>(
           workspaceRoot,
           session,
           options.contextTrace,
+          options.faultInjector,
         );
       },
     });
@@ -567,6 +583,7 @@ const writePlaySessionFilesWithLock = async (
   workspaceRoot: string,
   session: PlaySession,
   contextTrace?: PlayTurnContextTrace,
+  faultInjector?: WritePlaySessionFilesOptions['faultInjector'],
 ): Promise<string[]> => {
   const rehearsalState = normalizePlaySessionRehearsalState(session);
 
@@ -710,7 +727,15 @@ const writePlaySessionFilesWithLock = async (
       }
       await writePlayContextTraceToStage(stageRoot, normalizedContextTrace);
     }
+    await syncPlaySnapshotTree(stageRoot);
+    await faultInjector?.('after-stage-files');
     await writeFile(join(stageRoot, '.ready'), `${sessionForWrite.revision}\n`, 'utf-8');
+    await syncPlaySnapshotFile(join(stageRoot, '.ready'));
+    await syncPlaySnapshotDirectory(stageRoot);
+    await syncPlaySnapshotDirectory(sessionsRoot);
+    await syncPlaySnapshotDirectory(dirname(sessionsRoot));
+    await syncPlaySnapshotDirectory(workspaceRoot);
+    await faultInjector?.('after-ready');
   } catch (error) {
     await rm(stageRoot, { recursive: true, force: true });
     throw error;
@@ -720,6 +745,7 @@ const writePlaySessionFilesWithLock = async (
   try {
     await rename(sessionRoot, backupRoot);
     movedExistingSession = true;
+    await syncPlaySnapshotDirectory(sessionsRoot);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       await rm(stageRoot, { recursive: true, force: true });
@@ -727,22 +753,29 @@ const writePlaySessionFilesWithLock = async (
     }
   }
 
+  await faultInjector?.('after-backup-rename');
+
   try {
     await rename(stageRoot, sessionRoot);
   } catch (error) {
     if (movedExistingSession) {
-      await rename(backupRoot, sessionRoot).catch(() => undefined);
+      await rename(backupRoot, sessionRoot);
+      await syncPlaySnapshotDirectory(sessionsRoot);
     }
     await rm(stageRoot, { recursive: true, force: true });
     throw error;
   }
 
-  await Promise.all([
-    rm(join(sessionRoot, '.ready'), { force: true }).catch(() => undefined),
-    movedExistingSession
-      ? rm(backupRoot, { recursive: true, force: true }).catch(() => undefined)
-      : Promise.resolve(),
-  ]);
+  await faultInjector?.('after-session-swap');
+  // Keep the old snapshot until the new directory name is durable.
+  await syncPlaySnapshotDirectory(sessionsRoot);
+  await faultInjector?.('after-publish-sync');
+
+  await rm(join(sessionRoot, '.ready'), { force: true });
+  await syncPlaySnapshotDirectory(sessionRoot);
+  if (movedExistingSession) await rm(backupRoot, { recursive: true, force: true });
+  await syncPlaySnapshotDirectory(sessionsRoot);
+  await faultInjector?.('after-cleanup');
 
   return files.map(([file]) => join(sessionRoot, file));
 };
@@ -2351,8 +2384,12 @@ async function recoverPlaySessionDirectoryWithLock(
   if (await pathExists(sessionRoot)) {
     // A stage can belong to an in-flight writer. Only backups are safe to clean
     // once a complete target directory is visible.
+    if (backups.length === 0 && !await pathExists(join(sessionRoot, '.ready'))) return;
+    await syncPlaySnapshotDirectory(sessionsRoot);
+    await rm(join(sessionRoot, '.ready'), { force: true });
+    await syncPlaySnapshotDirectory(sessionRoot);
     await cleanupPlayTransactionDirectories(backups);
-    await rm(join(sessionRoot, '.ready'), { force: true }).catch(() => undefined);
+    await syncPlaySnapshotDirectory(sessionsRoot);
     return;
   }
 
@@ -2367,12 +2404,16 @@ async function recoverPlaySessionDirectoryWithLock(
   const selectedBackup = backups.at(-1);
   if (selectedStage) {
     await rename(selectedStage, sessionRoot);
-    await rm(join(sessionRoot, '.ready'), { force: true }).catch(() => undefined);
+    await syncPlaySnapshotDirectory(sessionsRoot);
+    await rm(join(sessionRoot, '.ready'), { force: true });
+    await syncPlaySnapshotDirectory(sessionRoot);
   } else if (selectedBackup) {
     await rename(selectedBackup, sessionRoot);
+    await syncPlaySnapshotDirectory(sessionsRoot);
   }
 
   await cleanupPlayTransactionDirectories([...stages, ...backups]);
+  await syncPlaySnapshotDirectory(sessionsRoot);
 }
 
 async function cleanupPlayTransactionDirectories(paths: string[]): Promise<void> {

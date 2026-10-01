@@ -89,7 +89,7 @@ describe('final document validator', () => {
     })).toThrow(/forbidden key/u);
   });
 
-  it('enforces timeline IDs, ordering, dates, statuses, and known references', () => {
+  it('enforces timeline IDs, ordering, dates, and statuses', () => {
     expect(() => validateFinalDocument({
       path: 'timeline/events.yaml',
       content: [
@@ -105,16 +105,6 @@ describe('final document validator', () => {
         '',
       ].join('\n'),
     })).toThrow(/strictly increasing|ISO dates must be ordered/u);
-    expect(() => validateFinalDocument({
-      path: 'timeline/events.yaml',
-      content: 'events:\n  - id: e1\n    date: now\n    title: Event\n    characterRef: nobody\n',
-      context: { knownObjectIds: ['mira'] },
-    })).toThrow(/unknown characterRef/u);
-    expect(validateFinalDocument({
-      path: 'timeline/events.yaml',
-      content: 'events:\n  - id: e1\n    date: now\n    title: Event\n    characterRef: mira\n',
-      context: { knownObjectIds: ['mira'] },
-    }).validator).toBe('timeline-yaml');
   });
 
   it('enforces foreshadow lifecycle and status domains', () => {

@@ -29,6 +29,12 @@ import type {
   CandidateFileChange,
   RepositoryBaseline,
 } from './candidate-change-set';
+import {
+  NOVEL_REFERENCE_PROJECTION_RULES,
+  isNovelReferencePath,
+  validateFinalObjectTreeReferences,
+} from './final-object-tree-validator';
+import { createWorkspaceProjection } from './workspace-projection';
 import { renderCandidateChangeDiff } from './change-diff';
 import { assertRepositoryBaseline as assertGitRepositoryBaseline } from './git-integration';
 import {
@@ -240,6 +246,7 @@ class FilePendingActionStore implements PendingActionStore {
       await this.#assertPreviewIdentityAvailable(id);
       await this.#validateRepository(candidate.repository);
       const oldContents = await this.#validateCandidateBaselines(candidate.changes);
+      await this.#validateReferenceTree(candidate.changes);
       const diff = renderCandidateDiff(candidate.changes, oldContents);
       const changes = candidate.changes.map((change, index) => toStoredChange(
         change,
@@ -308,6 +315,7 @@ class FilePendingActionStore implements PendingActionStore {
       });
       await this.#validatePendingBaselines(preview.changes);
       const hydrated = await this.#hydrateChanges(preview.changes);
+      await this.#validateReferenceTree(hydrated);
       const actualFingerprint = fingerprintCandidateChanges(hydrated);
       if (actualFingerprint !== preview.candidateFingerprint) {
         throw new PendingActionProtocolError(
@@ -491,6 +499,7 @@ class FilePendingActionStore implements PendingActionStore {
   }): Promise<PendingAction> {
     await this.#validateRepository(input.candidate.repository);
     const oldContents = await this.#validateCandidateBaselines(input.candidate.changes);
+    await this.#validateReferenceTree(input.candidate.changes);
     const diff = renderCandidateDiff(input.candidate.changes, oldContents);
     const changes = input.candidate.changes.map((change, index) => toStoredChange(
       change,
@@ -513,6 +522,22 @@ class FilePendingActionStore implements PendingActionStore {
     }, input.id);
     await this.#writeImmutableJson(this.#pendingPath(input.id), action);
     return action;
+  }
+
+  async #validateReferenceTree(changes: readonly CandidateFileChange[]): Promise<void> {
+    if (!changes.some((change) => isNovelReferencePath(change.path))) return;
+    const projection = await createWorkspaceProjection({
+      workspaceRoot: this.workspaceRoot,
+      rules: NOVEL_REFERENCE_PROJECTION_RULES,
+    });
+    validateFinalObjectTreeReferences({
+      baselineFiles: projection.baselineFiles,
+      changes: changes.map((change) => ({
+        path: change.path,
+        operation: change.operation,
+        ...(change.operation === 'delete' ? {} : { content: change.draft.content }),
+      })),
+    });
   }
 
   async #validateRepository(repository: RepositoryBaseline): Promise<void> {

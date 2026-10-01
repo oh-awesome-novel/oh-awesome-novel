@@ -47,7 +47,7 @@
 
 ## Package Boundaries
 
-- `packages/core`：workspace/config/domain 的纯合同与 validator；不调用模型，不执行 loop。
+- `packages/core`：config/domain 的纯合同与 validator，以及 workspace、Play、Reference 的文件存储子模块；不调用模型，不执行 loop。纯领域逻辑与文件 I/O 按模块隔离，不为包名引入 Repository Layer。
 - `packages/tools`：Markdown/YAML engine、read tools、workspace projection、sandbox session、ChangeSet、PendingAction store、deterministic producers 与 materializer。
 - `packages/runtime`：provider-agnostic Aider-style loop、tool execution、bounded audit、pending action events 与通用 async finalizer；不依赖 agent/tools。
 - `packages/agent`：context/prompt/model adapter、ToolSet 与 turn-scoped edit session 组合、RuntimeEvent 到 UI stream 适配。

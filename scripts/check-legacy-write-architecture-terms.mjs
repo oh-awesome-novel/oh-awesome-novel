@@ -119,8 +119,8 @@ const requiredAssertions = [
   },
   {
     file: 'docs/tasks/0800.md',
-    pattern: /^> Status: Completed$/mu,
-    message: 'Task 0800 must remain Completed after every implementation gate passes.',
+    pattern: /^> Status: (Completed|Needs Review)$/mu,
+    message: 'Task 0800 must record delivered implementation or evidence-based review status.',
   },
   {
     file: 'docs/ChatGPT对话.md',

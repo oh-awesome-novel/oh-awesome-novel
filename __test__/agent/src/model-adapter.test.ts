@@ -121,6 +121,34 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     });
   });
 
+  it('enforces the configured input reserve before every provider call and forwards output limits', async () => {
+    streamText.mockReturnValue({ textStream: toAsyncIterable(['done']), toolCalls: Promise.resolve([]) });
+    const resolveModel = vi.fn(() => ({ provider: 'mock', modelId: 'mock-model' }));
+    const adapter = createAiSdkRuntimeModelAdapter({
+      providerConfig: { id: 'mock-provider', kind: 'custom', model: 'mock-model',
+        models: [{ id: 'mock-model', contextWindow: 4096, maxOutputTokens: 1024 }] },
+      resolveModel,
+    });
+    await adapter.generate({ messages: [{ role: 'user', content: 'hello' }], tools: {} });
+    expect(streamText.mock.calls[0][0].maxOutputTokens).toBe(1024);
+    await expect(adapter.generate({ messages: [
+      { role: 'user', content: 'hello' },
+      { role: 'tool', content: '中文'.repeat(4000), name: 'read', toolCallId: 'read-1' },
+    ], tools: {} })).rejects.toMatchObject({ code: 'CONTEXT_INPUT_OVERFLOW', budgetTokens: 3072 });
+    expect(resolveModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not invent a budget when the output reserve is unknown', async () => {
+    streamText.mockReturnValue({ textStream: toAsyncIterable(['done']), toolCalls: Promise.resolve([]) });
+    const adapter = createAiSdkRuntimeModelAdapter({
+      providerConfig: { id: 'mock-provider', kind: 'custom', model: 'mock-model',
+        models: [{ id: 'mock-model', contextWindow: 32 }] },
+      resolveModel: vi.fn(() => ({ provider: 'mock', modelId: 'mock-model' })),
+    });
+    await adapter.generate({ messages: [{ role: 'user', content: '中文'.repeat(100) }], tools: {} });
+    expect(streamText.mock.calls[0][0].maxOutputTokens).toBeUndefined();
+  });
+
   it('maps runtime tool-call history to AI SDK model messages', async () => {
     streamText.mockReturnValue({
       textStream: toAsyncIterable(['完成']),

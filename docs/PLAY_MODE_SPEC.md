@@ -1,6 +1,6 @@
 # Play Mode / Roleplay Sandbox Spec
 
-Status: Draft Implementation Spec
+Status: Implemented specification with reliability follow-up in [1120](tasks/1120.md).
 
 ## Goal
 
@@ -27,7 +27,7 @@ Workspace
 - Play 可以拥有自己的右侧 HUD / Event / Context / Adoption inspector，但它们属于 Play workspace 内部布局，不是 Writing review panel 中的 Play 入口。
 - 顶级模式、当前 Play session 和选中 branch 应可恢复，并支持刷新或重新打开 workspace 后回到原位置。
 - Writing 与 Play 共享同一小说 workspace、provider、canonical source 和 PendingAction 基础设施，但拥有独立的主交互状态与布局状态。
-- 当前 `PlayModeTab.vue` / `rightTab: 'play'` 形态属于过渡实现，后续应迁移而不是继续扩展。
+- 顶级 Writing / Play 独立导航已交付；旧 `rightTab: play` 是历史过渡形态，不再作为迁移 backlog。
 
 ## Mode Boundary
 
@@ -91,7 +91,7 @@ scheduled event 到期后成为 hard-due skeleton。referee 必须在 settlement
 
 原子 Retry 使用独立 SSE 路由，并且请求只能携带 mandatory `baseRevision`；行动文本与 action kind 必须从目标 `worldSettlement` artifact 的不可变 typed input 读取，调用方不能覆盖。Core 只在内存中投影到该 artifact 的 before-turn state，provider、prompt 与 hard-due evaluator 都读取这份投影；最终 settlement 直接在权威 ledger 上生成同 parent sibling，session revision 只增加一次。旧 source artifact、其 descendants、event、observation 与 adoption ledger 均保留，只有新 sibling 成为 selected head；取消、provider / schema failure 或 commit 前 revision drift 都保持 session 零写入。首回合 Retry 通过共享虚拟 branch base 的两个完整 v2 root 表达，而不是把新结果错误挂到旧回合的 after-state。
 
-当前切片仍不包含命名 checkpoint、在历史 UI 中可直接选择的初始空世界 checkpoint，也没有独立的 branch-local knowledge / reveal store。Retry 会重新读取当前 activated source path 对应内容，因此在 context trace / source drift 封存落地前，只保证现有 transcript、state、events、schedule 与 suggestions 的同 before-turn projection，不能声称复现旧回合当时完全相同的外部 source bytes。
+命名 checkpoint、可直接选择的初始世界、branch-local knowledge / reveal、context trace 与 source drift 已由 M2/M3/1180 交付。Retry 仍不承诺旧 activated source bytes 的精确复现；continueFrozen 表示沿用 Play-local 状态并省略漂移来源。world session/artifact 为 v4/v2，rehearsal 的 v5/v3 另有合同，不能混称统一最新版本。
 
 session snapshot 采用 sibling staging directory + ready marker + directory swap 写入，固定 YAML / Markdown 文件、`turns/` 回合事实、event schedule 和 migration history 处于同一 snapshot。提交中断时，读取器可以恢复完整 stage 或已有 backup；不得并行直写目标文件形成混合 revision。同一 session 的 world turn、transcript、observation 和 adoption mutation 必须共享互斥锁，并支持 `baseRevision` 冲突检查。
 

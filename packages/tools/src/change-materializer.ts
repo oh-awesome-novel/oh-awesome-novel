@@ -56,6 +56,12 @@ import {
   validateFinalDocument,
 } from './final-document-validator';
 import {
+  isNovelReferencePath,
+  NOVEL_REFERENCE_PROJECTION_RULES,
+  validateFinalObjectTreeReferences,
+} from './final-object-tree-validator';
+import { createWorkspaceProjection } from './workspace-projection';
+import {
   assertPathWritableByPolicy,
   createWorkspaceChangePolicy,
 } from './workspace-change-policy';
@@ -73,7 +79,8 @@ export type ChangeMaterializerFaultPoint =
   | 'after-terminal'
   | 'before-git-add'
   | 'after-git-add'
-  | 'after-git-commit';
+  | 'after-git-commit'
+  | 'before-receipt';
 
 export interface ChangeMaterializerOptions {
   store: PendingActionStore;
@@ -129,7 +136,7 @@ interface TransactionJournal {
   actionId: string;
   decisionReceiptId: string;
   acceptedAt: string;
-  phase: 'prepared' | 'materializing' | 'accepted-finalize-only';
+  phase: 'prepared' | 'materializing' | 'accepted-finalize-only' | 'accepted-git-only';
   autoCommitRequested: boolean;
   repository: PendingAction['repository'];
   operations: TransactionOperation[];
@@ -244,7 +251,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         throw error;
       }
 
-      await this.#finalize(journal, { keepJournal: autoCommitRequested });
+      await this.#finalize(journal);
       if (autoCommitRequested) {
         const git = gitPreflight.dirtyBaselineFiles.length > 0
           ? ({ status: 'failed', errorCode: 'dirty_before_proposal' } as const)
@@ -253,11 +260,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
           ...receipt,
           git,
         });
+        await this.#fault('before-receipt');
         await locked.writeDecisionReceipt(receipt);
       }
-      if (!autoCommitRequested || receipt.git.status === 'committed') {
-        await this.#removeJournal(actionId);
-      }
+      await this.#removeJournal(actionId);
     });
 
     return {
@@ -332,6 +338,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
     const actionId = assertOpaquePendingActionId(actionIdValue);
     let receipt!: PendingActionDecisionReceipt;
     await this.#store.withMaterializationLocks(actionId, async (locked) => {
+      await this.#recoverJournalUnlocked(actionId, { access: locked });
       const record = await locked.readRecord();
       if (record.status !== 'accepted') {
         throw materializerError('PENDING_ACTION_NOT_ACCEPTED', `PendingAction ${actionId} is not accepted.`);
@@ -340,17 +347,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
       if (!previous || previous.decision !== 'accepted') {
         throw materializerError('PENDING_ACTION_RECEIPT_MISSING', `Accepted action ${actionId} has no receipt.`);
       }
+      assertReceiptMatchesRecord(previous, record);
       if (previous.git.status === 'committed') {
         receipt = previous;
         return;
-      }
-      const journal = await this.#readJournal(actionId);
-      if (journal) {
-        if (journal.phase !== 'accepted-finalize-only') {
-          journal.phase = 'accepted-finalize-only';
-          await this.#writeJournal(journal, false);
-        }
-        await this.#finalize(journal, { keepJournal: true });
       }
       const files = record.action.changes.map((change) => change.path);
       const previousGit = structuredClone(previous.git);
@@ -364,17 +364,13 @@ class FileChangeMaterializer implements ChangeMaterializer {
         await this.#assertAcceptedFinalState(record.action);
         await assertRepositoryBaseline(this.#workspaceRoot, record.action.repository);
       }
-      const result: PendingActionScopedCommitResult = committed
+      const git: PendingActionGitResult = committed
         ? { status: 'committed', ...committed }
-        : await commitPendingActionFiles({
-            workspaceRoot: this.#workspaceRoot,
-            files,
-            message: createPendingActionCommitMessage({
-              pendingActionId: actionId,
-              title: record.action.title,
-            }),
-          });
-      const git = toReceiptGit(result);
+        : await this.#commitAccepted(record.action, await this.#ensureAcceptedGitJournal(
+            record.action,
+            record.decisionReceiptId,
+            record.acceptedAt,
+          ));
       receipt = createPendingActionDecisionReceipt({ ...previous, git });
       if (previousGit.status !== 'committed' && git.status === 'committed') {
         // Keep transition operands stable: `previous` is deeply frozen, but an
@@ -389,13 +385,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
           git,
         });
       }
+      await this.#fault('before-receipt');
       await locked.writeDecisionReceipt(receipt);
-      if (git.status === 'committed') await this.#removeJournal(actionId);
-      else await this.#ensureAcceptedGitJournal(
-        record.action,
-        record.decisionReceiptId,
-        record.acceptedAt,
-      );
+      await this.#removeJournal(actionId);
     });
     return receipt;
   }
@@ -538,6 +530,20 @@ class FileChangeMaterializer implements ChangeMaterializer {
           : change.baseline.mode,
       });
     }
+    if (prepared.some((operation) => isNovelReferencePath(operation.targetFile))) {
+      const projection = await createWorkspaceProjection({
+        workspaceRoot: this.#workspaceRoot,
+        rules: NOVEL_REFERENCE_PROJECTION_RULES,
+      });
+      validateFinalObjectTreeReferences({
+        baselineFiles: projection.baselineFiles,
+        changes: prepared.map((operation) => ({
+          path: operation.targetFile,
+          operation: operation.operation,
+          ...(operation.draft === undefined ? {} : { content: operation.draft }),
+        })),
+      });
+    }
     return prepared;
   }
 
@@ -615,7 +621,6 @@ class FileChangeMaterializer implements ChangeMaterializer {
   async #recoverJournalUnlocked(
     actionId: string,
     options: {
-      preserveGitRetry?: boolean;
       access?: LockedPendingActionAccess;
     } = {},
   ): Promise<void> {
@@ -626,7 +631,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
       : await this.#store.readRecord(actionId);
     assertJournalMatchesAction(journal, record.action);
     if (record.status === 'pending') {
-      if (journal.phase !== 'accepted-finalize-only') {
+      if (journal.phase !== 'accepted-finalize-only' && journal.phase !== 'accepted-git-only') {
         await this.#rollback(journal);
         return;
       }
@@ -656,15 +661,16 @@ class FileChangeMaterializer implements ChangeMaterializer {
     ) {
       throw invalidJournal();
     }
-    if (journal.phase !== 'accepted-finalize-only') {
+    if (journal.phase !== 'accepted-finalize-only' && journal.phase !== 'accepted-git-only') {
       // A crash can occur after the durable terminal rename and before the
       // journal phase update. Terminal presence is authoritative and recovery
       // must never roll accepted canonical bytes back.
       journal.phase = 'accepted-finalize-only';
       await this.#writeJournal(journal, false);
     }
-    await this.#finalize(journal, { keepJournal: journal.autoCommitRequested });
+    await this.#finalize(journal);
     let receipt = await this.#store.readDecisionReceipt(actionId);
+    if (receipt) assertReceiptMatchesRecord(receipt, record);
     if (journal.autoCommitRequested && receipt?.git.status !== 'committed') {
       const committed = await readPendingActionCommitAtHead({
         workspaceRoot: this.#workspaceRoot,
@@ -687,8 +693,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         await (options.access
           ? options.access.writeDecisionReceipt(next)
           : this.#store.writeDecisionReceipt(next));
-        await this.#removeJournal(actionId);
-      } else if (!receipt && !options.preserveGitRetry) {
+      } else if (!receipt || receipt.git.status === 'not-requested') {
         const next = createPendingActionDecisionReceipt({
           id: record.decisionReceiptId,
           actionId,
@@ -707,6 +712,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
           ? options.access.writeDecisionReceipt(next)
           : this.#store.writeDecisionReceipt(next));
       }
+      await this.#removeJournal(actionId);
       return;
     }
     if (!receipt) {
@@ -777,10 +783,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
     await this.#removeJournal(journal.actionId);
   }
 
-  async #finalize(
-    journal: TransactionJournal,
-    options: { keepJournal?: boolean } = {},
-  ): Promise<void> {
+  async #finalize(journal: TransactionJournal): Promise<void> {
+    // This durable phase proves file cleanup finished. Git bookkeeping must
+    // not require the author to keep accepted canonical bytes unchanged.
+    if (journal.phase === 'accepted-git-only') return;
     if (journal.phase !== 'accepted-finalize-only') {
       throw materializerError('CHANGE_JOURNAL_CORRUPT', 'Only accepted transactions may be finalized.');
     }
@@ -792,9 +798,11 @@ class FileChangeMaterializer implements ChangeMaterializer {
       if (operation.backupFile) {
         await rm(this.#resolveJournalArtifact(operation.backupFile, '.backup'), { force: true });
       }
+      await fsyncDirectory(dirname(this.#resolveJournalPath(operation.targetFile)));
     }
     await this.#removeDraftDirectory(journal.actionId);
-    if (!options.keepJournal) await this.#removeJournal(journal.actionId);
+    journal.phase = 'accepted-git-only';
+    await this.#writeJournal(journal, false);
   }
 
   async #assertAcceptedFinalState(action: PendingAction): Promise<void> {
@@ -975,10 +983,12 @@ class FileChangeMaterializer implements ChangeMaterializer {
   }
 
   async #removeDraftDirectory(actionId: string): Promise<void> {
-    await rm(enginePath(this.#workspaceRoot, 'drafts', assertOpaquePendingActionId(actionId)), {
+    const draftRoot = enginePath(this.#workspaceRoot, 'drafts', assertOpaquePendingActionId(actionId));
+    await rm(draftRoot, {
       recursive: true,
       force: true,
     });
+    await fsyncDirectory(dirname(draftRoot));
   }
 
   async #removeOrphanTransactionTemporaries(actionId: string): Promise<void> {
@@ -1080,12 +1090,19 @@ class FileChangeMaterializer implements ChangeMaterializer {
     action: PendingAction,
     decisionReceiptId: string,
     acceptedAt: string,
-  ): Promise<void> {
-    if (await this.#readJournal(action.id)) return;
+  ): Promise<TransactionJournal> {
+    const existing = await this.#readJournal(action.id);
+    if (existing) return existing;
     const operations: PreparedOperation[] = action.changes.map((change) => ({
       operation: change.operation,
       targetFile: change.path,
       targetPath: resolve(this.#workspaceRoot, ...change.path.split('/')),
+      ...(change.operation === 'delete' ? {} : {
+        stageFile: join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.stage`),
+      }),
+      ...(change.operation === 'create' ? {} : {
+        backupFile: join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.backup`),
+      }),
       ...(change.baseline.exists
         ? { baselineHash: change.baseline.sha256, baselineMode: change.baseline.mode }
         : {}),
@@ -1100,8 +1117,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
         : change.baseline.mode,
     }));
     const journal = createJournal(action, operations, decisionReceiptId, acceptedAt, true);
-    journal.phase = 'accepted-finalize-only';
+    journal.phase = 'accepted-git-only';
     await this.#writeJournal(journal, true);
+    return journal;
   }
 
   async #fault(point: ChangeMaterializerFaultPoint): Promise<void> {
@@ -1271,7 +1289,7 @@ function parseJournal(value: unknown, expectedActionId: string): TransactionJour
     value.schemaVersion !== JOURNAL_SCHEMA_VERSION
     || value.kind !== 'change-materialization-journal'
     || value.actionId !== expectedActionId
-    || !['prepared', 'materializing', 'accepted-finalize-only'].includes(String(value.phase))
+    || !['prepared', 'materializing', 'accepted-finalize-only', 'accepted-git-only'].includes(String(value.phase))
     || typeof value.autoCommitRequested !== 'boolean'
     || !Array.isArray(value.operations)
     || value.operations.length === 0

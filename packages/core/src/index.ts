@@ -226,6 +226,7 @@ export {
   UNSUPPORTED_SESSION_PROPOSED_CHANGES_SCHEMA,
   SessionProposedChangesSchemaError,
   checkSessionResumeBoundary,
+  readSessionResumeBoundary,
   createSessionResumeBoundary,
   createSessionResumeBoundaryFromProposedChanges,
   formatAuthorReportMarkdown,
@@ -475,6 +476,7 @@ export type {
   SettlePlayWorldRefereeSettlementInput,
   PlaySessionMigrationPreview,
   WritePlaySessionFilesOptions,
+  PlaySessionWriteFaultPoint,
 } from './play-session.js';
 export {
   DEFAULT_PLAY_DETAIL_WINDOW_LIMIT,

@@ -180,6 +180,13 @@ import type {
 } from '@oh-awesome-novel/agent';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 import {
+  fingerprintPlayTurnArtifact,
+  readPlayTurnRunReceipt,
+  receiptMatchesCommittedArtifact,
+  writePlayTurnRunReceipt,
+} from './play-turn-run-receipt.js';
+import type { PlayTurnRunReceipt } from './play-turn-run-receipt.js';
+import {
   createPendingActionViewHandlers,
   toPendingActionViewErrorResponse,
 } from './pending-action-view.js';
@@ -208,6 +215,7 @@ import {
   createPlayAdoptionChangeProposal,
   PendingActionProtocolError,
   gitDiff,
+  initializeWorkspaceRepository,
   listGitCommits,
   loadYaml,
   readRepositoryBaseline,
@@ -255,6 +263,8 @@ const execFileAsync = promisify(execFile);
 const MAX_PLAY_REFEREE_RESPONSE_CHARACTERS = 262_144;
 const PLAY_CONTEXT_TRANSCRIPT_LIMIT = 20;
 const PLAY_CONTEXT_EVENT_LIMIT = 12;
+const playShutdownByApp = new WeakMap<NovelHonoApp, () => Promise<void>>();
+const playShutdownByServer = new WeakMap<Server, () => Promise<void>>();
 
 class InvalidJsonBodyError extends Error {}
 
@@ -272,6 +282,10 @@ export interface NovelBackendOptions {
   host?: string;
   port?: number;
   mode?: 'checkpoint' | 'model';
+  /** Includes activated sources and provider generation; commit itself is never timed out. */
+  playTurnDeadlineMs?: number;
+  /** A slow consumer is disconnected once queued SSE bytes exceed this bound. */
+  playTurnMaxQueuedBytes?: number;
   runAgent?: (input: NovelBackendAgentInput) => AsyncIterable<RuntimeEvent>;
   runPlayTurn?: (input: NovelBackendPlayTurnInput) => Promise<string>;
   streamPlayTurn?: (input: NovelBackendPlayTurnInput) => AsyncIterable<string>;
@@ -368,6 +382,7 @@ type PlayTurnRunStatus =
   | 'cancelling'
   | 'committing'
   | 'committed'
+  | 'indeterminate'
   | 'cancelled'
   | 'failed';
 
@@ -381,6 +396,8 @@ interface PlayTurnRunRecord {
   status: PlayTurnRunStatus;
   committedSession?: PlaySession;
   failureMessage?: string;
+  receipt: PlayTurnRunReceipt;
+  finished: Promise<void>;
 }
 
 interface LauncherWorkspaceEntry {
@@ -969,13 +986,23 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.post('/api/agent/chat', (context) => handleAgentChat(options, state, context));
   app.notFound((context) => jsonResponse(context, 404, { error: 'Not found.' }));
 
+  playShutdownByApp.set(app, async () => {
+    state.workspaceTransitionActive = true;
+    const runs = [...state.playTurnRuns.values()];
+    for (const run of runs) {
+      if (isCancelablePlayTurnStatus(run.status)) run.abortController.abort('backend-shutdown');
+    }
+    await Promise.all(runs.map((run) => run.finished));
+  });
   return app;
 }
 
 export function createNovelHttpBackend(options: NovelBackendOptions): Server {
   const app = createNovelHonoApp(options);
 
-  return createAdaptorServer({ fetch: app.fetch }) as Server;
+  const server = createAdaptorServer({ fetch: app.fetch }) as Server;
+  playShutdownByServer.set(server, playShutdownByApp.get(app)!);
+  return server;
 }
 
 export async function startNovelHttpBackend(
@@ -995,17 +1022,13 @@ export async function startNovelHttpBackend(
     host,
     port: address.port,
     url,
-    close: () =>
-      new Promise((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        });
-      }),
+    close: async () => {
+      const closed = new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose());
+      });
+      await playShutdownByServer.get(server)?.();
+      await closed;
+    },
   };
 }
 
@@ -1206,6 +1229,8 @@ async function handleCreateWorkspace(
       });
     }
 
+    const git = await initializeWorkspaceRepository(validation.path);
+
     state.activeWorkspaceRoot = validation.path;
     const now = new Date().toISOString();
     const workspaces = await upsertLauncherWorkspace(options, {
@@ -1220,6 +1245,7 @@ async function handleCreateWorkspace(
       workspace: workspaces.find((item) => item.path === validation.path),
       providerConfigured: state.providerConfigState.providers.length > 0,
       onboarding: { show: true },
+      git,
     });
   } finally {
     state.workspaceTransitionActive = false;
@@ -2284,7 +2310,8 @@ async function handleGitCommit(
     });
   }
 
-  const dirtyFiles = status.files.map((file) => file.path);
+  const dirtyFiles = status.files.flatMap((file) => file.originalPath
+    ? [file.originalPath, file.path] : [file.path]);
   const requestedFiles = readStringArray(body, 'files');
   const files = requestedFiles.length ? requestedFiles : dirtyFiles;
   const invalidFiles = files.filter((file) => !dirtyFiles.includes(file));
@@ -3891,9 +3918,9 @@ interface PlayWorldRefereeTurnStreamExecution {
   settle(refereeResponse: string): PlaySession;
 }
 
-function createPlayWorldRefereeTurnStreamResponse(
+async function createPlayWorldRefereeTurnStreamResponse(
   execution: PlayWorldRefereeTurnStreamExecution,
-): Response {
+): Promise<Response> {
   const {
     options,
     state,
@@ -3910,7 +3937,10 @@ function createPlayWorldRefereeTurnStreamResponse(
 
   const turnId = `play-turn-${randomUUID()}`;
   const runKey = createPlayTurnRunKey(workspaceRoot, id, turnId);
+  let finishRun!: () => void;
+  const finished = new Promise<void>((resolveRun) => { finishRun = resolveRun; });
   const run: PlayTurnRunRecord = {
+    finished,
     workspaceRoot,
     sessionId: id,
     sessionLockKey,
@@ -3918,13 +3948,30 @@ function createPlayWorldRefereeTurnStreamResponse(
     baseRevision: authoritativeSession.revision,
     abortController: new AbortController(),
     status: 'starting',
+    receipt: {
+      schemaVersion: 1, sessionId: id, turnId,
+      baseRevision: authoritativeSession.revision,
+      artifactId: execution.expectedArtifactId, phase: 'running',
+    },
   };
   state.playTurnRuns.set(runKey, run);
+  try { await writePlayTurnRunReceipt(workspaceRoot, run.receipt); }
+  catch {
+    state.activePlayTurns.delete(sessionLockKey);
+    state.playTurnRuns.delete(runKey);
+    finishRun();
+    return jsonResponse(context, 500, { error: 'Play turn recovery metadata could not be saved.' });
+  }
 
   const requestSignal = context.req.raw.signal;
   const encoder = new TextEncoder();
   let streamClosed = false;
   let sequence = 0;
+  const maxQueuedBytes = Math.max(1024, options.playTurnMaxQueuedBytes ?? 2 * 1024 * 1024);
+  const deadline = setTimeout(() => {
+    if (isCancelablePlayTurnStatus(run.status)) run.abortController.abort('deadline-exceeded');
+  }, Math.max(1, options.playTurnDeadlineMs ?? 120_000));
+  deadline.unref();
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -3943,13 +3990,15 @@ function createPlayWorldRefereeTurnStreamResponse(
           ...payload,
         };
 
-        try {
-          controller.enqueue(encoder.encode(
-            `event: ${type}\nid: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`,
-          ));
-        } catch {
+        const bytes = encoder.encode(`event: ${type}\nid: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`);
+        if ((controller.desiredSize ?? 0) < bytes.byteLength) {
           streamClosed = true;
+          if (isCancelablePlayTurnStatus(run.status)) run.abortController.abort('slow-reader');
+          controller.error(new Error('Play stream consumer exceeded its queued byte limit; reconcile the turn outcome.'));
+          return;
         }
+        try { controller.enqueue(bytes); } catch { streamClosed = true; }
+
       };
       const close = (): void => {
         if (streamClosed) {
@@ -3985,9 +4034,9 @@ function createPlayWorldRefereeTurnStreamResponse(
 
         try {
           assertPlayTurnNotCancelled(run);
-          const activatedSourceContext = await loadPlayActivatedSourceContext(
-            workspaceRoot,
-            turnSession,
+          const activatedSourceContext = await rejectPlayTurnGenerationOnAbort(
+            loadPlayActivatedSourceContext(workspaceRoot, turnSession),
+            run.abortController.signal,
           );
           emit('play.context.ready', {
             activatedSourceCount: turnSession.activatedSources.length,
@@ -4083,6 +4132,9 @@ function createPlayWorldRefereeTurnStreamResponse(
           }
           assertPlayTurnNotCancelled(run);
           run.status = 'committing';
+          clearTimeout(deadline);
+          run.receipt = { ...run.receipt, phase: 'committing', artifactHash: fingerprintPlayTurnArtifact(committedArtifact) };
+          await writePlayTurnRunReceipt(workspaceRoot, run.receipt);
           await writePlaySessionFiles(workspaceRoot, next, {
             expectedCurrentSession: authoritativeSession,
             contextTrace,
@@ -4090,6 +4142,9 @@ function createPlayWorldRefereeTurnStreamResponse(
 
           run.status = 'committed';
           run.committedSession = next;
+          run.receipt = { ...run.receipt, phase: 'committed' };
+          // A lost terminal receipt is recoverable from the durable committing identity + artifact.
+          await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
           for (const event of next.events.slice(authoritativeSession.events.length)) {
             emit('play.event.occurred', {
               revision: next.revision,
@@ -4108,22 +4163,43 @@ function createPlayWorldRefereeTurnStreamResponse(
             run.status !== 'committed'
           ) {
             run.status = 'cancelled';
+            run.receipt = { ...run.receipt, phase: 'cancelled' };
+            await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
             emit('play.turn.cancelled', {
               committed: false,
               revision: authoritativeSession.revision,
               reason: String(run.abortController.signal.reason ?? 'cancelled'),
             });
           } else {
-            const failure = classifyPlayTurnStreamFailure(error, run.status);
-            run.status = 'failed';
-            run.failureMessage = failure.message;
-            emit('play.turn.failed', { error: failure });
+            if (run.status === 'committing') {
+              const recovered = await readPlaySessionFiles(workspaceRoot, id).catch(() => undefined);
+              if (recovered && receiptMatchesCommittedArtifact(run.receipt, recovered)) {
+                run.status = 'committed';
+                run.committedSession = recovered;
+                run.receipt = { ...run.receipt, phase: 'committed' };
+                await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
+                emit('play.turn.committed', { artifactId: run.receipt.artifactId, revision: recovered.revision, session: recovered });
+                return;
+              }
+              // Keep the committing receipt: a transport error is not evidence of no commit.
+              run.status = 'indeterminate';
+              emit('play.turn.failed', { error: { code: 'commit_outcome_unknown', message: 'Play turn outcome is unknown. Reload the session before continuing.', retryable: false } });
+            } else {
+              const failure = classifyPlayTurnStreamFailure(error, run.status);
+              run.status = 'failed';
+              run.failureMessage = failure.message;
+              run.receipt = { ...run.receipt, phase: 'failed', error: failure.message.slice(0, 2000) };
+              await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
+              emit('play.turn.failed', { error: failure });
+            }
           }
         } finally {
+          clearTimeout(deadline);
           requestSignal.removeEventListener('abort', abortFromDisconnect);
           state.activePlayTurns.delete(sessionLockKey);
           schedulePlayTurnRunCleanup(state, runKey);
           close();
+          finishRun();
         }
       })();
     },
@@ -4134,7 +4210,7 @@ function createPlayWorldRefereeTurnStreamResponse(
         run.abortController.abort('client-disconnected');
       }
     },
-  });
+  }, { highWaterMark: maxQueuedBytes, size: (chunk) => chunk.byteLength });
 
   return new Response(stream, {
     status: 200,
@@ -4149,7 +4225,7 @@ function createPlayWorldRefereeTurnStreamResponse(
 }
 
 async function handleCancelPlayWorldRefereeTurn(
-  _options: NovelBackendOptions,
+  options: NovelBackendOptions,
   state: BackendState,
   id: string,
   turnId: string,
@@ -4160,7 +4236,22 @@ async function handleCancelPlayWorldRefereeTurn(
   );
 
   if (!run) {
-    return jsonResponse(context, 404, { error: 'Play turn run was not found.' });
+    const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+    try {
+      const receipt = await readPlayTurnRunReceipt(workspaceRoot, id, turnId);
+      if (!receipt) return jsonResponse(context, 404, { error: 'Play turn run was not found. Its outcome is unknown; reload the session.' });
+      if (receipt.artifactHash) {
+        const session = await readPlaySessionFiles(workspaceRoot, id);
+        if (receiptMatchesCommittedArtifact(receipt, session)) return jsonResponse(context, 200, { status: 'committed', committed: true, turnId, session });
+      }
+      if (receipt.phase === 'cancelled' || receipt.phase === 'failed') {
+        return jsonResponse(context, 200, { status: receipt.phase, committed: false, turnId,
+          ...(receipt.phase === 'failed' ? { error: receipt.error ?? 'Play turn failed before commit.' } : {}) });
+      }
+      return jsonResponse(context, 409, { error: 'Play turn outcome is unknown. Reload the session before continuing.' });
+    } catch (error) {
+      return jsonResponse(context, 409, { error: 'Play turn outcome could not be verified. Reload the session before continuing.' });
+    }
   }
 
   if (run.status === 'committed') {
@@ -4183,6 +4274,9 @@ async function handleCancelPlayWorldRefereeTurn(
       turnId,
       session,
     });
+  }
+  if (run.status === 'indeterminate') {
+    return jsonResponse(context, 409, { error: 'Play turn outcome is unknown. Reload the session before continuing.' });
   }
   if (run.status === 'committing') {
     return jsonResponse(context, 200, {

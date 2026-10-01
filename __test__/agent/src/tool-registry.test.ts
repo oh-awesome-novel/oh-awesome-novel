@@ -1,5 +1,9 @@
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   createNovelAgentReadTools,
@@ -11,6 +15,11 @@ import {
 import type { ToolSet } from 'ai';
 
 const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'simple-novel');
+const execFileAsync = promisify(execFile);
+const temporaryWorkspaces: string[] = [];
+afterEach(async () => {
+  await Promise.all(temporaryWorkspaces.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
 
 describe('Novel agent tool assembly', () => {
   it('creates a runtime with the agent-assembled AI SDK ToolSet', () => {
@@ -101,8 +110,18 @@ describe('Novel agent tool assembly', () => {
   });
 
   it('uses a read-only sandbox when the host did not select an exact target', async () => {
+    const sandboxRoot = await mkdtemp(join(tmpdir(), 'oan-tool-registry-'));
+    temporaryWorkspaces.push(sandboxRoot);
+    await cp(workspaceRoot, sandboxRoot, { recursive: true });
+    for (const args of [
+      ['init', '-b', 'main'],
+      ['config', 'user.name', 'OAN Test'],
+      ['config', 'user.email', 'oan@example.test'],
+      ['add', '--', '.'],
+      ['commit', '-m', 'test fixture'],
+    ]) await execFileAsync('git', ['-C', sandboxRoot, ...args]);
     const environment = await createNovelAgentTurnEditEnvironment({
-      workspaceRoot,
+      workspaceRoot: sandboxRoot,
       capability: 'novel.write_chapter',
     });
 
