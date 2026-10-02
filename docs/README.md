@@ -1,5 +1,7 @@
 # oh-awesome-novel Docs
 
+面向小说作者的使用文档位于根目录 [wiki/](../wiki/index.md)，涵盖启动、配置、写作、章节整理审批、正文搜索与导出、参考资料、剧情排演、上下文用量和 Git。运行 `npm run docs:dev` 可本地阅读。当前目录继续维护架构、设计和开发任务。
+
 `oh-awesome-novel` 是 filesystem-first 的长篇小说 AI Copilot / Novel IDE。稳定架构已经收敛为：
 
 ```text

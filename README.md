@@ -69,9 +69,21 @@ packages/
 
 __test__/          root-level test workspaces
 docs/              architecture, specs, plans, tasks
+wiki/              VitePress user guides and screenshots
 examples/          local example workspaces and global config
 reference-only/    research inputs, never product code
 ```
+
+## 使用文档
+
+面向作者的中文使用指南位于根目录 [wiki/](wiki/index.md)，使用 `vitepress@2.0.0-alpha.20` 原生默认主题。
+
+```sh
+npm install
+npm run docs:dev
+```
+
+访问 `http://127.0.0.1:5174/`。构建文档执行 `npm run docs:build`，预览构建结果执行 `npm run docs:preview`。文档站独立运行，无需启动应用后端；截图清单见 [wiki/screenshots.md](wiki/screenshots.md)。
 
 ## 本地开发
 

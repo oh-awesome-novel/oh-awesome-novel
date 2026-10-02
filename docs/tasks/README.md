@@ -71,6 +71,7 @@
 - [0570 Workspace Global Search](0570.md)
 - [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 - [1240 AI SDK 7 Migration](1240.md)
+- [1250 Illustrated User Documentation](1250.md)
 - [1260 Play Storage Read Model And Snapshot I/O](1260.md)
 - [1270 Readable Manuscript Export](1270.md)
 
