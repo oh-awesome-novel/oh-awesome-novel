@@ -9,6 +9,25 @@ const baseline = [
 ];
 
 describe('TrackingFs', () => {
+  it.each([0o600, 0o640, 0o666])('preserves mode %s when overwriting projected content', async (mode) => {
+    const path = 'chapters/a.md';
+    const memory = new InMemoryFs({
+      [`/workspace/${path}`]: { content: 'before\n', mode },
+    });
+    const fs = new TrackingFs(memory, {
+      baselineFiles: [{ path, content: 'before\n', mode }],
+    });
+    fs.activate();
+
+    await fs.writeFile(`/workspace/${path}`, 'after\n');
+    const reconciliation = await fs.reconcileWorkspace();
+    expect(reconciliation.finalFiles).toEqual([{ path, content: 'after\n', mode }]);
+    expect(reconciliation.candidatePaths).toEqual([path]);
+
+    await fs.writeFile(`/workspace/${path}`, 'before\n');
+    expect((await fs.reconcileWorkspace()).candidatePaths).toEqual([]);
+  });
+
   it('covers the complete async mutation surface and raw byte reads', async () => {
     const memory = new InMemoryFs({
       '/workspace/chapters/a.md': 'alpha\n',

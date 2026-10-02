@@ -173,7 +173,15 @@ export class TrackingFs implements IFileSystem {
     content: FileContent,
     options?: WriteFileOptions,
   ): Promise<void> {
+    const existingMode = await this.inner.exists(path)
+      ? (await this.inner.stat(path)).mode & 0o777
+      : undefined;
     await this.inner.writeFile(path, content, options);
+    // InMemoryFs resets overwritten files to 0o644. Content writes must retain
+    // the projected mode, including Windows' 0o666 and private POSIX files.
+    if (existingMode !== undefined) {
+      await this.inner.chmod(path, existingMode);
+    }
     this.#record('writeFile', path);
   }
 

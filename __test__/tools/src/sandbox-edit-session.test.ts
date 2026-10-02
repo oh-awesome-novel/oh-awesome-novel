@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,32 @@ afterEach(async () => {
 });
 
 describe('SandboxEditSession', () => {
+  it.each([0o600, 0o666])('preserves projected permissions after a shell redirect (%s)', async (mode) => {
+    const path = 'summaries/global.md';
+    const workspaceRoot = await tempWorkspace({ [path]: '# Global\n\nbefore\n' });
+    const canonical = join(workspaceRoot, path);
+    await chmod(canonical, mode);
+    const canonicalMode = (await lstat(canonical)).mode & 0o777;
+    const session = await createSandboxEditSession({
+      workspaceRoot,
+      policy: createWorkspaceChangePolicy({ capability: 'summary.edit' }),
+      repositoryReader: fakeRepository,
+    });
+    try {
+      await executeTool(session.tools, 'bash', {
+        command: "printf '# Global\\n\\nafter\\n' > summaries/global.md",
+      });
+      const candidate = await session.finalizeCandidate({ finalization: 'runtime-fallback' });
+      expect(candidate?.changes).toMatchObject([
+        { operation: 'update', path, baseline: { mode: canonicalMode } },
+      ]);
+      expect(await readFile(canonical, 'utf8')).toBe('# Global\n\nbefore\n');
+      expect((await lstat(canonical)).mode & 0o777).toBe(canonicalMode);
+    } finally {
+      await session.dispose();
+    }
+  });
+
   it('shares virtual state across calls and finalizes exact create/update/delete once', async () => {
     const workspaceRoot = await tempWorkspace({
       'summaries/global.md': '# Global\n\nold\n',
