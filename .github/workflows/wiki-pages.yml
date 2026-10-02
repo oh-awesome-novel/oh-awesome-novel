@@ -1,0 +1,68 @@
+name: Deploy wiki to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wiki/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - ".github/workflows/wiki-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install documentation dependencies
+        # Fetch locked registry packages from the official registry configured in .npmrc.
+        run: npm ci --ignore-scripts --workspaces=false --replace-registry-host=registry.npmmirror.com
+
+      - name: Build wiki
+        env:
+          VITEPRESS_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run docs:build -- --base "${VITEPRESS_BASE_PATH}/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: wiki/.vitepress/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

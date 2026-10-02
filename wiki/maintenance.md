@@ -67,15 +67,50 @@ npm run docs:preview
 
 构建输出在 `wiki/.vitepress/dist/`，已通过仓库的 `.gitignore` 排除，不要提交生成文件或缓存。
 
-## 部署到静态服务器
+## GitHub Pages 自动发布
 
-将构建输出目录作为静态网站根目录即可。当前配置使用默认根路径 `/`。如果部署到子路径（例如 `/oh-awesome-novel/`），先在配置中设置对应的 `base`，再重新构建：
+流水线文件为 `.github/workflows/wiki-pages.yml`。`main` 分支的 `wiki/**`、根依赖清单和锁文件、`.npmrc` 或流水线自身更新时，会自动构建并发布。也支持手动运行。
 
-```ts
-export default defineConfig({
-  base: "/oh-awesome-novel/",
-  // 保留已有配置。
-});
+首次发布需要仓库管理员将 **Settings → Pages → Build and deployment → Source** 设为 **GitHub Actions**。也可以在本机登录 `gh` 后执行以下命令，无需打开设置页面：
+
+```sh
+gh auth status
+gh api --method POST repos/oh-awesome-novel/oh-awesome-novel/pages -f build_type=workflow
 ```
+
+如果已经启用 Pages，改用更新命令：
+
+```sh
+gh api --method PUT repos/oh-awesome-novel/oh-awesome-novel/pages -f build_type=workflow
+```
+
+配置文件提交并推送到 `main` 后会自动触发首次发布。手动重新发布、查看最近运行和站点状态：
+
+```sh
+gh workflow run wiki-pages.yml --repo oh-awesome-novel/oh-awesome-novel --ref main
+gh run list --repo oh-awesome-novel/oh-awesome-novel --workflow wiki-pages.yml --limit 5
+gh api repos/oh-awesome-novel/oh-awesome-novel/pages --jq '{build_type, status, html_url}'
+```
+
+通过 `gh run watch <运行ID> --repo oh-awesome-novel/oh-awesome-novel --exit-status` 等待某次运行结束；失败时用 `gh run view <运行ID> --repo oh-awesome-novel/oh-awesome-novel --log-failed` 查看错误。
+
+默认站点地址为 <https://oh-awesome-novel.github.io/oh-awesome-novel/>。流水线从 Pages 配置读取实际子路径，通过构建参数注入 VitePress 的 `base`，保证导航、截图和搜索资源使用正确地址。将来配置自定义域名后，重新运行流水线即可使用更新后的路径。本地开发仍使用 `/`。
+
+流水线使用 Node.js 24、锁文件和根依赖构建文档，跳过安装脚本及其他 workspace 的安装。安装时将锁文件中的 `registry.npmmirror.com` 地址映射到 `.npmrc` 配置的 npm 官方源，保留锁定版本和完整性校验。部署使用 GitHub 自动提供的 `GITHUB_TOKEN` 和 OIDC；无需额外配置 PAT、SSH 密钥或 `gh-pages` 分支。若组织限制了 Actions，需要允许流水线中的官方 `actions/*`；若 `github-pages` 环境要求人工审批，需要在部署时完成该审批。
+
+在本地检查与 Pages 相同的子路径：
+
+```sh
+npm run docs:build -- --base /oh-awesome-novel/
+npm run docs:preview -- --base /oh-awesome-novel/
+```
+
+访问 `http://127.0.0.1:4174/oh-awesome-novel/`，检查页面、截图和搜索。
+
+配置方式见 [GitHub Pages 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)；命令行设置见 [Pages REST API](https://docs.github.com/en/rest/pages/pages)。
+
+## 部署到其他静态服务器
+
+将构建输出目录作为静态网站根目录即可。默认构建使用根路径 `/`；部署到子路径时，通过命令指定后重新构建，例如 `npm run docs:build -- --base /oh-awesome-novel/`。
 
 VitePress 版本固定为 `2.0.0-alpha.20`。配置写法可查阅 [VitePress 官方文档](https://vitepress.dev/guide/getting-started)；升级版本时同时复核配置与锁文件。
