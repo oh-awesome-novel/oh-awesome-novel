@@ -76,7 +76,13 @@ jobs:
       - name: Prepare Windows installer compression tools
         if: runner.os == 'Windows'
         working-directory: node_modules/electron-winstaller
-        run: node script/select-7z-arch.js
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          for (const extension of ['exe', 'dll']) {
+            fs.copyFileSync(`vendor/7z-${process.arch}.${extension}`, `vendor/7z.${extension}`);
+          }
+          NODE
 
       - name: Set application version from tag
         run: |
