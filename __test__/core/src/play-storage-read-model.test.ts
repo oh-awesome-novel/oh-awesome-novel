@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createPlaySessionDraft, listPlaySessionSummaries, projectPlaySessionSelectedDetail,
   readPlaySessionFiles, readPlaySessionSelectedDetail, settlePlayWorldRefereeResponse,
-  settlePlayWorldSettlementRetry, writePlaySessionFiles,
+  restorePlaySessionCheckpoint, settlePlayWorldSettlementRetry, writePlaySessionFiles,
 } from '@oh-awesome-novel/core';
 import type { PlaySession } from '@oh-awesome-novel/core';
 
@@ -173,6 +173,16 @@ describe('Play snapshot-bound storage read models', () => {
         const oldBytes = await readFile(oldPath, 'utf8');
         await writeFile(oldPath, 'Changed only in the prior snapshot\n');
         expect(await readFile(newPath, 'utf8')).toBe(oldBytes);
+        const oldTranscript = join(sessionsRoot, backup!, 'transcript.md');
+        const newTranscript = join(fixture.sessionRoot, 'transcript.md');
+        const oldTranscriptBytes = await readFile(oldTranscript, 'utf8');
+        const newTranscriptBytes = await readFile(newTranscript, 'utf8');
+        expect(newTranscriptBytes.startsWith(oldTranscriptBytes)).toBe(true);
+        expect(newTranscriptBytes).toContain('Scene 9.');
+        expect((await stat(oldTranscript)).ino).not.toBe((await stat(newTranscript)).ino);
+        expect((await stat(newTranscript)).nlink).toBe(1);
+        await writeFile(oldTranscript, 'Changed only in the prior transcript\n');
+        expect(await readFile(newTranscript, 'utf8')).toBe(newTranscriptBytes);
       },
     });
     expect(backup).toBeDefined();
@@ -181,6 +191,55 @@ describe('Play snapshot-bound storage read models', () => {
     await expect(writePlaySessionFiles(fixture.root, next, { expectedCurrentSession: before }))
       .rejects.toMatchObject({ name: 'PlaySessionWriteConflictError' });
     expect(await readPlaySessionSelectedDetail(fixture.root, before.id)).toEqual(projectPlaySessionSelectedDetail(next));
+  });
+
+  it.each(['missing', 'corrupt'] as const)('rebuilds a %s derived transcript from the validated graph on save', async (kind) => {
+    const fixture = await setup(3);
+    const before = await readPlaySessionFiles(fixture.root, fixture.session.id);
+    const next = append(before, 4);
+    const expectedRoot = await mkdtemp(join(tmpdir(), 'oan-play-transcript-'));
+    roots.push(expectedRoot);
+    await writePlaySessionFiles(expectedRoot, next, { expectedAbsent: true });
+    const transcript = join(fixture.sessionRoot, 'transcript.md');
+    if (kind === 'missing') await rm(transcript);
+    else await writeFile(transcript, 'Untrusted derived narrative\n');
+    await writePlaySessionFiles(fixture.root, next, { expectedCurrentSession: before });
+    expect(await readFile(transcript, 'utf8')).toBe(await readFile(
+      join(expectedRoot, '.workspace/play-sessions', next.id, 'transcript.md'), 'utf8',
+    ));
+    expect(await readPlaySessionFiles(fixture.root, next.id)).toEqual(next);
+  });
+
+  it('regenerates a non-prefix transcript after Restore and preserves multibyte text when extending it', async () => {
+    const fixture = await setup(4);
+    const before = await readPlaySessionFiles(fixture.root, fixture.session.id);
+    const restored = restorePlaySessionCheckpoint(before, before.selectedTurnIds[1]!);
+    await writePlaySessionFiles(fixture.root, restored, { expectedCurrentSession: before });
+    const transcript = join(fixture.sessionRoot, 'transcript.md');
+    expect(await readFile(transcript, 'utf8')).not.toContain('Scene 3.');
+    const next = settlePlayWorldRefereeResponse({ session: restored, actionKind: 'do',
+      userText: '她点亮灯笼。🌙', refereeResponse: response(5) });
+    await writePlaySessionFiles(fixture.root, next, { expectedCurrentSession: restored });
+    const first = await readFile(transcript, 'utf8');
+    const last = append(next, 6);
+    await writePlaySessionFiles(fixture.root, last, { expectedCurrentSession: next });
+    const final = await readFile(transcript, 'utf8');
+    expect(final.startsWith(first)).toBe(true);
+    expect(final).toContain('她点亮灯笼。🌙');
+    expect(final).not.toContain('Scene 3.');
+    expect(await readPlaySessionSelectedDetail(fixture.root, last.id)).toEqual(projectPlaySessionSelectedDetail(last));
+  });
+
+  it('validates every candidate sibling before optimizing its projection or staging any transcript', async () => {
+    const fixture = await setup(4, 2);
+    const before = await readPlaySessionFiles(fixture.root, fixture.session.id);
+    const next = structuredClone(append(before, 5));
+    const sibling = next.turnArtifacts.find((artifact) => !next.selectedTurnIds.includes(artifact.id))!;
+    sibling.parentTurnId = 'missing-parent';
+    const transcript = await readFile(join(fixture.sessionRoot, 'transcript.md'), 'utf8');
+    await expect(writePlaySessionFiles(fixture.root, next, { expectedCurrentSession: before })).rejects.toThrow();
+    expect(await readFile(join(fixture.sessionRoot, 'transcript.md'), 'utf8')).toBe(transcript);
+    expect(await readPlaySessionFiles(fixture.root, before.id)).toEqual(before);
   });
 
   it('keeps an unindexed session readable without silently upgrading its metadata', async () => {

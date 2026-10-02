@@ -75,6 +75,8 @@ export type PendingActionOrigin =
       readonly kind: 'chapterSettlement';
       readonly chapterId: string;
       readonly sourceHash: string;
+      readonly characterInventoryHash: string;
+      readonly inputFiles: readonly { readonly path: string; readonly sha256: string | null }[];
     }
   | {
       readonly kind: 'agentTurn';
@@ -413,11 +415,13 @@ export function parsePendingActionSource(value: unknown): PendingActionSource {
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
   if (value.kind === 'chapterSettlement') {
-    assertExactFields(value, ['kind', 'chapterId', 'sourceHash']);
+    assertExactFields(value, ['kind', 'chapterId', 'sourceHash', 'characterInventoryHash', 'inputFiles']);
     if (typeof value.chapterId !== 'string' || !/^(?!0000)\d{4}\/(?!0000)\d{4}$/u.test(value.chapterId)) {
       invalidSchema('Settlement chapter id must be a canonical volume/chapter id.');
     }
-    assertSha256(value.sourceHash, 'Origin chapter source hash');
+    const sourceHash = assertSha256(value.sourceHash, 'Origin chapter source hash');
+    assertSha256(value.characterInventoryHash, 'Settlement character inventory hash');
+    parseSettlementInputFiles(value.inputFiles, value.chapterId, sourceHash);
   } else if (value.kind === 'agentTurn') {
     assertExactFields(value, ['kind', 'sessionId', 'turnId']);
     assertOpaquePendingActionId(value.sessionId, 'Origin session id');
@@ -506,6 +510,35 @@ export function assertCanonicalTargetPath(value: unknown): string {
     invalidSchema(`PendingAction target path is hidden or internal: ${path}`);
   }
   return path;
+}
+
+function parseSettlementInputFiles(value: unknown, chapterId: string, sourceHash: string): void {
+  if (!Array.isArray(value) || value.length < 7 || value.length > 128) {
+    invalidSchema('Settlement input files must contain 7–128 source identities.');
+  }
+  const fixedPaths = new Set([
+    `chapters/${chapterId}.md`, `summaries/chapter/${chapterId}.md`,
+    `state/chapters/${chapterId}.yaml`, 'state/characters.yaml',
+    'timeline/events.yaml', 'foreshadow/active.yaml', 'foreshadow/resolved.yaml',
+  ]);
+  let previous = '';
+  let hasChapter = false;
+  const remaining = new Set(fixedPaths);
+  for (const file of value) {
+    if (!isRecord(file)) invalidSchema('Settlement source identity must be an object.');
+    assertExactFields(file, ['path', 'sha256']);
+    const path = assertCanonicalTargetPath(file.path);
+    if (path !== file.path || path <= previous || (!fixedPaths.has(path)
+      && !/^characters\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/.+\.(?:md|yaml)$/u.test(path))) {
+      invalidSchema('Settlement source paths must be unique, sorted domain inputs.');
+    }
+    previous = path;
+    remaining.delete(path);
+    if (file.sha256 !== null) assertSha256(file.sha256, 'Settlement input hash');
+    if (path === `chapters/${chapterId}.md`) hasChapter = file.sha256 === sourceHash;
+  }
+  if (!hasChapter) invalidSchema('Settlement source identities must bind the chapter evidence hash.');
+  if (remaining.size) invalidSchema('Settlement source identities must include all fixed merge inputs, including absent files.');
 }
 
 export function assertSha256(value: unknown, label = 'SHA-256'): string {

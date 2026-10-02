@@ -206,8 +206,13 @@ interface PlayWindowCursorPayload {
 
 export function summarizePlaySession(session: PlaySession): PlaySessionSummary {
   const facts = materializePlayTurnFacts(session);
-  const selectedEvents = session.events.filter((event) =>
-    facts.selectedEventIds.has(event.id));
+  return summarizeValidatedPlaySession(session, facts);
+}
+
+function summarizeValidatedPlaySession(
+  session: PlaySession,
+  facts: ReturnType<typeof materializePlayTurnFacts>,
+): PlaySessionSummary {
   const selectedArtifact = facts.selectedTurnIds.length
     ? facts.turnArtifacts.find((artifact) =>
         artifact.id === facts.selectedTurnIds.at(-1))
@@ -232,7 +237,7 @@ export function summarizePlaySession(session: PlaySession): PlaySessionSummary {
     ...(selectedArtifact ? { selectedArtifactId: selectedArtifact.id } : {}),
     selectedTurnCount: facts.selectedTurnIds.length,
     transcriptCount: facts.transcript.length,
-    eventCount: selectedEvents.length,
+    eventCount: facts.selectedEventIds.size,
     worldClock: { ...session.worldClock },
     canonical: false,
   };
@@ -264,6 +269,14 @@ export interface PlaySessionReadProjection extends Omit<PlaySessionSelectedDetai
 /** Shared validated projection used by both in-memory and persisted read models. */
 export function buildPlaySessionReadProjection(session: PlaySession): PlaySessionReadProjection {
   const facts = materializePlayTurnFacts(session);
+  return buildValidatedPlaySessionReadProjection(session, facts);
+}
+
+/** Internal storage seam: facts must come from this same synchronous validation. */
+export function buildValidatedPlaySessionReadProjection(
+  session: PlaySession,
+  facts: ReturnType<typeof materializePlayTurnFacts>,
+): PlaySessionReadProjection {
   const selectedEvents = session.events.filter((event) =>
     facts.selectedEventIds.has(event.id));
   const selectedObservations = session.observations.filter((observation) =>
@@ -284,9 +297,9 @@ export function buildPlaySessionReadProjection(session: PlaySession): PlaySessio
           selectedRehearsalEvidenceIds.has(turn.id)),
       }))
     : undefined;
+  const artifactsById = new Map(facts.turnArtifacts.map((artifact) => [artifact.id, artifact]));
   const selectedArtifacts = facts.selectedTurnIds.map((artifactId) => {
-    const artifact = facts.turnArtifacts.find((candidate) =>
-      candidate.id === artifactId);
+    const artifact = artifactsById.get(artifactId);
     if (!artifact) {
       throw new Error(`Selected Play artifact is missing: ${artifactId}.`);
     }
@@ -295,7 +308,7 @@ export function buildPlaySessionReadProjection(session: PlaySession): PlaySessio
   const selectedArtifact = selectedArtifacts.at(-1);
 
   return {
-    summary: summarizePlaySession(session),
+    summary: summarizeValidatedPlaySession(session, facts),
     snapshot: {
       schemaVersion: session.schemaVersion,
       id: session.id,

@@ -36,3 +36,49 @@ describe('strict chapter settlement observations', () => {
     expect(() => parseChapterSettlementObservationLog(valid(), { ...source, bodyStartLine: 1 })).toThrow();
   });
 });
+
+describe('strict multi-domain settlement intent', () => {
+  const withState = () => ({ ...valid(), domainChanges: [{ domain: 'state', observationId: 'key', characterId: 'hero', field: 'inventory', expectedValue: null, value: '钥匙' }], unresolvedObservationIds: [] as string[] });
+  it('accepts typed field intent and retains unresolved observation IDs for the compiler', () => {
+    const value = withState(); value.unresolvedObservationIds = ['key'];
+    expect(parseChapterSettlementObservationLog(value, source)).toEqual(value);
+  });
+  it.each([
+    (v: any) => { v.domainChanges[0].target = 'state/evil.yaml'; },
+    (v: any) => { v.domainChanges[0].characterId = '../hero'; },
+    (v: any) => { v.domainChanges[0].characterId = 'constructor'; },
+    (v: any) => { v.domainChanges[0].field = 'hp'; },
+    (v: any) => { v.domainChanges[0].field = '__proto__'; },
+    (v: any) => { v.domainChanges[0].expectedValue = {}; },
+    (v: any) => { delete v.domainChanges[0].expectedValue; },
+    (v: any) => { v.domainChanges[0].observationId = 'absent'; },
+    (v: any) => { v.domainChanges[0].domain = 'world'; },
+    (v: any) => { v.domainChanges.push(v.domainChanges[0]); },
+    (v: any) => { v.domainChanges = Array.from({ length: 33 }, () => v.domainChanges[0]); },
+    (v: any) => { v.unresolvedObservationIds = ['absent']; },
+    (v: any) => { v.unresolvedObservationIds = ['key', 'key']; },
+  ])('rejects unknown fields, references, category mappings and duplicate targets %#', (mutate) => {
+    const value = withState(); mutate(value);
+    expect(() => parseChapterSettlementObservationLog(value, source)).toThrow();
+  });
+  it('validates the hook lifecycle union and every category mapping', () => {
+    const value: any = valid();
+    value.observations[0].category = 'foreshadow';
+    value.domainChanges = [{ domain: 'foreshadow', observationId: 'key', hookId: 'key_origin', operation: 'create', description: '钥匙来源未明', relatedCharacters: ['hero'] }];
+    expect(parseChapterSettlementObservationLog(value, source).domainChanges).toHaveLength(1);
+    for (const operation of ['mention', 'advance', 'resolve', 'defer']) {
+      value.domainChanges = [{ domain: 'foreshadow', observationId: 'key', hookId: 'key_origin', operation, expectedStatus: 'active' }];
+      expect(parseChapterSettlementObservationLog(value, source).domainChanges?.[0]).toEqual(value.domainChanges[0]);
+    }
+    value.domainChanges[0].operation = 'delete';
+    expect(() => parseChapterSettlementObservationLog(value, source)).toThrow();
+    value.domainChanges[0].operation = 'resolve'; value.domainChanges[0].expectedStatus = 'deferred';
+    expect(() => parseChapterSettlementObservationLog(value, source)).toThrow();
+    value.observations[0].category = 'time'; value.domainChanges = [{ domain: 'timeline', observationId: 'key', title: '离开房间', time: '清晨' }];
+    expect(parseChapterSettlementObservationLog(value, source).domainChanges).toHaveLength(1);
+    value.observations[0].category = 'character'; value.domainChanges = [{ domain: 'character', observationId: 'key', characterId: 'hero' }];
+    expect(parseChapterSettlementObservationLog(value, source).domainChanges).toHaveLength(1);
+    value.observations[0].category = 'time';
+    expect(() => parseChapterSettlementObservationLog(value, source)).toThrow();
+  });
+});

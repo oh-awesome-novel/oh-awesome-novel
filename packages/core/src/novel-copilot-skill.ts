@@ -367,7 +367,7 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.settle_chapter',
     label: '整理本章',
     slashCommand: '/整理本章',
-    prompt: '请读取目标章节并整理本章。先输出只基于正文证据的 observation log，再在固定内存工作区编辑获授权的 summary、state、timeline、foreshadow 或角色文件，预览并提出一个 changes 提案。',
+    prompt: '请读取当前已打开的正文并整理本章。先输出只基于逐行正文证据的 observation log，再读取既有对象，提出 summary、state、timeline、foreshadow 与已有角色成长记录的结构化合并。用 settlement.propose 生成同一项审批；歧义和旧值冲突只报告，作者 Accept 后才保存。',
   },
   {
     id: 'chapter.review',

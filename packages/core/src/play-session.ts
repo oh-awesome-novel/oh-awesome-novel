@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
-import { access, copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, appendFile, copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, stringify } from 'yaml';
@@ -120,7 +120,7 @@ import {
   writePlayContextTraceToStage,
 } from './play-context-trace.js';
 import type { PlayTurnContextTrace } from './play-context-trace.js';
-import { projectPlaySessionSelectedDetail, summarizePlaySession } from './play-session-read-model.js';
+import { buildValidatedPlaySessionReadProjection, projectPlaySessionSelectedDetail, summarizePlaySession } from './play-session-read-model.js';
 import type { PlaySessionSummary, PlaySessionSelectedDetail, ProjectPlaySessionSelectedDetailOptions } from './play-session-read-model.js';
 import {
   PLAY_READ_MODEL_METADATA_KEY,
@@ -128,10 +128,12 @@ import {
   copyPlaySnapshotFile,
   playStorageHash,
   readPlayStorageAnchor,
+  readPlayStorageSource,
   readPlayStorageHead,
   readPlayStorageDetail,
   rebuildPlayStorageReadModel,
 } from './play-storage-read-model.js';
+import type { PlayStorageReadEvidence } from './play-storage-read-model.js';
 import type {
   PlayCommittedSceneEvidence,
   PlayRehearsalParticipant,
@@ -639,6 +641,11 @@ const writePlaySessionFilesWithLock = async (
       revision,
     },
   };
+  // Share this save's complete validation with the derived projection. Nothing
+  // from a previous process/session replaces validation of the candidate graph.
+  const projection = buildValidatedPlaySessionReadProjection(sessionForWrite, normalizedFacts);
+  const metadata = formatSessionMetadata(sessionForWrite);
+  const previousTranscript = previousSession && withTrailingNewline(formatTranscript(previousSession));
   const normalizedContextTrace = contextTrace === undefined
     ? undefined
     : normalizePlayTurnContextTrace(contextTrace);
@@ -660,7 +667,6 @@ const writePlaySessionFilesWithLock = async (
   const sourceHashes = new Map<string, string>();
   const reusedPaths = new Set<string>();
   const files: Array<[string, string | undefined]> = [
-    ['session.yaml', stringify(formatSessionMetadata(sessionForWrite))],
     ['transcript.md', formatTranscript(sessionForWrite)],
     ['play-local-state.yaml', stringify(sessionForWrite.playLocalState)],
     ['activated-sources.yaml', stringify({
@@ -735,8 +741,13 @@ const writePlaySessionFilesWithLock = async (
         return;
       }
       if (content === undefined) throw new Error('Play snapshot file has no content.');
-      const bytes = content.endsWith('\n') ? content : `${content}\n`;
+      const bytes = withTrailingNewline(content);
       sourceHashes.set(file.split(sep).join('/'), playStorageHash(bytes));
+      if (file === 'transcript.md' && previousTranscript !== undefined && bytes.startsWith(previousTranscript)) {
+        // Extend only a private staged clone; the published snapshot stays
+        // untouched until the existing atomic directory swap commits it.
+        if (await extendPlayTranscriptClone(sessionRoot, stageRoot, previousTranscript, bytes)) return;
+      }
       await writeFile(
         join(stageRoot, file),
         bytes,
@@ -763,9 +774,8 @@ const writePlaySessionFilesWithLock = async (
       }
       await writePlayContextTraceToStage(stageRoot, normalizedContextTrace);
     }
-    const metadata = formatSessionMetadata(sessionForWrite);
     const readModelRoot = await buildPlayStorageReadModel({
-      sessionRoot: stageRoot, session: sessionForWrite, metadata, sourceHashes, previousRoot: sessionRoot,
+      sessionRoot: stageRoot, session: sessionForWrite, metadata, sourceHashes, previousRoot: sessionRoot, projection,
     });
     await writeFile(join(stageRoot, 'session.yaml'), stringify({
       ...metadata, [PLAY_READ_MODEL_METADATA_KEY]: { version: 1, root: readModelRoot },
@@ -820,8 +830,31 @@ const writePlaySessionFilesWithLock = async (
   await syncPlaySnapshotDirectory(sessionsRoot);
   await faultInjector?.('after-cleanup');
 
-  return files.map(([file]) => join(sessionRoot, file));
+  return ['session.yaml', ...files.map(([file]) => file)].map((file) => join(sessionRoot, file));
 };
+
+function withTrailingNewline(content: string): string {
+  return content.endsWith('\n') ? content : `${content}\n`;
+}
+
+async function extendPlayTranscriptClone(
+  sessionRoot: string,
+  stageRoot: string,
+  previous: string,
+  next: string,
+): Promise<boolean> {
+  const stagedPath = join(stageRoot, 'transcript.md');
+  try {
+    await copyPlaySnapshotFile(join(sessionRoot, 'transcript.md'), stagedPath);
+    if (playStorageHash(await readFile(stagedPath)) !== playStorageHash(previous)) return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  const suffix = next.slice(previous.length);
+  if (suffix) await appendFile(stagedPath, suffix, 'utf8');
+  return true;
+}
 
 export const readPlaySessionFiles = async (
   workspaceRoot: string,
@@ -835,6 +868,7 @@ export const readPlaySessionFiles = async (
 const readPlaySessionFilesWithoutRecovery = async (
   workspaceRoot: string,
   sessionId: string,
+  sourceEvidence?: PlayStorageReadEvidence,
 ): Promise<PlaySession> => {
   const metadata = await readPlayYaml<Record<string, unknown> & {
     schemaVersion?: number;
@@ -854,7 +888,7 @@ const readPlaySessionFilesWithoutRecovery = async (
     branchSnapshotRequiredFromRevision?: number;
     branchBaseSnapshot?: unknown;
     sceneRehearsalSidecarVersion?: number;
-  }>(workspaceRoot, sessionId, 'session.yaml');
+  }>(workspaceRoot, sessionId, 'session.yaml', undefined, sourceEvidence);
   assertSupportedPlaySessionSchemaVersion(metadata.schemaVersion);
   const sourceSchemaVersion = normalizeStoredPlaySessionSchemaVersion(
     metadata.schemaVersion,
@@ -884,10 +918,9 @@ const readPlaySessionFilesWithoutRecovery = async (
         'Play session v5 requires a matching scene rehearsal sidecar and scenes directory.',
       );
     }
-    sceneRehearsal = normalizePlaySceneRehearsalSidecar(
-      parse(await readFile(rehearsalSidecarPath, 'utf-8')),
-    );
-    rehearsalScenes = await readPlayCommittedScenesFromSessionRoot(sessionRoot);
+    const sidecarBytes = await readPlayStorageSource(rehearsalSidecarPath, sourceEvidence);
+    sceneRehearsal = normalizePlaySceneRehearsalSidecar(parse(sidecarBytes));
+    rehearsalScenes = await readPlayCommittedScenesFromSessionRoot(sessionRoot, sourceEvidence);
   } else if (
     metadata.sceneRehearsalSidecarVersion !== undefined ||
     hasRehearsalSidecar ||
@@ -902,36 +935,42 @@ const readPlaySessionFilesWithoutRecovery = async (
     sessionId,
     'play-local-state.yaml',
     {},
+    sourceEvidence,
   );
   const activatedSources = await readPlayYaml<{ activatedSources?: PlayActivatedSource[] }>(
     workspaceRoot,
     sessionId,
     'activated-sources.yaml',
     {},
+    sourceEvidence,
   );
   const events = await readPlayYaml<{ events?: PlayWorldEvent[] }>(
     workspaceRoot,
     sessionId,
     'events.yaml',
     {},
+    sourceEvidence,
   );
   const eventSchedule = await readPlayYaml<{ scheduledEvents?: unknown }>(
     workspaceRoot,
     sessionId,
     'event-schedule.yaml',
     {},
+    sourceEvidence,
   );
   const observations = await readPlayYaml<{ observations?: PlayObservation[] }>(
     workspaceRoot,
     sessionId,
     'observations.yaml',
     {},
+    sourceEvidence,
   );
   const adoptionCandidates = await readPlayYaml<{ adoptionCandidates?: PlayAdoptionCandidate[] }>(
     workspaceRoot,
     sessionId,
     'adoption-candidates.yaml',
     {},
+    sourceEvidence,
   );
   const requireStoredVisibility = sourceSchemaVersion >= PLAY_SESSION_SCHEMA_VERSION;
   const normalizedEvents = (events.events ?? []).map((event) =>
@@ -949,7 +988,7 @@ const readPlaySessionFilesWithoutRecovery = async (
     }));
   const usesStructuredTurnArtifacts = sourceSchemaVersion >= 3;
   const turnArtifacts = usesStructuredTurnArtifacts
-    ? await readPlayTurnArtifacts(workspaceRoot, sessionId)
+    ? await readPlayTurnArtifacts(workspaceRoot, sessionId, sourceEvidence)
     : createLegacyPlayTurnArtifacts({
         transcript: metadata.transcript ?? [],
         events: normalizedEvents,
@@ -1182,20 +1221,12 @@ async function withPlayIndexedRead<T>(
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if ((code !== 'ENOENT' && code !== 'PLAY_READ_MODEL_REBIND_REQUIRED') || !readPlayStorageAnchor(metadata)) throw error;
-      const session = await readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId);
-      const paths: string[] = [
-        ...PLAY_SESSION_FILES.filter((file) => file !== 'session.yaml' && file !== 'transcript.md'),
-        ...session.turnArtifacts.map((artifact) => `turns/${artifact.id}.yaml`),
-        ...(session.rehearsalScenes ?? []).map((scene) => `scenes/${scene.sceneId}.yaml`),
-      ];
-      const sourceHashes = new Map<string, string>();
-      for (const path of paths) {
-        try { sourceHashes.set(path, playStorageHash(await readFile(join(sessionRoot, path)))); }
-        catch (readError) {
-          if ((readError as NodeJS.ErrnoException).code !== 'ENOENT') throw readError;
-        }
-      }
-      await rebuildPlayStorageReadModel({ sessionRoot, session, metadata, sourceHashes });
+      const sourceEvidence: PlayStorageReadEvidence = new Map();
+      // Hash the exact bytes consumed by the full validating reader. A second
+      // pass would both duplicate I/O and risk binding different source bytes.
+      const session = await readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId, sourceEvidence);
+      const sourceHashes = new Map([...sourceEvidence].map(([path, source]) => [relative(sessionRoot, path).split(sep).join('/'), source.sha256]));
+      await rebuildPlayStorageReadModel({ sessionRoot, session, metadata, sourceHashes, sourceEvidence });
       return operation(sessionRoot, metadata);
     }
   } finally { await release(); }
@@ -1874,10 +1905,12 @@ async function readPlayYaml<T>(
   sessionId: string,
   file: PlaySessionFile,
   fallback?: T,
+  sourceEvidence?: PlayStorageReadEvidence,
 ): Promise<T> {
   try {
     const filePath = resolvePlaySessionPath(workspaceRoot, sessionId, file);
-    const parsed = parse(await readFile(filePath, 'utf-8')) as T | undefined;
+    const bytes = await readPlayStorageSource(filePath, sourceEvidence);
+    const parsed = parse(bytes) as T | undefined;
     return parsed ?? (fallback as T);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' && fallback !== undefined) {
@@ -1891,17 +1924,19 @@ async function readPlayYaml<T>(
 async function readPlayTurnArtifacts(
   workspaceRoot: string,
   sessionId: string,
+  sourceEvidence?: PlayStorageReadEvidence,
 ): Promise<PlayTurnArtifact[]> {
   const sessionRoot = dirname(resolvePlaySessionPath(
     workspaceRoot,
     sessionId,
     'session.yaml',
   ));
-  return readPlayTurnArtifactsFromSessionRoot(sessionRoot);
+  return readPlayTurnArtifactsFromSessionRoot(sessionRoot, sourceEvidence);
 }
 
 async function readPlayTurnArtifactsFromSessionRoot(
   sessionRoot: string,
+  sourceEvidence?: PlayStorageReadEvidence,
 ): Promise<PlayTurnArtifact[]> {
   const turnsRoot = join(sessionRoot, PLAY_TURNS_DIRECTORY);
   let entries: Dirent[];
@@ -1920,9 +1955,10 @@ async function readPlayTurnArtifactsFromSessionRoot(
       .filter((entry) => entry.isFile() && entry.name.endsWith('.yaml'))
       .map(async (entry) => {
         const artifactId = assertSafePlayTurnArtifactId(entry.name.slice(0, -5));
-        const bytes = await readFile(join(turnsRoot, entry.name), 'utf-8');
+        const bytes = await readPlayStorageSource(join(turnsRoot, entry.name), sourceEvidence);
         const artifact = normalizePlayTurnArtifact(parse(bytes));
-        storedArtifactHashes.set(artifact, playStorageHash(bytes));
+        const hash = playStorageHash(bytes);
+        storedArtifactHashes.set(artifact, hash);
         if (artifact.id !== artifactId) {
           throw new Error(
             `Play turn artifact id mismatch: expected ${artifactId}, found ${artifact.id}.`,
@@ -1939,6 +1975,7 @@ async function readPlayTurnArtifactsFromSessionRoot(
 
 async function readPlayCommittedScenesFromSessionRoot(
   sessionRoot: string,
+  sourceEvidence?: PlayStorageReadEvidence,
 ): Promise<PlayCommittedSceneEvidence[]> {
   const scenesRoot = join(sessionRoot, PLAY_REHEARSAL_SCENES_DIRECTORY);
   const entries = await readdir(scenesRoot, { withFileTypes: true });
@@ -1955,9 +1992,8 @@ async function readPlayCommittedScenesFromSessionRoot(
         entry.name.slice(0, -5),
         'scene file id',
       );
-      const scene = normalizePlayCommittedSceneEvidence(
-        parse(await readFile(join(scenesRoot, entry.name), 'utf-8')),
-      );
+      const bytes = await readPlayStorageSource(join(scenesRoot, entry.name), sourceEvidence);
+      const scene = normalizePlayCommittedSceneEvidence(parse(bytes));
       if (scene.sceneId !== sceneId) {
         throw new Error(
           `Play committed scene id mismatch: expected ${sceneId}, found ${scene.sceneId}.`,

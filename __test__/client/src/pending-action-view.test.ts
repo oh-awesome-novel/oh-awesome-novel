@@ -22,11 +22,29 @@ const HASH_D = 'd'.repeat(64);
 
 describe('strict PendingActionView client boundary', () => {
   it('preserves the chapter settlement identity and rejects unknown or malformed origin fields', () => {
-    const origin = { kind: 'chapterSettlement', chapterId: '0001/0002', sourceHash: HASH_A };
+    const origin = { kind: 'chapterSettlement', chapterId: '0001/0002', sourceHash: HASH_A, characterInventoryHash: HASH_B,
+      inputFiles: [{ path: 'chapters/0001/0002.md', sha256: HASH_A },
+        ...['foreshadow/active.yaml', 'foreshadow/resolved.yaml', 'state/chapters/0001/0002.yaml',
+          'state/characters.yaml', 'summaries/chapter/0001/0002.md', 'timeline/events.yaml']
+          .map((path) => ({ path, sha256: null }))] };
     expect(parsePendingActionView({ ...createPendingView(), origin }).origin).toEqual(origin);
+    const withInput = (index: number, input: unknown) => ({ ...origin,
+      inputFiles: origin.inputFiles.map((file, offset) => offset === index ? input : file) });
+    const withExtra = (path: string) => ({ ...origin,
+      inputFiles: [...origin.inputFiles, { path, sha256: HASH_A }].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0) });
     for (const invalid of [
       { ...origin, extra: true }, { ...origin, chapterId: '../0002' },
       { ...origin, chapterId: '0000/0002' }, { ...origin, sourceHash: 'stale' },
+      { ...origin, characterInventoryHash: undefined }, { ...origin, characterInventoryHash: 'bad' },
+      { ...origin, inputFiles: undefined }, { ...origin, inputFiles: [] },
+      { ...origin, inputFiles: [origin.inputFiles[0]] },
+      { ...origin, inputFiles: [...origin.inputFiles].reverse() },
+      withInput(1, origin.inputFiles[0]),
+      withInput(0, { path: 'chapters/0001/0002.md', sha256: HASH_B }),
+      withExtra('.oan/config.yaml'), withExtra('outline/main.md'), withExtra('chapters/0001/0002.md'),
+      withInput(1, { ...origin.inputFiles[1], sha256: 'bad' }),
+      withInput(1, { ...origin.inputFiles[1], sha256: null, content: 'private' }),
+      withInput(1, { path: 'characters/hero/meta.yaml', sha256: null }),
     ]) expect(() => parsePendingActionView({ ...createPendingView(), origin: invalid })).toThrow();
   });
   it('parses create/update/delete and preserves diff as inert plain text', () => {

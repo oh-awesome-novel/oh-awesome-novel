@@ -24,6 +24,8 @@ export type PublicPendingActionOrigin =
       readonly kind: 'chapterSettlement';
       readonly chapterId: string;
       readonly sourceHash: string;
+      readonly characterInventoryHash: string;
+      readonly inputFiles: readonly { readonly path: string; readonly sha256: string | null }[];
     }
   | {
       readonly kind: 'agentTurn';
@@ -409,12 +411,14 @@ function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrig
   if (!isRecord(value)) invalid('PendingActionView origin must be an object.');
   rejectLegacyOrInternalFields(value);
   if (value.kind === 'chapterSettlement') {
-    assertExactFields(value, ['kind', 'chapterId', 'sourceHash']);
+    assertExactFields(value, ['kind', 'chapterId', 'sourceHash', 'characterInventoryHash', 'inputFiles']);
     if (typeof value.chapterId !== 'string' || !/^(?!0000)\d{4}\/(?!0000)\d{4}$/u.test(value.chapterId)) {
       invalid('Settlement chapter id must be a canonical volume/chapter id.');
     }
-    return deepFreeze({ kind: value.kind, chapterId: value.chapterId,
-      sourceHash: assertHash(value.sourceHash, 'origin chapter source hash') });
+    const sourceHash = assertHash(value.sourceHash, 'origin chapter source hash');
+    return deepFreeze({ kind: value.kind, chapterId: value.chapterId, sourceHash,
+      characterInventoryHash: assertHash(value.characterInventoryHash, 'Settlement character inventory hash'),
+      inputFiles: parseSettlementInputFiles(value.inputFiles, value.chapterId, sourceHash) });
   }
   if (value.kind === 'agentTurn') {
     assertExactFields(value, ['kind', 'sessionId', 'turnId']);
@@ -630,6 +634,37 @@ function assertPublicPath(value: unknown): string {
     invalid('PendingActionView change path is invalid.');
   }
   return value;
+}
+
+function parseSettlementInputFiles(value: unknown, chapterId: string, sourceHash: string) {
+  if (!Array.isArray(value) || value.length < 7 || value.length > 128) {
+    invalid('Settlement input files must contain 7–128 source identities.');
+  }
+  const fixedPaths = new Set([
+    `chapters/${chapterId}.md`, `summaries/chapter/${chapterId}.md`,
+    `state/chapters/${chapterId}.yaml`, 'state/characters.yaml',
+    'timeline/events.yaml', 'foreshadow/active.yaml', 'foreshadow/resolved.yaml',
+  ]);
+  let previous = '';
+  let hasChapter = false;
+  const remaining = new Set(fixedPaths);
+  const files = value.map((file) => {
+    if (!isRecord(file)) invalid('Settlement source identity must be an object.');
+    assertExactFields(file, ['path', 'sha256']);
+    const path = assertPublicPath(file.path);
+    if (path <= previous || (!fixedPaths.has(path)
+      && !/^characters\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/.+\.(?:md|yaml)$/u.test(path))) {
+      invalid('Settlement source paths must be unique, sorted domain inputs.');
+    }
+    previous = path;
+    remaining.delete(path);
+    const sha256 = file.sha256 === null ? null : assertHash(file.sha256, 'Settlement input hash');
+    if (path === `chapters/${chapterId}.md`) hasChapter = sha256 === sourceHash;
+    return { path, sha256 };
+  });
+  if (!hasChapter) invalid('Settlement source identities must bind the chapter evidence hash.');
+  if (remaining.size) invalid('Settlement source identities must include all fixed merge inputs, including absent files.');
+  return files;
 }
 
 function assertHash(value: unknown, label: string): string {

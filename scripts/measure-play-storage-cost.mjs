@@ -4,11 +4,11 @@
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 const original = Object.fromEntries(
-  ['readFile', 'writeFile', 'copyFile', 'cp', 'mkdir', 'rm', 'stat', 'readdir']
+  ['readFile', 'writeFile', 'appendFile', 'copyFile', 'cp', 'mkdir', 'rm', 'stat', 'readdir']
     .map((name) => [name, fs[name].bind(fs)]),
 );
 let active;
@@ -30,6 +30,17 @@ fs.writeFile = async (...args) => {
   if (active) {
     active.writeCalls += 1;
     active.writeBytes += byteLength(args[1]);
+    if (basename(String(args[0])) === 'session.yaml') active.metadataWriteCalls += 1;
+    if (basename(String(args[0])) === 'transcript.md') active.transcriptWriteBytes += byteLength(args[1]);
+  }
+  return result;
+};
+fs.appendFile = async (...args) => {
+  const result = await original.appendFile(...args);
+  if (active) {
+    active.appendCalls += 1;
+    active.appendBytes += byteLength(args[1]);
+    if (basename(String(args[0])) === 'transcript.md') active.transcriptAppendBytes += byteLength(args[1]);
   }
   return result;
 };
@@ -100,7 +111,9 @@ function append(session, step) {
 async function measure(operation) {
   active = {
     readAttempts: 0, readCalls: 0, readBytes: 0, readPaths: new Set(),
-    writeCalls: 0, writeBytes: 0, copyCalls: 0, copiedBytes: 0, aggregateLockHoldMs: 0,
+    writeCalls: 0, writeBytes: 0, appendCalls: 0, appendBytes: 0,
+    metadataWriteCalls: 0, transcriptWriteBytes: 0, transcriptAppendBytes: 0,
+    copyCalls: 0, copiedBytes: 0, aggregateLockHoldMs: 0,
   };
   const started = performance.now();
   const cpuStarted = process.cpuUsage();
@@ -111,7 +124,8 @@ async function measure(operation) {
     return {
       ...metrics,
       uniqueReadFiles: readPaths.size,
-      totalWrittenBytes: metrics.writeBytes + metrics.copiedBytes,
+      freshWrittenBytes: metrics.writeBytes + metrics.appendBytes,
+      totalWrittenBytes: metrics.writeBytes + metrics.appendBytes + metrics.copiedBytes,
       aggregateLockHoldMs: Number(metrics.aggregateLockHoldMs.toFixed(2)),
       elapsedMs: Number((performance.now() - started).toFixed(2)),
       cpuMs: Number(((cpu.user + cpu.system) / 1000).toFixed(2)),
@@ -153,10 +167,13 @@ for (const scenario of scenarios) {
     const before = await readPlaySessionFiles(root, 'session-0');
     const next = append(before, scenario.turns + 1);
     const save = await measure(() => writePlaySessionFiles(root, next, { expectedCurrentSession: before }));
+    const sessionRoot = join(root, '.workspace/play-sessions/session-0');
+    await original.rm(join(sessionRoot, '.read-model'), { recursive: true });
+    const rebuild = await measure(() => readPlaySessionSelectedDetail(root, 'session-0', { limit: 10 }));
     if (summary.readCalls === 0 || detail.readCalls === 0 || save.writeCalls === 0) {
       throw new Error('Filesystem instrumentation did not observe Core I/O.');
     }
-    results.push({ ...scenario, artifactCountPerSession: scenario.turns + scenario.siblings, summary, detail, save });
+    results.push({ ...scenario, artifactCountPerSession: scenario.turns + scenario.siblings, summary, detail, save, rebuild });
   } finally {
     await original.rm(root, { recursive: true, force: true });
   }

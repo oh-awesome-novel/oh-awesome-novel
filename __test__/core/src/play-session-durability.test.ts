@@ -110,8 +110,15 @@ describe('Play staged snapshot durability boundaries', () => {
 async function createFixture() {
   const root = await mkdtemp(join(tmpdir(), 'oan-play-durable-'));
   roots.push(root);
-  const before = createPlaySessionDraft({
+  const empty = createPlaySessionDraft({
     id: 'durable-session', title: 'Durable session', sceneStart: 'The lamp is dark.', characters: [],
+  });
+  // Start with an existing multibyte transcript so every update crash boundary
+  // exercises the private clone plus suffix path, not just initial creation.
+  const before = settlePlayWorldRefereeResponse({
+    session: empty, userText: '观察房间。🌙', actionKind: 'do',
+    refereeResponse: ['The lamp is still dark.', '```oan-play-settlement',
+      JSON.stringify({ events: [], stateDelta: {}, observations: [], suggestedActions: [] }), '```'].join('\n'),
   });
   const next = settlePlayWorldRefereeResponse({
     session: before,

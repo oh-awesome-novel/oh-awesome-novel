@@ -207,10 +207,11 @@ Before finishing a turn, the Copilot checks whether its proposals are complete:
 When a chapter draft is accepted or the user explicitly asks to "整理本章", the
 Copilot must propose the chapter settlement bundle:
 
-- chapter-summary candidates under the `summary.edit` capability.
-- evidence-backed state candidates under the `state.edit` capability.
-- timeline candidates under the `timeline.edit` capability.
-- foreshadow candidates under the `foreshadow.edit` capability.
+- a fixed read-only projection of the selected chapter and relevant existing objects;
+- a strict ObservationLog and typed domain changes bound to exact chapter evidence;
+- one deterministic CandidateChangeSet for chapter summary/state, supported global character state, timeline, foreshadow and existing character growth;
+- an exact derived target policy under `novel.multi-file-edit`, with no generic editing tool exposed to the model;
+- hash identities for existing and absent merge inputs, revalidated at human Accept.
 
 Settlement can be partial only when the Copilot states what could not be
 determined from the available text.
@@ -384,19 +385,14 @@ allowed tools, and completion criteria.
 - id: `chapter.settle`
 - capability id: `novel.settle_chapter`
 - label: `整理本章`
-- trigger: read a completed chapter and produce summary/state/timeline/foreshadow
-  proposals.
+- trigger: read the host-selected completed chapter and propose evidence-backed object settlement.
 - required context:
-  - target `chapter.get`
-  - `character.list`
-  - relevant `character.get`
-  - `state.get`
-  - `timeline.list`
-  - `foreshadow.list`
-  - `summary.get` for neighboring summaries.
+  - the selected numbered chapter and its exact source hash/line positions;
+  - existing character objects and fixed state/timeline/foreshadow ledgers;
+  - the chapter's existing summary/state and protected Constitution/Workflow.
 - allowed tools:
-  - exact `summary.edit`, `state.edit`, `timeline.edit`, and `foreshadow.edit`
-    sandbox capabilities selected by the host workflow.
+  - `readFile` over the fixed projection;
+  - `settlement.propose` with the strict shared observation/domain schema.
 - completion:
   - returns an evidence-only observation log before settlement.
   - returns a settlement bundle.
@@ -645,10 +641,11 @@ Given a workspace with a chapter, character card, state, timeline, and foreshado
 
 - command reads the target chapter.
 - command reads relevant character/state/timeline/foreshadow context.
-- command creates a chapter summary PendingAction.
-- command creates state/timeline/foreshadow PendingActions when changes are
-  detected.
-- UI displays those PendingActions.
+- command creates one PendingAction containing the chapter summary and valid state/timeline/foreshadow/character changes.
+- conflicting or explicitly ambiguous observations remain report-only, including omission from summary/chapter state.
+- repeated accepted evidence does not duplicate domain records.
+- UI displays each changed file and the complete diff; no target changes before Accept.
+- Accept rejects source, target and read-only merge dependency drift, including after backend restart.
 
 ### `/生成角色卡`
 

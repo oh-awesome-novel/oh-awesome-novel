@@ -200,7 +200,7 @@ export type {
 
 // Writing Settlement
 export { CHAPTER_SETTLEMENT_OBSERVATION_SCHEMA, assertChapterSettlementId, resolveChapterSettlementSelection, createChapterSettlementSource, parseChapterSettlementObservationLog, formatChapterSettlementObservationLog } from './chapter-settlement.js';
-export type { ChapterSettlementSource, ChapterSettlementObservation, ChapterSettlementObservationLog } from './chapter-settlement.js';
+export type { ChapterSettlementSource, ChapterSettlementObservation, ChapterSettlementObservationLog, ChapterSettlementDomainChange, ChapterSettlementStateField } from './chapter-settlement.js';
 export {
   SETTLEMENT_HOOK_OPERATIONS,
   formatObservationLogMarkdown,

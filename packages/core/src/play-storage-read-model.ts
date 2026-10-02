@@ -4,7 +4,7 @@ import { copyFile, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs
 import { join } from 'node:path';
 import { stringify } from 'yaml';
 import { buildPlaySessionReadProjection, getPlayWindowRange } from './play-session-read-model.js';
-import type { PlaySessionSelectedDetail, PlaySessionSummary, ProjectPlaySessionSelectedDetailOptions } from './play-session-read-model.js';
+import type { PlaySessionReadProjection, PlaySessionSelectedDetail, PlaySessionSummary, ProjectPlaySessionSelectedDetailOptions } from './play-session-read-model.js';
 import type { PlaySession } from './play-session.js';
 import { syncPlaySnapshotDirectory, syncPlaySnapshotTree } from './play-session-durability.js';
 
@@ -20,6 +20,7 @@ const SOURCE_FILES = new Set([
 ]);
 type Source = { path: string; sha256: string };
 type Fingerprint = { device: string; inode: string; size: string; mtime: string; ctime: string };
+export type PlayStorageReadEvidence = Map<string, { sha256: string; identity: Fingerprint }>;
 interface Head {
   version: 1;
   metadataHash: string;
@@ -41,6 +42,16 @@ export function playStorageHash(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+/** Bind a rebuild's hash to the exact bytes validated by the full reader. */
+export async function readPlayStorageSource(path: string, evidence?: PlayStorageReadEvidence): Promise<string> {
+  if (!evidence) return readFile(path, 'utf8');
+  const before = await fingerprint(path);
+  const bytes = await readFile(path);
+  if (stableJson(before) !== stableJson(await fingerprint(path))) throw invalid('Play source changed during validated read.');
+  evidence.set(path, { sha256: playStorageHash(bytes), identity: before });
+  return bytes.toString('utf8');
+}
+
 /** A private COW clone is safe to modify independently of the prior snapshot. */
 export async function copyPlaySnapshotFile(source: string, target: string): Promise<void> {
   await copyFile(source, target, constants.COPYFILE_FICLONE);
@@ -51,6 +62,8 @@ export async function buildPlayStorageReadModel(input: {
   session: PlaySession;
   metadata: Record<string, unknown>;
   sourceHashes: ReadonlyMap<string, string>;
+  projection?: PlaySessionReadProjection;
+  sourceEvidence?: PlayStorageReadEvidence;
   outputRoot?: string;
   previousRoot?: string;
 }): Promise<string> {
@@ -74,7 +87,7 @@ export async function buildPlayStorageReadModel(input: {
     await writeFile(path, bytes, 'utf8');
     return hash;
   };
-  const projection = buildPlaySessionReadProjection(input.session);
+  const projection = input.projection ?? buildPlaySessionReadProjection(input.session);
   const messageOwners = new Map<string, string>();
   const eventOwners = new Map<string, string>();
   for (const artifact of input.session.turnArtifacts) {
@@ -130,6 +143,11 @@ export async function buildPlayStorageReadModel(input: {
     events: await tree(projection.events.map((event, index) => ({ event, presentation: projection.eventPresentation[index] })), projection.events.map((event) => eventOwners.get(event.id))),
   };
   const root = await write(head);
+  // Do not seed a warm witness from sources changed after full validation.
+  // This checks identities only; the hashes above came from the validating read.
+  for (const [path, source] of input.sourceEvidence ?? []) {
+    if (stableJson(source.identity) !== stableJson(await fingerprint(path))) throw invalid('Play source changed during read-model reconstruction.');
+  }
   rememberWitness(input.previousRoot ?? input.sessionRoot, root, witness);
   return root;
 }
@@ -215,6 +233,7 @@ export async function readPlayStorageDetail(
 /** Rebuild only after the full canonical reader has validated all graph facts. */
 export async function rebuildPlayStorageReadModel(input: {
   sessionRoot: string; session: PlaySession; metadata: Record<string, unknown>; sourceHashes: ReadonlyMap<string, string>;
+  sourceEvidence?: PlayStorageReadEvidence;
 }): Promise<void> {
   const anchor = readPlayStorageAnchor(input.metadata);
   if (!anchor) return;

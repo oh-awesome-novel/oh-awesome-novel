@@ -212,7 +212,6 @@ import type {
 } from './reference-deconstruction.js';
 import {
   buildChapterIndex,
-  assertChapterSettlementActionFresh,
   commitFiles,
   createChangeMaterializer,
   createPendingActionStore,
@@ -1035,7 +1034,20 @@ export function createNovelHttpBackend(options: NovelBackendOptions): Server {
   const app = createNovelHonoApp(options);
 
   const server = createAdaptorServer({ fetch: app.fetch }) as Server;
-  playShutdownByServer.set(server, playShutdownByApp.get(app)!);
+  let shuttingDown = false;
+  // A response can become idle after server.close() has made its initial pass.
+  // Drain completed responses while allowing active streams and commits to finish.
+  server.on('request', (_request, response) => {
+    response.once('finish', () => {
+      if (shuttingDown) server.closeIdleConnections();
+    });
+  });
+  const shutdownPlay = playShutdownByApp.get(app)!;
+  playShutdownByServer.set(server, async () => {
+    shuttingDown = true;
+    try { await shutdownPlay(); }
+    finally { server.closeIdleConnections(); }
+  });
   return server;
 }
 
@@ -6009,7 +6021,8 @@ async function assertPendingActionOriginFresh(
   assertCapabilityOriginBinding(action.source.capability, origin);
   if (origin === undefined || origin.kind === 'agentTurn') return;
   if (origin.kind === 'chapterSettlement') {
-    await assertChapterSettlementActionFresh(workspaceRoot, action);
+    // ChangeMaterializer always validates this origin and its complete input
+    // read set before invoking the host hook. Avoid scanning it twice.
     return;
   }
   if (origin.kind === 'referenceDeconstructionPublish') {

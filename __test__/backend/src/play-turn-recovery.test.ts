@@ -144,6 +144,8 @@ describe('durable Play stream outcome reconciliation', () => {
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     commitFault.gate = async () => { enter(); await blocked; };
     const backend = await startNovelHttpBackend({ workspaceRoot: root, runPlayTurn: async () => settlement() });
+    // Shutdown must drain a completed response, rather than wait for its idle timer.
+    backend.server.keepAliveTimeout = 60_000;
     try {
       const response = await fetch(`${backend.url}${path}/turns/stream`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userText: 'Wait', baseRevision: 0 }),

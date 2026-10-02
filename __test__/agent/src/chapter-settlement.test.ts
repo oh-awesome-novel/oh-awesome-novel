@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNovelAgentTurnEditEnvironment, inferNovelAgentCapability } from '@oh-awesome-novel/agent';
@@ -12,12 +12,16 @@ const git = promisify(execFile); const roots: string[] = [];
 const chapterPath = 'chapters/0001/0001.md';
 const content = '# 第一章\n\n林安拿起钥匙。\n';
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
-async function fixture() {
+async function fixture(files: Record<string, string> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'oan-settlement-agent-')); roots.push(root);
   await mkdir(join(root, 'chapters/0001'), { recursive: true });
   await mkdir(join(root, 'outline'), { recursive: true });
   await writeFile(join(root, chapterPath), content);
   await writeFile(join(root, 'outline/plan.md'), '未发生的后续计划，不能作为正文证据。');
+  for (const [path, bytes] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), bytes);
+  }
   await git('git', ['init', '-b', 'main', root]); await git('git', ['-C', root, 'add', '.']);
   await git('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'baseline']);
   return root;
@@ -55,6 +59,19 @@ describe('production chapter settlement factory', () => {
       await writeFile(join(root, chapterPath), `${content}新增正文\n`);
       await expect(env.tools['settlement.propose']!.execute!(observations(), { toolCallId: 'stale', messages: [] })).rejects.toThrow();
       expect(await (await createPendingActionStore({ workspaceRoot: root })).listViews()).toEqual([]);
+    } finally { await env.dispose(); }
+  });
+  it('keeps the settlement projection fixed when a referenced character changes before proposal', async () => {
+    const characterPath = 'characters/hero/meta.yaml';
+    const root = await fixture({ [characterPath]: 'id: hero\nname: 林安\n' });
+    const env = await createNovelAgentTurnEditEnvironment({ workspaceRoot: root,
+      capability: 'novel.settle_chapter', exactWritablePaths: [chapterPath] });
+    try {
+      expect(env.workspace.fixedFileHashes!.some((file) => file.path === characterPath)).toBe(true);
+      await writeFile(join(root, characterPath), 'id: hero\nname: 作者改名\n');
+      await expect(env.tools['settlement.propose']!.execute!(observations(), { toolCallId: 'stale-character', messages: [] })).rejects.toThrow();
+      expect(await (await createPendingActionStore({ workspaceRoot: root })).listViews()).toEqual([]);
+      await expect(readFile(join(root, 'state/chapters/0001/0001.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await env.dispose(); }
   });
   it.each([[], ['state/world.yaml'], ['chapters/0001/0000.md'], [chapterPath, 'summaries/chapter/0001/0001.md']])('requires exactly one host-selected narrative chapter: %j', async (exactWritablePaths) => {

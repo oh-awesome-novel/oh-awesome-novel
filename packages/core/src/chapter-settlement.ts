@@ -12,7 +12,27 @@ export interface ChapterSettlementObservation {
 export interface ChapterSettlementObservationLog {
   schemaVersion: 1; chapterId: string; sourceHash: string;
   observations: ChapterSettlementObservation[]; unresolvedAmbiguities: string[];
+  /** Explicitly ambiguous observations are excluded from every truth file. */
+  unresolvedObservationIds?: string[];
+  domainChanges?: ChapterSettlementDomainChange[];
 }
+
+export type ChapterSettlementStateField = 'hp' | 'emotion' | 'location' | 'status' | 'power' | 'inventory' | 'resources' | 'information' | 'relationships';
+export type ChapterSettlementDomainChange =
+  | { domain: 'state'; observationId: string; characterId: string; field: ChapterSettlementStateField; expectedValue: string | null; value: string }
+  | { domain: 'timeline'; observationId: string; title: string; time: string }
+  | { domain: 'foreshadow'; observationId: string; operation: 'create'; hookId: string; description: string; relatedCharacters: string[] }
+  | { domain: 'foreshadow'; observationId: string; operation: 'mention' | 'advance' | 'resolve' | 'defer'; hookId: string; expectedStatus: string }
+  | { domain: 'character'; observationId: string; characterId: string };
+
+const stateCategories: Record<ChapterSettlementStateField, readonly ObservationCategory[]> = {
+  hp: ['injury', 'status'], emotion: ['emotionArc'], location: ['location'], status: ['status', 'sceneState'],
+  power: ['power'], inventory: ['item'], resources: ['resource'], information: ['informationBoundary'], relationships: ['relationship'],
+};
+const idSchema = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } as const;
+const characterSchema = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' } as const;
+const boundedTextSchema = { type: 'string', minLength: 1, maxLength: 512 } as const;
+const hookStatuses = ['draft', 'planned', 'planted', 'active', 'developing', 'dormant', 'resolved', 'paid-off', 'paid_off', 'abandoned'];
 
 export const CHAPTER_SETTLEMENT_OBSERVATION_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -32,6 +52,27 @@ export const CHAPTER_SETTLEMENT_OBSERVATION_SCHEMA = {
       },
     } },
     unresolvedAmbiguities: { type: 'array', maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 512 } },
+    unresolvedObservationIds: { type: 'array', maxItems: 32, uniqueItems: true, items: idSchema },
+    domainChanges: { type: 'array', maxItems: 32, items: { anyOf: [
+      { type: 'object', additionalProperties: false, required: ['domain', 'observationId', 'characterId', 'field', 'expectedValue', 'value'], properties: {
+        domain: { const: 'state' }, observationId: idSchema, characterId: characterSchema,
+        field: { type: 'string', enum: Object.keys(stateCategories) }, expectedValue: { anyOf: [boundedTextSchema, { type: 'null' }] }, value: boundedTextSchema,
+      } },
+      { type: 'object', additionalProperties: false, required: ['domain', 'observationId', 'title', 'time'], properties: {
+        domain: { const: 'timeline' }, observationId: idSchema, title: boundedTextSchema, time: boundedTextSchema,
+      } },
+      { type: 'object', additionalProperties: false, required: ['domain', 'observationId', 'operation', 'hookId', 'description', 'relatedCharacters'], properties: {
+        domain: { const: 'foreshadow' }, observationId: idSchema, operation: { const: 'create' }, hookId: idSchema,
+        description: boundedTextSchema, relatedCharacters: { type: 'array', maxItems: 16, uniqueItems: true, items: characterSchema },
+      } },
+      { type: 'object', additionalProperties: false, required: ['domain', 'observationId', 'operation', 'hookId', 'expectedStatus'], properties: {
+        domain: { const: 'foreshadow' }, observationId: idSchema, operation: { type: 'string', enum: ['mention', 'advance', 'resolve', 'defer'] },
+        hookId: idSchema, expectedStatus: { type: 'string', enum: hookStatuses },
+      } },
+      { type: 'object', additionalProperties: false, required: ['domain', 'observationId', 'characterId'], properties: {
+        domain: { const: 'character' }, observationId: idSchema, characterId: characterSchema,
+      } },
+    ] } },
   },
 } as const;
 
@@ -60,7 +101,7 @@ export function createChapterSettlementSource(chapterId: string, content: string
 export function parseChapterSettlementObservationLog(value: unknown, source: ChapterSettlementSource): ChapterSettlementObservationLog {
   const checked = createChapterSettlementSource(source.chapterId, source.content);
   if (checked.sourceHash !== source.sourceHash || checked.bodyStartLine !== source.bodyStartLine) throw new Error('Settlement source identity is invalid.');
-  const record = exact(value, ['schemaVersion', 'chapterId', 'sourceHash', 'observations', 'unresolvedAmbiguities']);
+  const record = exact(value, ['schemaVersion', 'chapterId', 'sourceHash', 'observations', 'unresolvedAmbiguities'], ['domainChanges', 'unresolvedObservationIds']);
   if (record.schemaVersion !== 1 || record.chapterId !== source.chapterId || record.sourceHash !== source.sourceHash) throw new Error('Settlement source hash or chapter identity does not match the fixed chapter.');
   const lines = source.content.replace(/\r\n/gu, '\n').split('\n');
   const seen = new Set<string>();
@@ -80,6 +121,11 @@ export function parseChapterSettlementObservationLog(value: unknown, source: Cha
   });
   return { schemaVersion: 1, chapterId: source.chapterId, sourceHash: source.sourceHash, observations,
     unresolvedAmbiguities: list(record.unresolvedAmbiguities, 16).map((value) => text(value, 512)),
+    ...(record.unresolvedObservationIds === undefined ? {} : { unresolvedObservationIds: uniqueStrings(record.unresolvedObservationIds, 32).map((id) => {
+      if (!seen.has(id)) throw new Error('Settlement ambiguity references an unknown observation.');
+      return id;
+    }) }),
+    ...(record.domainChanges === undefined ? {} : { domainChanges: parseDomainChanges(record.domainChanges, observations) }),
   };
 }
 
@@ -87,12 +133,68 @@ export function formatChapterSettlementObservationLog(log: ChapterSettlementObse
   const compatible: ObservationLog = { chapterId: log.chapterId, unresolvedAmbiguities: log.unresolvedAmbiguities,
     observations: log.observations.map((item) => ({ ...item, evidence: item.evidence.quote, location: `lines ${item.evidence.startLine}-${item.evidence.endLine}` })),
   };
-  return `${formatObservationLogMarkdown(compatible)}\n\nSource SHA-256: ${log.sourceHash}\nOnly high-confidence observations enter the summary/state candidate; all ambiguities remain in this report.`;
+  return `${formatObservationLogMarkdown(compatible)}\n\nSource SHA-256: ${log.sourceHash}\nOnly high-confidence, unambiguous observations enter settlement candidates; all ambiguities and conflicts remain in this report.${log.unresolvedObservationIds?.length ? `\nUnresolved observation IDs: ${log.unresolvedObservationIds.join(', ')}` : ''}`;
 }
 
-function exact(value: unknown, fields: string[]): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== fields.length || fields.some((key) => !Object.hasOwn(value, key))) throw new Error('Settlement observation schema has missing or unknown fields.');
+function exact(value: unknown, fields: string[], optional: string[] = []): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !fields.includes(key) && !optional.includes(key)) || fields.some((key) => !Object.hasOwn(value, key))) throw new Error('Settlement observation schema has missing or unknown fields.');
   return value as Record<string, unknown>;
+}
+
+function uniqueStrings(value: unknown, max: number): string[] {
+  const values = list(value, max).map((item) => text(item, 128));
+  if (new Set(values).size !== values.length) throw new Error('Settlement references must be unique.');
+  return values;
+}
+function safeCharacter(value: unknown): string {
+  const id = text(value, 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id) || id.includes('..') || ['constructor', 'prototype', '__proto__'].includes(id)) throw new Error('Settlement character identity is invalid.');
+  return id;
+}
+function parseDomainChanges(value: unknown, observations: ChapterSettlementObservation[]): ChapterSettlementDomainChange[] {
+  const byId = new Map(observations.map((observation) => [observation.id, observation]));
+  const targets = new Set<string>();
+  return list(value, 32).map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Settlement domain change must be an object.');
+    const item = entry as Record<string, unknown>;
+    const observation = byId.get(text(item.observationId, 64));
+    if (!observation) throw new Error('Settlement domain change references an unknown observation.');
+    let result: ChapterSettlementDomainChange;
+    let allowed: readonly ObservationCategory[];
+    let key: string;
+    if (item.domain === 'state') {
+      exact(item, ['domain', 'observationId', 'characterId', 'field', 'expectedValue', 'value']);
+      if (typeof item.field !== 'string' || !Object.hasOwn(stateCategories, item.field)) throw new Error('Settlement state field is invalid.');
+      const characterId = safeCharacter(item.characterId);
+      const field = item.field as ChapterSettlementStateField;
+      result = { domain: 'state', observationId: observation.id, characterId, field, expectedValue: item.expectedValue === null ? null : text(item.expectedValue, 512), value: text(item.value, 512) };
+      allowed = stateCategories[field]; key = `state:${characterId}:${field}`;
+    } else if (item.domain === 'timeline') {
+      exact(item, ['domain', 'observationId', 'title', 'time']);
+      result = { domain: 'timeline', observationId: observation.id, title: text(item.title, 512), time: text(item.time, 512) };
+      allowed = ['time', 'sceneState']; key = `timeline:${observation.id}`;
+    } else if (item.domain === 'character') {
+      exact(item, ['domain', 'observationId', 'characterId']);
+      result = { domain: 'character', observationId: observation.id, characterId: safeCharacter(item.characterId) };
+      allowed = ['character', 'relationship']; key = `character:${result.characterId}:${observation.id}`;
+    } else if (item.domain === 'foreshadow') {
+      const hookId = text(item.hookId, 64);
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(hookId)) throw new Error('Settlement hook ID is invalid.');
+      if (item.operation === 'create') {
+        exact(item, ['domain', 'observationId', 'operation', 'hookId', 'description', 'relatedCharacters']);
+        result = { domain: 'foreshadow', observationId: observation.id, operation: 'create', hookId, description: text(item.description, 512), relatedCharacters: uniqueStrings(item.relatedCharacters, 16).map(safeCharacter) };
+      } else {
+        exact(item, ['domain', 'observationId', 'operation', 'hookId', 'expectedStatus']);
+        if (typeof item.operation !== 'string' || !['mention', 'advance', 'resolve', 'defer'].includes(item.operation) || typeof item.expectedStatus !== 'string' || !hookStatuses.includes(item.expectedStatus)) throw new Error('Settlement hook operation or expected status is invalid.');
+        result = { domain: 'foreshadow', observationId: observation.id, operation: item.operation as 'mention' | 'advance' | 'resolve' | 'defer', hookId, expectedStatus: item.expectedStatus };
+      }
+      allowed = ['foreshadow']; key = `foreshadow:${hookId}`;
+    } else throw new Error('Settlement domain is invalid.');
+    if (!allowed.includes(observation.category)) throw new Error('Settlement domain change category does not match its observation.');
+    if (targets.has(key)) throw new Error('Settlement domain changes contain a duplicate target.');
+    targets.add(key);
+    return result;
+  });
 }
 function list(value: unknown, max: number): unknown[] {
   if (!Array.isArray(value) || value.length > max) throw new Error('Settlement observation array exceeds its schema limits.');
