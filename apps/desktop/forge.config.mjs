@@ -22,8 +22,8 @@ const config = {
   makers: [
     new MakerSquirrel({ name: 'oan' }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({ options: { name: 'oan' } }),
-    new MakerDeb({ options: { name: 'oan' } }),
+    new MakerRpm({ options: { name: 'oan', bin: 'oan' } }),
+    new MakerDeb({ options: { name: 'oan', bin: 'oan' } }),
   ],
   plugins: [
     new TsdownPlugin({
