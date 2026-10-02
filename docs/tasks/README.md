@@ -75,10 +75,10 @@
 - [1250 Illustrated User Documentation](1250.md)
 - [1260 Play Storage Read Model And Snapshot I/O](1260.md)
 - [1270 Readable Manuscript Export](1270.md)
+- [1280 Electron Release Workflow](1280.md)
 
 ## Needs Review Tasks
 
-- [1280 Electron Release Workflow](1280.md)
 - [0580 Git History And Sync Page](0580.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [1060 Play Mode And Tavern Character Import](1060.md)

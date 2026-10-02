@@ -165,6 +165,29 @@ jobs:
       - name: Publish complete release with checksums
         shell: bash
         run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const names = new Set();
+          function normalizeAssets(directory) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const source = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                normalizeAssets(source);
+                continue;
+              }
+              const name = entry.name.replace(/[^A-Za-z0-9._-]/g, '-');
+              if (names.has(name)) throw new Error(`Duplicate release asset: ${name}`);
+              names.add(name);
+              if (name !== entry.name) {
+                const destination = path.join(directory, name);
+                if (fs.existsSync(destination)) throw new Error(`Asset already exists: ${destination}`);
+                fs.renameSync(source, destination);
+              }
+            }
+          }
+          normalizeAssets('release-assets');
+          NODE
           mapfile -d '' assets < <(find release-assets -type f -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No distributables were downloaded." >&2

@@ -44,7 +44,7 @@ git push origin v0.1.0
 
 安装完成依赖后，流水线把标签中的版本写入 CI checkout 的 `apps/desktop/package.json`，确保应用、ZIP 和安装器版本一致。该变化不提交回源码，也不修改已有标签。手动只构建时，使用源码中的桌面应用版本。
 
-下载入口：[GitHub Releases](https://github.com/oh-awesome-novel/oh-awesome-novel/releases)。所有产物附带 `SHA256SUMS`，记录 Release 附件文件名对应的 SHA-256。
+下载入口：[GitHub Releases](https://github.com/oh-awesome-novel/oh-awesome-novel/releases)。所有产物附带 `SHA256SUMS`，记录 Release 附件文件名对应的 SHA-256。上传前将文件名中的空格等字符统一替换为连字符，避免 GitHub 的自动文件名转换使校验清单失配。
 
 ## 重试发布
 
