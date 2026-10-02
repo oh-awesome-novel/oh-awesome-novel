@@ -72,6 +72,11 @@ export type PendingActionSource =
 
 export type PendingActionOrigin =
   | {
+      readonly kind: 'chapterSettlement';
+      readonly chapterId: string;
+      readonly sourceHash: string;
+    }
+  | {
       readonly kind: 'agentTurn';
       readonly sessionId: string;
       readonly turnId: string;
@@ -251,7 +256,7 @@ export function parsePendingAction(
   assertNonEmptyText(value.title, 'PendingAction title');
   assertNonEmptyText(value.description, 'PendingAction description');
   assertCanonicalIsoTimestamp(value.createdAt, 'PendingAction createdAt');
-  parsePendingActionSource(value.source);
+  const source = parsePendingActionSource(value.source);
   parseRepositoryBaseline(value.repository);
   const allowedTargets = parseAllowedTargets(value.allowedTargets);
   if (!Array.isArray(value.changes) || value.changes.length === 0) {
@@ -266,7 +271,12 @@ export function parsePendingAction(
     );
   }
   parsePreview(value.preview, 'PendingAction preview');
-  if (Object.hasOwn(value, 'origin')) parsePendingActionOrigin(value.origin);
+  const origin = Object.hasOwn(value, 'origin') ? parsePendingActionOrigin(value.origin) : undefined;
+  const settlementProducer = source.kind === 'deterministic-builder' && source.producer === 'chapter-settlement';
+  if ((settlementProducer || origin?.kind === 'chapterSettlement')
+    && (!settlementProducer || origin?.kind !== 'chapterSettlement' || source.capability !== 'novel.multi-file-edit')) {
+    invalidSchema('Settlement producer requires its matching chapter evidence origin.');
+  }
   return deepFreeze(structuredClone(value)) as unknown as PendingAction;
 }
 
@@ -402,7 +412,13 @@ export function parsePendingActionSource(value: unknown): PendingActionSource {
 
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
-  if (value.kind === 'agentTurn') {
+  if (value.kind === 'chapterSettlement') {
+    assertExactFields(value, ['kind', 'chapterId', 'sourceHash']);
+    if (typeof value.chapterId !== 'string' || !/^(?!0000)\d{4}\/(?!0000)\d{4}$/u.test(value.chapterId)) {
+      invalidSchema('Settlement chapter id must be a canonical volume/chapter id.');
+    }
+    assertSha256(value.sourceHash, 'Origin chapter source hash');
+  } else if (value.kind === 'agentTurn') {
     assertExactFields(value, ['kind', 'sessionId', 'turnId']);
     assertOpaquePendingActionId(value.sessionId, 'Origin session id');
     assertOpaquePendingActionId(value.turnId, 'Origin turn id');

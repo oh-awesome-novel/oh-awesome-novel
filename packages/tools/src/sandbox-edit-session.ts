@@ -160,7 +160,10 @@ export interface SandboxProposalResult {
   noChanges: boolean;
 }
 
+export interface SandboxReadSource { path: string; sourceHash: string; originalChars: number }
+
 export interface SandboxEditSession {
+  drainReadSources(): SandboxReadSource[];
   readonly id: string;
   readonly tools: ToolSet;
   readonly policy: WorkspaceChangePolicy;
@@ -220,7 +223,14 @@ export async function createSandboxEditSession(
     workspaceRoot: VIRTUAL_WORKSPACE_ROOT,
     baselineFiles: projection.baselineFiles,
   });
+  const readSources = new Map<string, SandboxReadSource>();
   const policyFs = new PolicyFs(trackingFs, {
+    onRead(path, bytes) {
+      if (!path.startsWith(`${VIRTUAL_WORKSPACE_ROOT}/`)) return;
+      const relativePath = path.slice(VIRTUAL_WORKSPACE_ROOT.length + 1);
+      const sourceHash = createHash('sha256').update(bytes).digest('hex');
+      readSources.set(`${relativePath}:${sourceHash}`, { path: relativePath, sourceHash, originalChars: Buffer.from(bytes).toString('utf8').length });
+    },
     policy: options.policy,
     baselineFiles: projection.baselineFiles,
     projectedPaths: [
@@ -254,6 +264,7 @@ export async function createSandboxEditSession(
     limits,
     projection,
     referenceProjection,
+    readSources,
     repository,
     trackingFs,
     policyFs,
@@ -269,6 +280,7 @@ class FileSandboxEditSession implements SandboxEditSession {
   readonly projectionFingerprint: string;
 
   #tools: ToolSet = Object.freeze({});
+  #readSources: Map<string, SandboxReadSource>;
   #options: CreateSandboxEditSessionOptions;
   #limits: SandboxEditSessionLimits;
   #projection: WorkspaceProjection;
@@ -298,6 +310,7 @@ class FileSandboxEditSession implements SandboxEditSession {
   #proposalResult?: SandboxProposalResult;
 
   constructor(input: {
+    readSources: Map<string, SandboxReadSource>;
     options: CreateSandboxEditSessionOptions;
     limits: SandboxEditSessionLimits;
     projection: WorkspaceProjection;
@@ -307,6 +320,7 @@ class FileSandboxEditSession implements SandboxEditSession {
     policyFs: PolicyFs;
     bash: Bash;
   }) {
+    this.#readSources = input.readSources;
     this.#options = input.options;
     this.#limits = input.limits;
     this.#projection = input.projection;
@@ -337,6 +351,12 @@ class FileSandboxEditSession implements SandboxEditSession {
       })),
       directories: input.projection.manifest.directories,
     });
+  }
+
+  drainReadSources(): SandboxReadSource[] {
+    const sources = [...this.#readSources.values()];
+    this.#readSources.clear();
+    return sources;
   }
 
   get tools(): ToolSet {

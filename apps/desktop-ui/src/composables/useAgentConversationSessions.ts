@@ -155,6 +155,7 @@ export function useAgentConversationSessions(options: {
       { text },
       {
         body: {
+          sessionId: session.id,
           writingReferenceAttachmentIds,
           editContext: {
             exactWritablePaths: options.getExactWritablePaths?.() ?? [],

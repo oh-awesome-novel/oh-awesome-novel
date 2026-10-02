@@ -44,6 +44,8 @@ interface ActivatableFileSystem {
 }
 
 export interface PolicyFsOptions {
+  /** Trusted, content-free provenance observer; never exposed to model tools. */
+  onRead?: (path: string, bytes: Uint8Array) => void;
   policy: WorkspaceChangePolicy;
   baselineFiles?: readonly CandidateFileSnapshot[];
   /** Existing projected directories/files, expressed as workspace-relative paths. */
@@ -83,6 +85,7 @@ export class PolicyFs implements IFileSystem {
   readonly maxPathLength: number;
 
   #inner: IFileSystem;
+  #onRead?: PolicyFsOptions['onRead'];
   #active = false;
   #readable: readonly PathRule[];
   #writable: readonly PathRule[];
@@ -95,6 +98,7 @@ export class PolicyFs implements IFileSystem {
   constructor(inner: IFileSystem, options: PolicyFsOptions) {
     if (!options?.policy) throw new Error('PolicyFs requires a host-selected policy.');
     this.#inner = inner;
+    this.#onRead = options.onRead;
     this.workspaceRoot = normalizeAbsoluteRoot(
       options.workspaceRoot ?? VIRTUAL_WORKSPACE_ROOT,
       'workspaceRoot',
@@ -177,21 +181,31 @@ export class PolicyFs implements IFileSystem {
   async readFile(path: string, options?: ReadFileOptions): Promise<string> {
     const normalized = this.#assertReadable(path, 'open');
     await this.#assertRegularFile(normalized, 'open');
-    return this.#inner.readFile(normalized, options);
+    const content = await this.#inner.readFile(normalized, options);
+    // Hash actual VFS bytes, even when the consumer requested ASCII/base64 text.
+    if (this.#onRead) this.#onRead(normalized, await this.#inner.readFileBuffer(normalized));
+    return content;
   }
 
   async readFileBytes(path: string): Promise<ByteString> {
     const normalized = this.#assertReadable(path, 'open');
     await this.#assertRegularFile(normalized, 'open');
-    if (this.#inner.readFileBytes) return this.#inner.readFileBytes(normalized);
+    if (this.#inner.readFileBytes) {
+      const content = await this.#inner.readFileBytes(normalized);
+      this.#onRead?.(normalized, Buffer.from(content, 'latin1'));
+      return content;
+    }
     const bytes = await this.#inner.readFileBuffer(normalized);
+    this.#onRead?.(normalized, bytes);
     return Buffer.from(bytes).toString('latin1') as ByteString;
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const normalized = this.#assertReadable(path, 'open');
     await this.#assertRegularFile(normalized, 'open');
-    return this.#inner.readFileBuffer(normalized);
+    const bytes = await this.#inner.readFileBuffer(normalized);
+    this.#onRead?.(normalized, bytes);
+    return bytes;
   }
 
   writeFile(

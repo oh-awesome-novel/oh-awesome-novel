@@ -19,8 +19,8 @@ Related task: [1230](../../tasks/1230.md)
 - [x] 目标附近/最新摘要、全局/卷锚点、完整 Constitution/state。
 - [x] 逐文件 source/payload 证据和预算未知语义；每个 step 实施估算预算与输出上限。
 - [x] 恢复会话按固定投影比较 hash，并显示作者提示。
-- [ ] `1110` 剩余：compressible omission、protected overflow、actual usage、egress/inspector。
-- [ ] `1030` 最小结构化单章结算旅程。
+- [x] `1110` 标准Agent G1–G6：compressible omission、protected overflow、actual usage、egress/inspector。
+- [x] `1030` 最小结构化单章结算旅程。
 
 ## 3. Play reliability and scale
 
@@ -28,12 +28,12 @@ Related task: [1230](../../tasks/1230.md)
 - [x] 在关键边界进程中断并重启验证原子恢复；不宣称覆盖全部断电行为。
 - [x] 持久化最小运行身份与 artifact hash，重启优先从 session artifact 对账提交结果；未决结果明确 unknown。
 - [x] provider/来源读取 deadline、慢 SSE reader 字节队列上界、shutdown 取消/等待 commit barrier；根目录 `play-turn-recovery.test.ts` 覆盖，不能强制终止不服从 abort 的底层计算。
-- [ ] 测真实底层 I/O；再实施可重建索引和窗口读取，保持历史校验与隐藏内容边界。
+- [x] 测真实底层 I/O；再实施可重建索引和窗口读取，保持历史校验与隐藏内容边界。
 
 ## 4. Author productivity, separately accepted
 
-- [ ] `0570` 中文正文/标题/路径搜索、snippet、刷新、右侧打开。
-- [ ] `0700` 最小 Markdown/TXT 正文导出，明确目标与覆盖。
+- [x] `0570` 中文正文/标题/路径搜索、snippet、刷新、右侧打开。
+- [x] `0700` / `1270` 最小 Markdown/TXT 正文导出，明确目标与覆盖。
 - [ ] 作者旧稿导入预览与同一 ChangeSet 审批。
 - [ ] 卷/全局摘要来源覆盖、hash 和失效规则。
 

@@ -32,3 +32,5 @@ export type {
   RunTurnInput,
   RunTurnResult,
 } from './types';
+
+export { estimateRuntimeModelRequest } from './usage';

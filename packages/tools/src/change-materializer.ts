@@ -22,6 +22,7 @@ import {
 } from 'node:path';
 
 import { DEFAULT_CREATED_FILE_MODE } from './candidate-change-set';
+import { assertChapterSettlementActionFresh } from './chapter-settlement';
 import {
   assertRepositoryBaseline,
   commitPendingActionFiles,
@@ -394,6 +395,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
 
   async #validateAction(action: PendingAction): Promise<WorkspaceChangePolicy> {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
+    if (action.origin?.kind === 'chapterSettlement') {
+      await assertChapterSettlementActionFresh(this.#workspaceRoot, action);
+    }
     if (requiresTrustedOrigin(action.source.capability) && action.origin === undefined) {
       throw materializerError(
         'PENDING_ACTION_ORIGIN_VALIDATOR_REQUIRED',

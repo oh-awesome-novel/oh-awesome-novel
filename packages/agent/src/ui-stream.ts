@@ -1,3 +1,4 @@
+import { parseAgentUsageRecord } from '@oh-awesome-novel/core/agent-usage';
 import { createUIMessageStream } from 'ai';
 import type { UIMessage, UIMessageChunk } from 'ai';
 
@@ -56,6 +57,15 @@ export function runtimeEventsToUiMessageStream(
       writer.write({ type: 'start-step' });
 
       for await (const event of events) {
+        if (event.type === 'model_request_stats' || event.type === 'usage_stats') {
+          try { writer.write({ type: 'data-agent-usage', data: parseAgentUsageRecord(event.record) }); }
+          catch { writer.write({ type: 'data-usage-warning', data: { code: 'invalid-metadata' } }); }
+          continue;
+        }
+        if (event.type === 'usage_warning') {
+          writer.write({ type: 'data-usage-warning', data: { code: event.code } });
+          continue;
+        }
         if (event.type === 'message_delta') {
           writer.write({
             type: 'text-delta',

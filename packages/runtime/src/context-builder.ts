@@ -61,6 +61,7 @@ export class PriorityRuntimeContextBuilder implements RuntimeContextBuilder {
       .map((item) => ({
         role: 'system' as const,
         content: this.formatContextItem(item),
+        ...(item.provenance ? { provenance: item.provenance } : {}),
       }));
   }
 

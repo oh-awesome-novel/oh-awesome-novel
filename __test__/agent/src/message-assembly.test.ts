@@ -427,6 +427,10 @@ describe('Novel agent message assembly', () => {
       kind: 'selected',
       title: attachment.title,
       content: attachment.content,
+      provenance: [{ sourceId: 'playWritingReference', path: attachment.path, kind: 'selected',
+        attribution: 'exact', budgetLayer: 'L1', semanticBoundary: 'compressible',
+        estimator: 'utf8-bytes-div-3-v1', estimatedTokens: 0, modelVisibleChars: 0,
+        outcome: 'selected', reason: 'selected' }],
     });
     expect(contextPackage?.selected).toContainEqual(expect.objectContaining({
       sourceId: 'playWritingReference',
@@ -485,6 +489,10 @@ describe('Novel agent message assembly', () => {
         kind: 'selected',
         title: attachment.title,
         content: attachment.content,
+        provenance: [{ sourceId: 'playWritingReference', path: attachment.path, kind: 'selected',
+          attribution: 'exact', budgetLayer: 'L1', semanticBoundary: 'compressible',
+          estimator: 'utf8-bytes-div-3-v1', estimatedTokens: 0, modelVisibleChars: 0,
+          outcome: 'selected', reason: 'selected' }],
       })));
     expect(runtimeInput.context?.filter((item) =>
       item.kind === 'selected' && item.title.startsWith('Play outcome')))

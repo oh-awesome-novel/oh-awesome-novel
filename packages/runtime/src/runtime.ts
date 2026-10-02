@@ -1,6 +1,9 @@
+import { aggregateModelUsage, normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
+import type { ModelRequestUsageRecord, ModelStepUsageRecord, TurnUsageSummary } from '@oh-awesome-novel/core/agent-usage';
+import { estimateRuntimeModelRequest } from './usage';
 import { PriorityRuntimeContextBuilder } from './context-builder';
 import type { ModelMessage, ToolExecutionOptions, ToolResultPart, ToolSet } from 'ai';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   CopilotRuntimeOptions,
@@ -24,6 +27,10 @@ export class RuntimeSession {
   private readonly contextBuilder;
   private readonly options: CopilotRuntimeOptions;
   private streamEvents?: RuntimeEvent[];
+  private usageRequests: ModelRequestUsageRecord[] = [];
+  private usageSteps: ModelStepUsageRecord[] = [];
+  private turnId = '';
+  private usageFinished = false;
   private readonly state: RuntimeSessionState = {
     doneMessages: [],
     curMessages: [],
@@ -54,6 +61,10 @@ export class RuntimeSession {
   }
 
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
+    this.usageRequests = [];
+    this.usageSteps = [];
+    this.turnId = `turn_${randomUUID()}`;
+    this.usageFinished = false;
     this.state.curMessages = [...(input.messages ?? [])];
     this.state.toolLog = [];
     this.state.pendingActions = [];
@@ -86,11 +97,35 @@ export class RuntimeSession {
           context: input.context,
           skill: input.skill,
         });
-        const response = await this.generateModelResponse({
-          messages,
-          tools,
-          abortSignal: input.abortSignal,
-        });
+        const originalRequest = { messages, tools, abortSignal: input.abortSignal };
+        const prepared = await this.options.prepareModelRequest?.(originalRequest);
+        const request = prepared?.request ?? originalRequest;
+        const stats = await estimateRuntimeModelRequest(request);
+        const requestRecord: ModelRequestUsageRecord = {
+          ...this.usageBase(), recordType: 'request', stepIndex: loop, request: stats,
+          ...(prepared?.metadata ?? {
+            sources: request.messages.flatMap((message) => message.provenance ?? []),
+            budget: { status: 'unknown' as const, estimatedRequestTokens: stats.estimatedRequestTokens },
+          }),
+        };
+        this.usageRequests.push(requestRecord);
+        await this.emit({ type: 'model_request_stats', record: requestRecord });
+        let response: RuntimeModelResponse;
+        try {
+          if (requestRecord.budget.status === 'overflow') {
+            throw Object.assign(new Error(`CONTEXT_PROTECTED_OVERFLOW: Required input estimate ${stats.estimatedRequestTokens} exceeds budget ${requestRecord.budget.inputTokens}. Narrow the context or conversation, or adjust model limits.`), {
+              code: 'CONTEXT_PROTECTED_OVERFLOW', estimatedTokens: stats.estimatedRequestTokens,
+              budgetTokens: requestRecord.budget.inputTokens,
+              protectedSources: requestRecord.sources.filter((source) => source.semanticBoundary === 'protected'),
+            });
+          }
+          response = await this.generateModelResponse(request);
+          await this.recordUsageStep(loop, response.usage, input.abortSignal?.aborted ? 'aborted' : 'completed', response.finishReason);
+        } catch (error) {
+          const failure = error as { modelUsage?: RuntimeModelResponse['usage']; modelFinishReason?: string } | undefined;
+          await this.recordUsageStep(loop, failure?.modelUsage, input.abortSignal?.aborted || isAbortError(error) ? 'aborted' : 'failed', failure?.modelFinishReason);
+          throw error;
+        }
         const auditedMessage = response.message
           ? auditRuntimeMessage(response.message)
           : undefined;
@@ -105,7 +140,7 @@ export class RuntimeSession {
             content: auditedMessage?.content ?? '',
             toolCalls: response.toolCalls.map(auditRuntimeToolCall),
           });
-          await this.executeToolCalls(response, tools, messages, input.abortSignal);
+          await this.executeToolCalls(response, tools, request.messages, input.abortSignal);
           if (input.abortSignal?.aborted) {
             return await this.finish('aborted', assistantMessage, input.abortSignal);
           }
@@ -125,6 +160,7 @@ export class RuntimeSession {
       if (input.abortSignal?.aborted || isAbortError(error)) {
         return await this.finish('aborted', assistantMessage, input.abortSignal);
       }
+      await this.finishUsage('failed');
       await this.failTurn(error, input.abortSignal);
       throw error;
     }
@@ -226,6 +262,7 @@ export class RuntimeSession {
         name: toolCall.name,
         toolCallId: toolCall.id,
         content: JSON.stringify(result),
+        ...(this.options.toolResultProvenance ? { provenance: this.options.toolResultProvenance(toolCall, result) } : {}),
       });
     }
   }
@@ -314,6 +351,7 @@ export class RuntimeSession {
       toolLog: [...this.state.toolLog],
       pendingActions: [...this.state.pendingActions],
       stoppedReason,
+      usage: await this.finishUsage(stoppedReason === 'error' ? 'failed' : stoppedReason),
     };
 
     this.state.doneMessages.push(...this.state.curMessages);
@@ -322,6 +360,30 @@ export class RuntimeSession {
     await this.emit({ type: 'message_finish', result });
 
     return result;
+  }
+
+  private usageBase() {
+    return { schemaVersion: 1 as const, turnId: this.turnId, createdAt: new Date().toISOString(),
+      ...(this.options.usageSessionId ? { sessionId: this.options.usageSessionId } : {}) };
+  }
+
+  private async recordUsageStep(stepIndex: number, usage: RuntimeModelResponse['usage'], outcome: ModelStepUsageRecord['outcome'], finishReason?: string) {
+    const record: ModelStepUsageRecord = { ...this.usageBase(), recordType: 'step', stepIndex,
+      actualUsage: normalizeModelUsage(usage), outcome,
+      ...(finishReason && /^[a-z_-]{1,40}$/u.test(finishReason) ? { finishReason } : {}),
+    };
+    this.usageSteps.push(record);
+    await this.emit({ type: 'usage_stats', record });
+  }
+
+  private async finishUsage(outcome: TurnUsageSummary['outcome']): Promise<TurnUsageSummary> {
+    const record: TurnUsageSummary = { ...this.usageBase(), recordType: 'turn', stepCount: this.usageRequests.length,
+      estimatedMessageTokens: this.usageRequests.reduce((n, r) => n + r.request.estimatedMessageTokens, 0),
+      estimatedRequestTokens: this.usageRequests.reduce((n, r) => n + r.request.estimatedRequestTokens, 0),
+      ...aggregateModelUsage(this.usageSteps.map((s) => s.actualUsage)), outcome,
+    };
+    if (!this.usageFinished) { this.usageFinished = true; await this.emit({ type: 'usage_stats', record }); }
+    return record;
   }
 
   private async failTurn(error: unknown, abortSignal?: AbortSignal): Promise<void> {

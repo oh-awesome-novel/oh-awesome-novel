@@ -6,6 +6,8 @@
 > 详细证据、验收条件和验证范围见 [详细说明](DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md)。
 > 后续实施追踪：[1230 修正任务](tasks/1230.md)。本文保留评估基线，完成状态以该任务及关联 task 的验证记录为准。
 
+> 2026-10-01 续作：标准Agent完整 [usage治理](tasks/1110.md)、[单章结构化结算](tasks/1030.md)、[正文搜索](tasks/0570.md)、[Markdown/TXT导出](tasks/1270.md) 与 [Play底层窗口读取/减少重写](tasks/1260.md) 已落地。广义多领域结算、完整snapshot写入线性成本、旧稿导入/上层摘要等剩余项仍见1230；Extension继续暂缓。以下保留原评审事实，不作为续作后的缺陷清单。
+
 ## 总体判断
 
 **核心方向值得继续，下一阶段应先补正常使用闭环和可靠性，再扩功能。** Filesystem-first、轻量 Runtime、固定内存沙箱、CandidateChangeSet、人工审批和 Git 历史已有实际实现，没有证据支持重做架构或恢复旧写入方案。

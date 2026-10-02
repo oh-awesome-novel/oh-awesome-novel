@@ -343,7 +343,7 @@ describe('RuntimeSession', () => {
       pendingActions: [],
     }));
     expect(result.pendingActions).toEqual([fallbackAction]);
-    expect(events.slice(-2)).toEqual(['pending_action', 'message_finish']);
+    expect(events.slice(-3)).toEqual(['pending_action', 'usage_stats', 'message_finish']);
   });
 
   it('calls the finalizer on max-loop and aborted turns without duplicating actions', async () => {
@@ -454,9 +454,14 @@ describe('RuntimeSession', () => {
 
     expect(events).toEqual([
       'message_start',
+      'model_request_stats',
+      'usage_stats',
       'tool_call_start',
       'tool_call_finish',
       'pending_action',
+      'model_request_stats',
+      'usage_stats',
+      'usage_stats',
       'message_finish',
     ]);
   });
@@ -555,8 +560,11 @@ describe('RuntimeSession', () => {
 
     expect(events.map((event) => event.type)).toEqual([
       'message_start',
+      'model_request_stats',
       'message_delta',
       'message_delta',
+      'usage_stats',
+      'usage_stats',
       'message_finish',
     ]);
     expect(

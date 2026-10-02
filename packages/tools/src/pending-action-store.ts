@@ -214,7 +214,7 @@ class FilePendingActionStore implements PendingActionStore {
   }
 
   async proposeCandidate(input: ProposePendingActionInput): Promise<PendingActionView> {
-    const candidate = parseStrictCandidateChangeSet(input.candidate);
+    const candidate = parseStrictCandidateChangeSet(input.candidate, input.origin);
     const id = assertOpaquePendingActionId(input.id ?? this.#idFactory());
     return this.#withNamedLock(`locks/actions/${id}.lock`, async () => {
       await this.#assertActionIdentityAvailable(id);
@@ -235,7 +235,7 @@ class FilePendingActionStore implements PendingActionStore {
   async prepareChangePreview(
     input: PrepareChangePreviewInput,
   ): Promise<PreparedChangePreviewV1> {
-    const candidate = parseStrictCandidateChangeSet(input.candidate);
+    const candidate = parseStrictCandidateChangeSet(input.candidate, input.origin);
     const id = assertOpaquePendingActionId(input.id ?? this.#idFactory());
     const origin = parsePendingActionOrigin(input.origin);
     const allowedTargets = normalizeAllowedTargetInput(input.allowedTargets);
@@ -1209,7 +1209,7 @@ class FilePendingActionStore implements PendingActionStore {
   }
 }
 
-function parseStrictCandidateChangeSet(value: unknown): CandidateChangeSet {
+function parseStrictCandidateChangeSet(value: unknown, origin?: PendingActionOrigin): CandidateChangeSet {
   if (!isRecord(value)) invalidCandidate('CandidateChangeSet must be an object.');
   assertExactFields(value, [
     'schemaVersion',
@@ -1307,6 +1307,7 @@ function parseStrictCandidateChangeSet(value: unknown): CandidateChangeSet {
     description: 'Candidate validation',
     createdAt: value.finalizedAt,
     source: candidateSourceToPendingSource(value as unknown as CandidateChangeSet),
+    ...(origin === undefined ? {} : { origin }),
     repository: value.repository,
     allowedTargets: value.allowedTargets,
     changes: value.changes.map((change, index) => {

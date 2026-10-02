@@ -68,7 +68,11 @@
 - [1210 Reference Story Material Analysis Track](1210.md)
 - [1220 Reference Material Adoption And Desktop Closure](1220.md)
 
+- [0570 Workspace Global Search](0570.md)
+- [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 - [1240 AI SDK 7 Migration](1240.md)
+- [1260 Play Storage Read Model And Snapshot I/O](1260.md)
+- [1270 Readable Manuscript Export](1270.md)
 
 ## Needs Review Tasks
 
@@ -76,17 +80,17 @@
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [1030 Review And Settlement Workflow](1030.md)
 - [1060 Play Mode And Tavern Character Import](1060.md)
-- [1110 ContextPackage Evidence And Agent Usage Governance](1110.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 - [1230 Review-driven Reliability Corrections](1230.md)
 
 ## Planned Tasks
 
-- [0570 Workspace Global Search](0570.md)
+当前剩余工作按 Needs Review tasks 内的未完成 scope 推进。
+
 
 ## Deferred Development (2026-10-01)
 
-Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。先执行 [1230](1230.md) 的可靠性交付，再按作者反馈推进 0570 与 0700 的搜索、导出、旧稿导入和摘要。合同/helper 完成不等于生产接线或真实旅程完成。
+Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。先执行 [1230](1230.md) 的可靠性交付，已交付0570搜索与1270正文导出；后续按作者反馈推进0700旧稿导入与上层摘要。合同/helper 完成不等于生产接线或真实旅程完成。
 
 ## Package Call Route
 

@@ -21,6 +21,8 @@ bash-tool + just-bash fixed sandbox
 
 按 [设计实现评审](DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md) 与 [1230 修正任务](tasks/1230.md) 推进：先完成首次使用、审批恢复、中文 Git 路径、最终树引用校验，再补上下文预算、会话恢复和 Play 可靠性。正文搜索、可读导出、旧稿导入与卷/全局摘要分别验收。
 
+续作已交付标准Agent usage治理、单章summary/state结构化证据审批、正文搜索、Markdown/TXT导出和Play派生窗口存储读取。见tasks `1110` / `1030` / `0570` / `1270` / `1260`；剩余广义结算、hash freshness、导入/上层摘要与全量save成本继续独立验收。
+
 **Extension 系统开发暂缓。** 不新增动态 Tool 注册、extension host code、更多 Director 控制或 Reference 分析层；保留已经交付的能力。恢复扩展前，先证明已有写作、审批、导出与 Play adoption 的真实创作旅程。
 
 ## Milestone Overview

@@ -328,3 +328,11 @@ export type {
   PendingActionScopedCommitResult,
   RepositoryBaseline as GitRepositoryBaseline,
 } from './git-integration';
+export {
+  CHAPTER_SETTLEMENT_PRODUCER,
+  chapterSettlementTargets,
+  createChapterSettlementChangeProposal,
+  assertChapterSettlementActionFresh,
+} from './chapter-settlement';
+
+export type { SandboxReadSource } from './sandbox-edit-session';

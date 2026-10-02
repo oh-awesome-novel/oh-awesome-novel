@@ -14,6 +14,8 @@ vi.mock('ai', async (importOriginal) => ({
   streamText,
 }));
 
+const { jsonSchema } = await vi.importActual<typeof import('ai')>('ai');
+
 const {
   createSandboxNovelAgentEditEnvironmentFactory,
   createNovelAgentTurnEditEnvironment,
@@ -85,7 +87,7 @@ describe('turn-scoped agent edit environment injection', () => {
     const tools = {
       inspect: {
         description: 'Inspect the fixed turn environment.',
-        inputSchema: { type: 'object', properties: {} },
+        inputSchema: jsonSchema({ type: 'object', properties: {} }),
         execute,
       },
     } as ToolSet;

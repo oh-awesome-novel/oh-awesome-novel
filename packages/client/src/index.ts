@@ -1,3 +1,11 @@
+import { assertUsageSessionId, parseAgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
+import type { AgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
+export { parseAgentUsageRecord, parseAgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
+export type { AgentUsageRecord, AgentGovernanceHistory, ModelRequestUsageRecord, ModelStepUsageRecord, TurnUsageSummary, UsageSourceEvidence, NormalizedModelUsage } from '@oh-awesome-novel/core/agent-usage';
+import { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace-text.js';
+import type { WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
+export { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace-text.js';
+export type { WorkspaceSearchResult, WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
 import { DefaultChatTransport } from 'ai';
 import type { ChatTransport, UIMessage } from 'ai';
 import {
@@ -1746,6 +1754,8 @@ export interface AgentChatEditContext {
 }
 
 export interface OanClient extends PlayRehearsalClientMethods {
+  listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
+  getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
   getAgentChatApi(): string;
   createAgentChatTransport(editContext?: AgentChatEditContext): ChatTransport<UIMessage>;
@@ -1792,6 +1802,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   checkProviderConfig(input: ProviderCheckInput): Promise<ProviderCheckResult>;
   getWorkspaceTree(): Promise<{ tree: FileTreeNode[] }>;
   getWorkspaceFile(path: string): Promise<{ path: string; content: string }>;
+  searchWorkspace(query: string): Promise<WorkspaceSearchResponse>;
+  exportManuscript(format: 'md' | 'txt'): Promise<ManuscriptExport>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
   getWritingProfiles(): Promise<{ state: WritingProfileState }>;
   createWritingProfile(profile: WritingProfile): Promise<{ state: WritingProfileState }>;
@@ -2152,6 +2164,22 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   return {
     ...playRehearsalClient,
     backendBaseUrl,
+    listAgentUsageSessions: async () => {
+      const value = await requestJson<unknown>('/api/workspace/agent-sessions');
+      if (!isRecord(value) || Object.keys(value).length !== 1 || !Array.isArray(value.sessions) || value.sessions.length > 100) throw new Error('Invalid usage sessions.');
+      const sessions = value.sessions.map((entry: unknown) => {
+        if (!isRecord(entry) || Object.keys(entry).length !== 2 || typeof entry.updatedAt !== 'string' || !Number.isFinite(Date.parse(entry.updatedAt)) || new Date(entry.updatedAt).toISOString() !== entry.updatedAt) throw new Error('Invalid usage session.');
+        assertUsageSessionId(entry.id); return { id: entry.id, updatedAt: entry.updatedAt };
+      });
+      return { sessions };
+    },
+    getAgentGovernanceHistory: async (sessionId, limit = 50) => {
+      assertUsageSessionId(sessionId);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Usage limit must be 1–100.');
+      const value = parseAgentGovernanceHistory(await requestJson<unknown>(`/api/workspace/agent-sessions/${encodeURIComponent(sessionId)}/governance?limit=${limit}`));
+      if (value.sessionId !== sessionId) throw new Error('Usage session identity mismatch.');
+      return value;
+    },
     getAgentChatApi: () => joinUrl(backendBaseUrl, '/api/agent/chat'),
     createAgentChatTransport: (editContext) => {
       const normalizedEditContext = normalizeAgentChatEditContext(editContext);
@@ -2241,6 +2269,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         method: 'POST',
         body: input,
       }),
+    searchWorkspace: (query) => requestJson<unknown>(`/api/workspace/search?q=${encodeURIComponent(query)}`).then((value) => {
+      const response = parseWorkspaceSearchResponse(value);
+      if (response.query !== query.trim().normalize('NFC')) throw new Error('Mismatched workspace search response.');
+      return response;
+    }),
+    exportManuscript: (format) => requestJson<unknown>(`/api/workspace/manuscript/export?format=${encodeURIComponent(format)}`).then((value) => {
+      const response = parseManuscriptExport(value);
+      if (response.format !== format) throw new Error('Mismatched manuscript export format.');
+      return response;
+    }),
     getWorkspaceTree: () => requestJson<{ tree: FileTreeNode[] }>('/api/workspace/tree'),
     getWorkspaceFile: (path) =>
       requestJson<{ path: string; content: string }>(

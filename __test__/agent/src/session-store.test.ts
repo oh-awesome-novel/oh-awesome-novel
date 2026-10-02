@@ -12,6 +12,8 @@ vi.mock('ai', async (importOriginal) => ({
   streamText,
 }));
 
+const { jsonSchema } = await vi.importActual<typeof import('ai')>('ai');
+
 const {
   DEFAULT_BASH_COMMAND_PREVIEW_BYTES,
   createAgentSessionStore,
@@ -252,10 +254,10 @@ describe('agent session persistence', () => {
     const tools: ToolSet = {
       inspect: {
         description: 'Inspect a value.',
-        inputSchema: {
+        inputSchema: jsonSchema({
           type: 'object',
           properties: {},
-        },
+        }),
         execute: vi.fn(() => ({ value: 'ok' })),
       },
     } as ToolSet;
@@ -317,10 +319,10 @@ describe('agent session persistence', () => {
     const tools: ToolSet = {
       'workspace.proposeChanges': {
         description: 'Create a chapter PendingAction.',
-        inputSchema: {
+        inputSchema: jsonSchema({
           type: 'object',
           properties: {},
-        },
+        }),
         execute: vi.fn(() => ({
           pendingActions: [
             {

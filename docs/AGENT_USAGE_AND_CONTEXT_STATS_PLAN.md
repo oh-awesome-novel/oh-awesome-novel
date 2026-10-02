@@ -1,6 +1,6 @@
 # ContextPackage Evidence And Agent Usage Governance Plan
 
-> Status: Partially implemented; remaining scope tracked in [1110](tasks/1110.md).
+> Status: G1–G6 implemented and validated; see [1110](tasks/1110.md) for the delivered contract and limits. G7 remains optional follow-up.
 >
 > Related Task: [1110 ContextPackage Evidence And Agent Usage Governance](tasks/1110.md)
 >
@@ -67,7 +67,7 @@ V1 必须明确区分四层事实：
 
 `totalUsage` 仍是 deprecated alias；新接线使用 `usage`，不能重复累加两者。OAN 应读取并规范化这些数据，不自造 provider-specific usage 采集协议，也不保存 AI SDK 的任意 raw payload。
 
-## 3. 当前代码状态与缺口
+## 3. 实施前代码基线（历史）
 
 ### 3.1 已有基础
 
@@ -85,7 +85,7 @@ V1 必须明确区分四层事实：
 - reference selector
   - 已有 token budget、estimated tokens、included / omitted 与 reason，可复用其确定性预算经验。
 
-### 3.2 当前缺口
+### 3.2 当时缺口（G1–G6已补，实施记录见1110）
 
 - Context source 没有稳定的 source hash / revision 与 exact model-visible payload hash。
 - selected source 没有 original chars、model-visible chars、estimated tokens 等证据。
@@ -154,7 +154,12 @@ V1 不实现：
 | Excluded source | 本轮明确不得发送给模型的来源 |
 | Egress summary | provider、model、endpoint origin 和被发送 source refs 的无内容摘要 |
 
-## 7. 目标数据契约
+## 7. 数据契约与原始草案
+
+### 2026-10-01 实施合同调整
+
+实际 v1 wire schema 分为 `request`（provider 前的 message estimate、来源证据、budget 与 prepared egress）、`step`（规范化 actual usage 与 completed/failed/aborted）和 `turn`（累计 estimate 与逐字段 actual coverage）。以 Core `agent-usage` 的纯类型和 strict parser 为准，Runtime events 分别为 `model_request_stats` / `usage_stats`。source payload hash 对 Runtime 格式化后的消息计算；tool read 记录读取来源与返回 payload 的派生关系，不声称读取的全部字节已发送。API 不返回原 ContextPackage minimalMemory/trace 正文，只返回无内容 evidence。System payload 保留原始空白；调用方可提供 explicit input limit/output reserve。JSONL每record 2 MiB、文件32 MiB、有界尾读4 MiB/100 records；到限报告warning，未实现轮转。浏览器使用同一纯 parser 子入口。以下接口草案保留语义目标。
+
 
 以下接口是实施目标，用于固定语义；具体文件拆分可在实现时按包边界微调。
 

@@ -19,6 +19,7 @@ defineProps<{
   activeTab: WorkspaceRightTab;
   activeFilePath: string;
   fileContent: string;
+  fileLine?: number;
   fileLoading: boolean;
   fileError: string;
   pendingActions: Array<PendingActionView & {
@@ -61,6 +62,7 @@ const emit = defineEmits<{
       v-if="activeTab === 'file'"
       :path="activeFilePath"
       :content="fileContent"
+      :line="fileLine"
       :loading="fileLoading"
       :error="fileError"
     />

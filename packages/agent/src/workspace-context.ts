@@ -55,7 +55,7 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     for (const file of files) {
       const payload = root ? format(root, file) : file.content;
       contextFiles.push({ sourceId, path: file.path,
-        sourceHash: hash(file.content), payloadHash: hash(payload),
+        sourceHash: hash(file.content), payloadHash: hash(payload), payload, originalChars: file.content.length,
         modelVisibleChars: payload.length, estimatedTokens: estimateContextTokens(payload),
         selectionReason: sourceId === 'previousChapterEnding'
           ? targets.length ? 'target-near chapter or volume/global summary' : 'latest numbered chapter or volume/global summary'

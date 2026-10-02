@@ -159,3 +159,21 @@ describe('PolicyFs', () => {
     await expect(second.readFile('/workspace/chapters/0001/0001.md')).resolves.toBe('same\n');
   });
 });
+
+
+it('observes original file bytes for encoded reads without changing decoding or permissions', async () => {
+  const path = '/workspace/chapters/0001/0001.md'; const content = '中文 evidence\n';
+  const memory = new InMemoryFs({ [path]: content }); const observed: Uint8Array[] = [];
+  const fs = new PolicyFs(memory, {
+    policy: createWorkspaceChangePolicy({ capability: 'read-only' }),
+    baselineFiles: [{ path: 'chapters/0001/0001.md', content }],
+    projectedPaths: ['chapters', 'chapters/0001', 'chapters/0001/0001.md'],
+    onRead: (_path, bytes) => { observed.push(bytes); },
+  });
+  fs.activate();
+  for (const encoding of ['utf8', 'ascii', 'base64', 'hex'] as const) {
+    expect(await fs.readFile(path, { encoding })).toBe(await memory.readFile(path, { encoding }));
+    expect(Buffer.from(observed.at(-1)!)).toEqual(Buffer.from(content));
+  }
+  await expect(fs.readFile('/workspace/.git/config')).rejects.toThrow(); expect(observed).toHaveLength(4);
+});

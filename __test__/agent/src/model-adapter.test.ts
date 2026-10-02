@@ -8,6 +8,8 @@ vi.mock('ai', async (importOriginal) => ({
   streamText,
 }));
 
+const { jsonSchema } = await vi.importActual<typeof import('ai')>('ai');
+
 const { createAiSdkRuntimeModelAdapter } = await import('@oh-awesome-novel/agent');
 
 describe('AI SDK RuntimeModelAdapter bridge', () => {
@@ -21,10 +23,10 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     const toolSet: ToolSet = {
       'character.get': {
         description: 'Read character.',
-        inputSchema: {
+        inputSchema: jsonSchema({
           type: 'object',
           properties: {},
-        },
+        }),
         execute: vi.fn(),
       },
     } as ToolSet;
@@ -79,6 +81,8 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
       {
         type: 'finish',
         response: {
+          finishReason: undefined,
+          usage: { availability: 'unavailable' },
           message: {
             role: 'assistant',
             content: '你好',
@@ -116,6 +120,8 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
         tools: {},
       }),
     ).resolves.toEqual({
+      finishReason: undefined,
+      usage: { availability: 'unavailable' },
       message: {
         role: 'assistant',
         content: '完成',
@@ -268,3 +274,13 @@ async function* toAsyncIterable(chunks: string[]) {
     yield { type: 'text-delta', id: 'test-text', text: chunk };
   }
 }
+
+// Trusted caller limits supplement model metadata without inventing a default window.
+it('resolves the minimum explicit input limit and output reserve', async () => {
+  const { resolveContextBudget } = await import('@oh-awesome-novel/agent');
+  const config = { id: 'budget', kind: 'custom' as const, model: 'm', models: [{ id: 'm', contextWindow: 1000 }] };
+  expect(resolveContextBudget(config)).toEqual({ maxOutputTokens: undefined, inputTokens: undefined });
+  expect(resolveContextBudget(config, { outputReserveTokens: 100, maxEstimatedInputTokens: 600 })).toEqual({ maxOutputTokens: 100, inputTokens: 600 });
+  expect(resolveContextBudget({ ...config, models: [{ id: 'm', contextWindow: 100, maxOutputTokens: 200 }] })).toEqual({ maxOutputTokens: 200, inputTokens: 0 });
+  expect(() => resolveContextBudget(config, { maxEstimatedInputTokens: -1 })).toThrow();
+});

@@ -2,6 +2,7 @@
 import { computed, reactive, watch } from 'vue';
 import type { ChatStatus, UIMessage } from 'ai';
 
+import AgentUsageInspector from '../agent-checkpoint/AgentUsageInspector.vue';
 import AgentTimeline from '../agent-checkpoint/AgentTimeline.vue';
 import ChatComposer from '../agent-checkpoint/ChatComposer.vue';
 import CompactApprovalTray from '../agent-checkpoint/CompactApprovalTray.vue';
@@ -16,6 +17,7 @@ import type {
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 
 const props = defineProps<{
+  workspaceKey?: string;
   providerConfigured: boolean;
   queuedPrompt: string;
   chatStatus: ChatStatus;
@@ -35,6 +37,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  openSource: [path: string];
   updateChatInput: [input: string];
   sendChatInput: [];
   stopChat: [];
@@ -160,6 +163,7 @@ function mergePendingActions(
 
     <template v-else>
       <AgentTimeline :items="timelineItems" />
+      <AgentUsageInspector :key="workspaceKey" :messages="chatMessages" @open-source="emit('openSource', $event)" />
       <CompactApprovalTray
         v-if="!rightPanelShown"
         :actions="decoratedPendingActions"

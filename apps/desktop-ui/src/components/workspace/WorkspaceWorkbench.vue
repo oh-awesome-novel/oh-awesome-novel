@@ -42,6 +42,7 @@ defineProps<{
   chaptersError: string;
   activeFilePath: string;
   fileContent: string;
+  fileLine?: number;
   fileLoading: boolean;
   fileError: string;
   guideVisible: boolean;
@@ -165,6 +166,8 @@ const emit = defineEmits<{
         @configure-provider="emit('configureProvider')"
       />
       <CopilotPanel
+        :workspace-key="workspace.path"
+        @open-source="emit('openFile', $event)"
         v-else
         :provider-configured="providerConfigured"
         :queued-prompt="queuedPrompt"
@@ -202,6 +205,7 @@ const emit = defineEmits<{
       :active-tab="rightTab"
       :active-file-path="activeFilePath"
       :file-content="fileContent"
+        :file-line="fileLine"
       :file-loading="fileLoading"
       :file-error="fileError"
       :pending-actions="pendingActions"

@@ -6,6 +6,7 @@ import {
   Bot,
   Braces,
   ChevronDown,
+  Download,
   GitBranch,
   House,
   Library,
@@ -63,6 +64,7 @@ const emit = defineEmits<{
   showHome: [];
   openChapters: [];
   openSearch: [];
+  openExport: [];
   openPending: [];
   openRightTab: [tab: WorkspaceRightTab];
   openExternalEditor: [editor: ExternalEditor];
@@ -79,6 +81,7 @@ const navigationItems: ToolbarNavItem[] = [
   { id: 'home', label: 'Home', icon: House, rightTab: 'health' },
   { id: 'chapters', label: 'Chapters', icon: BookOpen },
   { id: 'search', label: 'Search', icon: Search },
+  { id: 'export', label: 'Export manuscript', icon: Download },
   { id: 'pending', label: 'Pending actions', icon: ListChecks, rightTab: 'approval' },
   { id: 'git', label: 'Git', icon: GitBranch, rightTab: 'git' },
   { id: 'profiles', label: 'Writing Profiles', icon: SlidersHorizontal, rightTab: 'profiles' },
@@ -115,6 +118,9 @@ function triggerNavigation(item: ToolbarNavItem) {
       return;
     case 'search':
       emit('openSearch');
+      return;
+    case 'export':
+      emit('openExport');
       return;
     case 'pending':
       emit('openPending');

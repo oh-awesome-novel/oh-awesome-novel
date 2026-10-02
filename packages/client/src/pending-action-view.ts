@@ -21,6 +21,11 @@ export class PendingActionViewParseError extends Error {
 
 export type PublicPendingActionOrigin =
   | {
+      readonly kind: 'chapterSettlement';
+      readonly chapterId: string;
+      readonly sourceHash: string;
+    }
+  | {
       readonly kind: 'agentTurn';
       readonly sessionId: string;
       readonly turnId: string;
@@ -403,6 +408,14 @@ function parsePendingActionViewChange(value: unknown): PendingActionViewChange {
 function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrigin {
   if (!isRecord(value)) invalid('PendingActionView origin must be an object.');
   rejectLegacyOrInternalFields(value);
+  if (value.kind === 'chapterSettlement') {
+    assertExactFields(value, ['kind', 'chapterId', 'sourceHash']);
+    if (typeof value.chapterId !== 'string' || !/^(?!0000)\d{4}\/(?!0000)\d{4}$/u.test(value.chapterId)) {
+      invalid('Settlement chapter id must be a canonical volume/chapter id.');
+    }
+    return deepFreeze({ kind: value.kind, chapterId: value.chapterId,
+      sourceHash: assertHash(value.sourceHash, 'origin chapter source hash') });
+  }
   if (value.kind === 'agentTurn') {
     assertExactFields(value, ['kind', 'sessionId', 'turnId']);
     return deepFreeze({

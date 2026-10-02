@@ -242,9 +242,28 @@ export function projectPlaySessionSelectedDetail(
   session: PlaySession,
   options: ProjectPlaySessionSelectedDetailOptions = {},
 ): PlaySessionSelectedDetail {
+  const projection = buildPlaySessionReadProjection(session);
   const limit = normalizeWindowLimit(options.limit);
+  const head = projection.snapshot.selectedTurnIds.at(-1) ?? 'initial-world';
+  const transcript = createWindow(projection.transcript, 'transcript', session, head, limit, options.transcriptCursor);
+  const events = createWindow(projection.events, 'event', session, head, limit, options.eventCursor);
+  const eventIds = new Set(events.items.map((event) => event.id));
+  return {
+    ...projection,
+    transcript,
+    events,
+    eventPresentation: projection.eventPresentation.filter((entry) => eventIds.has(entry.eventId)),
+  };
+}
+
+export interface PlaySessionReadProjection extends Omit<PlaySessionSelectedDetail, 'transcript' | 'events'> {
+  transcript: PlayTranscriptTurn[];
+  events: PlayWorldEvent[];
+}
+
+/** Shared validated projection used by both in-memory and persisted read models. */
+export function buildPlaySessionReadProjection(session: PlaySession): PlaySessionReadProjection {
   const facts = materializePlayTurnFacts(session);
-  const selectedHead = facts.selectedTurnIds.at(-1) ?? 'initial-world';
   const selectedEvents = session.events.filter((event) =>
     facts.selectedEventIds.has(event.id));
   const selectedObservations = session.observations.filter((observation) =>
@@ -265,22 +284,6 @@ export function projectPlaySessionSelectedDetail(
           selectedRehearsalEvidenceIds.has(turn.id)),
       }))
     : undefined;
-  const transcript = createWindow(
-    facts.transcript,
-    'transcript',
-    session,
-    selectedHead,
-    limit,
-    options.transcriptCursor,
-  );
-  const events = createWindow(
-    selectedEvents,
-    'event',
-    session,
-    selectedHead,
-    limit,
-    options.eventCursor,
-  );
   const selectedArtifacts = facts.selectedTurnIds.map((artifactId) => {
     const artifact = facts.turnArtifacts.find((candidate) =>
       candidate.id === artifactId);
@@ -324,10 +327,10 @@ export function projectPlaySessionSelectedDetail(
         ? { rehearsalScenes: selectedRehearsalScenes }
         : {}),
     },
-    transcript,
-    events,
+    transcript: structuredClone(facts.transcript),
+    events: structuredClone(selectedEvents),
     eventPresentation: projectEventPresentation(
-      events.items,
+      selectedEvents,
       selectedEvents,
       selectedArtifacts,
     ),
@@ -721,33 +724,27 @@ function createWindow<T>(
   limit: number,
   cursor: string | undefined,
 ): PlayCursorWindow<T> {
-  const end = cursor === undefined
-    ? items.length
-    : parseCursor(cursor, {
-        kind,
-        sessionId: session.id,
-        revision: session.revision,
-        selectedHead,
-        itemCount: items.length,
-      });
-  const start = Math.max(0, end - limit);
+  const { start, end, nextCursor } = getPlayWindowRange({
+    kind, sessionId: session.id, revision: session.revision, selectedHead, itemCount: items.length,
+  }, limit, cursor);
   return {
     items: structuredClone(items.slice(start, end)),
     totalCount: items.length,
     hasMoreBefore: start > 0,
-    ...(start > 0
-      ? {
-          nextCursor: formatCursor({
-            version: 1,
-            kind,
-            sessionId: session.id,
-            revision: session.revision,
-            selectedHead,
-            end: start,
-          }),
-        }
-      : {}),
+    ...(nextCursor ? { nextCursor } : {}),
   };
+}
+
+export function getPlayWindowRange(
+  expected: Omit<PlayWindowCursorPayload, 'version' | 'end'> & { itemCount: number },
+  limitValue: number | undefined,
+  cursor?: string,
+): { start: number; end: number; nextCursor?: string } {
+  const limit = normalizeWindowLimit(limitValue);
+  const end = cursor === undefined ? expected.itemCount : parseCursor(cursor, expected);
+  const start = Math.max(0, end - limit);
+  const { itemCount: _itemCount, ...identity } = expected;
+  return { start, end, ...(start > 0 ? { nextCursor: formatCursor({ version: 1, ...identity, end: start }) } : {}) };
 }
 
 function formatCursor(payload: PlayWindowCursorPayload): string {

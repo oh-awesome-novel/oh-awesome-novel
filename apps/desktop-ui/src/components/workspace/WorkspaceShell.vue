@@ -3,6 +3,8 @@ import { computed, onMounted, shallowRef, watch } from 'vue';
 
 import PlayWorkspace from '../play/PlayWorkspace.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
+import WorkspaceSearchDialog from './WorkspaceSearchDialog.vue';
+import ManuscriptExportDialog from './ManuscriptExportDialog.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
@@ -43,7 +45,11 @@ interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
 
 const api = useWorkspaceApi();
 const searchOpen = shallowRef(false);
-const searchQuery = shallowRef('');
+const exportOpen = shallowRef(false);
+const searchRefreshVersion = shallowRef(0);
+const activeFileLine = shallowRef<number>();
+let fileRequest = 0;
+let treeRequest = 0;
 const layout = useWorkspaceLayoutState(props.workspace.path);
 const activeFilePath = shallowRef('');
 const conversations = useAgentConversationSessions({
@@ -76,18 +82,6 @@ const writingProfileState = shallowRef<WritingProfileState>();
 const writingProfilesLoading = shallowRef(false);
 const writingProfilesError = shallowRef('');
 
-const fileSearchResults = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase();
-  const files = flattenFileNodes(tree.value).filter((node) => node.type === 'file');
-
-  if (!query) {
-    return files.slice(0, 12);
-  }
-
-  return files
-    .filter((node) => node.path.toLowerCase().includes(query) || node.name.toLowerCase().includes(query))
-    .slice(0, 20);
-});
 const decoratedPendingActions = computed(() =>
   workspacePendingActions.value.map((action) => ({
     ...action,
@@ -119,16 +113,16 @@ watch(
 );
 
 async function loadTree() {
+  const request = ++treeRequest;
+  const workspacePath = props.workspace.path;
   treeLoading.value = true;
   treeError.value = '';
-
   try {
-    tree.value = (await api.getWorkspaceTree()).tree;
+    const response = await api.getWorkspaceTree();
+    if (request === treeRequest && workspacePath === props.workspace.path) tree.value = response.tree;
   } catch (error) {
-    treeError.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    treeLoading.value = false;
-  }
+    if (request === treeRequest && workspacePath === props.workspace.path) treeError.value = error instanceof Error ? error.message : String(error);
+  } finally { if (request === treeRequest && workspacePath === props.workspace.path) treeLoading.value = false; }
 }
 
 async function loadChapters() {
@@ -222,22 +216,40 @@ function updateWritingProfileState(state: WritingProfileState) {
   writingProfilesError.value = '';
 }
 
-async function openFile(path: string) {
+async function openFile(path: string, line?: number) {
+  const request = ++fileRequest;
+  const workspacePath = props.workspace.path;
   searchOpen.value = false;
   activeFilePath.value = path;
+  activeFileLine.value = line;
   layout.openRightPanel('file');
   fileLoading.value = true;
   fileError.value = '';
   fileContent.value = '';
-
   try {
-    fileContent.value = (await api.getWorkspaceFile(path)).content;
+    const file = await api.getWorkspaceFile(path);
+    if (request === fileRequest && workspacePath === props.workspace.path) fileContent.value = file.content;
   } catch (error) {
-    fileError.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    fileLoading.value = false;
-  }
+    if (request === fileRequest && workspacePath === props.workspace.path) fileError.value = error instanceof Error ? error.message : String(error);
+  } finally { if (request === fileRequest && workspacePath === props.workspace.path) fileLoading.value = false; }
 }
+
+function openSearchResult(hit: { path: string; line: number }) {
+  layout.sidebarTab.value = 'files';
+  void loadTree();
+  void openFile(hit.path, hit.line);
+}
+
+watch(() => props.workspace.path, () => {
+  ++fileRequest;
+  searchOpen.value = false;
+  exportOpen.value = false;
+  activeFilePath.value = '';
+  activeFileLine.value = undefined;
+  fileContent.value = ''; fileError.value = ''; fileLoading.value = false;
+  tree.value = [];
+  void loadTree();
+});
 
 function openChapter(chapter: ChapterIndexChapter) {
   layout.sidebarTab.value = 'chapters';
@@ -412,20 +424,17 @@ function clearQueuedPrompt() {
 }
 
 function showHome() {
+  ++fileRequest;
+  activeFileLine.value = undefined;
+  fileLoading.value = false;
   activeFilePath.value = '';
   fileContent.value = '';
   fileError.value = '';
   layout.openRightPanel('health');
 }
 
-function flattenFileNodes(nodes: FileTreeNode[]): FileTreeNode[] {
-  return nodes.flatMap((node) => [
-    node,
-    ...flattenFileNodes(node.children ?? []),
-  ]);
-}
-
 async function refreshAfterPendingAction() {
+  ++searchRefreshVersion.value;
   await Promise.all([
     loadTree(),
     loadChapters(),
@@ -463,6 +472,7 @@ async function refreshPendingActionSurface() {
       @show-home="showHome"
       @open-chapters="openChapterNavigation"
       @open-search="searchOpen = true"
+      @open-export="exportOpen = true"
       @open-pending="openPendingActions"
       @open-right-tab="layout.openRightPanel"
       @open-external-editor="openExternalEditor"
@@ -491,6 +501,7 @@ async function refreshPendingActionSurface() {
       :chapters-error="chaptersError"
       :active-file-path="activeFilePath"
       :file-content="fileContent"
+      :file-line="activeFileLine"
       :file-loading="fileLoading"
       :file-error="fileError"
       :guide-visible="guideVisible"
@@ -558,34 +569,7 @@ async function refreshPendingActionSurface() {
       @writing-references-updated="conversations.refreshWritingReferences"
     />
 
-    <div v-if="searchOpen" class="search-overlay" role="dialog" aria-label="Workspace search">
-      <div class="search-panel">
-        <div class="search-panel-header">
-          <input
-            v-model="searchQuery"
-            class="search-input"
-            type="search"
-            placeholder="Search files"
-            aria-label="Search files"
-          >
-          <button class="icon-button" type="button" aria-label="Close search" @click="searchOpen = false">
-            ×
-          </button>
-        </div>
-        <div class="search-results" role="listbox" aria-label="Search results">
-          <button
-            v-for="node in fileSearchResults"
-            :key="node.path"
-            class="search-result"
-            type="button"
-            @click="openFile(node.path)"
-          >
-            <strong>{{ node.name }}</strong>
-            <span>{{ node.path }}</span>
-          </button>
-          <p v-if="fileSearchResults.length === 0" class="empty-copy">No matches</p>
-        </div>
-      </div>
-    </div>
+    <WorkspaceSearchDialog v-if="searchOpen" :workspace-path="workspace.path" :refresh-version="searchRefreshVersion" @close="searchOpen = false" @open-file="openSearchResult" />
+    <ManuscriptExportDialog v-if="exportOpen" :workspace-path="workspace.path" @close="exportOpen = false" />
   </main>
 </template>

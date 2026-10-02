@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createPlaySessionDraft,
   readPlaySessionFiles,
+  readPlaySessionSelectedDetail,
+  projectPlaySessionSelectedDetail,
   settlePlayWorldRefereeResponse,
   writePlaySessionFiles,
 } from '@oh-awesome-novel/core';
@@ -52,6 +54,8 @@ describe('Play staged snapshot durability boundaries', () => {
     const stored = await readPlaySessionFiles(fixture.root, fixture.before.id);
     const committed = !['after-stage-files', 'after-ready'].includes(point);
     expect(stored).toEqual(committed ? fixture.next : fixture.before);
+    expect(await readPlaySessionSelectedDetail(fixture.root, stored.id))
+      .toEqual(projectPlaySessionSelectedDetail(stored));
     const sessionRoot = join(fixture.root, '.workspace/play-sessions', fixture.before.id);
     const transcript = await readFile(join(sessionRoot, 'transcript.md'), 'utf8');
     expect(transcript.includes('The lamp turns on.')).toBe(committed);
@@ -71,6 +75,8 @@ describe('Play staged snapshot durability boundaries', () => {
       await writePlaySessionFiles(fixture.root, fixture.next, { expectedCurrentSession: fixture.before });
     }
     expect(await readPlaySessionFiles(fixture.root, fixture.before.id)).toEqual(fixture.next);
+    expect(await readPlaySessionSelectedDetail(fixture.root, fixture.before.id))
+      .toEqual(projectPlaySessionSelectedDetail(fixture.next));
   });
 
   it.each(points)('recovers creation killed at %s without publishing partial files', async (point) => {

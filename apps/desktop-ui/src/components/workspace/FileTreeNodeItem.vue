@@ -25,6 +25,10 @@ watch(
   },
 );
 
+watch(() => props.activePath, (path) => {
+  if (isDirectory.value && path?.startsWith(`${props.node.path}/`)) expanded.value = true;
+}, { immediate: true });
+
 function activate() {
   if (isDirectory.value) {
     expanded.value = !expanded.value;

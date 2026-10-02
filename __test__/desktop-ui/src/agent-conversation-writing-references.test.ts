@@ -75,6 +75,7 @@ describe('agent conversation Play Writing References', () => {
       { text: 'Use the selected Play outcome' },
       {
         body: {
+          sessionId: expect.any(String),
           writingReferenceAttachmentIds: ['attachment-1', 'attachment-2'],
           editContext: { exactWritablePaths: [] },
         },
@@ -94,6 +95,7 @@ describe('agent conversation Play Writing References', () => {
       { text: 'A second request' },
       {
         body: {
+          sessionId: expect.any(String),
           writingReferenceAttachmentIds: [],
           editContext: { exactWritablePaths: [] },
         },
@@ -115,6 +117,7 @@ describe('agent conversation Play Writing References', () => {
       { text: 'Revise the open chapter' },
       {
         body: {
+          sessionId: expect.any(String),
           writingReferenceAttachmentIds: [],
           editContext: { exactWritablePaths: ['chapters/0001.md'] },
         },

@@ -21,6 +21,14 @@ const HASH_C = 'c'.repeat(64);
 const HASH_D = 'd'.repeat(64);
 
 describe('strict PendingActionView client boundary', () => {
+  it('preserves the chapter settlement identity and rejects unknown or malformed origin fields', () => {
+    const origin = { kind: 'chapterSettlement', chapterId: '0001/0002', sourceHash: HASH_A };
+    expect(parsePendingActionView({ ...createPendingView(), origin }).origin).toEqual(origin);
+    for (const invalid of [
+      { ...origin, extra: true }, { ...origin, chapterId: '../0002' },
+      { ...origin, chapterId: '0000/0002' }, { ...origin, sourceHash: 'stale' },
+    ]) expect(() => parsePendingActionView({ ...createPendingView(), origin: invalid })).toThrow();
+  });
   it('parses create/update/delete and preserves diff as inert plain text', () => {
     const value = createPendingView();
     const parsed = parsePendingActionView(value);

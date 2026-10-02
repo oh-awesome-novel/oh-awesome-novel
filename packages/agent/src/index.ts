@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto';
+import { createContextEvidence, createUsageGovernance } from './usage-governance';
+import { normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
+import type { CopilotRuntimeOptions } from '@oh-awesome-novel/runtime';
 import { assertModelRequestBudget, resolveContextBudget } from './context-budget';
+import type { ContextBudgetOptions } from './context-budget';
+export type { ContextBudgetOptions } from './context-budget';
 import { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
+import { createChapterSettlementEditEnvironment } from './chapter-settlement';
 export { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -99,6 +106,9 @@ export interface NovelAgentWorkspaceSnapshot {
 }
 
 export interface NovelAgentWorkspaceContextFile {
+  /** Host-only payload for per-file assembly; never part of audit records. */
+  payload?: string;
+  originalChars?: number;
   sourceId: ContextSourceId | string;
   path: string;
   title?: string;
@@ -226,12 +236,15 @@ function resolveProviderApiKey(providerConfig: LlmProviderConfig): string | unde
   return undefined;
 }
 
-export interface AiSdkModelAdapterInput {
+export interface AiSdkModelAdapterInput extends ContextBudgetOptions {
   providerConfig: LlmProviderConfig;
   resolveModel: AiSdkProviderResolver;
 }
 
 export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
+  usageSessionId?: string;
+  prepareModelRequest?: CopilotRuntimeOptions['prepareModelRequest'];
+  toolResultProvenance?: CopilotRuntimeOptions['toolResultProvenance'];
   workspaceRoot: string;
   tools?: ToolSet;
   maxToolLoops?: number;
@@ -240,6 +253,7 @@ export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
 }
 
 export interface NovelAgentTurnEditEnvironment {
+  drainReadSources?: () => Array<{ path: string; sourceHash: string; originalChars: number }>;
   tools: ToolSet;
   workspace: NovelAgentWorkspaceSnapshot;
   skill?: RuntimeSkill;
@@ -345,8 +359,8 @@ async function* streamAiSdkModelResponse(
   input: AiSdkModelAdapterInput,
   request: RuntimeModelRequest,
 ): AsyncIterable<RuntimeModelStreamEvent> {
-  assertModelRequestBudget(request, input.providerConfig);
-  const { maxOutputTokens } = resolveContextBudget(input.providerConfig);
+  await assertModelRequestBudget(request, input.providerConfig, input);
+  const { maxOutputTokens } = resolveContextBudget(input.providerConfig, input);
   const model = await input.resolveModel(input.providerConfig);
   const instructions = toModelSystemPrompt(request.messages);
   const result = streamText({
@@ -361,16 +375,24 @@ async function* streamAiSdkModelResponse(
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
   });
   let text = '';
+  let observedUsage: ReturnType<typeof normalizeSdkUsage> | undefined;
+  let observedFinishReason: string | undefined;
+  const modelFailure = (error: unknown) => {
+    const failure = error instanceof Error ? error : new Error('Model generation failed.');
+    return Object.assign(failure, { modelUsage: observedUsage, modelFinishReason: observedFinishReason });
+  };
 
   // v7's textStream omits error parts. Observe the complete stream so a
   // provider failure still aborts the Runtime turn and discards its candidate.
   for await (const part of result.stream) {
-    if (part.type === 'error') throw part.error;
+    if (part.type === 'finish-step') { observedUsage = normalizeSdkUsage(part.usage); observedFinishReason = part.finishReason; }
+    if (part.type === 'finish') { observedUsage = normalizeSdkUsage(part.totalUsage); observedFinishReason = part.finishReason; }
+    if (part.type === 'error') throw modelFailure(part.error);
     if (part.type === 'abort') {
-      throw Object.assign(new Error(part.reason ?? 'Model generation was aborted.'), { name: 'AbortError' });
+      throw modelFailure(Object.assign(new Error(part.reason ?? 'Model generation was aborted.'), { name: 'AbortError' }));
     }
     if (part.type === 'finish' && part.finishReason === 'error') {
-      throw new Error('Model generation finished with an error.');
+      throw modelFailure(new Error('Model generation finished with an error.'));
     }
     if (part.type !== 'text-delta') continue;
     text += part.text;
@@ -390,8 +412,19 @@ async function* streamAiSdkModelResponse(
           }
         : undefined,
       toolCalls: (await result.finalStep).toolCalls.map(toRuntimeToolCall),
+      usage: normalizeSdkUsage(await result.usage),
+      finishReason: await result.finishReason,
     },
   };
+}
+
+function normalizeSdkUsage(usage: import('ai').LanguageModelUsage | undefined) {
+  return normalizeModelUsage({
+    inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, totalTokens: usage?.totalTokens,
+    cacheReadTokens: usage?.inputTokenDetails?.cacheReadTokens,
+    cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens,
+    reasoningTokens: usage?.outputTokenDetails?.reasoningTokens,
+  });
 }
 
 export const createAiSdkRuntimeModelAdapter = createAiSdkModelAdapter;
@@ -405,6 +438,9 @@ export const createNovelAgentRuntime = (
       workspaceRoot: input.workspaceRoot,
       tools: input.tools,
     }),
+    usageSessionId: input.usageSessionId,
+    prepareModelRequest: input.prepareModelRequest,
+    toolResultProvenance: input.toolResultProvenance,
     maxToolLoops: input.maxToolLoops,
     turnFinalizer: input.turnFinalizer,
     onEvent: input.onEvent,
@@ -426,7 +462,9 @@ export const createNovelAgentTurnEditEnvironment = async (
     exactWritablePaths: input.exactWritablePaths,
   });
   const factory = input.editEnvironmentFactory
-    ?? createSandboxNovelAgentEditEnvironmentFactory(selection);
+    ?? (input.capability === 'novel.settle_chapter'
+      ? createChapterSettlementEditEnvironment
+      : createSandboxNovelAgentEditEnvironmentFactory(selection));
   const environment = await factory({
     workspaceRoot: input.workspaceRoot,
     ...(input.capability ? { capability: input.capability } : {}),
@@ -528,6 +566,7 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
 
   return {
     tools: session.tools,
+    drainReadSources: () => session.drainReadSources(),
     workspace: createNovelAgentWorkspaceSnapshotFromProjection(projectionSnapshot, {
       targetPaths: input.exactWritablePaths,
     }),
@@ -803,24 +842,34 @@ export const runNovelAgentTurn = async (
     const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
+    const governance = createUsageGovernance({
+      provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
+      budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
+      sessionId: session?.metadata.id, contextPackage,
+      drainReadSources: environment.drainReadSources,
+    });
     const runtime = createNovelAgentRuntime({
       ...input,
+      usageSessionId: session?.metadata.id,
+      prepareModelRequest: governance.prepareModelRequest,
+      toolResultProvenance: governance.toolResultProvenance,
       tools: environment.tools,
       turnFinalizer: environment.finalizer,
-      onEvent: composeRuntimeEventHandlers(
+      onEvent: composeRuntimeEventHandlers(governance.onEvent, composeRuntimeEventHandlers(
         input.onEvent
           ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
           : undefined,
         session ? (event) => session.onEvent(event.type === 'message_finish'
           ? { ...event, result: withResumeNotice(event.result, resumeNotice) }
           : event) : undefined,
-      ),
+      )),
     });
     const rawResult = await runtime.runTurn(createRuntimeTurnInput({
       ...projectedInput,
       contextPackage,
     }));
     const result = withResumeNotice(rawResult, resumeNotice);
+    if (governance.takePersistenceWarning()) await input.onEvent?.({ type: 'usage_warning', code: 'persistence-unavailable' });
     await maybeWriteNovelAgentSessionArtifacts({
       workspaceRoot: input.workspaceRoot,
       request: input.request,
@@ -864,18 +913,27 @@ export async function* streamNovelAgentTurn(
     const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
+    const governance = createUsageGovernance({
+      provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
+      budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
+      sessionId: session?.metadata.id, contextPackage,
+      drainReadSources: environment.drainReadSources,
+    });
     const runtime = createNovelAgentRuntime({
       ...input,
+      usageSessionId: session?.metadata.id,
+      prepareModelRequest: governance.prepareModelRequest,
+      toolResultProvenance: governance.toolResultProvenance,
       tools: environment.tools,
       turnFinalizer: environment.finalizer,
-      onEvent: composeRuntimeEventHandlers(
+      onEvent: composeRuntimeEventHandlers(governance.onEvent, composeRuntimeEventHandlers(
         input.onEvent
           ? (event) => input.onEvent!(sanitizeRuntimeEventForPublic(event))
           : undefined,
         session ? (event) => session.onEvent(event.type === 'message_finish'
           ? { ...event, result: withResumeNotice(event.result, resumeNotice) }
           : event) : undefined,
-      ),
+      )),
     });
     let finalResult: RunTurnResult | undefined;
 
@@ -888,6 +946,7 @@ export async function* streamNovelAgentTurn(
         yield sanitizeRuntimeEventForPublic({ ...event, result: finalResult });
       } else {
         yield sanitizeRuntimeEventForPublic(event);
+        if (governance.takePersistenceWarning()) yield { type: 'usage_warning', code: 'persistence-unavailable' };
         if (event.type === 'message_start' && resumeNotice) {
           yield { type: 'message_delta', text: resumeNotice };
         }
@@ -1721,7 +1780,7 @@ const toModelVisibleToolSet = (tools: ToolSet): ToolSet =>
 const toModelSystemPrompt = (messages: RuntimeMessage[]): string =>
   messages
     .filter((message) => message.role === 'system')
-    .map((message) => message.content.trim())
+    .map((message) => message.content)
     .filter(Boolean)
     .join('\n\n');
 
@@ -1800,29 +1859,27 @@ const createNovelAgentContext = (
     ?? input.contextPackage?.capability
     ?? inferNovelAgentCapability(input.request, readQuickCommands(input.skill));
 
-  pushContext(
-    context,
-    'constitution',
-    'Novel Constitution',
-    input.workspace.constitution,
-  );
-  pushContext(context, 'workflow', 'Workflow', input.workspace.workflow);
-  pushContext(
-    context,
-    'reminder',
-    'Active fixed fragments',
-    input.writingProfile
-      ? formatWritingProfileReminders(input.writingProfile, capability)
-      : undefined,
-  );
-
-  for (const summary of input.workspace.summaries ?? []) {
-    pushContext(context, 'summary', 'Summary', summary);
-  }
-
-  pushContext(context, 'state', 'State', input.workspace.state);
-  pushContext(context, 'timeline', 'Timeline', input.workspace.timeline);
-  pushContext(context, 'foreshadow', 'Foreshadow', input.workspace.foreshadow);
+  const addSource = (kind: RuntimeContextItem['kind'], title: string, sourceId: string, fallback: string | readonly string[] | undefined,
+    budgetLayer: 'L0' | 'L1' | 'L2', semanticBoundary: 'protected' | 'compressible') => {
+    const files = input.workspace.contextFiles?.filter((file) => file.sourceId === sourceId && file.payload) ?? [];
+    if (files.length) {
+      for (const file of files) context.push({ kind, title, content: file.payload!, provenance: [createContextEvidence({
+        ...file, sourceId, kind, budgetLayer, semanticBoundary,
+      })] });
+    } else {
+      const texts = typeof fallback === 'string' ? [fallback] : fallback ?? [];
+      for (const [index, content] of texts.entries()) if (content) context.push({ kind, title, content,
+        provenance: [createContextEvidence({ sourceId: texts.length > 1 ? `${sourceId}-${index}` : sourceId, kind, budgetLayer, semanticBoundary })],
+      });
+    }
+  };
+  addSource('constitution', 'Novel Constitution', 'constitution', input.workspace.constitution, 'L0', 'protected');
+  addSource('workflow', 'Workflow', 'workflow', input.workspace.workflow, 'L0', 'protected');
+  pushContext(context, 'reminder', 'Active fixed fragments', input.writingProfile ? formatWritingProfileReminders(input.writingProfile, capability) : undefined);
+  addSource('summary', 'Summary', 'previousChapterEnding', input.workspace.summaries, 'L1', 'compressible');
+  addSource('state', 'State', 'latestState', input.workspace.state, 'L1', 'protected');
+  addSource('timeline', 'Timeline', 'timeline', input.workspace.timeline, 'L2', 'compressible');
+  addSource('foreshadow', 'Foreshadow', 'foreshadowLedger', input.workspace.foreshadow, 'L2', 'compressible');
   pushContext(
     context,
     'selected',
@@ -1839,7 +1896,32 @@ const createNovelAgentContext = (
       attachment.content,
     );
   }
-  context.push(...(input.selectedContext ?? []));
+  context.push(...(input.selectedContext ?? []).map((item, index) => {
+    if (item.provenance) return item;
+    if (item.title === 'Project Health Guardrails') return { ...item, provenance: [createContextEvidence({
+      sourceId: 'projectHealth', kind: 'selected', budgetLayer: 'L2', semanticBoundary: 'compressible',
+    })] };
+    if (item.title === 'Reference Context Selection' && input.referenceSelection) return { ...item, provenance: [
+      createContextEvidence({ sourceId: 'referenceSelection', kind: 'reference', budgetLayer: 'L2', semanticBoundary: 'compressible' }),
+      ...input.referenceSelection.included.map((source) => ({
+        ...createContextEvidence({ sourceId: 'referenceDistilled', kind: 'reference', path: source.path, budgetLayer: source.budgetLayer, semanticBoundary: 'compressible' }),
+        sourceRevision: `derived-${createHash('sha256').update(source.content).digest('hex')}`,
+        outcome: 'compressed' as const, attribution: 'derived' as const,
+      })),
+    ] };
+    return { ...item, provenance: [createContextEvidence({
+      sourceId: `selected-${index}`, kind: item.kind, budgetLayer: 'L0', semanticBoundary: 'protected',
+    })] };
+  }));
+  for (const item of context) if (!item.provenance) {
+    const attachment = input.playWritingReferences?.find((a) => a.content === item.content);
+    item.provenance = [createContextEvidence({
+      sourceId: item.title === 'Context Package Summary' ? 'contextPackage' : attachment ? 'playWritingReference' : item.kind,
+      kind: item.kind, ...(attachment ? { path: attachment.path } : {}),
+      budgetLayer: item.title === 'Context Package Summary' ? 'L3' : attachment ? 'L1' : 'L0',
+      semanticBoundary: item.title === 'Context Package Summary' || attachment ? 'compressible' : 'protected',
+    })];
+  }
 
   return context;
 };

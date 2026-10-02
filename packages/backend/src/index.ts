@@ -1,3 +1,5 @@
+import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
+import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -17,6 +19,7 @@ import { cors } from 'hono/cors';
 import {
   MAX_PLAY_LAUNCH_SOURCE_BYTES,
   NOVEL_COPILOT_CAPABILITY_IDS,
+  resolveChapterSettlementSelection,
   PlaySessionWriteConflictError,
   PlayLaunchSourceValidationError,
   activateWritingProfile,
@@ -63,13 +66,13 @@ import {
   normalizePlayWorldMomentum,
   preparePlayWorldSettlementRetry,
   projectPlayOutcomeReport,
-  projectPlaySessionSelectedDetail,
   projectPlayAdoptionCandidate,
   projectPlayAdoptionDraft,
   readProjectHealth,
   readPlayLaunchPackage,
   readPlayOutcomeReport,
   readPlaySessionFiles,
+  readPlaySessionSelectedDetail,
   rebuildPlayAdoptionDraft,
   renamePlaySessionCheckpoint,
   resolvePlaySessionPath,
@@ -209,6 +212,7 @@ import type {
 } from './reference-deconstruction.js';
 import {
   buildChapterIndex,
+  assertChapterSettlementActionFresh,
   commitFiles,
   createChangeMaterializer,
   createPendingActionStore,
@@ -328,6 +332,8 @@ export interface NovelBackendOptions {
 }
 
 export interface NovelBackendAgentInput {
+  sessionId?: string;
+  abortSignal?: AbortSignal;
   request: string;
   workspaceRoot: string;
   messages: UIMessage[];
@@ -585,6 +591,21 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace', (context) => handleGetActiveWorkspace(options, state, context));
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
+  app.get('/api/workspace/search', async (context) => {
+    const query = context.req.query('q') ?? '';
+    if (Object.keys(context.req.query()).some((key) => key !== 'q') || new URL(context.req.url).searchParams.getAll('q').length !== 1 || !query.trim()
+      || query.trim().length > 160 || /[\x00-\x1f\x7f]/u.test(query)) return jsonResponse(context, 400, { error: 'Invalid search query.' });
+    try { return jsonResponse(context, 200, await searchWorkspaceText(requireActiveWorkspaceRoot(options, state), query)); }
+    catch { return jsonResponse(context, 422, { error: 'Workspace search could not safely read the current files. Refresh after checking text files and links.' }); }
+  });
+  app.get('/api/workspace/manuscript/export', async (context) => {
+    const format = context.req.query('format');
+    if (Object.keys(context.req.query()).some((key) => key !== 'format') || new URL(context.req.url).searchParams.getAll('format').length !== 1 || (format !== 'md' && format !== 'txt')) {
+      return jsonResponse(context, 400, { error: 'Choose md or txt for manuscript export.' });
+    }
+    try { return jsonResponse(context, 200, await exportManuscript(requireActiveWorkspaceRoot(options, state), format)); }
+    catch { return jsonResponse(context, 422, { error: 'No safely readable canonical manuscript is available. Check chapters and file links, then retry.' }); }
+  });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
   app.get('/api/workspace/writing-profiles', (context) =>
     handleGetWritingProfiles(options, state, context));
@@ -983,6 +1004,19 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/chapters', (context) => handleWorkspaceChapters(options, state, context));
   app.post('/api/workspace/chapters/rescan', (context) =>
     handleWorkspaceChapterRescan(options, state, context));
+  app.get('/api/workspace/agent-sessions', async (context) => {
+    const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+    try { return jsonResponse(context, 200, { sessions: await listAgentUsageSessions(workspaceRoot) }); }
+    catch { return jsonResponse(context, 422, { error: 'Usage history is unavailable.' }); }
+  });
+  app.get('/api/workspace/agent-sessions/:id/governance', async (context) => {
+    const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+    const id = context.req.param('id'); const rawLimit = context.req.query('limit');
+    const limit = rawLimit === undefined ? 50 : Number(rawLimit);
+    try { assertUsageSessionId(id); } catch { return jsonResponse(context, 400, { error: 'Invalid usage session id.' }); }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return jsonResponse(context, 400, { error: 'Usage limit must be 1–100.' });
+    return jsonResponse(context, 200, await readAgentGovernanceHistory(workspaceRoot, id, limit));
+  });
   app.post('/api/agent/chat', (context) => handleAgentChat(options, state, context));
   app.notFound((context) => jsonResponse(context, 404, { error: 'Not found.' }));
 
@@ -1040,12 +1074,20 @@ async function handleAgentChat(
   await ensureProviderConfigLoaded(options, state);
   const body = await readJsonBody(context);
   const messages = Array.isArray(body.messages) ? (body.messages as UIMessage[]) : [];
+  if (body.sessionId !== undefined) {
+    try { assertUsageSessionId(body.sessionId); if (body.sessionId.includes('.')) throw new Error('Unsupported chat session id.'); } catch { return jsonResponse(context, 400, { error: 'Invalid agent session id.' }); }
+  }
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
   const attachmentIds = readPlayWritingReferenceAttachmentIds(body);
   const exactWritablePaths = readAgentExactWritablePaths(body);
 
   if (!requestText.trim()) {
     return jsonResponse(context, 400, { error: 'A user message is required.' });
+  }
+  if (inferNovelAgentCapability(requestText) === 'novel.settle_chapter') {
+    try { resolveChapterSettlementSelection(exactWritablePaths); } catch (error) {
+      return jsonResponse(context, 400, { code: 'CHAPTER_SETTLEMENT_SELECTION_REQUIRED', error: (error as Error).message });
+    }
   }
   if ('error' in attachmentIds) {
     return jsonResponse(context, 400, { error: attachmentIds.error });
@@ -1080,6 +1122,8 @@ async function handleAgentChat(
   const runtimeEvents = await createRuntimeEventStream(options, state, {
     request: requestText,
     workspaceRoot,
+    ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+    abortSignal: context.req.raw.signal,
     messages,
     exactWritablePaths,
     ...(playWritingReferences.length ? { playWritingReferences } : {}),
@@ -1556,18 +1600,11 @@ async function handleWorkspaceFile(
   state: BackendState,
   context: NovelBackendContext,
 ): Promise<Response> {
-  const workspaceRoot = await realpath(requireActiveWorkspaceRoot(options, state));
-  const filePath = resolveWorkspaceFile(workspaceRoot, context.req.query('path') ?? '');
-  const fileStat = await stat(filePath);
-
-  if (!fileStat.isFile()) {
-    return jsonResponse(context, 400, { error: 'Selected path is not a file.' });
+  try {
+    return jsonResponse(context, 200, await readWorkspaceTextFile(requireActiveWorkspaceRoot(options, state), context.req.query('path') ?? ''));
+  } catch {
+    return jsonResponse(context, 400, { error: 'Selected file is unavailable or is not safe workspace text.' });
   }
-
-  return jsonResponse(context, 200, {
-    path: relative(workspaceRoot, filePath),
-    content: await readFile(filePath, 'utf-8'),
-  });
 }
 
 async function handleWorkspaceChapters(
@@ -2746,9 +2783,8 @@ async function handleReadPlaySessionDetail(
     return jsonResponse(context, 400, { error: query.error });
   }
   try {
-    const session = await readPlaySessionFiles(workspaceRoot, id);
     return jsonResponse(context, 200, {
-      detail: projectPlaySessionSelectedDetail(session, query.value),
+      detail: await readPlaySessionSelectedDetail(workspaceRoot, id, query.value),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -5972,6 +6008,10 @@ async function assertPendingActionOriginFresh(
   const origin = action.origin;
   assertCapabilityOriginBinding(action.source.capability, origin);
   if (origin === undefined || origin.kind === 'agentTurn') return;
+  if (origin.kind === 'chapterSettlement') {
+    await assertChapterSettlementActionFresh(workspaceRoot, action);
+    return;
+  }
   if (origin.kind === 'referenceDeconstructionPublish') {
     const controller = state.referenceDeconstruction;
     if (!controller) throw new Error('Reference deconstruction controller is unavailable.');
@@ -6055,6 +6095,7 @@ function hasPendingActionErrorCode(error: unknown): boolean {
       || error.code === 'UNSUPPORTED_PENDING_ACTION_SCHEMA'
       || error.code === 'INVALID_PENDING_ACTION_SCHEMA'
       || error.code === 'STALE_REPOSITORY_BASELINE'
+      || error.code === 'STALE_PENDING_ACTION_BASELINE'
     );
 }
 
@@ -6344,7 +6385,8 @@ async function createRuntimeEventStream(
       exactWritablePaths: input.exactWritablePaths,
       tools: options.tools,
       externalContext,
-      session: { metadata: { title: input.request } },
+      abortSignal: input.abortSignal,
+      session: { ...(input.sessionId ? { id: input.sessionId } : {}), metadata: { title: input.request } },
     });
   }
 
@@ -6997,10 +7039,14 @@ async function readNovelName(workspaceRoot: string): Promise<string> {
 }
 
 async function buildFileTree(workspaceRoot: string, directory: string): Promise<FileTreeNode[]> {
+  if (await realpath(directory) !== directory) throw new Error('Unsafe workspace directory.');
   const entries = await readdir(directory, { withFileTypes: true });
+  const controlRoot = relative(workspaceRoot, directory) === '.oan';
   const nodes = await Promise.all(
     entries
-      .filter((entry) => !entry.name.startsWith('.'))
+      .filter((entry) => !entry.isSymbolicLink() && (controlRoot
+        ? (entry.name === 'constitution' && entry.isDirectory()) || (entry.name === 'workflow.yaml' && entry.isFile())
+        : !entry.name.startsWith('.') || (directory === workspaceRoot && entry.name === '.oan' && entry.isDirectory())))
       .map(async (entry) => {
         const absolutePath = join(directory, entry.name);
         const nodePath = relative(workspaceRoot, absolutePath);

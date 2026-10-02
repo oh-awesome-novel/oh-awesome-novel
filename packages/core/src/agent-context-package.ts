@@ -39,7 +39,9 @@ export interface ContextSourceRef {
   modelVisibleChars?: number;
   estimatedTokens?: number;
   estimator?: 'utf8-bytes-div-3-v1';
-  outcome?: 'selected' | 'omitted';
+  outcome?: 'selected' | 'compressed' | 'omitted' | 'excluded';
+  originalChars?: number;
+  sourceRevision?: string;
 }
 
 export type ContextTraceType =

@@ -74,8 +74,8 @@ syncBuiltinESMExports();
 const {
   createPlaySessionDraft,
   listPlaySessionSummaries,
-  projectPlaySessionSelectedDetail,
   readPlaySessionFiles,
+  readPlaySessionSelectedDetail,
   settlePlayWorldRefereeResponse,
   settlePlayWorldSettlementRetry,
   writePlaySessionFiles,
@@ -103,15 +103,18 @@ async function measure(operation) {
     writeCalls: 0, writeBytes: 0, copyCalls: 0, copiedBytes: 0, aggregateLockHoldMs: 0,
   };
   const started = performance.now();
+  const cpuStarted = process.cpuUsage();
   try {
     const value = await operation();
     const { readPaths, ...metrics } = active;
+    const cpu = process.cpuUsage(cpuStarted);
     return {
       ...metrics,
       uniqueReadFiles: readPaths.size,
       totalWrittenBytes: metrics.writeBytes + metrics.copiedBytes,
       aggregateLockHoldMs: Number(metrics.aggregateLockHoldMs.toFixed(2)),
       elapsedMs: Number((performance.now() - started).toFixed(2)),
+      cpuMs: Number(((cpu.user + cpu.system) / 1000).toFixed(2)),
       responseBytes: Buffer.byteLength(JSON.stringify(value)),
     };
   } finally {
@@ -146,9 +149,7 @@ for (const scenario of scenarios) {
       await writePlaySessionFiles(root, session, { expectedAbsent: true });
     }
     const summary = await measure(() => listPlaySessionSummaries(root));
-    const detail = await measure(async () => projectPlaySessionSelectedDetail(
-      await readPlaySessionFiles(root, 'session-0'), { limit: 10 },
-    ));
+    const detail = await measure(() => readPlaySessionSelectedDetail(root, 'session-0', { limit: 10 }));
     const before = await readPlaySessionFiles(root, 'session-0');
     const next = append(before, scenario.turns + 1);
     const save = await measure(() => writePlaySessionFiles(root, next, { expectedCurrentSession: before }));
@@ -164,6 +165,6 @@ console.log(JSON.stringify({
   node: process.version,
   platform: `${process.platform}/${process.arch}`,
   detailWindow: { transcript: 10, events: 10 },
-  scope: 'Successful application read/write bytes, copy bytes, and cooperative lock hold time; warm filesystem cache, no OS metadata or physical disk I/O.',
+  scope: 'Successful application read/write bytes, copy bytes, and cooperative lock hold time; warm filesystem cache and process-local source witness seeded by fixture creation. Cold/rebound witnesses require one full validation; OS metadata and physical disk I/O are not measured.',
   results,
 }, null, 2));

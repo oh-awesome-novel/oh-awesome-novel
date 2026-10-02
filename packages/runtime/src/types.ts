@@ -1,3 +1,4 @@
+import type { AgentUsageRecord, ModelRequestStats, NormalizedModelUsage, TurnUsageSummary, UsageRequestMetadata, UsageSourceEvidence } from '@oh-awesome-novel/core/agent-usage';
 import type { ToolSet } from 'ai';
 
 export type RuntimeRole = 'system' | 'user' | 'assistant' | 'tool';
@@ -8,6 +9,8 @@ export interface RuntimeMessage {
   name?: string;
   toolCallId?: string;
   toolCalls?: RuntimeToolCall[];
+  /** Host-only metadata, stripped before the provider request. */
+  provenance?: UsageSourceEvidence[];
 }
 
 export interface RuntimeToolCall {
@@ -75,6 +78,8 @@ export interface RuntimeModelRequest {
 }
 
 export interface RuntimeModelResponse {
+  usage?: NormalizedModelUsage;
+  finishReason?: string;
   message?: RuntimeMessage;
   toolCalls?: RuntimeToolCall[];
 }
@@ -100,6 +105,7 @@ export interface RuntimeToolLogEntry {
 }
 
 export interface RuntimeContextItem {
+  provenance?: UsageSourceEvidence[];
   kind:
     | 'constitution'
     | 'workflow'
@@ -153,6 +159,9 @@ export interface RuntimeTurnFinalizer {
 }
 
 export type RuntimeEvent =
+  | { type: 'model_request_stats'; record: Extract<AgentUsageRecord, { recordType: 'request' }> }
+  | { type: 'usage_stats'; record: Exclude<AgentUsageRecord, { recordType: 'request' }> }
+  | { type: 'usage_warning'; code: 'persistence-unavailable' }
   | { type: 'message_start'; messages: RuntimeMessage[] }
   | { type: 'message_delta'; text: string }
   | { type: 'tool_call_start'; toolCall: RuntimeToolCallAudit }
@@ -166,6 +175,10 @@ export type RuntimeEvent =
   | { type: 'error'; error: RuntimeError };
 
 export interface CopilotRuntimeOptions {
+  usageSessionId?: string;
+  prepareModelRequest?: (request: RuntimeModelRequest) => { request: RuntimeModelRequest; metadata: UsageRequestMetadata } | Promise<{ request: RuntimeModelRequest; metadata: UsageRequestMetadata }>;
+  toolResultProvenance?: (toolCall: RuntimeToolCall, result: RuntimeToolResult) => UsageSourceEvidence[];
+
   model: RuntimeModelAdapter;
   tools?: ToolSet;
   contextBuilder?: RuntimeContextBuilder;
@@ -183,6 +196,7 @@ export interface RunTurnInput {
 }
 
 export interface RunTurnResult {
+  usage?: TurnUsageSummary;
   messages: RuntimeMessage[];
   assistantMessage?: RuntimeMessage;
   toolLog: RuntimeToolLogEntry[];

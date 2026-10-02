@@ -24,5 +24,15 @@
     "tsdown": "^0.22.2",
     "typescript": "~6.0.2",
     "vitest": "^4.1.8"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./agent-usage": {
+      "types": "./dist/agent-usage.d.mts",
+      "import": "./dist/agent-usage.mjs"
+    }
   }
 }

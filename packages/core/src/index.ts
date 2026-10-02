@@ -199,6 +199,8 @@ export type {
 } from './writing-review.js';
 
 // Writing Settlement
+export { CHAPTER_SETTLEMENT_OBSERVATION_SCHEMA, assertChapterSettlementId, resolveChapterSettlementSelection, createChapterSettlementSource, parseChapterSettlementObservationLog, formatChapterSettlementObservationLog } from './chapter-settlement.js';
+export type { ChapterSettlementSource, ChapterSettlementObservation, ChapterSettlementObservationLog } from './chapter-settlement.js';
 export {
   SETTLEMENT_HOOK_OPERATIONS,
   formatObservationLogMarkdown,
@@ -371,6 +373,7 @@ export {
   listPlaySessions,
   previewPlaySessionMigration,
   readPlaySessionFiles,
+  readPlaySessionSelectedDetail,
   resolvePlaySessionPath,
   resolvePlayTurnArtifactPath,
   restorePlaySessionCheckpoint,
@@ -1159,3 +1162,9 @@ export type {
   ReferenceSourceType,
   ReferenceWorkSummary,
 } from './reference-work.js';
+
+export { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from './workspace-text.js';
+export type { WorkspaceSearchResult, WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
+
+export * from './agent-usage';
+export * from './agent-usage-store';

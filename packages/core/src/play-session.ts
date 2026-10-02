@@ -120,8 +120,18 @@ import {
   writePlayContextTraceToStage,
 } from './play-context-trace.js';
 import type { PlayTurnContextTrace } from './play-context-trace.js';
-import { summarizePlaySession } from './play-session-read-model.js';
-import type { PlaySessionSummary } from './play-session-read-model.js';
+import { projectPlaySessionSelectedDetail, summarizePlaySession } from './play-session-read-model.js';
+import type { PlaySessionSummary, PlaySessionSelectedDetail, ProjectPlaySessionSelectedDetailOptions } from './play-session-read-model.js';
+import {
+  PLAY_READ_MODEL_METADATA_KEY,
+  buildPlayStorageReadModel,
+  copyPlaySnapshotFile,
+  playStorageHash,
+  readPlayStorageAnchor,
+  readPlayStorageHead,
+  readPlayStorageDetail,
+  rebuildPlayStorageReadModel,
+} from './play-storage-read-model.js';
 import type {
   PlayCommittedSceneEvidence,
   PlayRehearsalParticipant,
@@ -521,6 +531,8 @@ export const writePlaySessionFiles = async (
   (transaction) => transaction.write(session, options),
 );
 
+const storedArtifactHashes = new WeakMap<PlayTurnArtifact, string>();
+
 export const withPlaySessionFileTransaction = async <T>(
   workspaceRoot: string,
   sessionIdValue: string,
@@ -536,6 +548,7 @@ export const withPlaySessionFileTransaction = async <T>(
     return await operation({
       read: () => readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId),
       write: async (session, options = {}) => {
+        let previousSession: PlaySession | undefined;
         if (session.id !== sessionId) {
           throw new Error('Play session transaction cannot cross sessions.');
         }
@@ -560,6 +573,7 @@ export const withPlaySessionFileTransaction = async <T>(
             workspaceRoot,
             sessionId,
           );
+          previousSession = authoritative;
           if (!isDeepStrictEqual(authoritative, options.expectedCurrentSession)) {
             throw new PlaySessionWriteConflictError(
               `Play session ${sessionId} changed before the staged write could commit.`,
@@ -571,6 +585,7 @@ export const withPlaySessionFileTransaction = async <T>(
           session,
           options.contextTrace,
           options.faultInjector,
+          previousSession,
         );
       },
     });
@@ -584,6 +599,7 @@ const writePlaySessionFilesWithLock = async (
   session: PlaySession,
   contextTrace?: PlayTurnContextTrace,
   faultInjector?: WritePlaySessionFilesOptions['faultInjector'],
+  previousSession?: PlaySession,
 ): Promise<string[]> => {
   const rehearsalState = normalizePlaySessionRehearsalState(session);
 
@@ -640,7 +656,10 @@ const writePlaySessionFilesWithLock = async (
       );
     }
   }
-  const files: Array<[string, string]> = [
+  const previousArtifacts = new Map(previousSession?.turnArtifacts.map((artifact) => [artifact.id, artifact]) ?? []);
+  const sourceHashes = new Map<string, string>();
+  const reusedPaths = new Set<string>();
+  const files: Array<[string, string | undefined]> = [
     ['session.yaml', stringify(formatSessionMetadata(sessionForWrite))],
     ['transcript.md', formatTranscript(sessionForWrite)],
     ['play-local-state.yaml', stringify(sessionForWrite.playLocalState)],
@@ -667,10 +686,17 @@ const writePlaySessionFilesWithLock = async (
           ] as [string, string]),
         ]
       : []),
-    ...sessionForWrite.turnArtifacts.map((artifact) => [
-      join(PLAY_TURNS_DIRECTORY, `${assertSafePlayTurnArtifactId(artifact.id)}.yaml`),
-      stringify(artifact),
-    ] as [string, string]),
+    ...sessionForWrite.turnArtifacts.map((artifact): [string, string | undefined] => {
+      const path = join(PLAY_TURNS_DIRECTORY, `${assertSafePlayTurnArtifactId(artifact.id)}.yaml`);
+      const previous = previousArtifacts.get(artifact.id);
+      const hash = previous && storedArtifactHashes.get(previous);
+      if (hash && isDeepStrictEqual(previous, artifact)) {
+        sourceHashes.set(path.split(sep).join('/'), hash);
+        reusedPaths.add(path);
+        return [path, undefined];
+      }
+      return [path, stringify(artifact)];
+    }),
   ];
   const sessionsRoot = resolvePlaySessionsRoot(workspaceRoot);
   const sessionRoot = dirname(resolvePlaySessionPath(
@@ -701,9 +727,19 @@ const writePlaySessionFilesWithLock = async (
     }
     await Promise.all(files.map(async ([file, content]) => {
       await mkdir(dirname(join(stageRoot, file)), { recursive: true });
+      if (reusedPaths.has(file)) {
+        await copyPlaySnapshotFile(join(sessionRoot, file), join(stageRoot, file));
+        if (playStorageHash(await readFile(join(stageRoot, file))) !== sourceHashes.get(file.split(sep).join('/'))) {
+          throw new PlaySessionWriteConflictError(`Play turn changed during snapshot reuse: ${file}.`);
+        }
+        return;
+      }
+      if (content === undefined) throw new Error('Play snapshot file has no content.');
+      const bytes = content.endsWith('\n') ? content : `${content}\n`;
+      sourceHashes.set(file.split(sep).join('/'), playStorageHash(bytes));
       await writeFile(
         join(stageRoot, file),
-        content.endsWith('\n') ? content : `${content}\n`,
+        bytes,
         'utf-8',
       );
     }));
@@ -727,6 +763,13 @@ const writePlaySessionFilesWithLock = async (
       }
       await writePlayContextTraceToStage(stageRoot, normalizedContextTrace);
     }
+    const metadata = formatSessionMetadata(sessionForWrite);
+    const readModelRoot = await buildPlayStorageReadModel({
+      sessionRoot: stageRoot, session: sessionForWrite, metadata, sourceHashes, previousRoot: sessionRoot,
+    });
+    await writeFile(join(stageRoot, 'session.yaml'), stringify({
+      ...metadata, [PLAY_READ_MODEL_METADATA_KEY]: { version: 1, root: readModelRoot },
+    }), 'utf8');
     await syncPlaySnapshotTree(stageRoot);
     await faultInjector?.('after-stage-files');
     await writeFile(join(stageRoot, '.ready'), `${sessionForWrite.revision}\n`, 'utf-8');
@@ -1088,12 +1131,75 @@ export const listPlaySessions = async (
 export const listPlaySessionSummaries = async (
   workspaceRoot: string,
 ): Promise<PlaySessionSummary[]> => {
-  const summaries = (await listPlaySessions(workspaceRoot))
-    .map(summarizePlaySession);
+  const root = resolvePlaySessionsRoot(workspaceRoot);
+  let entries: Dirent[];
+  try {
+    await recoverPlaySessionsRoot(workspaceRoot);
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const summaries = await Promise.all(entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map((entry) => withPlayIndexedRead(workspaceRoot, entry.name, async (sessionRoot, metadata) => {
+      const head = await readPlayStorageHead(sessionRoot, metadata);
+      return head?.summary ?? summarizePlaySession(await readPlaySessionFilesWithoutRecovery(workspaceRoot, entry.name));
+    })));
 
   return summaries.sort((left, right) =>
     right.latestActivityAt.localeCompare(left.latestActivityAt));
 };
+
+/** Warm workspace reads use derived pages; new source identities validate once. */
+export async function readPlaySessionSelectedDetail(
+  workspaceRoot: string,
+  sessionId: string,
+  options: ProjectPlaySessionSelectedDetailOptions = {},
+): Promise<PlaySessionSelectedDetail> {
+  return withPlayIndexedRead(workspaceRoot, sessionId, async (sessionRoot, metadata) => {
+    const head = await readPlayStorageHead(sessionRoot, metadata);
+    return head
+      ? readPlayStorageDetail(sessionRoot, head, options)
+      : projectPlaySessionSelectedDetail(await readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId), options);
+  });
+}
+
+async function withPlayIndexedRead<T>(
+  workspaceRoot: string,
+  sessionId: string,
+  operation: (sessionRoot: string, metadata: Record<string, unknown>) => Promise<T>,
+): Promise<T> {
+  assertSafePlaySessionId(sessionId);
+  const release = await acquirePlaySessionWriteLock(workspaceRoot, sessionId);
+  try {
+    await recoverPlaySessionDirectoryWithLock(workspaceRoot, sessionId);
+    const sessionRoot = dirname(resolvePlaySessionPath(workspaceRoot, sessionId, 'session.yaml'));
+    const metadata: unknown = parse(await readFile(join(sessionRoot, 'session.yaml'), 'utf8'));
+    if (!isRecord(metadata)) throw new Error('Play session metadata must be an object.');
+    readPlayStorageAnchor(metadata);
+    try { return await operation(sessionRoot, metadata); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code !== 'ENOENT' && code !== 'PLAY_READ_MODEL_REBIND_REQUIRED') || !readPlayStorageAnchor(metadata)) throw error;
+      const session = await readPlaySessionFilesWithoutRecovery(workspaceRoot, sessionId);
+      const paths: string[] = [
+        ...PLAY_SESSION_FILES.filter((file) => file !== 'session.yaml' && file !== 'transcript.md'),
+        ...session.turnArtifacts.map((artifact) => `turns/${artifact.id}.yaml`),
+        ...(session.rehearsalScenes ?? []).map((scene) => `scenes/${scene.sceneId}.yaml`),
+      ];
+      const sourceHashes = new Map<string, string>();
+      for (const path of paths) {
+        try { sourceHashes.set(path, playStorageHash(await readFile(join(sessionRoot, path)))); }
+        catch (readError) {
+          if ((readError as NodeJS.ErrnoException).code !== 'ENOENT') throw readError;
+        }
+      }
+      await rebuildPlayStorageReadModel({ sessionRoot, session, metadata, sourceHashes });
+      return operation(sessionRoot, metadata);
+    }
+  } finally { await release(); }
+}
 
 export const evaluatePlaySessionDueEvents = (
   session: PlaySession,
@@ -1814,9 +1920,9 @@ async function readPlayTurnArtifactsFromSessionRoot(
       .filter((entry) => entry.isFile() && entry.name.endsWith('.yaml'))
       .map(async (entry) => {
         const artifactId = assertSafePlayTurnArtifactId(entry.name.slice(0, -5));
-        const artifact = normalizePlayTurnArtifact(
-          parse(await readFile(join(turnsRoot, entry.name), 'utf-8')),
-        );
+        const bytes = await readFile(join(turnsRoot, entry.name), 'utf-8');
+        const artifact = normalizePlayTurnArtifact(parse(bytes));
+        storedArtifactHashes.set(artifact, playStorageHash(bytes));
         if (artifact.id !== artifactId) {
           throw new Error(
             `Play turn artifact id mismatch: expected ${artifactId}, found ${artifact.id}.`,
@@ -1931,6 +2037,7 @@ function normalizeSelectedTurnIds(
 }
 
 const PLAY_SESSION_METADATA_KEYS = new Set([
+  PLAY_READ_MODEL_METADATA_KEY,
   'schemaVersion',
   'id',
   'title',
