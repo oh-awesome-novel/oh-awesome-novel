@@ -68,6 +68,6 @@ npm run make --workspace @oh-awesome-novel/desktop
 
 `make` 会构建依赖和 renderer，再依次执行 Forge package / make。产物位于 `apps/desktop/out/make/`。本地默认构建当前系统和架构；Linux 构建需安装 `rpm` 和 `fakeroot` 等工具。
 
-CI 使用各平台原生 runner；安装时跳过生命周期脚本，再显式下载官方 Electron 二进制。Linux packaged smoke 使用 Xvfb 和仅测试进程的 `--no-sandbox`；正常桌面启动配置保持原样。Smoke 使用临时工作区验证 sandbox 候选产生、正式文件未被修改和 session dispose，不调用外部模型。
+CI 使用各平台原生 runner；安装时跳过生命周期脚本，再显式下载官方 Electron 二进制，并仅在 Windows 初始化 Squirrel 的架构对应压缩工具。Linux packaged smoke 使用 Xvfb 和仅测试进程的 `--no-sandbox`；正常桌面启动配置保持原样。Smoke 使用临时工作区验证 sandbox 候选产生、正式文件未被修改和 session dispose，不调用外部模型。
 
 参考：[Electron Forge 构建生命周期](https://www.electronforge.io/core-concepts/build-lifecycle)、[GitHub CLI Release 命令](https://cli.github.com/manual/gh_release_create)。

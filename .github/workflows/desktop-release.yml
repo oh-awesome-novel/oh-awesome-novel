@@ -73,6 +73,11 @@ jobs:
           npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com
           node node_modules/electron/install.js
 
+      - name: Prepare Windows installer compression tools
+        if: runner.os == 'Windows'
+        working-directory: node_modules/electron-winstaller
+        run: node script/select-7z-arch.js
+
       - name: Set application version from tag
         run: |
           if [[ -n "$RELEASE_TAG" ]]; then
