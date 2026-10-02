@@ -78,6 +78,7 @@
 
 ## Needs Review Tasks
 
+- [1280 Electron Release Workflow](1280.md)
 - [0580 Git History And Sync Page](0580.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
 - [1060 Play Mode And Tavern Character Import](1060.md)

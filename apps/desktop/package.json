@@ -3,15 +3,15 @@
   "productName": "oan",
   "private": true,
   "version": "0.0.0",
-  "description": "",
+  "description": "Filesystem-first novel IDE and AI writing copilot",
   "license": "MIT",
-  "author": "",
+  "author": "oh-awesome-novel",
   "type": "commonjs",
   "main": ".vite/build/main.js",
   "scripts": {
     "dev": "npm --prefix ../.. run desktop:build:deps && electron-forge start",
     "package": "npm --prefix ../.. run desktop:build:package && electron-forge package",
-    "make": "npm --prefix ../.. run desktop:build:package && electron-forge make --skip-package",
+    "make": "npm --prefix ../.. run desktop:build:package && electron-forge make",
     "publish": "npm --prefix ../.. run desktop:build:package && electron-forge publish",
     "start": "electron ."
   },

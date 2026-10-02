@@ -87,6 +87,8 @@ npm run docs:dev
 
 ## 本地开发
 
+桌面安装包由 GitHub Actions 构建，推送版本标签后发布到 [GitHub Releases](https://github.com/oh-awesome-novel/oh-awesome-novel/releases)。支持 macOS arm64/x64、Windows x64 和 Linux x64，不配置证书签名或公证。构建验证与发布步骤见 [Electron Release](docs/ELECTRON_RELEASE.md)。
+
 优先使用独立 HTTP backend + Vite Web UI：
 
 ```sh

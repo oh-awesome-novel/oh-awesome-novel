@@ -20,10 +20,10 @@ const config = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({ name: 'oan' }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({ options: { name: 'oan' } }),
+    new MakerDeb({ options: { name: 'oan' } }),
   ],
   plugins: [
     new TsdownPlugin({

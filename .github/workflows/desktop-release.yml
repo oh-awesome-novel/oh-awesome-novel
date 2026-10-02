@@ -1,0 +1,176 @@
+name: Build and release Electron
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to release; leave empty to build artifacts only"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - os: windows-2022
+            platform: win32
+            arch: x64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NX_DAEMON: "false"
+      NX_NO_CLOUD: "true"
+      ELECTRON_MIRROR: "https://github.com/electron/electron/releases/download/"
+      ELECTRON_CUSTOM_DIR: "v{{ version }}"
+      npm_config_electron_mirror: "https://github.com/electron/electron/releases/download/"
+      npm_config_electron_custom_dir: "v{{ version }}"
+      RELEASE_TAG: ${{ inputs.tag || (github.event_name == 'push' && github.ref_type == 'tag' && github.ref_name) || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Linux packaging and smoke-test tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com
+          node node_modules/electron/install.js
+
+      - name: Set application version from tag
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            git show-ref --verify "refs/tags/$RELEASE_TAG"
+          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const semver = require('semver');
+          const tag = process.env.RELEASE_TAG;
+          const file = 'apps/desktop/package.json';
+          const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (tag) {
+            const version = tag.startsWith('v') ? tag.slice(1) : '';
+            if (!semver.valid(version) || semver.valid(version) !== version) {
+              throw new Error('Release tags must be v followed by a canonical semantic version.');
+            }
+            pkg.version = version;
+            fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');
+          }
+          console.log(`Building oan ${pkg.version}`);
+          NODE
+
+      - name: Make unsigned distributables
+        run: npm run make --workspace @oh-awesome-novel/desktop -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Verify packaged main process
+        run: |
+          cat > "$RUNNER_TEMP/oan-packaged-smoke.cjs" <<'NODE'
+          const path = require('node:path');
+          const { spawnSync } = require('node:child_process');
+          const platform = process.platform;
+          const bundle = path.resolve('apps/desktop/out', `oan-${platform}-${process.arch}`);
+          const executable = platform === 'darwin'
+            ? path.join(bundle, 'oan.app/Contents/MacOS/oan')
+            : path.join(bundle, platform === 'win32' ? 'oan.exe' : 'oan');
+          const args = ['--oan-packaged-main-smoke'];
+          if (platform === 'linux') args.push('--no-sandbox');
+          const result = spawnSync(executable, args, { encoding: 'utf8', timeout: 120000 });
+          process.stdout.write(result.stdout || '');
+          process.stderr.write(result.stderr || '');
+          if (result.error) throw result.error;
+          if (result.status !== 0 || !result.stdout?.includes('"ok":true')) {
+            throw new Error(`Packaged smoke failed: exit=${result.status}, signal=${result.signal}`);
+          }
+          NODE
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a node "$RUNNER_TEMP/oan-packaged-smoke.cjs"
+          else
+            node "$RUNNER_TEMP/oan-packaged-smoke.cjs"
+          fi
+
+      - name: Upload distributables
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: apps/desktop/out/make/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Download distributables
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish complete release with checksums
+        shell: bash
+        run: |
+          mapfile -d '' assets < <(find release-assets -type f -print0 | sort -z)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No distributables were downloaded." >&2
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")") >> release-assets/SHA256SUMS
+          done
+          assets+=(release-assets/SHA256SUMS)
+          prerelease_args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" --json isDraft > release.json; then
+            node -e 'if (!require("./release.json").isDraft) throw new Error("This release is already published; create a new version tag.")'
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "oan $RELEASE_TAG" --generate-notes "${prerelease_args[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false "${prerelease_args[@]}"
