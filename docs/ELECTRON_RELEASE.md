@@ -66,6 +66,10 @@ gh workflow run desktop-release.yml --repo oh-awesome-novel/oh-awesome-novel --r
 
 ## 本地构建
 
+应用图标的母版与各平台资源位于 `apps/desktop/assets/`，设计说明、完整生成提示词和更新方法见[图标资源说明](../apps/desktop/assets/README.md)。在macOS上运行 `npm run icons:build` 可从已保存母版重新生成PNG、ICO、ICNS及启动页/favicon资源；CI直接使用这些版本化产物。
+
+Forge为macOS应用选择ICNS、Windows EXE/Squirrel Setup选择ICO、DEB/RPM选择512px PNG。窗口图标从打包后的 `resources/icons` 读取，macOS开发环境也使用同一图案作为Dock图标。当前使用传统ICNS覆盖已支持的macOS发行环境。
+
 使用 Node.js 24，在仓库根目录安装依赖，然后执行：
 
 ```sh

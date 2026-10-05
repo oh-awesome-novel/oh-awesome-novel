@@ -11,6 +11,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "icons:build": "node scripts/build-app-icons.mjs",
     "build": "nx run-many -t build --parallel=1",
     "typecheck": "node scripts/check-typecheck-coverage.mjs && npm run typecheck --workspaces --if-present",
     "test:ci": "npm --ignore-scripts run test:run --workspace @oh-awesome-novel/test-core --workspace @oh-awesome-novel/test-runtime --workspace @oh-awesome-novel/test-tools --workspace @oh-awesome-novel/test-agent --workspace @oh-awesome-novel/test-backend --workspace @oh-awesome-novel/test-client --workspace @oh-awesome-novel/test-desktop-ui -- --maxWorkers=1",

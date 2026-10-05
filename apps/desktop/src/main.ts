@@ -102,6 +102,7 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
+    icon: resolveDesktopIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backend
@@ -134,6 +135,12 @@ const getRendererIndexPath = () => {
 app.on('ready', async () => {
   if (packagedMainSmokeEnabled) {
     return;
+  }
+
+  // A packaged macOS app uses its ICNS bundle icon. Development runs inside
+  // Electron's own bundle, so explicitly display the same artwork in its Dock.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(resolveDesktopIconPath());
   }
 
   backend = await startNovelHttpBackend({
@@ -180,6 +187,13 @@ function resolveWorkspaceRoot(): string {
 
 function resolveDesktopConfigDir(): string {
   return app.getPath('userData');
+}
+
+function resolveDesktopIconPath(): string {
+  const iconDirectory = app.isPackaged
+    ? path.join(process.resourcesPath, 'icons')
+    : path.join(app.getAppPath(), 'assets', 'icons');
+  return path.join(iconDirectory, process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 }
 
 function getSystemTheme(): ThemePreference {

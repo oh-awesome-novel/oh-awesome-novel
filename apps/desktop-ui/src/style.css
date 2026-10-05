@@ -616,7 +616,7 @@
   }
 
   .launcher-app-icon {
-    @apply h-12 w-12 dark:invert;
+    @apply h-12 w-12 object-contain;
   }
 
   .launcher-brand-copy {

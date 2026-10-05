@@ -7,7 +7,7 @@ import LauncherSettingsView from './LauncherSettingsView.vue';
 import { useWorkspaceSearch } from '../../composables/useWorkspaceSearch';
 import type { LauncherSection } from './launcherSections';
 import type { WorkspaceSummary } from '../../composables/useWorkspaceApi';
-import appIconUrl from '../../assets/oan-app-icon.svg';
+import appIconUrl from '../../assets/oan-app-icon.png';
 
 const props = defineProps<{
   section: LauncherSection;

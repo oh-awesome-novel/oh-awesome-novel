@@ -79,6 +79,7 @@
 - [1290 Long-novel Context And Memory Freshness](1290.md)
 - [1300 Author Manuscript Markdown Import](1300.md)
 - [1310 Delivery Quality Gates And Reviewed Git Commits](1310.md)
+- [1320 Application Icon And Desktop Branding](1320.md)
 
 ## Needs Review Tasks
 
