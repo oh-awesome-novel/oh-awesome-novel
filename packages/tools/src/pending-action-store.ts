@@ -37,6 +37,7 @@ import {
 import { createWorkspaceProjection } from './workspace-projection';
 import { renderCandidateChangeDiff } from './change-diff';
 import { syncDirectory } from './filesystem-durability';
+import { hostFileModesMatch } from './filesystem-modes';
 import { assertRepositoryBaseline as assertGitRepositoryBaseline } from './git-integration';
 import {
   createPendingActionDecisionReceipt,
@@ -583,7 +584,7 @@ class FilePendingActionStore implements PendingActionStore {
     if (
       createHash('sha256').update(bytes).digest('hex') !== baseline.sha256
       || bytes.byteLength !== baseline.byteLength
-      || (information.mode & 0o777) !== baseline.mode
+      || !hostFileModesMatch(information.mode, baseline.mode)
     ) {
       throw staleBaseline(path);
     }

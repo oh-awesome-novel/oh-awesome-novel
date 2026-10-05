@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { gitFileModesMatch } from './filesystem-modes';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -410,6 +411,9 @@ export async function inspectPendingActionGitPreflight(input: {
   const unrelatedStagedFiles = stagedFiles.filter((file) => !acceptedPaths.has(file));
 
   const dirtyBaselineFiles: string[] = [];
+  const fileMode = await runGit(input.workspaceRoot, ['config', '--default', 'true', '--type=bool', '--get', 'core.filemode']);
+  if (!fileMode.ok) throw gitResultError(fileMode.error);
+  const tracksExecutableMode = fileMode.stdout.trim() === 'true';
   for (const file of input.files) {
     const headEntry = await readHeadFile(input.workspaceRoot, input.expected.head, file.path);
     if (!file.exists) {
@@ -419,7 +423,8 @@ export async function inspectPendingActionGitPreflight(input: {
     if (
       headEntry === undefined
       || headEntry.sha256 !== file.sha256
-      || headEntry.mode !== file.mode
+      || file.mode === undefined
+      || !gitFileModesMatch(file.mode, headEntry.mode, tracksExecutableMode)
     ) {
       dirtyBaselineFiles.push(file.path);
     }
@@ -633,7 +638,7 @@ async function readHeadFile(
       code: 'git_failed',
     });
   }
-  const match = /^(\d+)\s+blob\s+([0-9a-f]{40,64})\t([\s\S]+)$/u.exec(records[0]!);
+  const match = /^(100644|100755)\s+blob\s+([0-9a-f]{40,64})\t([\s\S]+)$/u.exec(records[0]!);
   if (!match || match[3] !== path) {
     throw Object.assign(new Error(`Git tree entry is invalid for ${path}.`), {
       code: 'git_failed',

@@ -62,6 +62,10 @@ export async function prepareGitCommitPreview(workspaceRoot: string, requestedFi
   const indexPath = resolve(root, await git(root, ['rev-parse', '--git-path', 'index']));
   const indexHash = await hashIndex(indexPath);
   await assertSelectedIndex(root, files);
+  const fileMode = await runGit(root, ['config', '--default', 'true', '--type=bool', '--get', 'core.filemode']);
+  if (!fileMode.ok) throw invalid('Git file mode configuration could not be validated.');
+  const trackHostExecutable = process.platform !== 'win32' && fileMode.stdout.trim() === 'true';
+  const retainedModes = trackHostExecutable ? undefined : await readRetainedFileModes(root, repository.head, files);
   const directory = await mkdtemp(join(tmpdir(), 'oan-reviewed-git-'));
   const env = { ...process.env, GIT_INDEX_FILE: join(directory, 'index') };
   try {
@@ -70,7 +74,10 @@ export async function prepareGitCommitPreview(workspaceRoot: string, requestedFi
       const blobPath = join(directory, 'blob');
       await writeFile(blobPath, bytes, { mode: 0o600 });
       const oid = await git(root, ['hash-object', '-w', '--no-filters', '--', blobPath]);
-      await git(root, ['update-index', '--add', '--cacheinfo', mode & 0o111 ? '100755' : '100644', oid, file], env);
+      const gitMode = trackHostExecutable
+        ? (mode & 0o100 ? '100755' : '100644')
+        : retainedModes!.get(file) ?? '100644';
+      await git(root, ['update-index', '--add', '--cacheinfo', gitMode, oid, file], env);
     }, async (file) => { await git(root, ['update-index', '--force-remove', '--', file], env); });
     const tree = await git(root, ['write-tree'], env);
     const result = await runGit(root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--no-color', repository.head, '--', ...files], env);
@@ -302,6 +309,29 @@ async function assertSelectedIndex(root: string, files: string[]) {
   if (staged.some((file) => !files.includes(file))) throw invalid('There are staged files outside this commit scope. Review them separately.');
   const tracked = new Set((await git(root, ['ls-tree', '-rz', '--name-only', 'HEAD'], undefined, false)).split('\0').filter(Boolean));
   if (entries.some((entry) => !tracked.has(entry.slice(2)) && !files.includes(entry.slice(2)))) throw invalid('Unselected intent-to-add entries require your external Git editor.');
+}
+/** With host executable tracking disabled, Git keeps the stage-0 index mode.
+ * HEAD supplies tracked files absent from the index; genuinely new files are
+ * non-executable. The complete index hash still binds any staged chmod. */
+async function readRetainedFileModes(root: string, head: string, files: string[]): Promise<Map<string, '100644' | '100755'>> {
+  const modes = new Map<string, '100644' | '100755'>();
+  const selected = new Set(files);
+  const tree = await git(root, ['ls-tree', '-rz', head, '--', ...files], undefined, false);
+  const index = await git(root, ['ls-files', '--stage', '-z', '--', ...files], undefined, false);
+  for (const [output, pattern] of [
+    [tree, /^([0-7]{6}) (?:blob|commit) [a-f0-9]+\t([\s\S]+)$/u],
+    [index, /^([0-7]{6}) [a-f0-9]+ 0\t([\s\S]+)$/u],
+  ] as const) {
+    for (const entry of output.split('\0').filter(Boolean)) {
+      const match = pattern.exec(entry);
+      if (!match) throw invalid('Selected Git entries must be resolved regular files.');
+      const [, mode, path] = match;
+      if (!selected.has(path!)) continue;
+      if (mode !== '100644' && mode !== '100755') throw invalid('Selected Git entries must be resolved regular files.');
+      modes.set(path!, mode);
+    }
+  }
+  return modes;
 }
 async function assertUnsignedCommit(root: string) {
   const signed = await runGit(root, ['config', '--default', 'false', '--type=bool', '--get', 'commit.gpgsign']);

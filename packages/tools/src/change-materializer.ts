@@ -24,6 +24,7 @@ import {
 
 import { DEFAULT_CREATED_FILE_MODE } from './candidate-change-set';
 import { syncDirectory, syncFile as fsyncFile } from './filesystem-durability';
+import { hostFileModesMatch } from './filesystem-modes';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
 import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
 import {
@@ -447,7 +448,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         if (
           sha256(bytes) !== change.baseline.sha256
           || bytes.byteLength !== change.baseline.byteLength
-          || (information.mode & 0o777) !== change.baseline.mode
+          || !hostFileModesMatch(information.mode, change.baseline.mode)
         ) {
           throw staleBaseline(change.path);
         }
@@ -522,8 +523,8 @@ class FileChangeMaterializer implements ChangeMaterializer {
         operation: change.operation,
         targetFile: change.path,
         targetPath,
-        ...(stagePath ? { stagePath, stageFile: relative(this.#workspaceRoot, stagePath) } : {}),
-        ...(backupPath ? { backupPath, backupFile: relative(this.#workspaceRoot, backupPath) } : {}),
+        ...(stagePath ? { stagePath, stageFile: journalArtifactPath(relative(this.#workspaceRoot, stagePath)) } : {}),
+        ...(backupPath ? { backupPath, backupFile: journalArtifactPath(relative(this.#workspaceRoot, backupPath)) } : {}),
         ...(change.baseline.exists
           ? { baselineHash: change.baseline.sha256, baselineMode: change.baseline.mode }
           : {}),
@@ -850,7 +851,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
       || information.isSymbolicLink()
       || !information.isFile()
       || information.nlink !== 1
-      || (information.mode & 0o777) !== operation.targetMode
+      || !hostFileModesMatch(information.mode, operation.targetMode)
       || information.size !== operation.draftByteLength
       || await readRegularFileHash(target) !== operation.draftHash
     ) {
@@ -872,7 +873,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
     }
     if (
       await readRegularFileHash(operation.targetPath) !== operation.baselineHash
-      || (information.mode & 0o777) !== operation.baselineMode
+      || !hostFileModesMatch(information.mode, operation.baselineMode!)
     ) {
       throw staleBaseline(operation.targetFile);
     }
@@ -886,7 +887,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
     }
     if (
       await readRegularFileHash(operation.backupPath) !== operation.baselineHash
-      || (information.mode & 0o777) !== operation.baselineMode
+      || !hostFileModesMatch(information.mode, operation.baselineMode!)
     ) {
       throw materializerError('CHANGE_BACKUP_INVALID', `Backup differs from baseline: ${operation.targetFile}.`);
     }
@@ -1021,7 +1022,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         || information.isSymbolicLink()
         || !information.isFile()
         || information.nlink !== 1
-        || (information.mode & 0o777) !== 0o600
+        || !hostFileModesMatch(information.mode, 0o600)
         || information.size > 16 * 1024 * 1024
       ) {
         throw materializerError(
@@ -1108,10 +1109,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
       targetFile: change.path,
       targetPath: resolve(this.#workspaceRoot, ...change.path.split('/')),
       ...(change.operation === 'delete' ? {} : {
-        stageFile: join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.stage`),
+        stageFile: journalArtifactPath(join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.stage`)),
       }),
       ...(change.operation === 'create' ? {} : {
-        backupFile: join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.backup`),
+        backupFile: journalArtifactPath(join(dirname(change.path), `.oan-ce-${materializationArtifactToken(action.id, change.path)}.backup`)),
       }),
       ...(change.baseline.exists
         ? { baselineHash: change.baseline.sha256, baselineMode: change.baseline.mode }
@@ -1204,6 +1205,11 @@ function materializationArtifactToken(actionId: string, targetFile: string): str
     .slice(0, 32);
 }
 
+/** Journals use workspace-relative protocol paths on every host platform. */
+function journalArtifactPath(nativeRelativePath: string): string {
+  return nativeRelativePath.replaceAll('\\', '/');
+}
+
 function assertJournalMatchesAction(
   journal: TransactionJournal,
   action: PendingAction,
@@ -1226,10 +1232,10 @@ function assertJournalMatchesAction(
       targetFile: change.path,
       ...(change.operation === 'delete'
         ? {}
-        : { stageFile: join(parent, `.oan-ce-${token}.stage`) }),
+        : { stageFile: journalArtifactPath(join(parent, `.oan-ce-${token}.stage`)) }),
       ...(change.operation === 'create'
         ? {}
-        : { backupFile: join(parent, `.oan-ce-${token}.backup`) }),
+        : { backupFile: journalArtifactPath(join(parent, `.oan-ce-${token}.backup`)) }),
       ...(change.baseline.exists
         ? { baselineHash: change.baseline.sha256, baselineMode: change.baseline.mode }
         : {}),
@@ -1471,7 +1477,7 @@ async function assertOrphanArtifactMatches(
     || !information.isFile()
     || information.nlink !== 1
     || information.size !== expected.byteLength
-    || (information.mode & 0o777) !== expected.mode
+    || !hostFileModesMatch(information.mode, expected.mode)
     || await readRegularFileHash(path) !== expected.sha256
   ) {
     throw materializerError(

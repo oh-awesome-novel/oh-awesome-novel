@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { parse, stringify } from 'yaml';
 
@@ -153,7 +153,8 @@ async function buildVolumeIndex(
   volumeId: string,
 ): Promise<ChapterIndexVolume> {
   const volumeRoot = join(chaptersRoot, volumeId);
-  const metadataPath = join('chapters', volumeId, '0000.md');
+  // Public/cache paths use the same portable namespace as the file reader.
+  const metadataPath = posix.join('chapters', volumeId, '0000.md');
   const title = await readTitle({
     filePath: join(volumeRoot, '0000.md'),
     fallback: `${volumeId} 未命名卷`,
@@ -172,7 +173,7 @@ async function buildVolumeIndex(
     chapterFiles.map(async (chapterFile) => {
       const chapterNumber = basename(chapterFile, '.md');
       const id = `${volumeId}/${chapterNumber}`;
-      const path = join('chapters', volumeId, chapterFile);
+      const path = posix.join('chapters', volumeId, chapterFile);
 
       return {
         id,
@@ -189,7 +190,7 @@ async function buildVolumeIndex(
 
   return {
     id: volumeId,
-    path: join('chapters', volumeId),
+    path: posix.join('chapters', volumeId),
     title,
     metadataPath,
     chapters,

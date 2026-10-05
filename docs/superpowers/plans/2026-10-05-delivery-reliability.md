@@ -42,4 +42,6 @@ Related task: [1310](../../tasks/1310.md)
 - 保留文件写入、文件fsync、原子rename及所有路径安全检查；Windows文件flush使用具备写权限的句柄。
 - 仅Windows目录open/sync的已知不支持错误允许降级；POSIX目录错误、未知I/O错误与文件flush错误继续阻止操作。
 - 修复PendingAction、materializer和同类Play snapshot/preview/receipt调用，增加平台故障注入回归。
+- 第二次Windows预检通过预览后暴露宿主mode表示差异；按实际权限能力比较物理文件，Git baseline按Git模式语义判断，并将journal artifact路径统一为`/`。补齐创建、更新、自动commit、只读漂移和恢复回归。
+- 相同平台检查覆盖章节索引、文件树及领域读取工具；对外相对路径和固定VFS使用POSIX表示，真实磁盘访问保留原生路径。手动Git预览保留不跟踪宿主执行位时的index/HEAD模式。
 - 重新执行质量门禁与原生四平台打包旅程；通过后发布新标签，并把运行和附件校验结果记录到1280/1310。

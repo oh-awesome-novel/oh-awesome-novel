@@ -7065,7 +7065,7 @@ async function buildFileTree(workspaceRoot: string, directory: string): Promise<
         : !entry.name.startsWith('.') || (directory === workspaceRoot && entry.name === '.oan' && entry.isDirectory())))
       .map(async (entry) => {
         const absolutePath = join(directory, entry.name);
-        const nodePath = relative(workspaceRoot, absolutePath);
+        const nodePath = relative(workspaceRoot, absolutePath).split(sep).join('/');
 
         if (entry.isDirectory()) {
           return {

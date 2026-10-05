@@ -52,6 +52,59 @@ describe('reviewed explicit Git commit', () => {
     expect(await git(root, 'show', 'HEAD:chapter.md')).toBe('# reviewed lower case\r\nraw bytes\r\n');
     await expect(readFile(join(root, 'hook-ran'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+  it('preserves a tracked executable with core.filemode=false despite non-executable host permissions', async () => {
+    const root = await fixture();
+    await git(root, 'update-index', '--chmod=+x', 'chapter.md'); await git(root, 'commit', '-m', 'executable baseline');
+    await git(root, 'config', 'core.filemode', 'false'); await chmod(join(root, 'chapter.md'), 0o644);
+    await writeFile(join(root, 'chapter.md'), '# reviewed executable content\n');
+    const input = await reviewed(root);
+    expect(input.diff).not.toContain('mode 100');
+    expect((await commitFiles(input)).status).toBe('committed');
+    expect(await git(root, 'ls-tree', 'HEAD', 'chapter.md')).toMatch(/^100755 /u);
+    expect(await git(root, 'show', 'HEAD:chapter.md')).toBe('# reviewed executable content\n');
+  });
+  it('preserves an explicitly staged executable change when core.filemode=false', async () => {
+    const root = await fixture(); await git(root, 'config', 'core.filemode', 'false');
+    await git(root, 'update-index', '--chmod=+x', 'chapter.md'); await chmod(join(root, 'chapter.md'), 0o644);
+    const input = await reviewed(root);
+    expect(input.diff).toContain('new mode 100755');
+    expect((await commitFiles(input)).status).toBe('committed');
+    expect(await git(root, 'ls-tree', 'HEAD', 'chapter.md')).toMatch(/^100755 /u);
+  });
+  it('falls back to the HEAD executable mode when a selected worktree file is absent from the index', async () => {
+    const root = await fixture();
+    await git(root, 'update-index', '--chmod=+x', 'chapter.md'); await git(root, 'commit', '-m', 'executable baseline');
+    await git(root, 'config', 'core.filemode', 'false'); await git(root, 'rm', '--cached', 'chapter.md');
+    await chmod(join(root, 'chapter.md'), 0o644); await writeFile(join(root, 'chapter.md'), '# retained HEAD mode\n');
+    const input = await reviewed(root);
+    expect((await commitFiles(input)).status).toBe('committed');
+    expect(await git(root, 'ls-tree', 'HEAD', 'chapter.md')).toMatch(/^100755 /u);
+  });
+  it.each([0o654, 0o645])('does not turn group/other-only host mode %i into a Git executable', async (mode) => {
+    const root = await fixture(); await git(root, 'config', 'core.filemode', 'true');
+    await chmod(join(root, 'chapter.md'), mode);
+    const input = await reviewed(root);
+    expect(input.diff).not.toContain('new mode 100755');
+    expect((await commitFiles(input)).status).toBe('committed');
+    expect(await git(root, 'ls-tree', 'HEAD', 'chapter.md')).toMatch(/^100644 /u);
+  });
+  it.each([true, false])('honors core.filemode=%s for a true owner-executable change and new files', async (filemode) => {
+    const root = await fixture(); await git(root, 'config', 'core.filemode', String(filemode));
+    await chmod(join(root, 'chapter.md'), 0o744);
+    await writeFile(join(root, 'new.md'), '# reviewed new file\n'); await chmod(join(root, 'new.md'), 0o744);
+    const input = await reviewed(root, ['chapter.md', 'new.md']);
+    expect((await commitFiles(input)).status).toBe('committed');
+    const expectedMode = filemode && process.platform !== 'win32' ? '100755' : '100644';
+    expect(await git(root, 'ls-tree', 'HEAD', 'chapter.md')).toMatch(new RegExp(`^${expectedMode} `, 'u'));
+    expect(await git(root, 'ls-tree', 'HEAD', 'new.md')).toMatch(new RegExp(`^${expectedMode} `, 'u'));
+  });
+  it('still rejects raw permission drift after review when core.filemode=false', async () => {
+    const root = await fixture(); await git(root, 'config', 'core.filemode', 'false');
+    const input = await reviewed(root); const head = await git(root, 'rev-parse', 'HEAD');
+    await chmod(join(root, 'chapter.md'), 0o444);
+    expect(await commitFiles(input)).toMatchObject({ status: 'failed', error: { code: 'stale_preview' } });
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+  });
   it('reports committed truth after index-finalization failure and retries only finalization without a second commit', async () => {
     const root = await fixture(); const input = await reviewed(root);
     const result = await commitFiles({ ...input, faultInjector: async (point) => { if (point === 'after-ref-update') throw new Error('index failure'); } });

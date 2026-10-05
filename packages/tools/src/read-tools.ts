@@ -1,7 +1,8 @@
 import { realpathSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import * as hostPath from 'node:path';
+import { basename, extname, isAbsolute, posix, relative, sep } from 'node:path';
 import { jsonSchema, tool } from 'ai';
 import type { ToolSet } from 'ai';
 import { parse as parseYaml } from 'yaml';
@@ -101,8 +102,8 @@ function worldSearchTool(options: CreateReadToolsOptions) {
       const matches = [];
 
       for (const filePath of files) {
-        const rel = relative(worldRoot, filePath);
-        if (topic && !rel.startsWith(normalize(topic))) {
+        const rel = workspacePaths(options).relative(worldRoot, filePath).replaceAll('\\', '/');
+        if (topic && !rel.startsWith(safeRelativePath(topic))) {
           continue;
         }
 
@@ -112,7 +113,7 @@ function worldSearchTool(options: CreateReadToolsOptions) {
         }
 
         matches.push({
-          file: relative(options.workspaceRoot, filePath),
+          file: workspaceRelativePath(options, filePath),
           content,
         });
       }
@@ -139,7 +140,7 @@ function chapterGetTool(options: CreateReadToolsOptions) {
 
       return {
         id,
-        file: relative(options.workspaceRoot, filePath),
+        file: workspaceRelativePath(options, filePath),
         frontmatter: document.frontmatter,
         content: document.body,
       };
@@ -162,7 +163,7 @@ function stateGetTool(options: CreateReadToolsOptions) {
         const filePath = resolveWorkspacePath(options, 'state', safeRelativePath(file));
         const document = await loadWorkspaceYaml(options, filePath);
         return {
-          file: relative(options.workspaceRoot, filePath),
+          file: workspaceRelativePath(options, filePath),
           data: path ? getByPath(document.data, path) : document.data,
         };
       }
@@ -210,7 +211,7 @@ function summaryGetTool(options: CreateReadToolsOptions) {
       const document = await loadWorkspaceMarkdown(options, filePath);
 
       return {
-        file: relative(options.workspaceRoot, filePath),
+        file: workspaceRelativePath(options, filePath),
         frontmatter: document.frontmatter,
         content: document.body,
       };
@@ -237,7 +238,7 @@ function constitutionGetTool(options: CreateReadToolsOptions) {
         );
         const document = await loadWorkspaceMarkdown(options, filePath);
         return {
-          file: relative(options.workspaceRoot, filePath),
+          file: workspaceRelativePath(options, filePath),
           content: document.body,
         };
       }
@@ -257,7 +258,7 @@ function workflowGetTool(options: CreateReadToolsOptions) {
       const filePath = resolveWorkspacePath(options, '.oan', 'workflow.yaml');
       const document = await loadWorkspaceYaml(options, filePath);
       return {
-        file: relative(options.workspaceRoot, filePath),
+        file: workspaceRelativePath(options, filePath),
         data: document.data,
       };
     },
@@ -276,7 +277,7 @@ async function readDomainDirectory(
       continue;
     }
 
-    const filePath = join(directory, entry.name);
+    const filePath = workspacePaths(options).join(directory, entry.name);
     const extension = extname(entry.name);
 
     if (extension === '.yaml' || extension === '.yml') {
@@ -313,7 +314,7 @@ async function readMarkdownDirectory(
   const files = await listFiles(options, directory, ['.md']);
   return Promise.all(
     files.map(async (filePath) => ({
-      file: relative(options.workspaceRoot, filePath),
+      file: workspaceRelativePath(options, filePath),
       content: (await loadWorkspaceMarkdown(options, filePath)).body,
     })),
   );
@@ -353,7 +354,7 @@ async function listFiles(
   const files: string[] = [];
 
   for (const entry of entries) {
-    const filePath = join(directory, entry.name);
+    const filePath = workspacePaths(options).join(directory, entry.name);
 
     if (entry.isDirectory && !entry.name.startsWith('.')) {
       files.push(...(await listFiles(options, filePath, extensions)));
@@ -368,11 +369,21 @@ async function listFiles(
   return files.sort();
 }
 
+// The fixed in-memory projection uses POSIX paths even on a Windows host.
+function workspacePaths(options: CreateReadToolsOptions) {
+  return options.reader ? posix : hostPath;
+}
+
+function workspaceRelativePath(options: CreateReadToolsOptions, filePath: string): string {
+  return workspacePaths(options).relative(options.workspaceRoot, filePath).replaceAll('\\', '/');
+}
+
 function resolveWorkspacePath(options: CreateReadToolsOptions, ...parts: string[]): string {
   const root = options.workspaceRoot;
-  const resolvedRoot = normalize(join(root));
-  const resolved = normalize(join(root, ...parts));
-  const rel = relative(resolvedRoot, resolved);
+  const paths = workspacePaths(options);
+  const resolvedRoot = paths.normalize(root);
+  const resolved = paths.join(root, ...parts);
+  const rel = paths.relative(resolvedRoot, resolved);
 
   if (rel.startsWith('..') || rel === '') {
     throw new Error(`Path is outside workspace: ${parts.join('/')}`);
@@ -444,9 +455,10 @@ function safeSegment(value: string): string {
 }
 
 function safeRelativePath(value: string): string {
-  const normalized = normalize(value);
+  const normalized = posix.normalize(value);
 
   if (
+    !value || value.includes('\\') || value.includes(':') || value.includes('\0') ||
     normalized.startsWith('..') ||
     normalized.includes('/../') ||
     normalized.startsWith('/') ||

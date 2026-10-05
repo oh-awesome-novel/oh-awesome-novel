@@ -250,6 +250,8 @@ opaque id 经过 strict validation 后才能参与路径。所有 JSON/draft 使
 
 文件fsync在所有平台均为必需；Windows刷新已存在文件时使用可写句柄。目录barrier仅在Windows遇到Node不支持的`EPERM` / `EISDIR` / `EINVAL` / `ENOTSUP`时降级，文件错误、其它目录I/O错误以及POSIX上的同类错误继续抛出。该兼容处理不代表Windows获得了POSIX目录fsync或设备断电级耐久保证。
 
+物理文件mode按宿主可表达的语义核对：POSIX保留完整权限比较，Windows核对只读属性；两者都继续验证正文hash、文件类型、hardlink及路径边界。Git baseline按Git记录的可执行位和`core.filemode`判断，不把Windows权限表示误当作未提交正文。journal内相对路径统一使用`/`，不得把原生Windows分隔符写入持久化合同。
+
 ## Session Lifecycle
 
 模型可见 tools：固定 projection 上的 domain reads、`bash`、bounded `readFile`/`writeFile`、`workspace.previewChanges` 与 `workspace.proposeChanges`。
