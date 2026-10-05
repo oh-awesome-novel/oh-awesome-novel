@@ -26,6 +26,7 @@ import type {
 } from '@oh-awesome-novel/tools';
 
 import { serializePreparedChangePreviewSummary } from './pending-action-view.js';
+import { syncDirectory } from './directory-sync.js';
 
 export const PLAY_ADOPTION_PREVIEW_SCHEMA_VERSION = 1 as const;
 const MAX_STORED_PLAY_ADOPTION_PREVIEW_BYTES = 8 * 1024 * 1024;
@@ -461,15 +462,6 @@ async function writeFileDurably(
   const handle = await open(path, flag, 0o600);
   try {
     await handle.writeFile(content, 'utf8');
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
     await handle.sync();
   } finally {
     await handle.close();

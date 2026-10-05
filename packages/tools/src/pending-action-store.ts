@@ -36,6 +36,7 @@ import {
 } from './final-object-tree-validator';
 import { createWorkspaceProjection } from './workspace-projection';
 import { renderCandidateChangeDiff } from './change-diff';
+import { syncDirectory } from './filesystem-durability';
 import { assertRepositoryBaseline as assertGitRepositoryBaseline } from './git-integration';
 import {
   createPendingActionDecisionReceipt,
@@ -1196,12 +1197,7 @@ class FilePendingActionStore implements PendingActionStore {
         );
       }
       await rename(temporary, path);
-      const directory = await open(dirname(path), 'r');
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
+      await syncDirectory(dirname(path));
     } finally {
       if (handle) await handle.close();
       await rm(temporary, { force: true });

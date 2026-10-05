@@ -23,6 +23,7 @@ import {
 } from 'node:path';
 
 import { DEFAULT_CREATED_FILE_MODE } from './candidate-change-set';
+import { syncDirectory, syncFile as fsyncFile } from './filesystem-durability';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
 import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
 import {
@@ -1430,15 +1431,9 @@ async function ensureSafeInternalDirectory(
   return cursor;
 }
 
-async function fsyncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try { await handle.sync(); } finally { await handle.close(); }
-}
-
 async function fsyncDirectory(path: string): Promise<void> {
   try {
-    const handle = await open(path, 'r');
-    try { await handle.sync(); } finally { await handle.close(); }
+    await syncDirectory(path);
   } catch (error) {
     if (!isNotFound(error)) throw error;
   }

@@ -248,6 +248,8 @@ Prepared preview 使用 `kind: 'prepared-change-preview'`、origin、candidate f
 
 opaque id 经过 strict validation 后才能参与路径。所有 JSON/draft 使用同目录 temp + fsync + atomic rename，并做 internal realpath/symlink guard。同 id 同时出现 accepted/rejected terminal 是 corruption，必须 fail closed。
 
+文件fsync在所有平台均为必需；Windows刷新已存在文件时使用可写句柄。目录barrier仅在Windows遇到Node不支持的`EPERM` / `EISDIR` / `EINVAL` / `ENOTSUP`时降级，文件错误、其它目录I/O错误以及POSIX上的同类错误继续抛出。该兼容处理不代表Windows获得了POSIX目录fsync或设备断电级耐久保证。
+
 ## Session Lifecycle
 
 模型可见 tools：固定 projection 上的 domain reads、`bash`、bounded `readFile`/`writeFile`、`workspace.previewChanges` 与 `workspace.proposeChanges`。

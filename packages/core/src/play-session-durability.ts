@@ -23,7 +23,9 @@ export async function syncPlaySnapshotFile(path: string): Promise<void> {
   if (!information.isFile() || information.isSymbolicLink()) {
     throw new Error('Play snapshot fsync requires a regular file.');
   }
-  const handle = await open(path, 'r');
+  // Windows FlushFileBuffers requires a writable handle. File flush failures
+  // remain fatal on every platform; this is not the directory-barrier fallback.
+  const handle = await open(path, process.platform === 'win32' ? 'r+' : 'r');
   try { await handle.sync(); } finally { await handle.close(); }
 }
 
@@ -32,6 +34,18 @@ export async function syncPlaySnapshotDirectory(path: string): Promise<void> {
   if (!information.isDirectory() || information.isSymbolicLink()) {
     throw new Error('Play snapshot fsync requires a directory.');
   }
-  const handle = await open(path, 'r');
-  try { await handle.sync(); } finally { await handle.close(); }
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(path, 'r');
+    await handle.sync();
+  } catch (error) {
+    // Node/libuv cannot provide a directory fsync barrier on some Windows
+    // filesystems. Keep validation above and all other I/O failures strict.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.platform !== 'win32' || !['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP'].includes(code ?? '')) throw error;
+  } finally {
+    // Closing an opened handle is mandatory; close failures are not an
+    // unsupported directory barrier and must not be swallowed by the catch.
+    await handle?.close();
+  }
 }

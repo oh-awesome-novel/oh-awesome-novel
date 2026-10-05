@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { PlaySession } from '@oh-awesome-novel/core';
+import { syncDirectory } from './directory-sync.js';
 
 /** Transport recovery metadata only; the Play session artifact remains commit truth. */
 export interface PlayTurnRunReceipt {
@@ -90,11 +91,6 @@ async function receiptDirectory(root: string, sessionId: string, create: boolean
     }
   }
   return cursor;
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, constants.O_RDONLY);
-  try { await handle.sync(); } finally { await handle.close(); }
 }
 
 function requireId(value: string): void {

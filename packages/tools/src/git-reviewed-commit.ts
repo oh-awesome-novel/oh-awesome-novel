@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { readGitStatus, readRepositoryBaseline, reviewedGitHelpers } from './git-integration';
 import type { GitCommitResult, RepositoryBaseline } from './git-integration';
+import { syncDirectory } from './filesystem-durability';
 
 const { runGit, validateWorkspaceRelativePaths, assertGitFilePaths, gitResultError } = reviewedGitHelpers;
 const TTL = 15 * 60_000;
@@ -309,14 +310,6 @@ async function assertUnsignedCommit(root: string) {
 }
 async function git(root: string, args: string[], env?: NodeJS.ProcessEnv, trim = true): Promise<string> {
   const result = await runGit(root, args, env); if (!result.ok) throw gitResultError(result.error); return trim ? result.stdout.trim() : result.stdout;
-}
-async function syncDirectory(path: string) {
-  // Windows does not expose POSIX directory fsync through Node. File fsync and
-  // atomic rename still run; unsupported directory handles are platform-specific.
-  let handle;
-  try { handle = await open(path, constants.O_RDONLY); await handle.sync(); }
-  catch (error) { if (process.platform !== 'win32' || !['EPERM', 'EISDIR', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
-  finally { await handle?.close(); }
 }
 function hash(value: string | Buffer) { return createHash('sha256').update(value).digest('hex'); }
 function invalid(message: string) { return gitResultError({ code: 'invalid_input', message }); }

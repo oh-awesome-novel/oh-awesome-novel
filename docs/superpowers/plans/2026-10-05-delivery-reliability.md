@@ -34,3 +34,12 @@ Related task: [1310](../../tasks/1310.md)
 - [x] 记录本机平台、可控 provider、CI 尚未远程执行等真实验证边界。
 
 最终验证：完整质量命令通过182文件/1,430测试；macOS arm64最终package及两个独立进程写作/重启smoke通过。跨平台workflow尚未远程执行，完整边界见1310。
+
+## 5. Release follow-up (2026-10-05)
+
+用户随后授权提交并发布版本。首次四平台预检中，质量门禁、macOS arm64/x64与Linux通过，Windows在导入预览持久化时失败；定位为Windows不支持Node的POSIX目录fsync方式。
+
+- 保留文件写入、文件fsync、原子rename及所有路径安全检查；Windows文件flush使用具备写权限的句柄。
+- 仅Windows目录open/sync的已知不支持错误允许降级；POSIX目录错误、未知I/O错误与文件flush错误继续阻止操作。
+- 修复PendingAction、materializer和同类Play snapshot/preview/receipt调用，增加平台故障注入回归。
+- 重新执行质量门禁与原生四平台打包旅程；通过后发布新标签，并把运行和附件校验结果记录到1280/1310。
