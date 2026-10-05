@@ -2,6 +2,8 @@
 
 `.github/workflows/desktop-release.yml` 使用现有 Nx 和 Electron Forge 构建链生成桌面分发包。推送版本标签后，共用质量门禁、全部平台构建和 packaged main smoke 通过才会公开 GitHub Release。
 
+2026-10-05：[v0.2.0](https://github.com/oh-awesome-novel/oh-awesome-novel/releases/tag/v0.2.0)已公开，发行源码为`7f7e087`。[正式流水线](https://github.com/oh-awesome-novel/oh-awesome-novel/actions/runs/37274648020)的质量门禁、四平台构建和两进程写作/重启旅程全部通过；七项分发附件与公开`SHA256SUMS`及GitHub记录的SHA-256一致。详细证据与剩余验收边界见[1280](tasks/1280.md)、[1310](tasks/1310.md)。
+
 ## 质量门禁
 
 `.github/workflows/quality.yml` 在 PR 和 main 推送时执行，也由发行 workflow 调用。`npm run quality` 依次执行生产构建、严格 TypeScript / Vue 类型检查、七个测试 workspace、文档术语和 task/index 状态检查、Wiki 构建。测试按 workspace 顺序运行，避免重复构建清理依赖产物或过量并行导致超时。
@@ -39,14 +41,14 @@ gh run download <运行ID> --repo oh-awesome-novel/oh-awesome-novel --dir deskto
 
 ## 发布版本
 
-先确认当前提交和新版本号，再创建并推送一个新的 `v` 开头的 SemVer 标签。`v0.1.0` 已公开；以下以维护者后续选择 `v0.1.1` 为例：
+先确认当前提交和新版本号，再创建并推送一个新的 `v` 开头的 SemVer 标签。`v0.2.0` 已公开；以下以维护者后续选择 `v0.2.1` 为例：
 
 ```sh
-git tag -a v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+git tag -a v0.2.1 -m "Release v0.2.1"
+git push origin v0.2.1
 ```
 
-该示例不会由普通分支推送自动执行；版本号由维护者决定。预发布使用 `v0.1.1-beta.1` 等标签，流水线会标记为 prerelease。
+该示例不会由普通分支推送自动执行；版本号由维护者决定。预发布使用 `v0.2.1-beta.1` 等标签，流水线会标记为 prerelease。
 
 安装完成依赖后，流水线把标签中的版本写入 CI checkout 的 `apps/desktop/package.json`，确保应用、ZIP 和安装器版本一致。该变化不提交回源码，也不修改已有标签。手动只构建时，使用源码中的桌面应用版本。
 
@@ -59,7 +61,7 @@ git push origin v0.1.1
 也可以手动构建并发布一个**已经存在**的版本标签：
 
 ```sh
-gh workflow run desktop-release.yml --repo oh-awesome-novel/oh-awesome-novel --ref main -f tag=v0.1.1
+gh workflow run desktop-release.yml --repo oh-awesome-novel/oh-awesome-novel --ref main -f tag=v0.2.1
 ```
 
 流水线先建立 draft、上传全部产物和校验文件，再公开 Release。上传失败保留 draft，重试可以继续上传；已经公开的同名 Release 会拒绝覆盖，需要使用新版本标签。

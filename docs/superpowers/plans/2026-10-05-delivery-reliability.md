@@ -31,9 +31,9 @@ Related task: [1310](../../tasks/1310.md)
 
 - [x] 集中构建与质量命令通过；修复暴露的回归后按受影响范围复跑。
 - [x] 更新0580/1230/1280及开发/发行文档，分清已交付、仍待验收和暂缓范围。
-- [x] 记录本机平台、可控 provider、CI 尚未远程执行等真实验证边界。
+- [x] 分别记录本机与原生CI验证证据、可控 provider及安装/签名等未验证边界。
 
-最终验证：完整质量命令通过182文件/1,430测试；macOS arm64最终package及两个独立进程写作/重启smoke通过。跨平台workflow尚未远程执行，完整边界见1310。
+初始本机验证记录：完整质量命令通过182文件/1,430测试；macOS arm64 package及两个独立进程写作/重启smoke通过。当时跨平台workflow尚未远程执行；随后目录fsync修复后的本机质量门禁通过185文件/1,472测试。后续原生矩阵证据见下方，完整边界见1310。
 
 ## 5. Release follow-up (2026-10-05)
 
@@ -44,4 +44,7 @@ Related task: [1310](../../tasks/1310.md)
 - 修复PendingAction、materializer和同类Play snapshot/preview/receipt调用，增加平台故障注入回归。
 - 第二次Windows预检通过预览后暴露宿主mode表示差异；按实际权限能力比较物理文件，Git baseline按Git模式语义判断，并将journal artifact路径统一为`/`。补齐创建、更新、自动commit、只读漂移和恢复回归。
 - 相同平台检查覆盖章节索引、文件树及领域读取工具；对外相对路径和固定VFS使用POSIX表示，真实磁盘访问保留原生路径。手动Git预览保留不跟踪宿主执行位时的index/HEAD模式。
-- 重新执行质量门禁与原生四平台打包旅程；通过后发布新标签，并把运行和附件校验结果记录到1280/1310。
+- [四平台发行预检](https://github.com/oh-awesome-novel/oh-awesome-novel/actions/runs/37273973876)已验证源提交`7f7e087c76b0749feb5857981148e6acfc5fc490`：质量门禁、macOS arm64/x64、Windows x64、Linux x64构建及真实打包写作/独立进程重启旅程全部通过。
+- 该预检质量日志确认189文件/1,497测试、10个生产workspace严格typecheck和58项task状态检查通过；Windows两进程均无renderer错误或外部网络请求，4次本地provider请求、正文hash与全部必需检查通过，分项证据见1310。
+- 同一提交的`v0.2.0`已通过[正式发行流水线](https://github.com/oh-awesome-novel/oh-awesome-novel/actions/runs/37274648020)并[公开发布](https://github.com/oh-awesome-novel/oh-awesome-novel/releases/tag/v0.2.0)。七项分发附件与公开SHA256SUMS及GitHub资产摘要全部一致，证据已记录于1280/1310。
+- 仍未验证安装器实际安装、各平台原生图标视觉、商业provider、远端Git同步和设备断电；未配置开发者证书签名或macOS公证。post-terminal缺失receipt的同进程读取422边界继续记录于1310。
