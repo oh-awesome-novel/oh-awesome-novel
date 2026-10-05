@@ -229,6 +229,20 @@ Novel Constitution
 
 Constitution 是作者可见、可编辑、Git tracked 的创作约束，不是隐藏审查规则。
 
+### Long-novel Memory Selection
+
+固定 VFS 的可读范围与默认模型消息是两个边界。当前全局状态继续 protected；`state/chapters/` 的逐章观察与 `settlementRecords` 是历史证据，不能因为属于 state 目录就每轮全部发送。目标章的当前证据可形成明确标注的派生 payload，其余历史保留在同一固定投影中按需读取。显式选定的原文件不被这一默认策略静默裁剪。
+
+Core 的冻结输入 evaluator 供 host health 与 Agent 共用，按正文原始内容 hash 和可验证证据区分 current / stale / missing / unverified，不以 mtime 认定剧情变化。摘要只把验证通过的当前证据块视作当前事实；手写且无来源的摘要保留为未验证参考，损坏或过期的受管证据不会伪装为当前事实。健康警告与覆盖说明在模型消息中有界，仍是 soft warning。
+
+canonical source hash 与派生 payload hash 分别记录。此策略不删除历史、不调用隐式压缩模型，也不自动撤销过去已接受的全局事实。具体范围和规模验收见 [1290](tasks/1290.md)。
+
+### Author Manuscript Import
+
+作者旧稿导入是独立的确定性 workflow：有界 Markdown 上传 → 保留原文的拆章/映射 → immutable prepared preview → PendingAction → Accept。它不读取调用方提供的宿主路径、不使用模型，仅对宿主验证后的规范章节路径授予 `chapter.edit`，初版只允许 create。
+
+`manuscriptImport` origin 绑定原稿 hash、映射 hash 与预览身份；promotion 和 Accept 重验已审阅候选、repository baseline 和目标不存在。变更后的原稿/映射需重新预览，冲突需重新映射；底层仍复用统一 store/materializer/Git。见 [1300](tasks/1300.md)。
+
 ## Architecture Decisions
 
 - filesystem first、Markdown/YAML、Object File Tree。

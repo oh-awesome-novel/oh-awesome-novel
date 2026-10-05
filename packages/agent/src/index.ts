@@ -11,7 +11,7 @@ export { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-con
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
-import { parse as parseYaml } from 'yaml';
+import type { JSONValue } from 'ai';
 
 import {
   DEFAULT_WRITING_PROFILE_ID,
@@ -24,6 +24,7 @@ import {
   formatAuthorReportMarkdown,
   formatContextPackageSummary,
   formatProjectHealthMarkdown,
+  evaluateProjectHealth,
   formatWritingProfileReminders,
   getBuiltinWritingProfiles,
   writeAgentSessionArtifact,
@@ -103,6 +104,7 @@ export interface NovelAgentWorkspaceSnapshot {
   contextFiles?: readonly NovelAgentWorkspaceContextFile[];
   omittedContextFiles?: readonly NovelAgentWorkspaceContextFile[];
   fixedFileHashes?: ReadonlyArray<{ path: string; hash: string }>;
+  chapterEvidenceCoverage?: string;
 }
 
 export interface NovelAgentWorkspaceContextFile {
@@ -562,7 +564,7 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
     ...(origin ? { proposalOrigin: origin } : {}),
   });
   const projectionSnapshot = session.projectionSnapshot();
-  const projectHealth = createProjectHealthFromProjection(projectionSnapshot);
+  const projectHealth = evaluateProjectHealth(projectionSnapshot, { generatedAt: new Date().toISOString() });
 
   return {
     tools: session.tools,
@@ -629,101 +631,6 @@ function createDefaultProjectedWritingProfile(): WritingProfile {
     throw new Error('Built-in commercialWriting Profile is unavailable.');
   }
   return profile;
-}
-
-function createProjectHealthFromProjection(
-  projection: SandboxProjectionSnapshot,
-): ProjectHealth {
-  const filesByPath = new Map(projection.files.map((file) => [file.path, file]));
-  const characterIds = projection.directories
-    .filter((path) => /^characters\/[^/]+$/u.test(path))
-    .map((path) => path.slice('characters/'.length))
-    .sort();
-  const missingCharacterCards = characterIds.filter((id) => (
-    !filesByPath.has(`characters/${id}/meta.yaml`)
-    || !filesByPath.has(`characters/${id}/summary.md`)
-  ));
-  const chapters = projection.files
-    .map((file) => /^chapters\/(.+)\.md$/u.exec(file.path)?.[1])
-    .filter((id): id is string => Boolean(id) && !id!.endsWith('/0000'))
-    .sort();
-  const chapterSummaries = new Set(projection.files
-    .map((file) => /^summaries\/chapter\/(.+)\.md$/u.exec(file.path)?.[1])
-    .filter((id): id is string => Boolean(id)));
-  const chaptersWithoutSummaries = chapters.filter((id) => !chapterSummaries.has(id));
-  const activeHookDocument = parseProjectedYaml(filesByPath.get('foreshadow/active.yaml')?.content);
-  const activeHookCount = isProjectedRecord(activeHookDocument) && Array.isArray(activeHookDocument.active)
-    ? activeHookDocument.active.length
-    : 0;
-  const timelineDocument = parseProjectedYaml(filesByPath.get('timeline/events.yaml')?.content);
-  const timelineChapters = new Set(
-    isProjectedRecord(timelineDocument) && Array.isArray(timelineDocument.events)
-      ? timelineDocument.events
-          .filter(isProjectedRecord)
-          .map((event) => event.chapter)
-          .filter((chapter): chapter is string => typeof chapter === 'string')
-      : [],
-  );
-  const timelineGaps = chapters.filter((id) => !timelineChapters.has(id));
-  const latestChapter = Math.max(0, ...projection.files
-    .filter((file) => /^chapters\/.+\.md$/u.test(file.path) && !file.path.endsWith('/0000.md'))
-    .map((file) => file.mtimeMs));
-  const latestState = Math.max(0, ...projection.files
-    .filter((file) => /^state\/.+\.ya?ml$/u.test(file.path))
-    .map((file) => file.mtimeMs));
-  const latestStateStale = latestChapter > latestState;
-  const issues: ProjectHealth['issues'] = [
-    ...missingCharacterCards.map((characterId) => ({
-      id: `missing-character-card:${characterId}`,
-      severity: 'warning' as const,
-      title: 'Missing character card file',
-      detail: `${characterId} is missing meta.yaml or summary.md.`,
-      path: `characters/${characterId}`,
-    })),
-    ...chaptersWithoutSummaries.map((chapterId) => ({
-      id: `chapter-summary:${chapterId}`,
-      severity: 'warning' as const,
-      title: 'Chapter has no summary',
-      detail: `${chapterId} has no matching summaries/chapter file.`,
-      path: `chapters/${chapterId}.md`,
-    })),
-    ...timelineGaps.map((chapterId) => ({
-      id: `timeline-gap:${chapterId}`,
-      severity: 'info' as const,
-      title: 'No timeline event for chapter',
-      detail: `${chapterId} has chapter text but no timeline event.`,
-      path: `chapters/${chapterId}.md`,
-    })),
-    ...(latestStateStale
-      ? [{
-          id: 'latest-state-stale',
-          severity: 'warning' as const,
-          title: 'Latest state may be stale',
-          detail: 'A chapter file is newer than the latest state YAML file.',
-          path: 'state',
-        }]
-      : []),
-  ];
-
-  return {
-    generatedAt: new Date(Math.max(0, ...projection.files.map((file) => file.mtimeMs)))
-      .toISOString(),
-    missingCharacterCards,
-    chaptersWithoutSummaries,
-    activeHookCount,
-    latestStateStale,
-    timelineGapCount: timelineGaps.length,
-    pendingActionCount: 0,
-    issues,
-  };
-}
-
-function parseProjectedYaml(content: string | undefined): unknown {
-  return content === undefined ? undefined : parseYaml(content) as unknown;
-}
-
-function isProjectedRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function bindNovelAgentTurnToEnvironment(
@@ -1827,11 +1734,11 @@ const toModelMessage = (message: RuntimeMessage): ModelMessage => {
 
 const toModelToolResultOutput = (
   content: string,
-): { type: 'json'; value: unknown } | { type: 'text'; value: string } => {
+): { type: 'json'; value: JSONValue } | { type: 'text'; value: string } => {
   try {
     return {
       type: 'json',
-      value: JSON.parse(content),
+      value: JSON.parse(content) as JSONValue,
     };
   } catch {
     return {
@@ -1878,6 +1785,7 @@ const createNovelAgentContext = (
   pushContext(context, 'reminder', 'Active fixed fragments', input.writingProfile ? formatWritingProfileReminders(input.writingProfile, capability) : undefined);
   addSource('summary', 'Summary', 'previousChapterEnding', input.workspace.summaries, 'L1', 'compressible');
   addSource('state', 'State', 'latestState', input.workspace.state, 'L1', 'protected');
+  if (input.workspace.chapterEvidenceCoverage) context.push({ kind: 'selected', title: 'Chapter Evidence Coverage', content: input.workspace.chapterEvidenceCoverage, provenance: [createContextEvidence({ sourceId: 'chapterEvidenceCoverage', kind: 'selected', budgetLayer: 'L1', semanticBoundary: 'compressible' })] });
   addSource('timeline', 'Timeline', 'timeline', input.workspace.timeline, 'L2', 'compressible');
   addSource('foreshadow', 'Foreshadow', 'foreshadowLedger', input.workspace.foreshadow, 'L2', 'compressible');
   pushContext(
@@ -1885,7 +1793,7 @@ const createNovelAgentContext = (
     'selected',
     'Context Package Summary',
     input.contextPackage
-      ? formatContextPackageSummary(input.contextPackage)
+      ? formatContextPackageSummary(input.contextPackage, { maxSources: 24, maxTrace: 24 })
       : undefined,
   );
   for (const attachment of input.playWritingReferences ?? []) {
@@ -2001,7 +1909,7 @@ function appendToolTraceToContextPackage(
     const source = inferSourceFromTool(entry.toolCall.name);
     const pendingAction = entry.result.pendingActions?.[0];
     const failed = !entry.result.ok;
-    const reason = failed
+    const reason = !entry.result.ok
       ? `tool ${entry.toolCall.name} failed: ${entry.result.error.message}`
       : pendingAction
         ? `tool ${entry.toolCall.name} produced PendingAction ${pendingAction.id}`

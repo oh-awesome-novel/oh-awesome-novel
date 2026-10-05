@@ -201,6 +201,7 @@ const emit = defineEmits<{
     </section>
 
     <WorkspaceRightPanel
+      :workspace-path="workspace.path"
       v-if="rightShown"
       :active-tab="rightTab"
       :active-file-path="activeFilePath"

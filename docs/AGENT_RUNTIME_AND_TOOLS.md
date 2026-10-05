@@ -101,6 +101,8 @@ workflow.get
 
 Reference publication/adoption、Play adoption 等 host workflow 可以直接使用 builder/virtual writer 生成 ChangeSet。它们不向模型暴露 shell，也不伪造 command log，但仍必须通过 exact policy、final validators、PendingAction 与 materializer。
 
+作者 Markdown 旧稿导入同样是 deterministic producer，使用 `chapter.edit` 和 exact create-only targets；输入/映射经 immutable prepared preview 绑定，用户创建候选后沿同一审批链落盘，不增加模型工具或绕过审批的 API。见 [1300](tasks/1300.md)。
+
 ## Capability Selection
 
 capability 是 trusted host input，不是 tool argument：
@@ -159,6 +161,8 @@ interface RuntimeTurnFinalizer {
 PendingAction source 只记录 command log hash/count，不记录 preview。
 
 ## Context Builder
+
+`1290` 将当前全局状态与章级结算历史分层。host health 与 Agent 对同类冻结输入采用共同的 source-hash freshness evaluator，模型上下文中的健康提示/覆盖说明有界。选中章的当前证据可派生为明确标注的 payload，其余历史仍由固定投影 read tools 提供；完整显式选择保持保护。摘要的当前证据、过期来源和作者未验证参考必须明确区分，不把旧快照当作当前事实。详见 [1290](tasks/1290.md)。
 
 优先级：
 

@@ -65,7 +65,7 @@ export function listPlaySessionCheckpoints(
   );
 
   const turnCheckpoints = facts.turnArtifacts
-    .map((artifact) => {
+    .map((artifact): PlayCheckpointSummary => {
       const status: PlayCheckpointStatus = artifact.id === currentArtifactId
         ? 'current'
         : selectedArtifactIds.has(artifact.id)

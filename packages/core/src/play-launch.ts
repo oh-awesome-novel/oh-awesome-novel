@@ -157,12 +157,14 @@ export interface PlayLaunchPackage {
 
 export class PlayLaunchSourceValidationError extends Error {
   readonly name = 'PlayLaunchSourceValidationError';
+  readonly diagnostics: PlayLaunchDiagnostic[];
 
   constructor(
     message: string,
-    readonly diagnostics: PlayLaunchDiagnostic[],
+    diagnostics: PlayLaunchDiagnostic[],
   ) {
     super(message);
+    this.diagnostics = diagnostics;
   }
 }
 

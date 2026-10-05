@@ -1,101 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef } from 'vue';
-
-import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
-import type {
-  GitCommitDetail,
-  GitCommitSummary,
-  GitWorkspaceStatus,
-} from '../../composables/useWorkspaceApi';
-
-const api = useWorkspaceApi();
-const status = shallowRef<GitWorkspaceStatus>();
-const commits = shallowRef<GitCommitSummary[]>([]);
-const selectedCommit = shallowRef<GitCommitDetail>();
-const dirtyDiff = shallowRef('');
-const loading = shallowRef(false);
-const error = shallowRef('');
-const commitMessage = shallowRef('chore(novel): manual quick commit');
-const syncStatus = shallowRef('');
-const previewReady = shallowRef(false);
-const dirtyFiles = computed(() => status.value?.files.flatMap((file) => file.originalPath
-  ? [file.originalPath, file.path] : [file.path]) ?? []);
-
-onMounted(() => {
-  void refreshGit();
-});
-
-async function refreshGit() {
-  loading.value = true;
-  error.value = '';
-  previewReady.value = false;
-  dirtyDiff.value = '';
-
-  try {
-    const nextStatus = await api.getGitStatus();
-    status.value = nextStatus;
-    commits.value = nextStatus.head ? (await api.getGitLog(12)).commits : [];
-    dirtyDiff.value = nextStatus.files.length
-      ? (await api.getGitDiff(dirtyFiles.value)).diff
-      : '';
-    previewReady.value = nextStatus.repository && nextStatus.status !== 'unknown';
-  } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : String(caught);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function showCommit(hash: string) {
-  error.value = '';
-
-  try {
-    selectedCommit.value = await api.getGitCommit(hash);
-  } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : String(caught);
-  }
-}
-
-async function quickCommit() {
-  if (!previewReady.value || loading.value) return;
-  error.value = '';
-  try {
-    const result = await api.quickCommit({
-      files: dirtyFiles.value,
-      message: commitMessage.value,
-    });
-    if (result.status !== 'committed') {
-      error.value = result.status === 'failed' ? result.error.message : result.reason;
-      return;
-    }
-    await refreshGit();
-  } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : String(caught);
-  }
-}
-
-async function sync() {
-  syncStatus.value = 'Syncing...';
-  error.value = '';
-
-  try {
-    const result = await api.syncGit();
-    syncStatus.value = result.status === 'synced'
-      ? 'Synced'
-      : `${result.step}: ${result.error.message}`;
-    await refreshGit();
-  } catch (caught) {
-    syncStatus.value = '';
-    error.value = caught instanceof Error ? caught.message : String(caught);
-  }
-}
+import { useGitReview } from '../../composables/useGitReview';
+const props = withDefaults(defineProps<{ workspacePath?: string }>(), { workspacePath: '' });
+const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessage, syncStatus, previewReady, dirtyFiles,
+  retryIndex, refreshGit, showCommit, quickCommit, sync } = useGitReview(() => props.workspacePath);
 </script>
 
 <template>
   <section class="right-tab-panel" aria-label="Git history and sync">
     <div class="panel-heading">
       <h2 class="panel-title">Git</h2>
-      <button class="ghost-button tight-button" type="button" @click="refreshGit">Refresh</button>
+      <button class="ghost-button tight-button" type="button" :disabled="loading" @click="refreshGit">Refresh</button>
     </div>
     <p v-if="loading" class="empty-copy">Reading Git status...</p>
     <p v-if="error" class="error-copy">{{ error }}</p>
@@ -132,6 +46,7 @@ async function sync() {
       <pre v-if="dirtyDiff" class="diff-preview">{{ dirtyDiff }}</pre>
 
       <div class="quick-commit-box">
+        <p class="empty-copy">Commits preserve the reviewed file bytes. For Git hooks, content filters or signed commits, use your external Git editor.</p>
         <label class="field">
           Commit message
           <input v-model="commitMessage" class="text-input" type="text">
@@ -143,7 +58,7 @@ async function sync() {
             :disabled="loading || !previewReady || !dirtyFiles.length || !commitMessage.trim()"
             @click="quickCommit"
           >
-            Commit dirty files
+            {{ retryIndex ? 'Retry Git index finalization' : 'Commit reviewed files' }}
           </button>
           <button class="secondary-button" type="button" :disabled="loading || !status.head || !status.available" @click="sync">Sync</button>
         </div>

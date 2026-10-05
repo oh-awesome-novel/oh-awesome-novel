@@ -17,11 +17,11 @@ bash-tool + just-bash fixed sandbox
 
 优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database。
 
-## Current Delivery Priority (2026-10-01)
+## Current Delivery Priority (2026-10-05)
 
-按 [设计实现评审](DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md) 与 [1230 修正任务](tasks/1230.md) 推进：先完成首次使用、审批恢复、中文 Git 路径、最终树引用校验，再补上下文预算、会话恢复和 Play 可靠性。正文搜索、可读导出、旧稿导入与卷/全局摘要分别验收。
+按 [1230 修正任务](tasks/1230.md) 的最新记录推进，原评审只作带日期的基线。首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复和已记录的 Play 可靠性修正已交付。
 
-续作已交付标准Agent usage治理、单章summary/state结构化证据审批、正文搜索、Markdown/TXT导出和Play派生窗口存储读取。见tasks `1110` / `1030` / `0570` / `1270` / `1260`；剩余广义结算、hash freshness、导入/上层摘要与全量save成本继续独立验收。
+现已交付标准Agent usage治理、受限多领域结构化结算、正文搜索、Markdown/TXT导出、Play派生窗口/快照优化，以及[1290](tasks/1290.md)章级来源新鲜度与长篇历史加载、[1300](tasks/1300.md)作者Markdown旧稿导入。[1310](tasks/1310.md)承接生产类型/发行质量门禁、Git预览绑定提交与打包写作旅程，其最终验证以任务记录为准。后续候选是 `0700` 卷/全局摘要、`0580` 远端同步收尾与更多环境验收、`1120`剩余Play可靠性。完整Play mutation/CAS成本仍线性，进一步优化以实测门槛为准。
 
 **Extension 系统开发暂缓。** 不新增动态 Tool 注册、extension host code、更多 Director 控制或 Reference 分析层；保留已经交付的能力。恢复扩展前，先证明已有写作、审批、导出与 Play adoption 的真实创作旅程。
 
@@ -139,6 +139,8 @@ Deliverables: chat streaming、tool activity、PendingAction list/detail、creat
 
 Goal: 使用 chapter/volume/global summaries、state、timeline 与 foreshadow 构造 bounded context，不加载整本小说，不把向量数据库当事实源。
 
+Current delivery: `1030` 章节证据结算与 `1290` 章级 freshness / 历史分层已完成。卷/全局摘要可作为明确未验证的手工参考读取，生成和多层来源覆盖传播仍待独立实现。
+
 ## M10. Workflow And Skills
 
 Goal: 作者可控的 Workflow、Writing Profile、Skill Prompt Pack 和 allowed tool filter。
@@ -160,6 +162,8 @@ Extensions 不得获得 host shell、绕过 sandbox policy、直接写 canonical
 Goal: old manuscript import、readable export、Git UI、validation、跨平台 package 与真实 workspace polish。
 
 Import/export 是显式用户 workflow；AI 导入产生 canonical change 时仍走 PendingAction。
+
+Current delivery: `1270` Markdown/TXT导出、`1300` create-only Markdown旧稿导入、`1280` Electron发行流程已交付。`1310` 将严格类型/回归门禁、Git预览绑定和打包重启旅程接入现有链路。导入无需模型，但所有正式章节创建仍由作者审阅PendingAction后Accept。
 
 ## M13. Sandbox Change Engine And Unified Producers
 

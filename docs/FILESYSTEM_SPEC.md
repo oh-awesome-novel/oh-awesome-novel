@@ -383,6 +383,8 @@ Character 是相对稳定的人设。
 
 State 是随章节变化的动态变量。
 
+`state/chapters/<卷号>/<章号>.yaml` 保存已接受的本章结算证据，包括正文 `sourceHash`、观察和可能存在的 `settlementRecords` 历史；作者既有字段继续保留。它与 `state/characters.yaml` 等当前全局状态用途不同。默认上下文只加载当前全局状态及目标章的当前证据，其他章级记录在固定投影中按需读取，不因位于 state 根而全部发送。
+
 ## Timeline Format
 
 ### `timeline/events.yaml`
@@ -446,6 +448,8 @@ State/Timeline/Foreshadow YAML 还检查 `characterId`、`characterIds`、`relat
 同 action 新建对象并引用它合法；删除对象必须同时删除或改写全部引用它的结构化文件。未改动的引用文件也参与检查。已有悬空引用的工程，对上述六个根内的写入会 fail closed，需在同一候选中修复；纯 summary/outline/Reference publication 的候选不触发这项 gate。语法与单文件领域校验继续独立执行，不因引用存在而跳过。
 
 ## Summary Format
+
+章节结算生成的摘要带当前来源指针和历史证据块；来源 hash 对应正文原始内容。默认上下文使用通过证据检查的当前块，历史块不作为当前事实自动加载。作者手写摘要缺少来源记录时标为 unverified 参考；过期、损坏或缺失的证据由共享 evaluator 明确区分。`sourceHash` 不证明模型对文学事实的解释正确，作者仍审阅提案。
 
 ```text
 summaries/chapter/0001/0001.md

@@ -1,5 +1,7 @@
 import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
+import { assertManuscriptImportPreview } from '@oh-awesome-novel/tools';
+import { createManuscriptImportHandlers } from './manuscript-import.js';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -213,11 +215,11 @@ import type {
 import {
   buildChapterIndex,
   commitFiles,
+  prepareGitCommitPreview,
   createChangeMaterializer,
   createPendingActionStore,
   createPlayAdoptionChangeProposal,
   PendingActionProtocolError,
-  gitDiff,
   initializeWorkspaceRepository,
   listGitCommits,
   loadYaml,
@@ -450,6 +452,10 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     pendingActionServices: new Map<string, Promise<PendingActionServices>>(),
   };
   const app = new Hono();
+  const manuscriptImport = createManuscriptImportHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getStore: async (root) => (await getPendingActionServices(state, root)).store,
+  });
   const playRehearsal = createPlayRehearsalBackendController({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     async getModelRuntime() {
@@ -606,6 +612,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     catch { return jsonResponse(context, 422, { error: 'No safely readable canonical manuscript is available. Check chapters and file links, then retry.' }); }
   });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
+  app.post('/api/workspace/manuscript/import/preview', (context) => manuscriptImport.preview(context));
+  app.post('/api/workspace/manuscript/import/previews/:id/pending-action', (context) => manuscriptImport.propose(context, context.req.param('id')));
   app.get('/api/workspace/writing-profiles', (context) =>
     handleGetWritingProfiles(options, state, context));
   app.post('/api/workspace/writing-profiles', (context) =>
@@ -2324,9 +2332,9 @@ async function handleGitDiff(
   const files = context.req.queries('file') ?? [];
 
   try {
-    return jsonResponse(context, 200, {
-      diff: await gitDiff(workspaceRoot, files),
-    });
+    const preview = await prepareGitCommitPreview(workspaceRoot, files);
+    if (requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Workspace changed; refresh the Git preview.' });
+    return jsonResponse(context, 200, preview);
   } catch (error) {
     return jsonResponse(context, 400, {
       error: error instanceof Error ? error.message : String(error),
@@ -2342,39 +2350,30 @@ async function handleGitCommit(
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const body = await readJsonBody(context);
   const message = getOptionalString(body, 'message')?.trim();
+  const previewId = getOptionalString(body, 'previewId');
+  const previewFingerprint = getOptionalString(body, 'previewFingerprint');
+
+  if (Object.keys(body).some((key) => !['files', 'message', 'previewId', 'previewFingerprint'].includes(key))
+    || !Array.isArray(body.files) || !body.files.length || body.files.length > 256 || new Set(body.files).size !== body.files.length || body.files.some((file) => typeof file !== 'string')
+    || !previewId || !/^git_[0-9a-f-]{36}$/u.test(previewId) || !previewFingerprint || !/^[a-f0-9]{64}$/u.test(previewFingerprint)) {
+    return jsonResponse(context, 400, { error: 'A reviewed Git preview and its exact file scope are required.' });
+  }
 
   if (!message) {
     return jsonResponse(context, 400, { error: 'Commit message is required.' });
   }
 
-  const status = await readGitStatus(workspaceRoot);
-  if (!status.repository || status.status === 'unknown') {
-    return jsonResponse(context, 409, {
-      status: 'failed',
-      message,
-      error: status.error ?? {
-        code: 'not_git_repository',
-        message: 'Workspace is not a Git repository.',
-      },
-    });
+  if (requireActiveWorkspaceRoot(options, state) !== workspaceRoot) {
+    return jsonResponse(context, 409, { error: 'Workspace changed; refresh and review again.' });
   }
-
-  const dirtyFiles = status.files.flatMap((file) => file.originalPath
-    ? [file.originalPath, file.path] : [file.path]);
-  const requestedFiles = readStringArray(body, 'files');
-  const files = requestedFiles.length ? requestedFiles : dirtyFiles;
-  const invalidFiles = files.filter((file) => !dirtyFiles.includes(file));
-
-  if (invalidFiles.length > 0) {
-    return jsonResponse(context, 400, {
-      error: `Commit files must come from current dirty status: ${invalidFiles.join(', ')}`,
-    });
-  }
+  const files = body.files as string[];
 
   const result = await commitFiles({
     workspaceRoot,
     files,
     message,
+    previewId,
+    previewFingerprint,
   });
 
   return jsonResponse(context, result.status === 'committed' ? 200 : 409, result);
@@ -6020,7 +6019,7 @@ async function assertPendingActionOriginFresh(
   const origin = action.origin;
   assertCapabilityOriginBinding(action.source.capability, origin);
   if (origin === undefined || origin.kind === 'agentTurn') return;
-  if (origin.kind === 'chapterSettlement') {
+  if (origin.kind === 'chapterSettlement' || origin.kind === 'manuscriptImport') {
     // ChangeMaterializer always validates this origin and its complete input
     // read set before invoking the host hook. Avoid scanning it twice.
     return;
@@ -6054,6 +6053,10 @@ async function assertPreparedPendingActionOriginFresh(
   preview: PreparedChangePreviewV1,
 ): Promise<void> {
   assertCapabilityOriginBinding(preview.capability, origin);
+  if (origin.kind === 'manuscriptImport') {
+    assertManuscriptImportPreview(preview);
+    return;
+  }
   if (origin.kind === 'referenceMaterialAdoption') {
     const controller = state.referenceMaterialAdoption;
     if (!controller) throw new Error('Reference Material adoption controller is unavailable.');

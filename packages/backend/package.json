@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsdown",
     "test": "npm run test:run --workspace @oh-awesome-novel/test-backend",
-    "test:watch": "npm run test --workspace @oh-awesome-novel/test-backend"
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-backend",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",

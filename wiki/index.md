@@ -16,6 +16,7 @@ oh-awesome-novel 是一个在本地管理长篇小说的写作工作区。你可
 
 | 你想做什么 | 阅读文档 |
 | --- | --- |
+| 把自己的 Markdown 旧稿拆章导入小说工程 | [导入自己的旧稿](./guide/manuscript-import.md) |
 | 查找正文中的线索，或下载整部小说正文 | [搜索与导出正文](./guide/search-and-export.md) |
 | 给 AI 提供参考作品或故事素材 | [参考资料](./guide/references.md) |
 | 先演一段情节，再决定是否用于正文 | [剧情排演](./guide/play.md) |

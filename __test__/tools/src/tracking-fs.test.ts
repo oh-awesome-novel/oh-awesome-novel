@@ -1,4 +1,4 @@
-import { InMemoryFs } from 'just-bash';
+import { InMemoryFs, latin1FromBytes } from 'just-bash';
 import { describe, expect, it } from 'vitest';
 
 import { TrackingFs } from '@oh-awesome-novel/tools';
@@ -62,7 +62,7 @@ describe('TrackingFs', () => {
       'link',
       'utimes',
     ]);
-    expect(Buffer.from(await fs.readFileBytes('/workspace/chapters/b.md'), 'latin1').toString()).toBe('bravo\n');
+    expect(Buffer.from(latin1FromBytes(await fs.readFileBytes('/workspace/chapters/b.md')), 'latin1').toString()).toBe('bravo\n');
     expect(() => fs.writeFileSync('/bin/late', 'no')).toThrow('frozen');
     expect(() => fs.mkdirSync('/usr/bin', { recursive: true })).toThrow('frozen');
   });

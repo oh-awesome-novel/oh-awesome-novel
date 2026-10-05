@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsdown",
     "test": "npm run test:run --workspace @oh-awesome-novel/test-tools",
-    "test:watch": "npm run test --workspace @oh-awesome-novel/test-tools"
+    "test:watch": "npm run test --workspace @oh-awesome-novel/test-tools",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^24.13.1",

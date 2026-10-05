@@ -1,3 +1,6 @@
+import { parseGitDiffPreview, assertReviewedGitCommitInput, parseReviewedGitCommitResult } from './git-preview';
+import type { GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
+export type { GitCommitPreview, GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
 import { assertUsageSessionId, parseAgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
 import type { AgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
 export { parseAgentUsageRecord, parseAgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
@@ -6,6 +9,10 @@ import { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace
 import type { WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
 export { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace-text.js';
 export type { WorkspaceSearchResult, WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
+import { assertManuscriptImportInput, assertManuscriptImportProposal, parseManuscriptImportPreviewResult } from './manuscript-import.js';
+import type { ManuscriptImportInput, ManuscriptImportPreviewResult, ManuscriptImportProposalInput } from './manuscript-import.js';
+export { MANUSCRIPT_IMPORT_MAX_BYTES, parseManuscriptImportPreviewResult } from './manuscript-import.js';
+export type { ManuscriptImportMapping, ManuscriptImportInput, ManuscriptImportChapter, ManuscriptImportPreview, ManuscriptImportPreviewResult, ManuscriptImportProposalInput } from './manuscript-import.js';
 import { DefaultChatTransport } from 'ai';
 import type { ChatTransport, UIMessage } from 'ai';
 import {
@@ -1638,6 +1645,8 @@ export interface GitCommandError {
     | 'auth_failed'
     | 'conflict'
     | 'invalid_input'
+    | 'stale_preview'
+    | 'index_recovery_required'
     | 'git_failed';
   message: string;
   stderr?: string;
@@ -1684,7 +1693,7 @@ export interface GitCommitDetail extends GitCommitSummary {
 }
 
 export type GitCommitResult =
-  | { status: 'committed'; hash: string; message: string }
+  | { status: 'committed'; hash: string; message: string; warning?: GitCommandError }
   | { status: 'skipped'; reason: 'auto_commit_disabled'; message: string }
   | { status: 'failed'; message: string; error: GitCommandError };
 
@@ -1804,6 +1813,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   getWorkspaceFile(path: string): Promise<{ path: string; content: string }>;
   searchWorkspace(query: string): Promise<WorkspaceSearchResponse>;
   exportManuscript(format: 'md' | 'txt'): Promise<ManuscriptExport>;
+  previewManuscriptImport(input: ManuscriptImportInput): Promise<ManuscriptImportPreviewResult>;
+  proposeManuscriptImport(previewId: string, input: ManuscriptImportProposalInput): Promise<PendingActionViewEnvelopeV1>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
   getWritingProfiles(): Promise<{ state: WritingProfileState }>;
   createWritingProfile(profile: WritingProfile): Promise<{ state: WritingProfileState }>;
@@ -1898,8 +1909,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   getGitStatus(): Promise<GitWorkspaceStatus>;
   getGitLog(maxCount?: number): Promise<{ commits: GitCommitSummary[]; error?: GitCommandError }>;
   getGitCommit(hash: string): Promise<GitCommitDetail>;
-  getGitDiff(files?: string[]): Promise<{ diff: string }>;
-  quickCommit(input: { files?: string[]; message: string }): Promise<GitCommitResult>;
+  getGitDiff(files?: string[]): Promise<GitDiffPreview>;
+  quickCommit(input: ReviewedGitCommitInput): Promise<GitCommitResult>;
   syncGit(): Promise<GitSyncResult>;
   openExternalEditor(editor: 'vscode' | 'zed' | 'webstorm'): Promise<{
     opened: boolean;
@@ -2279,6 +2290,23 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       if (response.format !== format) throw new Error('Mismatched manuscript export format.');
       return response;
     }),
+    previewManuscriptImport: async (input) => {
+      assertManuscriptImportInput(input);
+      const result = parseManuscriptImportPreviewResult(await requestJson<unknown>('/api/workspace/manuscript/import/preview', { method: 'POST', body: input }));
+      if (result.preview.sourceName !== input.sourceName || result.preview.sourceBytes !== new TextEncoder().encode(input.text).byteLength) throw new Error('Mismatched manuscript import source.');
+      if (input.mappings && (input.mappings.length !== result.preview.chapters.length || input.mappings.some((mapping, index) => {
+        const chapter = result.preview.chapters[index];
+        return !chapter || mapping.index !== chapter.index || mapping.volume !== chapter.volume || mapping.chapter !== chapter.chapter || mapping.title.trim() !== chapter.title;
+      }))) throw new Error('Mismatched manuscript import mapping.');
+      return result;
+    },
+    proposeManuscriptImport: async (previewId, input) => {
+      assertManuscriptImportProposal(previewId, input);
+      const result = parsePendingActionViewEnvelope(await requestJson<unknown>(`/api/workspace/manuscript/import/previews/${encodeURIComponent(previewId)}/pending-action`, { method: 'POST', body: input }));
+      if (result.pendingAction.id !== previewId || result.pendingAction.status !== 'pending' || result.pendingAction.origin?.kind !== 'manuscriptImport' || result.pendingAction.origin.previewId !== previewId
+        || result.pendingAction.changes.some((change) => change.operation !== 'create' || !/^chapters\/(?!0000)[0-9]{4}\/(?!0000)[0-9]{4}\.md$/u.test(change.path))) throw new Error('Mismatched manuscript import proposal.');
+      return result;
+    },
     getWorkspaceTree: () => requestJson<{ tree: FileTreeNode[] }>('/api/workspace/tree'),
     getWorkspaceFile: (path) =>
       requestJson<{ path: string; content: string }>(
@@ -2552,15 +2580,17 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       ),
     getGitCommit: (hash) =>
       requestJson<GitCommitDetail>(`/api/git/show/${encodeURIComponent(hash)}`),
-    getGitDiff: (files = []) =>
-      requestJson<{ diff: string }>(
+    getGitDiff: async (files = []) =>
+      parseGitDiffPreview(await requestJson<unknown>(
         `/api/git/diff${files.length ? `?${files.map((file) => `file=${encodeURIComponent(file)}`).join('&')}` : ''}`,
-      ),
-    quickCommit: (input) =>
-      requestJson<GitCommitResult>('/api/git/commit', {
+      )),
+    quickCommit: async (input) => {
+      assertReviewedGitCommitInput(input);
+      return parseReviewedGitCommitResult(await requestJson<unknown>('/api/git/commit', {
         method: 'POST',
         body: input,
-      }),
+      }));
+    },
     syncGit: () =>
       requestJson<GitSyncResult>('/api/git/sync', {
         method: 'POST',
@@ -4362,6 +4392,8 @@ function isGitCommandErrorEnvelope(value: unknown): value is GitCommandError {
       || value.code === 'auth_failed'
       || value.code === 'conflict'
       || value.code === 'invalid_input'
+      || value.code === 'stale_preview'
+      || value.code === 'index_recovery_required'
       || value.code === 'git_failed'
     )
     && isNonEmptyString(value.message)

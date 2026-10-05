@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": [
-      "ES2022",
+      "ES2023",
       "DOM"
     ],
     "strict": true,
@@ -16,7 +16,10 @@
     "noEmit": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts",

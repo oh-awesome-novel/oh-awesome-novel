@@ -16,7 +16,7 @@ Related task: [1230](../../tasks/1230.md)
 - [x] 类型化最终树引用 inventory；同候选新建、删除、未知引用、namespace 错配。
 - [x] proposal 与 Accept 共用合同；窄模型投影不扩权。
 - [x] 修正文档样例并用真实 validator 验证。
-- [x] 目标附近/最新摘要、全局/卷锚点、完整 Constitution/state。
+- [x] 目标附近/最新摘要、全局/卷锚点、完整 Constitution/当时 state；后续1290将当前状态与章级历史分层并补source hash freshness。
 - [x] 逐文件 source/payload 证据和预算未知语义；每个 step 实施估算预算与输出上限。
 - [x] 恢复会话按固定投影比较 hash，并显示作者提示。
 - [x] `1110` 标准Agent G1–G6：compressible omission、protected overflow、actual usage、egress/inspector。
@@ -34,7 +34,7 @@ Related task: [1230](../../tasks/1230.md)
 
 - [x] `0570` 中文正文/标题/路径搜索、snippet、刷新、右侧打开。
 - [x] `0700` / `1270` 最小 Markdown/TXT 正文导出，明确目标与覆盖。
-- [ ] 作者旧稿导入预览与同一 ChangeSet 审批。
+- [x] 作者旧稿导入预览与同一 ChangeSet 审批（2026-10-05，1300）。
 - [ ] 卷/全局摘要来源覆盖、hash 和失效规则。
 
 ## Verification

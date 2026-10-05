@@ -254,7 +254,7 @@ function normalizeProjectionRules(
   }
   return Object.freeze([...byKey.values()].sort((left, right) => (
     left.path.localeCompare(right.path, 'en') || left.kind.localeCompare(right.kind, 'en')
-  )).map(Object.freeze));
+  )).map((rule) => Object.freeze(rule)));
 }
 
 function normalizeProjectionLimits(options: CreateWorkspaceProjectionOptions) {

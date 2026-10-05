@@ -173,15 +173,20 @@ export const deriveMinimalMemory = (
 
 export const formatContextPackageSummary = (
   contextPackage: ContextPackage,
+  options: { maxSources?: number; maxTrace?: number } = {},
 ): string => {
+  const bounded = <T>(items: readonly T[], limit: number | undefined, format: (item: T) => string): string => {
+    const count = limit === undefined ? items.length : Math.max(0, Math.floor(limit));
+    return items.length ? [...items.slice(0, count).map(format), ...(items.length > count ? [`- ${items.length - count} additional entries omitted from this bounded context report; full evidence remains in the context artifact.`] : [])].join('\n') : '- none';
+  };
   const selected = contextPackage.selected.length
-    ? contextPackage.selected.map(formatSourceRef).join('\n')
+    ? bounded(contextPackage.selected, options.maxSources, formatSourceRef)
     : '- none';
   const omitted = contextPackage.omitted.length
-    ? contextPackage.omitted.map(formatSourceRef).join('\n')
+    ? bounded(contextPackage.omitted, options.maxSources, formatSourceRef)
     : '- none';
   const trace = contextPackage.trace?.length
-    ? contextPackage.trace.map(formatTraceEntry).join('\n')
+    ? bounded(contextPackage.trace, options.maxTrace, formatTraceEntry)
     : '- none';
 
   return [

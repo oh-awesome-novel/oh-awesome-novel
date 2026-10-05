@@ -268,9 +268,12 @@ export {
   writeWorkspaceProjections,
 } from './projections.js';
 export {
+  evaluateProjectHealth,
   formatProjectHealthMarkdown,
   readProjectHealth,
 } from './project-health.js';
+export { evaluateChapterEvidence, formatChapterEvidenceCoverage } from './chapter-evidence-freshness.js';
+export type { FrozenWorkspaceFile, FrozenWorkspaceSnapshot, ChapterEvidenceFreshness, ChapterEvidenceAssessment, ChapterEvidenceCoverage } from './chapter-evidence-freshness.js';
 export type {
   ProjectionDocument,
   ProjectionTarget,
@@ -1168,3 +1171,5 @@ export type { WorkspaceSearchResult, WorkspaceSearchResponse, ManuscriptExport }
 
 export * from './agent-usage';
 export * from './agent-usage-store';
+
+export * from './manuscript-import';

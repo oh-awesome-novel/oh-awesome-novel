@@ -458,7 +458,7 @@ function projectEventPresentation(
       momentumChanged: Boolean(pressure || agenda),
     });
     const safeStateImpacts = containsHiddenEvent
-      ? []
+      ? { items: [], omittedCount: 0 }
       : projectArtifactStateImpacts(artifact, false, {
           momentumChanged: false,
         });

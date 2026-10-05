@@ -73,4 +73,4 @@ Git Diff Human Approval
 
 早期讨论中的 `StoryForge` 只作为历史参考来源，不是当前产品名、组件名、目录名或兼容目标。
 
-当前修正交付与暂缓范围见 [1230 Review-driven Reliability Corrections](tasks/1230.md)。
+当前修正交付与暂缓范围见 [1230 Review-driven Reliability Corrections](tasks/1230.md)。2026-10-05 已交付 [1290 Long-novel Context And Memory Freshness](tasks/1290.md)、[1300 Author Manuscript Markdown Import](tasks/1300.md) 和 [1310 Delivery Quality Gates And Reviewed Git Commits](tasks/1310.md)。1310已通过本机完整质量与打包旅程，跨平台CI尚未远程执行；对应作者说明见 [上下文与用量](../wiki/guide/usage.md) 和 [导入旧稿](../wiki/guide/manuscript-import.md)。

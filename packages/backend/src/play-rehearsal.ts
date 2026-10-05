@@ -35,6 +35,7 @@ import type {
   LlmProviderConfig,
   NarrativeBlock,
   PlayAttemptMutationReceipt,
+  PlayAttemptMutationResult,
   PlayDirectorKnowledgeGrant,
   PlaySession,
   PlayContextSourceTrace,
@@ -86,14 +87,20 @@ export interface PlayRehearsalStructuredError {
 
 export class PlayRehearsalRequestError extends Error {
   readonly name = 'PlayRehearsalRequestError';
+  readonly status: number;
+  readonly code: string;
+  readonly details?: Record<string, unknown>;
 
   constructor(
-    readonly status: number,
-    readonly code: string,
+    status: number,
+    code: string,
     message: string,
-    readonly details?: Record<string, unknown>,
+    details?: Record<string, unknown>,
   ) {
     super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
   }
 }
 
@@ -146,7 +153,7 @@ export interface PlayRehearsalBackendController {
     sessionId: string,
     attemptId: string,
     body: unknown,
-  ): Promise<Record<string, unknown>>;
+  ): Promise<PlayAttemptMutationResult>;
   finalizeAttempt(
     sessionId: string,
     attemptId: string,
@@ -156,7 +163,7 @@ export interface PlayRehearsalBackendController {
     sessionId: string,
     attemptId: string,
     body: unknown,
-  ): Promise<Record<string, unknown>>;
+  ): Promise<PlayAttemptMutationResult>;
   getSceneMemory(
     sessionId: string,
     lens: unknown,
@@ -665,7 +672,7 @@ async function performPlayRedirectIntervention(input: {
   stepRef: string;
   directorIntent: string;
   authorConstraintRefs: string[];
-}): Promise<Record<string, unknown>> {
+}): Promise<PlayAttemptMutationResult> {
   const requestFingerprint = fingerprintPlayAttemptRequest({
     kind: 'redirectStep',
     stepRef: input.stepRef,

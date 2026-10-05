@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { evaluateChapterEvidence, formatChapterEvidenceCoverage } from '@oh-awesome-novel/core';
 import type { SandboxProjectionSnapshot } from '@oh-awesome-novel/tools';
 import type { NovelAgentWorkspaceContextFile, NovelAgentWorkspaceSnapshot } from './index';
 import { estimateContextTokens } from './context-budget';
@@ -19,7 +20,17 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
   // Constitution and current state are protected; never silently take only the
   // first N files. The adapter rejects an oversized request before provider I/O.
   const constitution = select('.oan/constitution', ['.md']);
-  const state = select('state', ['.yaml', '.yml']);
+  const allState = select('state', ['.yaml', '.yml']);
+  const coverage = evaluateChapterEvidence(projection);
+  const bySummary = new Map(coverage.map((item) => [item.summary.path, item.summary]));
+  const byState = new Map(coverage.map((item) => [item.state.path, item.state]));
+  const selectedPaths = new Set(options.targetPaths ?? []);
+  const selectedChapterIds = new Set((options.targetPaths ?? []).flatMap((path) => {
+    const id = /^(?:chapters|summaries\/chapter|state\/chapters)\/(\d{4}\/\d{4})\.(?:md|ya?ml)$/u.exec(path)?.[1]; return id ? [id] : [];
+  }));
+  const selectedStatePaths = new Set(coverage.filter((item) => selectedChapterIds.has(item.chapterId)).map((item) => item.state.path));
+  const state = allState.filter((file) => !file.path.startsWith('state/chapters/') || selectedPaths.has(file.path)
+    || selectedStatePaths.has(file.path));
   const timeline = select('timeline', ['.yaml', '.yml', '.md']);
   const foreshadow = select('foreshadow', ['.yaml', '.yml', '.md']);
   const allSummaries = select('summaries', ['.md']);
@@ -30,7 +41,7 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     .filter((volume) => volume !== undefined).toSorted((a, b) => b - a)[0];
   const activeVolumes = new Set(targets.length ? targets.map((target) => target.volume)
     : [latestChapter?.volume ?? latestVolume].filter((volume) => volume !== undefined));
-  const summaries = allSummaries.toSorted((a, b) => {
+  const summaries = allSummaries.filter((file) => !bySummary.has(file.path) || bySummary.get(file.path)!.context !== undefined).toSorted((a, b) => {
     const rank = (file: File) => {
       if (file.path === 'summaries/global.md') return -3;
       const volume = volumeNumber(file.path);
@@ -51,15 +62,28 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     && volumeNumber(file.path) === undefined).slice(0, 12)];
   const workflow = projection.files.find((file) => file.path === '.oan/workflow.yaml' && file.content.length > 0);
   const contextFiles: NovelAgentWorkspaceContextFile[] = [];
+  const payloadFor = (sourceId: string, root: string, file: File) => {
+    if (sourceId === 'previousChapterEnding') {
+      const evidence = bySummary.get(file.path);
+      return `# ${file.path.slice(root.length + 1)}\n\n${evidence?.context ?? `Freshness: unverified author reference. This volume/global summary has no verified chapter source coverage; check source chapters before using it as current facts.\n\n${file.content}`}`;
+    }
+    if (sourceId === 'latestState' && file.path.startsWith('state/chapters/')) {
+      const evidence = byState.get(file.path);
+      if (selectedPaths.has(file.path)) return `${format(root, file)}\n\nExplicitly selected complete file. Freshness: ${evidence?.status ?? 'unverified'}; historical records and unverified author fields are not automatically current facts.`;
+      return `# ${file.path.slice(root.length + 1)}\n\n${evidence?.context ?? `Freshness: ${evidence?.status ?? 'unverified'}. ${evidence?.reason ?? 'No supported chapter evidence metadata.'} This source is not current evidence; read it explicitly through the fixed projection if needed.`}`;
+    }
+    return root ? format(root, file) : file.content;
+  };
   const describe = (sourceId: string, root: string, files: File[]) => {
     for (const file of files) {
-      const payload = root ? format(root, file) : file.content;
+      const payload = payloadFor(sourceId, root, file);
       contextFiles.push({ sourceId, path: file.path,
         sourceHash: hash(file.content), payloadHash: hash(payload), payload, originalChars: file.content.length,
         modelVisibleChars: payload.length, estimatedTokens: estimateContextTokens(payload),
         selectionReason: sourceId === 'previousChapterEnding'
-          ? targets.length ? 'target-near chapter or volume/global summary' : 'latest numbered chapter or volume/global summary'
-          : 'complete protected source or continuity ledger from the fixed projection',
+          ? `${bySummary.get(file.path)?.status ?? 'unverified'} summary: current evidence only, or explicitly unverified author reference; historical snapshots omitted`
+          : file.path.startsWith('state/chapters/') ? selectedPaths.has(file.path) ? 'explicitly selected complete chapter state file' : 'derived selected chapter current evidence and author fields; historical records omitted'
+          : 'complete protected current source or continuity ledger from the fixed projection',
       });
     }
   };
@@ -75,16 +99,22 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     projectionFingerprint: projection.projectionFingerprint,
     ...(constitution.length ? { constitution: constitution.map((file) => format('.oan/constitution', file)).join('\n\n') } : {}),
     ...(workflow ? { workflow: workflow.content } : {}),
-    ...(chosen.length ? { summaries: Object.freeze(chosen.map((file) => format('summaries', file))) } : {}),
-    ...(state.length ? { state: state.map((file) => format('state', file)).join('\n\n') } : {}),
+    ...(chosen.length ? { summaries: Object.freeze(chosen.map((file) => payloadFor('previousChapterEnding', 'summaries', file))) } : {}),
+    ...(state.length ? { state: state.map((file) => payloadFor('latestState', 'state', file)).join('\n\n') } : {}),
+    chapterEvidenceCoverage: formatChapterEvidenceCoverage(coverage, [...selectedChapterIds]),
     ...(timeline.length ? { timeline: timeline.map((file) => format('timeline', file)).join('\n\n') } : {}),
     ...(foreshadow.length ? { foreshadow: foreshadow.map((file) => format('foreshadow', file)).join('\n\n') } : {}),
     contextFiles: Object.freeze(contextFiles),
-    omittedContextFiles: Object.freeze(allSummaries.filter((file) => !chosen.includes(file)).map((file) => ({
+    omittedContextFiles: Object.freeze([...allSummaries.filter((file) => !chosen.includes(file)).map((file) => ({
       sourceId: 'previousChapterEnding', path: file.path, sourceHash: hash(file.content),
       modelVisibleChars: 0, estimatedTokens: 0,
-      selectionReason: 'outside the twelve nearest/latest summary anchors; available through fixed-projection tools',
-    }))),
+      selectionReason: bySummary.get(file.path)?.context === undefined && bySummary.has(file.path)
+        ? `${bySummary.get(file.path)!.status}: ${bySummary.get(file.path)!.reason} Available only through explicit fixed-projection reads.`
+        : 'outside the twelve nearest/latest summary anchors; available through fixed-projection tools',
+    })), ...allState.filter((file) => !state.includes(file)).map((file) => ({
+      sourceId: 'latestState', path: file.path, sourceHash: hash(file.content), modelVisibleChars: 0, estimatedTokens: 0,
+      selectionReason: 'unselected chapter evidence/history is not default current state; available through fixed-projection reads',
+    }))]),
   });
 }
 

@@ -23,6 +23,8 @@ export interface GitCommandError {
     | 'auth_failed'
     | 'conflict'
     | 'invalid_input'
+    | 'stale_preview'
+    | 'index_recovery_required'
     | 'git_failed';
   message: string;
   stderr?: string;
@@ -69,7 +71,7 @@ export interface GitCommitDetail extends GitCommitSummary {
 }
 
 export type GitCommitResult =
-  | { status: 'committed'; hash: string; message: string }
+  | { status: 'committed'; hash: string; message: string; warning?: GitCommandError }
   | { status: 'skipped'; reason: 'auto_commit_disabled'; message: string }
   | { status: 'failed'; message: string; error: GitCommandError };
 
@@ -365,82 +367,14 @@ export async function showGitCommit(
   };
 }
 
-export async function commitFiles(input: {
-  workspaceRoot: string;
-  files: string[];
-  message: string;
-}): Promise<GitCommitResult> {
-  const files = validateWorkspaceRelativePaths(input.workspaceRoot, input.files, true);
-  await assertGitFilePaths(input.workspaceRoot, files);
-  const message = input.message.trim();
-
-  if (!files.length) {
-    return failedCommit(message, {
-      code: 'invalid_input',
-      message: 'No files selected for commit.',
-    });
-  }
-
-  if (!message) {
-    return failedCommit(message, {
-      code: 'invalid_input',
-      message: 'Commit message is required.',
-    });
-  }
-
-  const stagedBefore = await runGit(input.workspaceRoot, [
-    'diff',
-    '--cached',
-    '--name-only',
-    '--no-renames',
-    '-z',
-  ]);
-  if (!stagedBefore.ok) {
-    return failedCommit(message, stagedBefore.error);
-  }
-
-  const stagedFiles = parseNulPaths(stagedBefore.stdout);
-  const unrelatedStaged = stagedFiles.filter((file) => !files.includes(file));
-  if (unrelatedStaged.length > 0) {
-    return failedCommit(message, {
-      code: 'invalid_input',
-      message: `There are staged files outside this commit scope: ${unrelatedStaged.join(', ')}`,
-    });
-  }
-
-  const statusBefore = await runGit(input.workspaceRoot, ['status', '--porcelain=v1', '-z', '--', ...files]);
-  if (!statusBefore.ok) {
-    return failedCommit(message, statusBefore.error);
-  }
-
-  if (!statusBefore.stdout.trim() && stagedFiles.length === 0) {
-    return failedCommit(message, {
-      code: 'invalid_input',
-      message: 'Selected files have no changes to commit.',
-    });
-  }
-
-  const add = await runGit(input.workspaceRoot, ['update-index', '--add', '--remove', '--', ...files]);
-  if (!add.ok) {
-    return failedCommit(message, add.error);
-  }
-
-  const commit = await runGit(input.workspaceRoot, ['commit', '-m', message]);
-  if (!commit.ok) {
-    return failedCommit(message, commit.error);
-  }
-
-  const head = await runGit(input.workspaceRoot, ['rev-parse', 'HEAD']);
-  if (!head.ok) {
-    return failedCommit(message, head.error);
-  }
-
-  return {
-    status: 'committed',
-    hash: head.stdout.trim(),
-    message,
-  };
+/** Explicit user commits require the exact preview returned by prepareGitCommitPreview. */
+export async function commitFiles(input: import('./git-reviewed-commit').ReviewedGitCommitInput): Promise<GitCommitResult> {
+  const { commitReviewedGitFiles } = await import('./git-reviewed-commit');
+  return commitReviewedGitFiles(input);
 }
+
+/** Internal adapter shared by the reviewed-commit module, never a frontend passthrough. */
+export const reviewedGitHelpers = { runGit, validateWorkspaceRelativePaths, assertGitFilePaths, gitResultError };
 
 /**
  * Revalidates the Git boundary used by ChangeMaterializer. The baseline check

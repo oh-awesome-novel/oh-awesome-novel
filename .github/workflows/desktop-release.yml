@@ -18,8 +18,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    name: Verify release source
+    uses: ./.github/workflows/quality.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: quality
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -53,7 +60,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.quality.outputs.commit }}
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -109,30 +116,12 @@ jobs:
       - name: Make unsigned distributables
         run: npm run make --workspace @oh-awesome-novel/desktop -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
 
-      - name: Verify packaged main process
+      - name: Verify packaged writing and restart journey
         run: |
-          cat > "$RUNNER_TEMP/oan-packaged-smoke.cjs" <<'NODE'
-          const path = require('node:path');
-          const { spawnSync } = require('node:child_process');
-          const platform = process.platform;
-          const bundle = path.resolve('apps/desktop/out', `oan-${platform}-${process.arch}`);
-          const executable = platform === 'darwin'
-            ? path.join(bundle, 'oan.app/Contents/MacOS/oan')
-            : path.join(bundle, platform === 'win32' ? 'oan.exe' : 'oan');
-          const args = ['--oan-packaged-main-smoke'];
-          if (platform === 'linux') args.push('--no-sandbox');
-          const result = spawnSync(executable, args, { encoding: 'utf8', timeout: 120000 });
-          process.stdout.write(result.stdout || '');
-          process.stderr.write(result.stderr || '');
-          if (result.error) throw result.error;
-          if (result.status !== 0 || !result.stdout?.includes('"ok":true')) {
-            throw new Error(`Packaged smoke failed: exit=${result.status}, signal=${result.signal}`);
-          }
-          NODE
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            xvfb-run -a node "$RUNNER_TEMP/oan-packaged-smoke.cjs"
+            xvfb-run -a node __test__/desktop-ui/packaged-main-smoke/run.cjs --no-sandbox
           else
-            node "$RUNNER_TEMP/oan-packaged-smoke.cjs"
+            node __test__/desktop-ui/packaged-main-smoke/run.cjs
           fi
 
       - name: Upload distributables

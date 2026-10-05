@@ -1298,7 +1298,7 @@ function parseStrictCandidateChangeSet(value: unknown, origin?: PendingActionOri
   }
 
   // Reuse the strict stored parser to validate every baseline and operation union.
-  const syntheticId = 'candidate_validation';
+  const syntheticId = origin?.kind === 'manuscriptImport' ? origin.previewId : 'candidate_validation';
   parsePendingAction({
     schemaVersion: 1,
     kind: 'pending-action',

@@ -290,6 +290,13 @@ describe('Play session bounded read model', () => {
       createdAt: '2026-07-20T02:00:00.000Z',
     });
     const hiddenEventId = hidden.events[0]!.id;
+    // Hidden event branches still satisfy the public collection contract and do
+    // not expose impact counts to the player projection.
+    const hiddenDetail = projectPlaySessionSelectedDetail(hidden, { limit: 1 });
+    expect(hiddenDetail.eventPresentation[0]).toMatchObject({
+      stateImpacts: [],
+      stateImpactOmittedCount: 0,
+    });
     const revealed = settlePlayWorldRefereeSettlement({
       session: hidden,
       userText: 'Question the porter.',

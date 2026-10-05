@@ -210,7 +210,7 @@ export function createCandidateChangeSet(
       updated: changes.filter((change) => change.operation === 'update').length,
       deleted: changes.filter((change) => change.operation === 'delete').length,
       changedBytes: changes.reduce((total, change) => (
-        total + (change.draft?.byteLength ?? change.baseline.byteLength)
+        total + (change.operation === 'delete' ? change.baseline.byteLength : change.draft.byteLength)
       ), 0),
     },
   };

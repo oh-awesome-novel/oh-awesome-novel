@@ -25,6 +25,7 @@ export default defineConfig({
         text: "日常创作",
         items: [
           { text: "章节与 AI 写作", link: "/guide/writing" },
+          { text: "导入自己的旧稿", link: "/guide/manuscript-import" },
           { text: "审阅与接受修改", link: "/guide/review" },
           { text: "搜索与导出正文", link: "/guide/search-and-export" },
           { text: "参考资料", link: "/guide/references" },

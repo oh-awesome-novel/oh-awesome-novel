@@ -33,7 +33,7 @@ Character、World、Constitution 等长期对象拆成小型 Markdown / YAML 文
 
 ### F3. Domain Support
 
-必须支持 Character、World、Chapter、State、Timeline、Foreshadow、Summary 与 Outline，以及 Constitution、Workflow、Skill、Writing Profile 和 Extension 控制域。
+必须支持 Character、World、Chapter、State、Timeline、Foreshadow、Summary 与 Outline，以及 Constitution、Workflow、Skill 和 Writing Profile 控制域。Extension manifest / 动态注册保留为暂缓范围，不列作当前交付门槛。
 
 ### F4. Novel Constitution And Workflow
 
@@ -107,6 +107,8 @@ PendingAction、terminal record、decision receipt 和 prepared preview 使用�
 
 上下文来自 Constitution、Workflow、当前任务、显式选择、近期章节、摘要、State、Timeline 与 Foreshadow。默认不加载整本小说，向量数据库不得成为 memory 事实源。
 
+当前全局状态与章级历史证据必须分层选择；默认模型消息不包含全部章节的结算历史。摘要/章级状态以正文 hash 和证据结构判定来源有效性，区分 current / stale / missing / unverified。历史和未验证参考不能冒充当前事实；来源警告不成为隐式写入 gate，必要输入仍遵循 protected overflow。
+
 ### F15. Review, Settlement And Adoption
 
 - Review 默认 report-only；只有作者明确要求编辑时才创建候选。
@@ -121,6 +123,10 @@ UI 必须展示 PendingAction title/status、create/update/delete path list、�
 ### F17. Internal State And Reset
 
 新协议仅使用 `.workspace/change-engine/v1/`。`.workspace/` 与 `.oan/sessions/` 是 disposable runtime/session state；一次性开发 reset 只能在验证 exact realpath、Git tracked files、Git status 与 canonical SHA-256 manifest 后删除这两个目录。`.git`、`.oan` 其它配置与所有小说对象树必须保留。
+
+### F18. Author Manuscript Import
+
+作者自有 Markdown 可在当前工作区预览拆章和卷章映射。原文保留、冲突可见、输入/映射变化后重新预览；初版只创建新章节，不隐式覆盖或合并。导入使用独立 deterministic producer 和同一 immutable preview / PendingAction / Accept，不与已有 OAN workspace 打开或外部 Reference 导入混同。当前批次上限为 512 KiB / 64 章。
 
 ## Non-Functional Requirements
 

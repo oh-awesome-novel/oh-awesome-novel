@@ -12,7 +12,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsdown"
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@oh-awesome-novel/core": "^0.0.1",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "tsdown": "^0.22.2",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "@types/node": "^24.13.1"
   }
 }

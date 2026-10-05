@@ -63,7 +63,7 @@ async function safeAncestors(root: string, path: string): Promise<void> {
 }
 
 /** Safe plain-text viewer read; only constitution/workflow are hidden-path exceptions. */
-export async function readWorkspaceTextFile(workspaceRoot: string, inputPath: string): Promise<TextFile> {
+export async function readWorkspaceTextFile(workspaceRoot: string, inputPath: string, options: { preserveBOM?: boolean } = {}): Promise<TextFile> {
   const root = await realpath(workspaceRoot);
   const path = safePath(inputPath);
   await safeAncestors(root, path);
@@ -85,7 +85,7 @@ export async function readWorkspaceTextFile(workspaceRoot: string, inputPath: st
     if (length !== before.size || before.ino !== current.ino || before.dev !== current.dev
       || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.size !== before.size || current.isSymbolicLink()
       || current.nlink !== 1 || after.nlink !== 1) throw new Error(`Workspace text changed during reading: ${path}`);
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length));
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: options.preserveBOM ?? false }).decode(bytes.subarray(0, length));
     if (content.includes('\0')) throw new Error(`Workspace text contains binary data: ${path}`);
     return { path, content };
   } finally { await handle.close(); }

@@ -9,6 +9,7 @@
   "type": "commonjs",
   "main": ".vite/build/main.js",
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "npm --prefix ../.. run desktop:build:deps && electron-forge start",
     "package": "npm --prefix ../.. run desktop:build:package && electron-forge package",
     "make": "npm --prefix ../.. run desktop:build:package && electron-forge make",

@@ -125,9 +125,11 @@ export function getPlaySessionStartMode(session: PlaySession): PlayStartMode {
       'Play launch session metadata purpose does not match the parent session schema.',
     );
   }
-  return session.schemaVersion === 5
-    ? session.sceneRehearsal.startMode
-    : launchMetadata?.startMode ?? 'quick';
+  if (session.schemaVersion === 5) {
+    if (!session.sceneRehearsal) throw new Error('Scene rehearsal session requires its sceneRehearsal metadata.');
+    return session.sceneRehearsal.startMode;
+  }
+  return launchMetadata?.startMode ?? 'quick';
 }
 
 export function getPlayLaunchSessionMetadata(
@@ -254,7 +256,7 @@ function createKnowledgeEvidence(
     launchPackage.sourceBase.activatedSources.map((source) => [source.sourceId, source]),
   );
   return launchPackage.participantRoles.flatMap((participant) =>
-    participant.initialKnowledge.flatMap((knowledge) => {
+    participant.initialKnowledge.flatMap<PlaySceneKnowledgeEvidence>((knowledge) => {
       if (!knowledge.sourceRefs.length) {
         return [{
           id: knowledge.id,

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initWorkspace } from '@oh-awesome-novel/core';
 import {
   commitFiles,
+  prepareGitCommitPreview,
   createChangeMaterializer,
   createPendingActionStore,
   createSandboxEditSession,
@@ -126,7 +127,7 @@ describe('Git status and explicit commit preview', () => {
     const diff = await gitDiff(root, paths);
     for (const index of paths.keys()) expect(diff).toContain(`+value: file-${index}`);
     expect(diff).not.toContain('leave this untracked');
-    expect(await commitFiles({ workspaceRoot: root, files: paths, message: 'explicit selected paths' })).toMatchObject({ status: 'committed' });
+    expect(await reviewedCommit({ workspaceRoot: root, files: paths, message: 'explicit selected paths' })).toMatchObject({ status: 'committed' });
     const changed = (await git(root, 'diff-tree', '--no-commit-id', '--name-only', '-z', '-r', 'HEAD')).split('\0').filter(Boolean);
     expect(changed.sort()).toEqual([...paths].sort());
     expect((await readGitStatus(root)).files.map((file) => file.path)).toEqual(['unrelated.md']);
@@ -144,7 +145,7 @@ describe('Git status and explicit commit preview', () => {
     expect(diff).toContain('+new untracked content');
     expect(diff).not.toContain('+staged old content');
     expect(await readFile(join(root, '.git/index'))).toEqual(indexBefore);
-    const result = await commitFiles({ workspaceRoot: root, files: ['baseline.md', 'new.md'], message: 'previewed commit' });
+    const result = await reviewedCommit({ workspaceRoot: root, files: ['baseline.md', 'new.md'], message: 'previewed commit' });
     expect(result.status).toBe('committed');
     expect(await git(root, 'show', '--format=', 'HEAD')).toBe(diff);
   });
@@ -161,7 +162,7 @@ describe('Git status and explicit commit preview', () => {
     const status = await readGitStatus(root);
     expect(status.files).toContainEqual(expect.objectContaining({ path: newPath, originalPath: oldPath, indexStatus: 'R' }));
     expect(await gitDiff(root, [oldPath, newPath])).toContain('rename from');
-    expect(await commitFiles({ workspaceRoot: root, files: [oldPath, newPath], message: 'rename' })).toMatchObject({ status: 'committed' });
+    expect(await reviewedCommit({ workspaceRoot: root, files: [oldPath, newPath], message: 'rename' })).toMatchObject({ status: 'committed' });
     expect(await showGitCommit(root, (await git(root, 'rev-parse', 'HEAD')).trim())).toMatchObject({
       files: [expect.objectContaining({ path: newPath, originalPath: oldPath, status: 'R100' })],
     });
@@ -175,7 +176,7 @@ describe('Git status and explicit commit preview', () => {
     expect(status.files[0]?.path).toBe(path);
     expect(status.files[0]?.raw).toContain(JSON.stringify(path));
     await expect(gitDiff(root, [path])).rejects.toMatchObject({ code: 'invalid_input' });
-    await expect(commitFiles({ workspaceRoot: root, files: [path], message: 'unsupported' })).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(reviewedCommit({ workspaceRoot: root, files: [path], message: 'unsupported' })).rejects.toMatchObject({ code: 'invalid_input' });
     expect(await git(root, 'diff', '--cached', '--name-only')).toBe('');
   });
 
@@ -196,7 +197,7 @@ describe('Git status and explicit commit preview', () => {
     await initializeWorkspaceRepository(root);
     await write(root, '.oan/config.yaml', 'version: 1\nnovelName: New title\n');
     expect(await gitDiff(root, ['.oan/config.yaml'])).toContain('+novelName: New title');
-    expect(await commitFiles({ workspaceRoot: root, files: ['.oan/config.yaml'], message: 'rename novel' })).toMatchObject({ status: 'committed' });
+    expect(await reviewedCommit({ workspaceRoot: root, files: ['.oan/config.yaml'], message: 'rename novel' })).toMatchObject({ status: 'committed' });
     await expect(gitDiff(root, ['.oan/sessions/messages.json'])).rejects.toMatchObject({ code: 'invalid_input' });
     await expect(gitDiff(root, ['.workspace/internal.json'])).rejects.toMatchObject({ code: 'invalid_input' });
   });
@@ -232,4 +233,10 @@ async function write(root: string, path: string, content: string) {
 
 async function git(root: string, ...args: string[]) {
   return (await execFileAsync('git', ['--literal-pathspecs', '-C', root, ...args])).stdout;
+}
+
+async function reviewedCommit(input: { workspaceRoot: string; files: string[]; message: string }) {
+  const result = await prepareGitCommitPreview(input.workspaceRoot, input.files);
+  if (!result.preview) throw new Error('Expected a dirty review preview.');
+  return commitFiles({ ...input, previewId: result.preview.id, previewFingerprint: result.preview.fingerprint });
 }

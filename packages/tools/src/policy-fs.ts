@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { latin1FromBytes, unsafeBytesFromLatin1 } from 'just-bash';
 import { posix } from 'node:path';
 
 import type {
@@ -192,12 +193,12 @@ export class PolicyFs implements IFileSystem {
     await this.#assertRegularFile(normalized, 'open');
     if (this.#inner.readFileBytes) {
       const content = await this.#inner.readFileBytes(normalized);
-      this.#onRead?.(normalized, Buffer.from(content, 'latin1'));
+      this.#onRead?.(normalized, Buffer.from(latin1FromBytes(content), 'latin1'));
       return content;
     }
     const bytes = await this.#inner.readFileBuffer(normalized);
     this.#onRead?.(normalized, bytes);
-    return Buffer.from(bytes).toString('latin1') as ByteString;
+    return unsafeBytesFromLatin1(Buffer.from(bytes).toString('latin1'));
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {

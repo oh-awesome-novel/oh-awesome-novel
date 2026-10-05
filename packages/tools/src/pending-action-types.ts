@@ -72,6 +72,12 @@ export type PendingActionSource =
 
 export type PendingActionOrigin =
   | {
+      readonly kind: 'manuscriptImport';
+      readonly previewId: string;
+      readonly sourceHash: string;
+      readonly mappingHash: string;
+    }
+  | {
       readonly kind: 'chapterSettlement';
       readonly chapterId: string;
       readonly sourceHash: string;
@@ -274,6 +280,14 @@ export function parsePendingAction(
   }
   parsePreview(value.preview, 'PendingAction preview');
   const origin = Object.hasOwn(value, 'origin') ? parsePendingActionOrigin(value.origin) : undefined;
+  const importProducer = source.kind === 'deterministic-builder' && source.producer === 'manuscript-import';
+  if ((importProducer || origin?.kind === 'manuscriptImport')
+    && (!importProducer || origin?.kind !== 'manuscriptImport' || origin.previewId !== id
+      || source.capability !== 'chapter.edit' || changes.length > 64
+      || changes.length !== allowedTargets.length
+      || changes.some((change) => change.operation !== 'create' || !/^chapters\/(?!0000)\d{4}\/(?!0000)\d{4}\.md$/u.test(change.path)))) {
+    invalidSchema('Manuscript import requires its matching preview origin and exact create-only chapter targets.');
+  }
   const settlementProducer = source.kind === 'deterministic-builder' && source.producer === 'chapter-settlement';
   if ((settlementProducer || origin?.kind === 'chapterSettlement')
     && (!settlementProducer || origin?.kind !== 'chapterSettlement' || source.capability !== 'novel.multi-file-edit')) {
@@ -414,7 +428,12 @@ export function parsePendingActionSource(value: unknown): PendingActionSource {
 
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
-  if (value.kind === 'chapterSettlement') {
+  if (value.kind === 'manuscriptImport') {
+    assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash']);
+    assertOpaquePendingActionId(value.previewId, 'Import preview id');
+    assertSha256(value.sourceHash, 'Import source hash');
+    assertSha256(value.mappingHash, 'Import mapping hash');
+  } else if (value.kind === 'chapterSettlement') {
     assertExactFields(value, ['kind', 'chapterId', 'sourceHash', 'characterInventoryHash', 'inputFiles']);
     if (typeof value.chapterId !== 'string' || !/^(?!0000)\d{4}\/(?!0000)\d{4}$/u.test(value.chapterId)) {
       invalidSchema('Settlement chapter id must be a canonical volume/chapter id.');

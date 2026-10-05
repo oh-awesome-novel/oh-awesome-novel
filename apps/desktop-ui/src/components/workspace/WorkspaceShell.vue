@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue';
 
 import PlayWorkspace from '../play/PlayWorkspace.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import WorkspaceSearchDialog from './WorkspaceSearchDialog.vue';
 import ManuscriptExportDialog from './ManuscriptExportDialog.vue';
+import ManuscriptImportDialog from './ManuscriptImportDialog.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
@@ -46,10 +47,14 @@ interface OnboardingFinishPayload extends WorkspaceOnboardingInput {
 const api = useWorkspaceApi();
 const searchOpen = shallowRef(false);
 const exportOpen = shallowRef(false);
+const manuscriptImportOpen = shallowRef(false);
 const searchRefreshVersion = shallowRef(0);
 const activeFileLine = shallowRef<number>();
 let fileRequest = 0;
 let treeRequest = 0;
+let workspaceEpoch = 0;
+let pendingRequest = 0;
+onBeforeUnmount(() => { ++workspaceEpoch; ++pendingRequest; });
 const layout = useWorkspaceLayoutState(props.workspace.path);
 const activeFilePath = shallowRef('');
 const conversations = useAgentConversationSessions({
@@ -158,9 +163,12 @@ async function rescanChapters() {
 }
 
 async function loadWorkspaceStatus() {
+  const epoch = workspaceEpoch;
   try {
-    workspaceStatus.value = await api.getWorkspaceStatus();
+    const result = await api.getWorkspaceStatus();
+    if (epoch === workspaceEpoch) workspaceStatus.value = result;
   } catch {
+    if (epoch !== workspaceEpoch) return;
     workspaceStatus.value = {
       pendingActionCount: 0,
       git: {
@@ -179,23 +187,28 @@ async function loadWorkspaceStatus() {
 }
 
 async function loadPendingActions() {
+  const epoch = workspaceEpoch;
+  const request = ++pendingRequest;
   pendingActionsLoading.value = true;
   pendingActionsError.value = '';
 
   try {
-    workspacePendingActions.value = [...(await api.listPendingActions()).pendingActions];
+    const result = await api.listPendingActions();
+    if (epoch === workspaceEpoch && request === pendingRequest) workspacePendingActions.value = [...result.pendingActions];
   } catch (error) {
-    pendingActionsError.value = error instanceof Error ? error.message : String(error);
+    if (epoch === workspaceEpoch && request === pendingRequest) pendingActionsError.value = error instanceof Error ? error.message : String(error);
   } finally {
-    pendingActionsLoading.value = false;
+    if (epoch === workspaceEpoch && request === pendingRequest) pendingActionsLoading.value = false;
   }
 }
 
 async function loadProjectHealth() {
+  const epoch = workspaceEpoch;
   try {
-    projectHealth.value = (await api.getProjectHealth()).health;
+    const result = await api.getProjectHealth();
+    if (epoch === workspaceEpoch) projectHealth.value = result.health;
   } catch {
-    projectHealth.value = undefined;
+    if (epoch === workspaceEpoch) projectHealth.value = undefined;
   }
 }
 
@@ -241,15 +254,26 @@ function openSearchResult(hit: { path: string; line: number }) {
 }
 
 watch(() => props.workspace.path, () => {
+  ++workspaceEpoch;
+  ++pendingRequest;
   ++fileRequest;
   searchOpen.value = false;
   exportOpen.value = false;
+  manuscriptImportOpen.value = false;
   activeFilePath.value = '';
   activeFileLine.value = undefined;
   fileContent.value = ''; fileError.value = ''; fileLoading.value = false;
   tree.value = [];
+  workspacePendingActions.value = [];
+  selectedPendingActionId.value = '';
+  pendingActionsLoading.value = false;
+  pendingActionsError.value = '';
+  workspaceStatus.value = undefined;
+  projectHealth.value = undefined;
+  decisions.value = {};
+  decisionErrors.value = {};
   void loadTree();
-});
+}, { flush: 'sync' });
 
 function openChapter(chapter: ChapterIndexChapter) {
   layout.sidebarTab.value = 'chapters';
@@ -350,7 +374,9 @@ function reviewPendingAction(action?: PendingActionView) {
 }
 
 async function reviewPendingActionById(pendingActionId: string): Promise<void> {
+  const epoch = workspaceEpoch;
   await refreshPendingActionSurface();
+  if (epoch !== workspaceEpoch) return;
   const action = decoratedPendingActions.value.find(
     (candidate) => candidate.id === pendingActionId,
   );
@@ -364,6 +390,11 @@ async function reviewPendingActionById(pendingActionId: string): Promise<void> {
 function openPendingActionDiff(action: PendingActionView) {
   selectedPendingActionId.value = action.id;
   layout.openRightPanel('diff');
+}
+
+function reviewManuscriptImport(pendingActionId: string) {
+  manuscriptImportOpen.value = false;
+  void reviewPendingActionById(pendingActionId);
 }
 
 async function openExternalEditor(editor: 'vscode' | 'zed' | 'webstorm') {
@@ -473,6 +504,7 @@ async function refreshPendingActionSurface() {
       @open-chapters="openChapterNavigation"
       @open-search="searchOpen = true"
       @open-export="exportOpen = true"
+      @open-manuscript-import="manuscriptImportOpen = true"
       @open-pending="openPendingActions"
       @open-right-tab="layout.openRightPanel"
       @open-external-editor="openExternalEditor"
@@ -571,5 +603,6 @@ async function refreshPendingActionSurface() {
 
     <WorkspaceSearchDialog v-if="searchOpen" :workspace-path="workspace.path" :refresh-version="searchRefreshVersion" @close="searchOpen = false" @open-file="openSearchResult" />
     <ManuscriptExportDialog v-if="exportOpen" :workspace-path="workspace.path" @close="exportOpen = false" />
+    <ManuscriptImportDialog v-if="manuscriptImportOpen" :workspace-path="workspace.path" @close="manuscriptImportOpen = false" @proposed="reviewManuscriptImport" />
   </main>
 </template>

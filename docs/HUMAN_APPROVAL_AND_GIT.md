@@ -203,6 +203,20 @@ journal 持久化 `autoCommitRequested`。若 commit 已成功但 receipt 尚未
 
 关闭 auto commit 时系统不得自动 commit 或 sync。
 
+### Reviewed Git Panel Commit
+
+Git 面板提交当前 dirty files 使用独立于 accepted action 重试的短期预览凭证：
+
+- Backend 从 host 工作区捕获选定文件的原始 bytes/mode、缺失状态、repository/branch/HEAD 和真实 index hash，在独立 index 中生成批准的 Git tree 与对应 diff。
+- 前端只提交 preview id/fingerprint、同一组选定路径和 commit message。Git tree、文件内容和仓库身份只能来自 Backend 持有的快照，不能由前端自行声明。
+- 凭证限15分钟，最多64项；单次最多256文件、16 MiB目标内容。后端重启、过期或状态漂移后必须重新读取 diff 并审阅。
+- 提交获取 index 锁并重验所有绑定，用固定 tree 创建 commit。Git 原生 `update-ref` 事务在 prepare 阶段锁定 HEAD 与其引用分支，应用在持锁期间核对原分支身份，再通过原 HEAD 的 compare-and-swap 提交；不手工持有一个会阻塞 Git 自己的 HEAD 锁。检查后才发生的工作区编辑保留为后续 dirty change，绝不重新 stage 进这次 commit。
+- 为保证展示内容与提交 blob 一致，此入口使用 raw bytes，不运行 clean filters、autocrlf 转换或可能修改内容的 commit hooks。要求签名的仓库应在外部 Git 工具提交；不能悄悄关闭签名。
+- sparse checkout、skip-worktree/assume-unchanged 等特殊 index 状态明确拒绝，交由外部 Git 工具处理，避免重建 index 时丢失作者的既有设置。index 读取最多16 MiB，使用非阻塞、有界读取与前后身份校验；当前进程待恢复 index 内容合计最多64 MiB。
+- 分支已更新但 index 收尾失败，结果仍为 committed 并附带 recovery warning；当前进程内同一凭证重试只补 index，不重复创建 commit。进程中断留下的 Git lock/index 状态需在外部工具检查，本入口不宣称拥有 PendingAction 的 durable receipt 恢复能力。
+
+拒绝陈旧预览不修改 canonical 文件，也不变更已有 HEAD/index。此规则不改变 PendingAction 自动提交和已接受 action 精确重试的既有合同。
+
 ## Manual Git Operations
 
 用户可以通过外部编辑器或 Git CLI 手动 commit/branch/restore。这属于显式用户行为，不属于 AI 自动操作。OAN 后续刷新 repository state；现有 PendingAction 因 branch/HEAD/baseline 漂移应变 stale，而不是自动适配。

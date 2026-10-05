@@ -48,6 +48,8 @@ Copilot 会把 `.oan/workflow.yaml`、constitution、summary、state、timeline�
 - Filesystem-first 项目结构：`chapters/`、`characters/`、`world/`、`state/`、`timeline/`、`foreshadow/`、`summaries/`、`.oan/`。
 - 文件浏览：workspace 文件树、文件内容只读查看。
 - 章节导航：按卷和章节扫描 `chapters/<volume>/<chapter>.md`，支持重新扫描章节索引。
+- 正文搜索与导出：中文正文/标题/路径搜索、行号/snippet定位，以及按章节顺序下载Markdown/TXT。
+- 作者旧稿导入：UTF-8 `.md` 文本/文件、拆章与卷章映射、冲突/diff预览，经PendingAction接受后创建章节；单批512 KiB/64章，不自动覆盖既有正文，不依赖模型。
 - Novel Agent Copilot：中央聊天区、快捷指令、工具活动记录、流式输出。
 - 快捷指令：`/生成角色卡`、`/规划下一章`、`/写下一章`、`/整理本章`、`/审稿`、`/更新状态`、`/补伏笔`、`/去AI味`。
 - PendingAction 审批：按结构化 `create | update | delete` 变更列出、接受、拒绝；接受后才落盘。
@@ -57,6 +59,8 @@ Copilot 会把 `.oan/workflow.yaml`、constitution、summary、state、timeline�
 - 本地 backend：Electron 启动本地 HTTP backend，UI 通过 client 封装调用，不关心底层是 HTTP 还是 Electron IPC。
 - Agent loop：Aider-style 多轮 tool calling，工具结果回填，PendingAction event 输出。
 - Git 状态：workspace 首页显示当前 git clean / dirty / unknown 状态和待审批数量。
+- Git 页面：已有status/log/diff/显式commit/sync；预览后内容漂移保护和同步收尾仍由0580跟进。
+- 长篇记忆：章级摘要/状态按正文hash区分current/stale/missing/unverified；当前状态与历史证据分层加载，默认模型消息中的健康/覆盖/来源清单有界。
 
 ## 产品边界
 
@@ -64,4 +68,4 @@ AI 是 Copilot，不是小说数据所有者。项目的事实来源始终是文
 
 当前产品不追求重型多 Agent 平台、自动后台写作、私有数据库、隐藏记忆系统或 host-shell coding environment。写作体验的核心是：作者提出意图，Host 授予精确 capability，Copilot 在固定内存投影中形成 PendingAction，作者通过结构化 change list 与 diff 确认后再写入。
 
-后续演进重点包括全局搜索、Git 历史与同步页面、摘要工作流 polish、更完整的文件 diff / 上下文查看体验，以及在保持 fixed-baseline guard 的前提下支持更大 workspace。
+后续演进重点包括卷/全局摘要生成、Git预览与同步收尾、发布质量基线，以及按真实使用反馈改善现有Play采纳旅程。全局搜索、基础Git页面、正文导出与Markdown旧稿导入已有生产入口，不作为从零开发事项。

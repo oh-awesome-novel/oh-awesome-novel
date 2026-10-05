@@ -1,4 +1,5 @@
-import { Bash, InMemoryFs } from 'just-bash';
+import { Bash, InMemoryFs, latin1FromBytes } from 'just-bash';
+import type { IFileSystem } from 'just-bash';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -176,4 +177,25 @@ it('observes original file bytes for encoded reads without changing decoding or 
     expect(Buffer.from(observed.at(-1)!)).toEqual(Buffer.from(content));
   }
   await expect(fs.readFile('/workspace/.git/config')).rejects.toThrow(); expect(observed).toHaveLength(4);
+});
+
+it.each(['native', 'tracking-fallback', 'policy-fallback'])('preserves UTF-8 bytes and audit evidence through the %s ByteString boundary', async (mode) => {
+  const path = '/workspace/chapters/0001/0001.md';
+  const content = '中文 😀 café\n';
+  const memory: IFileSystem = new InMemoryFs({ [path]: content });
+  if (mode !== 'native') memory.readFileBytes = undefined;
+  const baselineFiles = [{ path: 'chapters/0001/0001.md', content }];
+  const inner = mode === 'tracking-fallback' ? new TrackingFs(memory, { baselineFiles }) : memory;
+  const observed: Uint8Array[] = [];
+  const fs = new PolicyFs(inner, {
+    policy: createWorkspaceChangePolicy({ capability: 'read-only' }), baselineFiles,
+    projectedPaths: ['chapters', 'chapters/0001', 'chapters/0001/0001.md'],
+    onRead: (_path, bytes) => observed.push(bytes),
+  });
+  fs.activate();
+  const bytes = await fs.readFileBytes(path);
+  expect(Buffer.from(latin1FromBytes(bytes), 'latin1')).toEqual(Buffer.from(content, 'utf8'));
+  expect(Buffer.from(observed[0])).toEqual(Buffer.from(content, 'utf8'));
+  await expect(fs.readFileBytes('/workspace/.git/config')).rejects.toThrow();
+  expect(observed).toHaveLength(1);
 });

@@ -28,12 +28,14 @@ export type PlayWorldSettlementRetryErrorCode =
 
 export class PlayWorldSettlementRetryError extends Error {
   readonly name = 'PlayWorldSettlementRetryError';
+  readonly code: PlayWorldSettlementRetryErrorCode;
 
   constructor(
-    readonly code: PlayWorldSettlementRetryErrorCode,
+    code: PlayWorldSettlementRetryErrorCode,
     message: string,
   ) {
     super(message);
+    this.code = code;
   }
 }
 

@@ -1,3 +1,4 @@
+import { unsafeBytesFromLatin1 } from 'just-bash';
 import type {
   ByteString,
   CpOptions,
@@ -161,7 +162,7 @@ export class TrackingFs implements IFileSystem {
   async readFileBytes(path: string): Promise<ByteString> {
     if (this.inner.readFileBytes) return this.inner.readFileBytes(path);
     const bytes = await this.inner.readFileBuffer(path);
-    return Buffer.from(bytes).toString('latin1') as ByteString;
+    return unsafeBytesFromLatin1(Buffer.from(bytes).toString('latin1'));
   }
 
   readFileBuffer(path: string): Promise<Uint8Array> {

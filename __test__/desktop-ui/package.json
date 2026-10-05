@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "typecheck": "npm run typecheck:renderer-smoke",
     "pretest": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",
     "test": "vitest",
     "pretest:run": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",

@@ -76,6 +76,9 @@
 - [1260 Play Storage Read Model And Snapshot I/O](1260.md)
 - [1270 Readable Manuscript Export](1270.md)
 - [1280 Electron Release Workflow](1280.md)
+- [1290 Long-novel Context And Memory Freshness](1290.md)
+- [1300 Author Manuscript Markdown Import](1300.md)
+- [1310 Delivery Quality Gates And Reviewed Git Commits](1310.md)
 
 ## Needs Review Tasks
 
@@ -87,12 +90,12 @@
 
 ## Planned Tasks
 
-当前剩余工作按 Needs Review tasks 内的未完成 scope 推进。
+当前剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
 
 
 ## Deferred Development (2026-10-01)
 
-Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。先执行 [1230](1230.md) 的可靠性交付，已交付0570搜索与1270正文导出；后续按作者反馈推进0700旧稿导入与上层摘要。合同/helper 完成不等于生产接线或真实旅程完成。
+Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。已交付0570搜索、1270正文导出、1290来源新鲜度/长篇上下文、1300作者旧稿导入及1310类型/发行门禁、预览绑定Git提交与打包旅程；后续按作者反馈推进0700卷/全局摘要，0580远端同步/环境验收和1120剩余可靠性范围。合同/helper 完成不等于生产接线或真实旅程完成。
 
 ## Package Call Route
 

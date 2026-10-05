@@ -18,6 +18,11 @@ import type { PlayLaunchPackage } from '@oh-awesome-novel/core';
 
 const HASH = 'a'.repeat(64);
 
+it('rejects a scene-rehearsal schema without scene metadata', () => {
+  const session = createPlaySessionDraft({ id: 'missing-rehearsal', title: 'Missing metadata', sceneStart: 'Start', characters: [] });
+  expect(() => getPlaySessionStartMode({ ...session, schemaVersion: 5 })).toThrow('requires its sceneRehearsal metadata');
+});
+
 function launchPackage(
   purpose: 'immersiveJourney' | 'sceneRehearsal',
 ): PlayLaunchPackage {

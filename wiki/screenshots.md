@@ -1,6 +1,6 @@
 # 截图与更新说明
 
-本文档的界面截图采集于 **2026 年 10 月 1 日至 2 日**，来自仓库中的真实桌面前端和本地后端。使用的是 `examples/simple-novel` 的独立临时副本；截图不包含私人小说、真实 API Key 或个人全局配置。
+本文档的界面截图采集于 **2026 年 10 月 1 日至 5 日**，来自仓库中的真实桌面前端和本地后端。10月1–2日使用 `examples/simple-novel` 的独立临时副本，10月5日使用全新空白临时小说；截图不包含私人小说、真实 API Key 或个人全局配置。
 
 10 月 2 日基于 `c7701d8` 重新构建后端，补齐搜索、正文导出、上下文与用量、正常 Git 历史和章节结算审批截图。新增截图来自独立浏览器窗口，保留实际中英文界面；较大的截图可点击指南下方的原图链接查看。
 
@@ -21,6 +21,7 @@
 | [Git 面板](/screenshots/git.jpg) | 临时副本尚未初始化 Git 的提示 |
 | [正文搜索](/screenshots/search-results.jpg) | 搜索“米拉”的真实结果；2026-10-02 |
 | [正文导出](/screenshots/manuscript-export.jpg) | Markdown / TXT 下载入口和导出范围说明；2026-10-02 |
+| [旧稿导入已接受](/screenshots/manuscript-import-accepted.jpg) | 无模型配置的临时小说完成两章Markdown导入，已Accept且autoCommit关闭；2026-10-05 |
 | [上下文与用量](/screenshots/usage.jpg) | 无模型请求的空记录状态及 Estimated / Actual 说明；2026-10-02 |
 | [Git 历史](/screenshots/git-history.jpg) | 独立演示仓库的真实初始提交，状态 clean；2026-10-02 |
 | [章节结算审批](/screenshots/chapter-settlement.jpg) | 正式确定性构建器生成的两文件 PendingAction，尚未接受；2026-10-02 |
@@ -30,6 +31,8 @@
 截图展示当前界面及操作入口。10 月 1 日的 `approval.jpg`、`git.jpg` 保留审批空列表和 Git 未初始化状态。10 月 2 日新增的结算截图通过产品公开的确定性构建器和 PendingAction store 生成真实候选：新增 `state/chapters/0001/0001.yaml`，更新 `summaries/chapter/0001/0001.md`。观察输入为文档演示所提供，经过章节 hash、逐行 quote 和候选校验，不是模型生成结果。
 
 两次采集均未请求真实模型、未点击 Accept、未修改演示小说的已提交正文。没有伪造模型回复、Actual 用量、拆书结果或 Play 回合。新的 Git 截图来自临时副本自己的初始提交，与本项目的开发历史无关。
+
+2026-10-05另行验收作者旧稿导入：从空临时小说开始，使用显式输入的两章演示文字，真实执行预览、重复章号冲突、重映射、创建PendingAction和Accept。Accept前章节目录为空，之后两章原文保留；关闭autoCommit时Git仍仅有基线提交。没有配置或调用模型，也没有修改仓库示例小说。
 :::
 
 ![写作工作区截图](/screenshots/workspace.jpg)

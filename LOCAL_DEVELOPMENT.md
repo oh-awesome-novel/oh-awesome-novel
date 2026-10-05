@@ -111,6 +111,16 @@ This path builds backend dependencies first and starts Electron through Electron
 
 ## Build And Test
 
+Run the same quality gate used by pull requests and releases from the repository root:
+
+```sh
+npm run quality
+```
+
+This builds production packages in dependency order, checks all ten production TypeScript workspaces plus the renderer smoke fixture, runs the seven Vitest workspaces sequentially with one worker each, checks architecture terminology and task/index status, and builds the wiki. The empty `ui-vue` placeholder has no source to typecheck. Vitest test files are executed by Vitest; the production source check is not a claim that every test fixture has a standalone TypeScript project.
+
+For an already built checkout, `npm run typecheck`, `npm run test:ci`, and `npm run docs:check` can be run separately. `test:ci` deliberately skips workspace lifecycle rebuilds so each suite consumes the same completed build; run `npm run build` after changing production code. Backend and SDK integration tests need local loopback sockets and use temporary workspaces and controlled model responses, without personal credentials.
+
 Build the web UI:
 
 ```sh

@@ -12,7 +12,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsdown"
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.83",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "tsdown": "^0.22.2",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "@types/node": "^24.13.1"
   }
 }

@@ -226,15 +226,15 @@ export async function saveWorkspaceOnboarding(
     config.novelName = novelName;
   }
 
-  config.onboarding = withoutUndefined({
+  config.onboarding = {
     completed: !skipped,
     skipped,
-    novelName,
-    inspiration,
-    characterSeed,
-    startGoal,
+    ...(novelName !== undefined ? { novelName } : {}),
+    ...(inspiration !== undefined ? { inspiration } : {}),
+    ...(characterSeed !== undefined ? { characterSeed } : {}),
+    ...(startGoal !== undefined ? { startGoal } : {}),
     updatedAt: new Date().toISOString(),
-  }) as WorkspaceOnboardingState;
+  };
 
   await writeFileAtomically(workspaceConfigPath(rootDir), stringify(config));
 
@@ -248,12 +248,6 @@ function workspaceConfigPath(rootDir: string): string {
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
-}
-
-function withoutUndefined(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
-  );
 }
 
 // ---------------------------------------------------------------------------

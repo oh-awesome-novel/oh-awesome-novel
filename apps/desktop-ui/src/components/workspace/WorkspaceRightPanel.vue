@@ -16,6 +16,7 @@ import type {
 } from '../../composables/useWorkspaceApi';
 
 defineProps<{
+  workspacePath?: string;
   activeTab: WorkspaceRightTab;
   activeFilePath: string;
   fileContent: string;
@@ -87,7 +88,7 @@ const emit = defineEmits<{
       :status="workspaceStatus"
       :health="projectHealth"
     />
-    <GitReviewTab v-else-if="activeTab === 'git'" />
+    <GitReviewTab v-else-if="activeTab === 'git'" :workspace-path="workspacePath" />
     <WritingProfileManagerTab
       v-else-if="activeTab === 'profiles'"
       :state="writingProfileState"

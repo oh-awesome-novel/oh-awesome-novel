@@ -22,7 +22,8 @@ describe('project health', () => {
       expect(health.pendingActionCount).toBe(2);
       expect(health.missingCharacterCards).toEqual(['heroine']);
       expect(health.chaptersWithoutSummaries).toEqual(['0001/0002']);
-      expect(health.latestStateStale).toBe(true);
+      expect(health.latestStateStale).toBe(false);
+      expect(health.issues).toContainEqual(expect.objectContaining({ id: 'chapter-state-missing:0001/0001' }));
       expect(health.timelineGapCount).toBe(1);
       expect(health.issues).toEqual(
         expect.arrayContaining([
@@ -46,7 +47,7 @@ describe('project health', () => {
 
       expect(markdown).toContain('## Project Health');
       expect(markdown).toContain('missing character cards: 1');
-      expect(markdown).toContain('latest state stale: yes');
+      expect(markdown).toContain('latest state stale: no');
       expect(markdown).toContain('[warning] Chapter has no summary');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });

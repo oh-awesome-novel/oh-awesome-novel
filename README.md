@@ -108,6 +108,8 @@ npm run dev --workspace @oh-awesome-novel/desktop-ui
 
 打开 `http://127.0.0.1:5173/`。完整配置与测试说明见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。
 
+提交前运行 `npm run quality`：依赖顺序构建、生产源码严格类型检查、七个测试 workspace、文档状态/术语检查和 Wiki 构建使用同一入口。PR、main 与发行前检查复用这条命令；发行只打包通过质量门禁的精确源码提交。
+
 ## 关键文档
 
 - [Project Vision](docs/PROJECT_VISION.md)

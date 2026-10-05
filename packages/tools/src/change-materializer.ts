@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { Dirent, Stats } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -23,6 +24,7 @@ import {
 
 import { DEFAULT_CREATED_FILE_MODE } from './candidate-change-set';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
+import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
 import {
   assertRepositoryBaseline,
   commitPendingActionFiles,
@@ -354,7 +356,6 @@ class FileChangeMaterializer implements ChangeMaterializer {
         return;
       }
       const files = record.action.changes.map((change) => change.path);
-      const previousGit = structuredClone(previous.git);
       const committed = await readPendingActionCommitAtHead({
         workspaceRoot: this.#workspaceRoot,
         actionId,
@@ -373,7 +374,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
             record.acceptedAt,
           ));
       receipt = createPendingActionDecisionReceipt({ ...previous, git });
-      if (previousGit.status !== 'committed' && git.status === 'committed') {
+      if (git.status === 'committed') {
         // Keep transition operands stable: `previous` is deeply frozen, but an
         // explicit reconstruction avoids any accidental aliasing at this
         // security boundary.
@@ -397,6 +398,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
     if (action.origin?.kind === 'chapterSettlement') {
       await assertChapterSettlementActionFresh(this.#workspaceRoot, action);
+    }
+    if (action.origin?.kind === 'manuscriptImport') {
+      await assertManuscriptImportActionFresh(this.#workspaceRoot, action);
     }
     if (requiresTrustedOrigin(action.source.capability) && action.origin === undefined) {
       throw materializerError(
@@ -659,6 +663,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
     if (record.status === 'rejected') {
       throw materializerError('PENDING_ACTION_TERMINAL_CONFLICT', `Rejected action ${actionId} has a transaction journal.`);
     }
+    if (record.status !== 'accepted') throw invalidJournal();
     if (
       record.decisionReceiptId !== journal.decisionReceiptId
       || record.acceptedAt !== journal.acceptedAt
@@ -997,7 +1002,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
 
   async #removeOrphanTransactionTemporaries(actionId: string): Promise<void> {
     const root = enginePath(this.#workspaceRoot, 'transactions');
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries: Dirent[];
     try {
       entries = await readdir(root, { withFileTypes: true });
     } catch (error) {
@@ -1053,7 +1058,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         });
         removable.push(stagePath);
       }
-      if (backupPath && await safeLstat(backupPath)) {
+      if (change.operation !== 'create' && backupPath && await safeLstat(backupPath)) {
         await assertOrphanArtifactMatches(backupPath, {
           sha256: change.baseline.sha256,
           byteLength: change.baseline.byteLength,
@@ -1439,7 +1444,7 @@ async function fsyncDirectory(path: string): Promise<void> {
   }
 }
 
-async function safeLstat(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+async function safeLstat(path: string): Promise<Stats | undefined> {
   try { return await lstat(path); } catch (error) {
     if (isNotFound(error)) return undefined;
     throw error;

@@ -12,6 +12,7 @@
     "src"
   ],
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "prebuild": "tsc -p tsconfig.json",
     "build": "tsdown"
   },

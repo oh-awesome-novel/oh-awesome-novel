@@ -78,7 +78,7 @@ export function createUsageGovernance(input: {
           trace: declared.trace.filter((entry) => entry.outcome !== 'selected' || !sources.some((s) => s.sourceId === entry.sourceId && s.path === entry.path && ['omitted', 'excluded'].includes(s.outcome))),
         };
         for (const message of messages) if (message.provenance?.some((s) => s.sourceId === 'contextPackage')) {
-          message.content = `# Selected Context: Context Package Summary\n\n${formatContextPackageSummary(summary)}`;
+          message.content = `# Selected Context: Context Package Summary\n\n${formatContextPackageSummary(summary, { maxSources: 24, maxTrace: 24 })}`;
         }
         // The final session artifact describes the final assembled request.
         if (input.contextPackage) { input.contextPackage.selected = summary.selected; input.contextPackage.omitted = summary.omitted; input.contextPackage.trace = summary.trace; }

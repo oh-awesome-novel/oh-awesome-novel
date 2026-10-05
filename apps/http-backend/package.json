@@ -8,6 +8,7 @@
   "type": "module",
   "main": "dist/index.mjs",
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "prebuild": "nx run @oh-awesome-novel/backend:build",
     "build": "tsdown",
     "dev": "nx run @oh-awesome-novel/backend:build && tsdown && node dist/index.mjs",

@@ -735,6 +735,7 @@ function resolveAdoptionRoot(input: {
       };
     }
     case 'outcome': {
+      const seed = input.seed;
       const report = requireCurrentOutcomeReport(
         input.session,
         input.evidenceIndex.selectedArtifactTurnRefs,
@@ -742,7 +743,7 @@ function resolveAdoptionRoot(input: {
         input.outcomeReport,
       );
       const item = report.items.find((candidate) =>
-        candidate.id === input.seed.outcomeItemId);
+        candidate.id === seed.outcomeItemId);
       if (!item) {
         throw new Error(`Play adoption outcome item is unknown: ${input.seed.outcomeItemId}.`);
       }
@@ -1189,7 +1190,7 @@ function orderRefsBySelectedArtifacts(
 function normalizeIdList(
   value: unknown,
   label: string,
-  maximum = MAX_PLAY_ADOPTION_EVIDENCE_REFS,
+  maximum: number = MAX_PLAY_ADOPTION_EVIDENCE_REFS,
 ): string[] {
   if (!Array.isArray(value) || value.length > maximum) {
     throw new Error(

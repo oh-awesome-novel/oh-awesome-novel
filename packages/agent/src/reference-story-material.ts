@@ -653,13 +653,13 @@ function projectFinding(finding: ReferenceStoryMaterialFinding): Record<string, 
   };
 }
 
-async function generateStructured<OUTPUT>(input: {
+async function generateStructured<OUTPUT, PARTIAL>(input: {
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
   readonly system: string;
   readonly prompt: string;
-  readonly output: ReturnType<typeof Output.object<OUTPUT>>;
+  readonly output: Output.Output<OUTPUT, PARTIAL, never>;
   readonly maxOutputTokens: number;
   readonly stageLabel: string;
 }): Promise<ReferenceStoryMaterialGenerationResult<OUTPUT>> {
@@ -694,7 +694,7 @@ async function generateStructured<OUTPUT>(input: {
     }
     return {
       status: 'completed',
-      output: result.output as OUTPUT,
+      output: result.output,
       finishReason: result.finishReason,
     };
   } catch (error) {

@@ -26,7 +26,6 @@ import type {
   LlmProviderConfig,
   ReferenceChapterWorkUnitWindow,
   ReferenceDeconstructionFinding,
-  ReferenceDistillationModelOutput,
   ReferenceEvidencePointerMap,
   ReferenceRollingContext,
 } from '@oh-awesome-novel/core';
@@ -698,7 +697,7 @@ export async function generateReferenceDistillation(
   const output = Output.object({
     name: 'OanReferenceDistillation',
     description: 'A bounded set of transformed, evidence-closed OAN technique entries.',
-    schema: jsonSchema<ReferenceDistillationModelOutput>(
+    schema: jsonSchema<ReferenceDistillationOutput>(
       REFERENCE_DISTILLATION_JSON_SCHEMA,
       {
         validate(value) {
@@ -1157,13 +1156,13 @@ function projectWorkUnit(value: unknown): ReferenceWorkUnitPromptProjection {
   };
 }
 
-async function generateReferenceStructuredOutput<OUTPUT>(input: {
+async function generateReferenceStructuredOutput<OUTPUT, PARTIAL>(input: {
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
   readonly system: string;
   readonly prompt: string;
-  readonly output: ReturnType<typeof Output.object<OUTPUT>>;
+  readonly output: Output.Output<OUTPUT, PARTIAL, never>;
   readonly maxOutputTokens: number;
   readonly stageLabel: string;
 }): Promise<ReferenceFullDeconstructionGenerationResult<OUTPUT>> {
@@ -1209,7 +1208,7 @@ async function generateReferenceStructuredOutput<OUTPUT>(input: {
 
     return {
       status: 'completed',
-      output: result.output as OUTPUT,
+      output: result.output,
       finishReason: result.finishReason,
     };
   } catch (error) {

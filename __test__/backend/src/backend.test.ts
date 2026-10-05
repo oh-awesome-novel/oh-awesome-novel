@@ -4444,10 +4444,13 @@ describe('novel HTTP backend', () => {
         files: [expect.objectContaining({ path: 'chapters/0001/0001.md' })],
       });
 
+    const reviewed = await fetchJson<{ preview: { id: string; fingerprint: string } }>(`${backend.url}/api/git/diff?file=chapters%2F0001%2F0001.md`);
     await expect(fetchJson(`${backend.url}/api/git/commit`, {
       method: 'POST',
       body: JSON.stringify({
         files: ['chapters/0001/0001.md'],
+        previewId: reviewed.preview.id,
+        previewFingerprint: reviewed.preview.fingerprint,
         message: 'chore(novel): quick commit test',
       }),
     }))

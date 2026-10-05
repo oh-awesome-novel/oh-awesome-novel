@@ -1,335 +1,99 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
-import { parse } from 'yaml';
+import { lstat, readdir, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
+import { parseDocument } from 'yaml';
+import { evaluateChapterEvidence } from './chapter-evidence-freshness.js';
+import type { FrozenWorkspaceSnapshot } from './chapter-evidence-freshness.js';
+import { readWorkspaceTextFile } from './workspace-text.js';
 
 export type ProjectHealthSeverity = 'info' | 'warning' | 'error';
-
-export interface ProjectHealthIssue {
-  id: string;
-  severity: ProjectHealthSeverity;
-  title: string;
-  detail: string;
-  path?: string;
-}
-
+export interface ProjectHealthIssue { id: string; severity: ProjectHealthSeverity; title: string; detail: string; path?: string }
 export interface ProjectHealth {
-  generatedAt: string;
-  missingCharacterCards: string[];
-  chaptersWithoutSummaries: string[];
+  generatedAt: string; missingCharacterCards: string[]; chaptersWithoutSummaries: string[];
   activeHookCount: number;
+  /** Known chapter evidence whose source hash is stale; missing/unverified are separate issues. */
   latestStateStale: boolean;
-  timelineGapCount: number;
-  pendingActionCount: number;
-  issues: ProjectHealthIssue[];
+  timelineGapCount: number; pendingActionCount: number; issues: ProjectHealthIssue[];
 }
+export interface ReadProjectHealthOptions { generatedAt?: string; pendingActionCount?: number }
 
-export interface ReadProjectHealthOptions {
-  generatedAt?: string;
-  pendingActionCount?: number;
-}
-
-export const readProjectHealth = async (
-  workspaceRoot: string,
-  options: ReadProjectHealthOptions = {},
-): Promise<ProjectHealth> => {
-  const [
-    missingCharacterCards,
-    chapters,
-    chapterSummaries,
-    activeHookCount,
-    latestStateStale,
-    timelineChapters,
-  ] = await Promise.all([
-    findMissingCharacterCards(workspaceRoot),
-    listChapterIds(workspaceRoot),
-    listChapterSummaryIds(workspaceRoot),
-    countActiveHooks(workspaceRoot),
-    detectLatestStateStale(workspaceRoot),
-    listTimelineChapterIds(workspaceRoot),
-  ]);
-
-  const chaptersWithoutSummaries = chapters.filter(
-    (chapterId) => !chapterSummaries.includes(chapterId),
-  );
-  const timelineGaps = chapters.filter(
-    (chapterId) => !timelineChapters.includes(chapterId),
-  );
+/** Pure shared evaluator for host-captured health data and the Agent's fixed projection. */
+export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options: ReadProjectHealthOptions = {}): ProjectHealth {
+  const files = new Map(snapshot.files.map((file) => [file.path, file.content]));
+  const characterIds = [...new Set([...snapshot.directories ?? [], ...files.keys()].flatMap((path) => {
+    const id = /^characters\/([^/]+)(?:\/|$)/u.exec(path)?.[1]; return id ? [id] : [];
+  }))].sort();
+  const missingCharacterCards = characterIds.filter((id) => !files.has(`characters/${id}/meta.yaml`) || !files.has(`characters/${id}/summary.md`));
+  const coverage = evaluateChapterEvidence(snapshot);
+  const chapters = snapshot.files.flatMap(({ path }) => {
+    const id = /^chapters\/(.+)\.md$/u.exec(path)?.[1]; return id && !id.endsWith('/0000') ? [id] : [];
+  }).sort();
+  const chaptersWithoutSummaries = chapters.filter((id) => !files.has(`summaries/chapter/${id}.md`));
+  const active = readYaml(files.get('foreshadow/active.yaml'));
+  const activeHookCount = record(active) && Array.isArray(active.active) ? active.active.length : 0;
+  const timeline = readYaml(files.get('timeline/events.yaml'));
+  const timelineChapters = new Set(record(timeline) && Array.isArray(timeline.events) ? timeline.events.filter(record).map((event) => event.chapter) : []);
+  const timelineGaps = chapters.filter((id) => !timelineChapters.has(id));
+  const latestStateStale = coverage.some((item) => item.state.status === 'stale');
   const issues: ProjectHealthIssue[] = [
-    ...missingCharacterCards.map((characterId) => ({
-      id: `missing-character-card:${characterId}`,
-      severity: 'warning' as const,
-      title: 'Missing character card file',
-      detail: `${characterId} is missing meta.yaml or summary.md.`,
-      path: `characters/${characterId}`,
+    ...missingCharacterCards.map((id): ProjectHealthIssue => ({ id: `missing-character-card:${id}`, severity: 'warning', title: 'Missing character card file', detail: `${id} is missing meta.yaml or summary.md.`, path: `characters/${id}` })),
+    ...chaptersWithoutSummaries.map((id): ProjectHealthIssue => ({ id: `chapter-summary:${id}`, severity: 'warning', title: 'Chapter has no summary', detail: `${id} has no matching summaries/chapter file.`, path: `chapters/${id}.md` })),
+    ...coverage.flatMap((item) => (['summary', 'state'] as const).flatMap((kind): ProjectHealthIssue[] => {
+      const assessment = item[kind];
+      if (assessment.status === 'current' || (kind === 'summary' && assessment.status === 'missing')) return [];
+      return [{ id: `chapter-${kind}-${assessment.status}:${item.chapterId}`, severity: assessment.status === 'stale' ? 'warning' : 'info',
+        title: `Chapter ${kind} ${assessment.status}`, detail: `${item.chapterId}: ${assessment.reason}`, path: assessment.path }];
     })),
-    ...chaptersWithoutSummaries.map((chapterId) => ({
-      id: `chapter-summary:${chapterId}`,
-      severity: 'warning' as const,
-      title: 'Chapter has no summary',
-      detail: `${chapterId} has no matching summaries/chapter file.`,
-      path: `chapters/${chapterId}.md`,
-    })),
-    ...timelineGaps.map((chapterId) => ({
-      id: `timeline-gap:${chapterId}`,
-      severity: 'info' as const,
-      title: 'No timeline event for chapter',
-      detail: `${chapterId} has chapter text but no timeline event.`,
-      path: `chapters/${chapterId}.md`,
-    })),
+    ...timelineGaps.map((id): ProjectHealthIssue => ({ id: `timeline-gap:${id}`, severity: 'info', title: 'No timeline event for chapter', detail: `${id} has chapter text but no timeline event.`, path: `chapters/${id}.md` })),
   ];
+  if (latestStateStale) issues.push({ id: 'latest-state-stale', severity: 'warning', title: 'Chapter state has stale source evidence', detail: 'At least one settled chapter no longer matches its recorded source hash. Global state is not automatically retracted.', path: 'state/chapters' });
+  if (options.pendingActionCount && options.pendingActionCount > 0) issues.push({ id: 'pending-actions', severity: 'info', title: 'PendingAction exists', detail: `${options.pendingActionCount} pending action(s) need review.` });
+  return { generatedAt: options.generatedAt ?? '1970-01-01T00:00:00.000Z', missingCharacterCards, chaptersWithoutSummaries, activeHookCount, latestStateStale, timelineGapCount: timelineGaps.length, pendingActionCount: options.pendingActionCount ?? 0, issues };
+}
 
-  if (latestStateStale) {
-    issues.push({
-      id: 'latest-state-stale',
-      severity: 'warning',
-      title: 'Latest state may be stale',
-      detail: 'A chapter file is newer than the latest state YAML file.',
-      path: 'state',
-    });
+/** Capture only public novel roots. Hidden paths, symlinks and non-regular files never enter health inputs. */
+export async function readProjectHealth(workspaceRoot: string, options: ReadProjectHealthOptions = {}): Promise<ProjectHealth> {
+  const root = await realpath(workspaceRoot);
+  const files: Array<{ path: string; content: string }> = [];
+  const directories: string[] = [];
+  let entries = 0;
+  let totalBytes = 0;
+  async function visit(path: string, depth = 0): Promise<void> {
+    if (++entries > 10_000 || depth > 24) throw new Error('Project health capture exceeds its entry/depth limit.');
+    const absolute = join(root, path);
+    let info;
+    try { info = await lstat(absolute); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    if (info.isSymbolicLink()) return;
+    if (info.isDirectory()) {
+      if (await realpath(absolute) !== absolute) throw new Error('Project health directory changed during capture.');
+      directories.push(path);
+      for (const entry of (await readdir(absolute)).sort()) if (!entry.startsWith('.')) await visit(`${path}/${entry}`, depth + 1);
+      const after = await lstat(absolute);
+      if (!after.isDirectory() || after.ino !== info.ino || after.dev !== info.dev || await realpath(absolute) !== absolute) throw new Error('Project health directory changed during capture.');
+    } else if (info.isFile() && info.nlink === 1 && /\.(md|ya?ml)$/u.test(path)) {
+      if (info.size > 2 * 1024 * 1024 || totalBytes + info.size > 32 * 1024 * 1024) throw new Error('Project health capture exceeds its 2 MiB file / 32 MiB total limit.');
+      const file = await readWorkspaceTextFile(root, path, { preserveBOM: true });
+      totalBytes += Buffer.byteLength(file.content);
+      if (totalBytes > 32 * 1024 * 1024) throw new Error('Project health capture exceeds its 32 MiB total limit.');
+      files.push(file);
+    }
   }
+  for (const root of ['characters', 'chapters', 'summaries', 'state', 'foreshadow', 'timeline']) await visit(root);
+  return evaluateProjectHealth({ files, directories }, { ...options, generatedAt: options.generatedAt ?? new Date().toISOString() });
+}
 
-  if (options.pendingActionCount && options.pendingActionCount > 0) {
-    issues.push({
-      id: 'pending-actions',
-      severity: 'info',
-      title: 'PendingAction exists',
-      detail: `${options.pendingActionCount} pending action(s) need review.`,
-    });
-  }
-
-  return {
-    generatedAt: options.generatedAt ?? new Date().toISOString(),
-    missingCharacterCards,
-    chaptersWithoutSummaries,
-    activeHookCount,
-    latestStateStale,
-    timelineGapCount: timelineGaps.length,
-    pendingActionCount: options.pendingActionCount ?? 0,
-    issues,
-  };
-};
-
+/** Bounded model/report text; the UI DTO retains every issue. */
 export const formatProjectHealthMarkdown = (health: ProjectHealth): string => [
-  '## Project Health',
-  '',
-  `Generated: ${health.generatedAt}`,
-  '',
+  '## Project Health', '', `Generated: ${health.generatedAt}`, '',
   `- missing character cards: ${health.missingCharacterCards.length}`,
   `- chapters without summaries: ${health.chaptersWithoutSummaries.length}`,
   `- active hooks: ${health.activeHookCount}`,
-  `- latest state stale: ${health.latestStateStale ? 'yes' : 'no'}`,
-  `- timeline gaps: ${health.timelineGapCount}`,
-  `- pending actions: ${health.pendingActionCount}`,
-  '',
-  '### Issues',
-  health.issues.length
-    ? health.issues.map((issue) => `- [${issue.severity}] ${issue.title}: ${issue.detail}`).join('\n')
-    : '- none',
+  `- latest state stale: ${health.latestStateStale ? 'yes' : 'no'} (source hash; missing/unverified evidence is listed separately)`,
+  `- timeline gaps: ${health.timelineGapCount}`, `- pending actions: ${health.pendingActionCount}`, '', '### Issues',
+  health.issues.length ? health.issues.slice(0, 20).map((issue) => `- [${issue.severity}] ${issue.title}: ${issue.detail}`).join('\n') : '- none',
+  ...(health.issues.length > 20 ? [`- ${health.issues.length - 20} additional issues omitted from this bounded report; inspect project health for details.`] : []),
 ].join('\n');
-
-async function findMissingCharacterCards(workspaceRoot: string): Promise<string[]> {
-  const charactersRoot = resolveWorkspacePath(workspaceRoot, 'characters');
-
-  try {
-    const entries = await readdir(charactersRoot, { withFileTypes: true });
-    const characterIds = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-    const missing = await Promise.all(
-      characterIds.map(async (characterId) => {
-        const hasMeta = await exists(join(charactersRoot, characterId, 'meta.yaml'));
-        const hasSummary = await exists(join(charactersRoot, characterId, 'summary.md'));
-
-        return hasMeta && hasSummary ? undefined : characterId;
-      }),
-    );
-
-    return missing.filter((characterId): characterId is string => Boolean(characterId));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-
-    throw error;
-  }
+function readYaml(content: string | undefined): unknown {
+  if (content === undefined) return undefined;
+  try { const doc = parseDocument(content, { uniqueKeys: true }); return doc.errors.length ? undefined : doc.toJS({ maxAliasCount: 100 }); } catch { return undefined; }
 }
-
-async function listChapterIds(workspaceRoot: string): Promise<string[]> {
-  const chaptersRoot = resolveWorkspacePath(workspaceRoot, 'chapters');
-  const files = await readFilesIfExists(chaptersRoot, ['.md']);
-
-  return files
-    .filter((file) => !file.endsWith('/0000.md'))
-    .map((file) => file.replace(/\.md$/, ''))
-    .sort();
-}
-
-async function listChapterSummaryIds(workspaceRoot: string): Promise<string[]> {
-  const summariesRoot = resolveWorkspacePath(workspaceRoot, 'summaries', 'chapter');
-  const files = await readFilesIfExists(summariesRoot, ['.md']);
-
-  return files.map((file) => file.replace(/\.md$/, '')).sort();
-}
-
-async function countActiveHooks(workspaceRoot: string): Promise<number> {
-  const activePath = resolveWorkspacePath(workspaceRoot, 'foreshadow', 'active.yaml');
-
-  try {
-    const parsed = parse(await readFile(activePath, 'utf-8')) as unknown;
-
-    if (isRecord(parsed) && Array.isArray(parsed.active)) {
-      return parsed.active.length;
-    }
-
-    return 0;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return 0;
-    }
-
-    throw error;
-  }
-}
-
-async function listTimelineChapterIds(workspaceRoot: string): Promise<string[]> {
-  const eventsPath = resolveWorkspacePath(workspaceRoot, 'timeline', 'events.yaml');
-
-  try {
-    const parsed = parse(await readFile(eventsPath, 'utf-8')) as unknown;
-
-    if (!isRecord(parsed) || !Array.isArray(parsed.events)) {
-      return [];
-    }
-
-    return [
-      ...new Set(
-        parsed.events
-          .filter(isRecord)
-          .map((event) => event.chapter)
-          .filter((chapter): chapter is string => typeof chapter === 'string'),
-      ),
-    ].sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-async function detectLatestStateStale(workspaceRoot: string): Promise<boolean> {
-  const [chapterFiles, stateFiles] = await Promise.all([
-    readFilesWithMtimeIfExists(resolveWorkspacePath(workspaceRoot, 'chapters'), ['.md']),
-    readFilesWithMtimeIfExists(resolveWorkspacePath(workspaceRoot, 'state'), ['.yaml', '.yml']),
-  ]);
-  const latestChapter = Math.max(
-    0,
-    ...chapterFiles
-      .filter((file) => !file.path.endsWith('/0000.md'))
-      .map((file) => file.mtimeMs),
-  );
-  const latestState = Math.max(0, ...stateFiles.map((file) => file.mtimeMs));
-
-  return latestChapter > latestState;
-}
-
-async function readFilesIfExists(
-  directory: string,
-  extensions: string[],
-): Promise<string[]> {
-  try {
-    const files = await readDirectoryFiles(directory);
-
-    return files
-      .filter((file) => extensions.some((extension) => file.endsWith(extension)))
-      .map((file) => relative(directory, file))
-      .sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-async function readFilesWithMtimeIfExists(
-  directory: string,
-  extensions: string[],
-): Promise<Array<{ path: string; mtimeMs: number }>> {
-  try {
-    const files = await readDirectoryFiles(directory);
-    const matchingFiles = files
-      .filter((file) => extensions.some((extension) => file.endsWith(extension)))
-      .sort();
-
-    return Promise.all(
-      matchingFiles.map(async (file) => ({
-        path: relative(directory, file),
-        mtimeMs: (await stat(file)).mtimeMs,
-      })),
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-async function readDirectoryFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const absolutePath = join(directory, entry.name);
-
-      if (entry.isDirectory()) {
-        return readDirectoryFiles(absolutePath);
-      }
-
-      if (!entry.isFile()) {
-        return [];
-      }
-
-      return [absolutePath];
-    }),
-  );
-
-  return files.flat();
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false;
-    }
-
-    throw error;
-  }
-}
-
-function resolveWorkspacePath(workspaceRoot: string, ...segments: string[]): string {
-  const workspace = resolve(workspaceRoot);
-  const target = resolve(workspace, ...segments);
-  const targetRelativePath = relative(workspace, target);
-
-  if (
-    targetRelativePath.startsWith('..') ||
-    targetRelativePath === '' ||
-    targetRelativePath.includes(`..${sep}`)
-  ) {
-    throw new Error('Project health path must stay inside workspace.');
-  }
-
-  return target;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }

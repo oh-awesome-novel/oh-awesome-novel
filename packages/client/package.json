@@ -12,6 +12,7 @@
     "src"
   ],
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsdown",
     "test": "npm run test:run --workspace @oh-awesome-novel/test-client",
     "test:watch": "npm run test --workspace @oh-awesome-novel/test-client"

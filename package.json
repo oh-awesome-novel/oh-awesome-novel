@@ -11,6 +11,11 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "build": "nx run-many -t build --parallel=1",
+    "typecheck": "node scripts/check-typecheck-coverage.mjs && npm run typecheck --workspaces --if-present",
+    "test:ci": "npm --ignore-scripts run test:run --workspace @oh-awesome-novel/test-core --workspace @oh-awesome-novel/test-runtime --workspace @oh-awesome-novel/test-tools --workspace @oh-awesome-novel/test-agent --workspace @oh-awesome-novel/test-backend --workspace @oh-awesome-novel/test-client --workspace @oh-awesome-novel/test-desktop-ui -- --maxWorkers=1",
+    "docs:check": "node scripts/check-legacy-write-architecture-terms.mjs && node scripts/check-task-status.mjs",
+    "quality": "npm run build && npm run typecheck && npm run test:ci && npm run docs:check && npm run docs:build",
     "desktop:build:deps": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend",
     "desktop:build:package": "nx run-many -t build -p @oh-awesome-novel/forge-plugin-tsdown @oh-awesome-novel/backend @oh-awesome-novel/desktop-ui",
     "docs:dev": "vitepress dev wiki --host 127.0.0.1 --port 5174",
