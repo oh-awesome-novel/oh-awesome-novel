@@ -45,7 +45,7 @@ export async function writePlayTurnRunReceipt(root: string, receipt: PlayTurnRun
   try {
     const handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
     try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
-    await rename(temp, path);
+    await replaceReceiptFile(temp, path);
     await syncDirectory(directory!);
   } finally { await rm(temp, { force: true }); }
 }
@@ -76,6 +76,23 @@ export async function readPlayTurnRunReceipt(root: string, sessionId: string, tu
     validateReceipt(value, sessionId, turnId);
     return value;
   } finally { await handle.close(); }
+}
+
+async function replaceReceiptFile(from: string, to: string): Promise<void> {
+  // Windows cannot replace a file another handle still has open. A recovery
+  // reader can hit that window; retry the sharing violation, then surface it.
+  const attempts = process.platform === 'win32' ? 40 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const locked = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+      if (process.platform !== 'win32' || !locked || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
 }
 
 async function receiptDirectory(root: string, sessionId: string, create: boolean): Promise<string | undefined> {
