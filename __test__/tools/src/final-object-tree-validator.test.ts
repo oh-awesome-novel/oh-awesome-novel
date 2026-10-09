@@ -96,7 +96,7 @@ describe('final object tree references', () => {
     const examples = ['timeline/events.yaml', 'foreshadow/active.yaml', 'foreshadow/resolved.yaml'].map((path) => {
       const heading = specification.indexOf(`### \`${path}\``);
       const section = specification.slice(heading);
-      const content = /```yaml\n([\s\S]*?)```/u.exec(section)?.[1];
+      const content = /```yaml\r?\n([\s\S]*?)```/u.exec(section)?.[1]?.replaceAll('\r\n', '\n');
       expect(content).toBeDefined();
       validateFinalDocument({ path, content: content! });
       return { path, content: content! };

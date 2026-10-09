@@ -199,7 +199,8 @@ describe('host permission semantics at approval boundaries', () => {
     expect(await readFile(path, 'utf8')).toBe('{}');
   });
 
-  it('retains full POSIX permission drift checks while Git preflight compares only executable mode', async () => {
+  // Directory fsync on a Windows volume fails before this POSIX simulation can run.
+  it.skipIf(process.platform === 'win32')('retains full POSIX permission drift checks while Git preflight compares only executable mode', async () => {
     host.platform = 'linux';
     const { root, store, actionId, repository } = await fixture();
     const files = [{ path: chapter, exists: true, sha256: createHash('sha256').update(before).digest('hex'), mode: 0o600 }];

@@ -139,7 +139,13 @@ async function createFixture() {
 }
 
 async function killAt(root: string, payload: string, point: PlaySessionWriteFaultPoint, mode: 'create' | 'update') {
-  await expect(execFileAsync(process.execPath, [
+  const result = await execFileAsync(process.execPath, [
     '--input-type=module', '-e', killedWriter, root, payload, point, mode,
-  ], { timeout: 10_000 })).rejects.toMatchObject({ signal: 'SIGKILL' });
+  ], { timeout: 10_000 }).then(
+    () => { throw new Error('writer exited without the crash boundary'); },
+    (error: NodeJS.ErrnoException) => error,
+  );
+  // Windows TerminateProcess reports a status code. POSIX reports SIGKILL.
+  if (process.platform === 'win32') expect(result.signal ?? result.code).not.toBe(0);
+  else expect(result).toMatchObject({ signal: 'SIGKILL' });
 }

@@ -22,7 +22,7 @@ describe('reviewed explicit Git commit', () => {
   it.each(['content', 'mode', 'index', 'head', 'branch'] as const)('rejects %s drift without changing HEAD or the index', async (kind) => {
     const root = await fixture(); const input = await reviewed(root);
     if (kind === 'content') await writeFile(join(root, 'chapter.md'), '# 未审阅\n');
-    if (kind === 'mode') await chmod(join(root, 'chapter.md'), 0o755);
+    if (kind === 'mode') await chmod(join(root, 'chapter.md'), process.platform === 'win32' ? 0o444 : 0o755);
     if (kind === 'index') await git(root, 'add', 'chapter.md');
     if (kind === 'head') await git(root, 'commit', '--allow-empty', '-m', 'another commit');
     if (kind === 'branch') await git(root, 'checkout', '-b', 'other');
@@ -169,7 +169,7 @@ describe('reviewed explicit Git commit', () => {
     const root = await fixture(); await writeFile(join(root, 'new 中文.md'), '# new\n'); await chmod(join(root, 'new 中文.md'), 0o755);
     await rm(join(root, 'chapter.md')); await mkdir(join(root, 'notes')); await writeFile(join(root, 'notes/unrelated.md'), 'keep untracked');
     const input = await reviewed(root, ['chapter.md', 'new 中文.md']); expect((await commitFiles(input)).status).toBe('committed');
-    expect(await git(root, 'ls-tree', 'HEAD', 'new 中文.md')).toContain('100755');
+    expect(await git(root, 'ls-tree', 'HEAD', 'new 中文.md')).toContain(process.platform === 'win32' ? '100644' : '100755');
     await expect(git(root, 'show', 'HEAD:chapter.md')).rejects.toThrow();
     expect(await git(root, 'status', '--porcelain')).toContain('notes/');
   });
