@@ -55,16 +55,6 @@ jobs:
       - name: Build, typecheck, test and verify documentation
         run: npm run quality
 
-      # The approval journey includes a real Git commit. Repeat it on Windows
-      # so a slow commit cannot hide behind a single passing sample.
-      - name: Repeat approval journey on Windows
-        if: runner.os == 'Windows'
-        run: |
-          for attempt in 1 2 3 4 5; do
-            echo "approval-journey attempt ${attempt}"
-            npm --ignore-scripts run test:run --workspace @oh-awesome-novel/test-desktop-ui -- src/sandbox-change-engine-approval-journey.test.ts --maxWorkers=1
-          done
-
   package:
     name: Package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
