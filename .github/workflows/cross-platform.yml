@@ -1,0 +1,119 @@
+name: Cross-platform checks
+
+# quality.yml stays a single Ubuntu job because desktop-release.yml reads
+# jobs.quality.outputs.commit from that reusable workflow. This workflow runs
+# the same install, build, typecheck, test and docs gate on each OS, then
+# packages the desktop app and runs the existing writing-journey smoke.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      NX_DAEMON: "false"
+      NX_NO_CLOUD: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Record host Git and Node settings
+        run: |
+          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, version: process.version })"
+          npm --version
+          git --version
+          git config --show-origin --get-regexp 'core\.(autocrlf|eol|longpaths|filemode)' || true
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com
+
+      - name: Build, typecheck, test and verify documentation
+        run: npm run quality
+
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      NX_DAEMON: "false"
+      NX_NO_CLOUD: "true"
+      ELECTRON_MIRROR: "https://github.com/electron/electron/releases/download/"
+      ELECTRON_CUSTOM_DIR: "v{{ version }}"
+      npm_config_electron_mirror: "https://github.com/electron/electron/releases/download/"
+      npm_config_electron_custom_dir: "v{{ version }}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Linux packaging and smoke-test tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com
+          node node_modules/electron/install.js
+
+      - name: Resolve package target
+        id: target
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const arch = process.arch;
+          const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+          if (!['x64', 'arm64'].includes(arch)) {
+            throw new Error(`Unsupported package architecture: ${arch}`);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `platform=${platform}\narch=${arch}\n`);
+          NODE
+
+      - name: Package desktop app
+        run: npm run package --workspace @oh-awesome-novel/desktop -- --platform=${{ steps.target.outputs.platform }} --arch=${{ steps.target.outputs.arch }}
+
+      - name: Verify packaged writing and restart journey
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a node __test__/desktop-ui/packaged-main-smoke/run.cjs --no-sandbox
+          else
+            node __test__/desktop-ui/packaged-main-smoke/run.cjs
+          fi
