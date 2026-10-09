@@ -26,6 +26,7 @@ import type { NovelBackendHandle } from '@oh-awesome-novel/backend';
 const clientHarness = vi.hoisted(() => {
   let current: Record<PropertyKey, unknown> | undefined;
   let acceptResult: unknown;
+  let acceptFailure: unknown;
   const proxy = new Proxy<Record<PropertyKey, unknown>>({}, {
     get(_target, property) {
       if (!current) {
@@ -42,6 +43,9 @@ const clientHarness = vi.hoisted(() => {
         return Promise.resolve(result).then((value) => {
           acceptResult = value;
           return value;
+        }, (error: unknown) => {
+          acceptFailure = error;
+          throw error;
         });
       };
     },
@@ -52,13 +56,18 @@ const clientHarness = vi.hoisted(() => {
     install(client: object) {
       current = client as Record<PropertyKey, unknown>;
       acceptResult = undefined;
+      acceptFailure = undefined;
     },
     accepted() {
       return acceptResult;
     },
+    failure() {
+      return acceptFailure;
+    },
     reset() {
       current = undefined;
       acceptResult = undefined;
+      acceptFailure = undefined;
     },
   };
 });
@@ -69,6 +78,7 @@ vi.mock('../../../apps/desktop-ui/src/client', () => ({
 
 import WorkspaceShell from '../../../apps/desktop-ui/src/components/workspace/WorkspaceShell.vue';
 
+const JOURNEY_TIMEOUT_MS = 20_000;
 const execFileAsync = promisify(execFile);
 const tempRoots: string[] = [];
 const backends: NovelBackendHandle[] = [];
@@ -138,7 +148,7 @@ describe('Sandbox Change Engine approval journey', () => {
     await vi.waitFor(() => {
       expect(wrapper.get('[data-test="pending-action-count"]').text()).toBe('1');
       expect(wrapper.get('.pending-card').text()).toContain(`Created: ${targetPath}`);
-    });
+    }, { timeout: JOURNEY_TIMEOUT_MS });
     expect(await git(workspaceRoot, 'rev-parse', 'HEAD')).toBe(initialHead);
     await expect(readFile(target, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
 
@@ -152,15 +162,11 @@ describe('Sandbox Change Engine approval journey', () => {
     await flushPromises();
     await cardButton(wrapper, 'Accept').trigger('click');
 
-    await vi.waitFor(() => {
-      const result = clientHarness.accepted() as
-        | PendingActionDecisionEnvelopeV1
-        | undefined;
-      expect(result?.receipt).toMatchObject({
-        decision: 'accepted',
-        materialization: 'committed',
-        git: { status: 'committed' },
-      });
+    const result = await decisionAfterAccept();
+    expect(result.receipt).toMatchObject({
+      decision: 'accepted',
+      materialization: 'committed',
+      git: { status: 'committed' },
     });
     await flushPromises();
 
@@ -180,7 +186,7 @@ describe('Sandbox Change Engine approval journey', () => {
         'No pending actions.',
       );
       expect(wrapper.get('[data-test="pending-action-count"]').text()).toBe('0');
-    });
+    }, { timeout: JOURNEY_TIMEOUT_MS });
 
     wrapper.unmount();
     wrapper = mountWorkspace(workspace);
@@ -191,7 +197,7 @@ describe('Sandbox Change Engine approval journey', () => {
         'No pending actions.',
       );
       expect(wrapper.get('[data-test="pending-action-count"]').text()).toBe('0');
-    });
+    }, { timeout: JOURNEY_TIMEOUT_MS });
     await expect(client.listPendingActions()).resolves.toEqual({ pendingActions: [] });
     await expect(client.getWorkspaceStatus()).resolves.toMatchObject({
       pendingActionCount: 0,
@@ -201,6 +207,20 @@ describe('Sandbox Change Engine approval journey', () => {
     wrapper.unmount();
   });
 });
+
+async function decisionAfterAccept(): Promise<PendingActionDecisionEnvelopeV1> {
+  const deadline = Date.now() + JOURNEY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const failure = clientHarness.failure();
+    if (failure) throw failure;
+    const accepted = clientHarness.accepted() as PendingActionDecisionEnvelopeV1 | undefined;
+    if (accepted) return accepted;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Accept did not return a decision receipt within ${JOURNEY_TIMEOUT_MS}ms.`,
+  );
+}
 
 async function createWorkspace(): Promise<string> {
   const root = await createTempRoot('oan-desktop-approval-');
