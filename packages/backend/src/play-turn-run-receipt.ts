@@ -54,8 +54,14 @@ export async function readPlayTurnRunReceipt(root: string, sessionId: string, tu
   requireId(turnId);
   const directory = await receiptDirectory(root, sessionId, false);
   if (!directory) return undefined;
+  const path = join(directory, `${turnId}.json`);
+  // Windows ignores O_NOFOLLOW, so reject a symlink before opening it.
+  let linked;
+  try { linked = await lstat(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  if (linked.isSymbolicLink() || !linked.isFile()) throw new Error('Unsafe Play turn receipt.');
   let handle;
-  try { handle = await open(join(directory, `${turnId}.json`), constants.O_RDONLY | constants.O_NOFOLLOW); }
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   try {
     const before = await handle.stat();

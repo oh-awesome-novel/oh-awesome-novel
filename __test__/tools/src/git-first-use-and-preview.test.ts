@@ -22,6 +22,13 @@ import {
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 
+function windowsForbids(relativePath: string): boolean {
+  return process.platform === 'win32' && (
+    /[<>:"|?*\u0000-\u001f]/u.test(relativePath)
+    || relativePath.split('/').some((part) => part.endsWith(' ') || part.endsWith('.'))
+  );
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -119,7 +126,8 @@ describe('Git status and explicit commit preview', () => {
 
   it('preserves supported paths byte-for-byte from status through preview and scoped commit', async () => {
     const root = await repository();
-    const paths = ['state/中文 名称.yaml', 'state/"quoted".yaml', '-leading.md', 'state/[literal].yaml', 'state/ padded .yaml '];
+    const paths = ['state/中文 名称.yaml', 'state/"quoted".yaml', '-leading.md', 'state/[literal].yaml', 'state/ padded .yaml ']
+      .filter((path) => !windowsForbids(path));
     for (const [index, path] of paths.entries()) await write(root, path, `value: file-${index}\n`);
     await write(root, 'unrelated.md', 'leave this untracked\n');
     const status = await readGitStatus(root);
@@ -153,7 +161,7 @@ describe('Git status and explicit commit preview', () => {
   it('decodes rename source and destination in status and commit details', async () => {
     const root = await repository();
     const oldPath = 'before 中文.md';
-    const newPath = 'after "新名".md';
+    const newPath = windowsForbids('after "新名".md') ? 'after 新名.md' : 'after "新名".md';
     await write(root, oldPath, 'renamed file\n');
     await git(root, 'add', '--', oldPath);
     await git(root, 'commit', '-m', 'before rename');
@@ -168,7 +176,7 @@ describe('Git status and explicit commit preview', () => {
     });
   });
 
-  it.each(['tab\tname.md', 'line\nbreak.md'])('displays control paths without splitting and refuses operations on %j', async (path) => {
+  it.skipIf(process.platform === 'win32').each(['tab\tname.md', 'line\nbreak.md'])('displays control paths without splitting and refuses operations on %j', async (path) => {
     const root = await repository();
     await write(root, path, 'untrusted path\n');
     const status = await readGitStatus(root);

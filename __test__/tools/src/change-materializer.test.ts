@@ -89,7 +89,8 @@ describe('ChangeMaterializer v1', () => {
     await expect(readFile(join(fixture.root, 'world/obsolete.md'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });
-    expect((await lstat(join(fixture.root, 'chapters/0001/0002.md'))).mode & 0o777).toBe(0o644);
+    const createdMode = (await lstat(join(fixture.root, 'chapters/0001/0002.md'))).mode & 0o777;
+    expect(createdMode & (process.platform === 'win32' ? 0o200 : 0o777)).toBe(process.platform === 'win32' ? 0o200 : 0o644);
     expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(fixture.repository.head);
     await expect(readFile(transactionPath(fixture.root, fixture.actionId), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
@@ -325,7 +326,7 @@ describe('ChangeMaterializer v1', () => {
     await expect(readFile(join(content.root, 'chapters/0001/0002.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 
     const mode = await createFixture('mode-drift');
-    await chmod(join(mode.root, 'state/value.yaml'), 0o600);
+    await chmod(join(mode.root, 'state/value.yaml'), process.platform === 'win32' ? 0o444 : 0o600);
     await expect(createChangeMaterializer({ store: mode.store }).accept({
       actionId: mode.actionId,
       autoCommitOnAccept: false,
@@ -509,7 +510,7 @@ describe('ChangeMaterializer v1', () => {
       actionId: mode.actionId,
       autoCommitOnAccept: false,
     });
-    await chmod(join(mode.root, 'state/value.yaml'), 0o600);
+    await chmod(join(mode.root, 'state/value.yaml'), process.platform === 'win32' ? 0o444 : 0o600);
     await expect(modeMaterializer.quickCommit(mode.actionId)).rejects.toMatchObject({
       code: 'ACCEPTED_TARGET_DRIFT',
     });
