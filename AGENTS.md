@@ -82,3 +82,9 @@ Git Diff Human Approval
   - 后续新增 `packages/tools`、`packages/agent` 等模块时，分别使用 `__test__/tools/`、`__test__/agent/`。
 - 每个 `__test__/<module>/` 应作为独立 npm workspace，包含自己的 `package.json`、`vitest.config.ts` 和 `src/**/*.test.ts`。
 - 测试应优先通过包入口导入被测代码，例如 `@oh-awesome-novel/core`，避免直接导入 `packages/<module>/src/*` 私有路径。
+
+## Cursor Cloud specific instructions
+
+- 本仓库要求 Node.js 24（`package.json` 的 `engines` 与 `mise.toml`）。Cloud Agent 可能把 Node 22 的 `/exec-daemon/node` 放在 `PATH` 最前，直接执行 `node` 会落到错误版本。环境安装把 Node.js 24.21.0 放在 `/usr/local/node-v24`。运行 `node` / `npm` 前执行 `export PATH="/usr/local/node-v24/bin:$PATH"`。
+- 依赖安装与 CI 相同：`npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com`。日常启动、质量门禁和示例路径见 `LOCAL_DEVELOPMENT.md`。启动前设置 `NX_DAEMON=false` 与 `NX_NO_CLOUD=true`。
+- `examples/global/workspace-list.json` 可能记录了其他机器的绝对路径。Web 启动器里用「打开」填入本机 `examples/simple-novel` 的绝对路径。
