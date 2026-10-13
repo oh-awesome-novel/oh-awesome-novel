@@ -88,3 +88,4 @@ Git Diff Human Approval
 - 本仓库要求 Node.js 24（`package.json` 的 `engines` 与 `mise.toml`）。Cloud Agent 可能把 Node 22 的 `/exec-daemon/node` 放在 `PATH` 最前，直接执行 `node` 会落到错误版本。环境安装把 Node.js 24.21.0 放在 `/usr/local/node-v24`。运行 `node` / `npm` 前执行 `export PATH="/usr/local/node-v24/bin:$PATH"`。
 - 依赖安装与 CI 相同：`npm ci --ignore-scripts --replace-registry-host=registry.npmmirror.com`。日常启动、质量门禁和示例路径见 `LOCAL_DEVELOPMENT.md`。启动前设置 `NX_DAEMON=false` 与 `NX_NO_CLOUD=true`。
 - `examples/global/workspace-list.json` 可能记录了其他机器的绝对路径。Web 启动器里用「打开」填入本机 `examples/simple-novel` 的绝对路径。
+- Cloud Agent 全局开启了 `commit.gpgsign=true`。OAN 检测到签名提交开启时会拒绝应用内 Git commit，Git 相关测试也会失败。运行质量门禁和 HTTP backend 前设置 `GIT_CONFIG_GLOBAL=/usr/local/etc/oan-dev.gitconfig`（安装脚本会写入 `gpgsign=false` 的开发用全局配置）。不要改 `~/.gitconfig` 里的 `commit.gpgsign`，仓库自身的签名提交仍走原来的全局配置。仓库本地 `commit.gpgsign=true` 仍然优先于这个开发配置。
