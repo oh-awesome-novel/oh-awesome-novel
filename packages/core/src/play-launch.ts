@@ -1,3 +1,4 @@
+import { isTavernInteractionSourcePath } from './tavern-play.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -632,7 +633,7 @@ async function inspectPlayLaunchSource(
     reason: source.reason ?? `Guided Start ${source.role} source`,
     budgetLayer: source.role === 'chapter' ? 'L2' : 'L1',
     semanticBoundary: 'compressible',
-    trust: 'canonical',
+    trust: isTavernInteractionSourcePath(source.path) ? 'interactionHint' : 'canonical',
   };
   const diagnosticId = `diagnostic-source-${index + 1}`;
 

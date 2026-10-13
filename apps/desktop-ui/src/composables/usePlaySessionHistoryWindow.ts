@@ -51,6 +51,7 @@ export interface UsePlaySessionHistoryWindowOptions {
   directorLens: Readonly<Ref<boolean>>;
   onDecision(result: PlaySourceDriftDecisionResult): void;
   onError?(error: unknown): void;
+  beforeLoad?(sessionId: string): Promise<void>;
 }
 
 export function usePlaySessionHistoryWindow(
@@ -101,6 +102,8 @@ export function usePlaySessionHistoryWindow(
     loading.value = true;
     error.value = '';
     try {
+      await options.beforeLoad?.(sessionId);
+      if (!isCurrentSelection(generation, sessionId)) return false;
       const result = await options.client.getPlaySessionDetail(sessionId, {
         limit: PLAY_HISTORY_WINDOW_SIZE,
       });

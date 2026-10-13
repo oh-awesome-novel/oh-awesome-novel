@@ -115,7 +115,7 @@ function isSelected(value: PlayRelativeTimeAdvance): boolean {
     </div>
 
     <p :id="hintId">
-      实际推进以上方时长为准；输入文字只描述等待意图。绝对世界时间需要世界时间规则后才会启用。
+      实际推进以上方时长为准；输入文字只描述等待意图。绝对计划须同时使用含时区的 ISO 世界时钟与明确的 ISO 触发时间，并在下一回合开始时检查是否到期。
     </p>
   </section>
 </template>

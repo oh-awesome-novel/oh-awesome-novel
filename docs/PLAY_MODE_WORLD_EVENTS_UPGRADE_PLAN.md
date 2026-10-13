@@ -14,9 +14,13 @@
 >
 > 执行顺序调整：2026-07-15。
 >
-> 当前执行原则：现有 session / artifact / staged snapshot、专用 SSE 与顶级 Play 工作区已经满足继续交付产品功能的门槛。M1 与跨计划 F1 已于 2026-07-15 落地；M2–M4、跨计划 F2 / F3 已于 2026-07-16 落地；M5 长篇使用与体验收口及跨计划 F4 advanced Director controls 已于 2026-07-20 落地。产品当前未发布，旧 endpoint / 数据 migration 与系统化无障碍支持暂缓；后续只在真实使用触发具体风险时推进局部 correctness / release hardening。
+> 当前执行原则：M1–M5 与 F1–F4 已交付。产品已经发布；2026-10-07 按 [1120](tasks/1120.md) 补齐显式 session 升级、receipt 保留、stage 清理、ISO 时间与显式状态引用，按 [1060](tasks/1060.md) 补齐角色卡导入旅程。设备/跨平台验收等剩余边界以 task 为准。
 
-## 当前产品阶段说明
+## 2026-10-07 执行状态
+
+旧 session 已有 Core/Backend/Client/Desktop 显式预览确认；普通 mutation 不再静默升级。旧 mutation/list endpoint 标记弃用，仍有用途的 full detail 保留。`atWorldTime` 使用明确 `format: iso8601` 才启用内置确定性比较；旧无格式 trigger 语义不变。可选 `stateDeltaRefs` 由 Core/Client 校验真实变化叶路径。staged recovery 在同锁内清理遗留 stage，损坏快照保留 backup；30 天 terminal receipt 清理保留未知/未决证据。下文早期“未发布/待实现”段落属于历史计划，最新范围和验证以 [1120](tasks/1120.md) 及 [本轮实施计划](superpowers/plans/2026-10-07-play-reliability-and-tavern-import.md) 为准。
+
+## 历史产品阶段说明（2026-07）
 
 OAN 目前仍处于产品早期开发阶段，尚未发布，也没有需要兼容的已发布用户数据。现阶段优先验证 Play Mode 的核心玩法、交互闭环与真实使用价值，以下工作明确暂缓，不作为当前功能里程碑、验收或合并的前置条件：
 

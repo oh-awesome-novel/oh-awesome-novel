@@ -1,6 +1,6 @@
 # Import Tavern-compatible Character Card
 
-> 状态：设计提案 / 导入规范草案。  
+> 状态：基础导入旅程已实现（2026-10-07）；下文未来目录/扩展建议不是现行协议，最新实现见 [1060](tasks/1060.md)。
 > 目的：定义 OAN 如何安全导入 Tavern-compatible 角色卡，并把导入结果接入 OAN 自己的角色卡体系。  
 > 来源：SillyTavern 角色卡、WorldInfo / lorebook 和 Play / roleplay 生态观察。  
 > 边界：本文不要求复制 SillyTavern 实现，不内置第三方角色卡，不自动抓取分享站点内容。
@@ -351,13 +351,13 @@ rawFieldInventory:
 - 测试角色卡质量。
 - 不污染小说项目事实源。
 
-输出位置可为：
+当前输出位置为：
 
 ```text
-.oan/play/imports/<session-id>/<card-id>.yaml
+.workspace/play-sessions/<session-id>/session.yaml
 ```
 
-Play-only 内容不能被写作 agent 当作 canon。用户要求保留时，再转为 Create Character 或 Merge。
+Play-only 内容以版本化 `tavernPlayImport` metadata 保存，复用已有 session staged writer；不另建导入数据库。内容不能被写作 agent 当作 canon。用户要求保留时，再用同一张卡执行 Create Character 或 Merge。
 
 ## 导入流程
 

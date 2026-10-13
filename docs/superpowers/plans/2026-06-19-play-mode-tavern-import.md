@@ -2,6 +2,8 @@
 
 > **For agentic workers:** Play is a separate product surface. It can feed writing, but it is not canonical truth by default.
 
+> **2026-10-07 follow-up:** The original checkmarks described the first helper/contracts slice. Task [1060](../../tasks/1060.md) and [the closure plan](2026-10-07-play-reliability-and-tavern-import.md) now implement the real local-file UI/API, deterministic create/merge PendingAction path, explicit Play-only confirmation, bounded parser and actual context activation.
+
 **Goal:** Plan and implement the first Play Mode / Roleplay Sandbox slice and Tavern-compatible Character Card import.
 
 **Architecture:** Play uses one world referee with multiple character voice/state modules. Play transcript and play-local state live separately from novel truth files. Adoption back into Writing Mode uses PendingAction.

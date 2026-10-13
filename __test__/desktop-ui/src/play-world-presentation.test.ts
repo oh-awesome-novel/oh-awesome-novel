@@ -10,6 +10,20 @@ import type {
 } from '../../../apps/desktop-ui/src/composables/useWorkspaceApi';
 
 describe('buildPlayEventCardViews', () => {
+  it('limits artifact-based state impacts to the event explicit refs', () => {
+    const event = createEvent({ id: 'event-target', stateDeltaRefs: ['gate'] });
+    const artifact = createArtifact({
+      eventIds: [event.id], stateDelta: { gate: 'closed', weather: 'rain' },
+      playLocalStateVisibilitySnapshot: { gate: 'playerVisible', weather: 'playerVisible' },
+    });
+    for (const showSpoilers of [false, true]) {
+      expect(buildPlayEventCardViews({ events: [event], artifacts: [artifact], showSpoilers })[0]?.stateImpacts)
+        .toEqual([{ path: 'gate', value: 'closed' }]);
+      expect(buildPlayEventCardViews({ events: [{ ...event, stateDeltaRefs: [] }], artifacts: [artifact], showSpoilers })[0]?.stateImpacts)
+        .toEqual([]);
+    }
+  });
+
   it('uses the owning artifact snapshots for spoiler-safe causes and state changes', () => {
     const sourceEvent = createEvent({
       id: 'event-source',

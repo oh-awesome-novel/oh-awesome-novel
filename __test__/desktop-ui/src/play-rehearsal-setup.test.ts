@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import PlayRehearsalSetup from '../../../apps/desktop-ui/src/components/play/rehearsal/PlayRehearsalSetup.vue';
 import PlaySessionPurposePicker from '../../../apps/desktop-ui/src/components/play/rehearsal/PlaySessionPurposePicker.vue';
+import { buildPlayRehearsalSessionInput } from '../../../apps/desktop-ui/src/composables/playRehearsalPresentation';
+import type { PlayRehearsalSetupSubmission } from '../../../apps/desktop-ui/src/components/play/rehearsal/types';
 
 describe('Play rehearsal setup', () => {
   it('offers both Play purposes as keyboard-compatible buttons', async () => {
@@ -34,6 +36,12 @@ describe('Play rehearsal setup', () => {
     await wrapper.get('[name="scene-opening"]').setValue('  The doors begin to close.  ');
     await wrapper.get('[name="scene-objective"]').setValue('  Test whether Mara tells the truth.  ');
     await wrapper.get('[name="scene-risk"]').setValue('The witness leaves.');
+    await wrapper.get('[name="play-allow-hidden"]').setValue(false);
+    await wrapper.get('[name="play-event-limit"]').setValue('7');
+    await wrapper.get('.play-rehearsal-step-form').trigger('submit');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('Scene');
+    expect(wrapper.text()).toContain('Enter a whole number from 0 to 6.');
+    await wrapper.get('[name="play-event-limit"]').setValue('0');
     await wrapper.get('.play-rehearsal-step-form').trigger('submit');
     await flushPromises();
 
@@ -75,6 +83,7 @@ describe('Play rehearsal setup', () => {
         risk: 'The witness leaves.',
         simulationMode: 'reactiveWorld',
         density: 'balanced',
+        eventSettings: { allowOffscreen: true, allowHidden: false, maxExternalEventsPerTurn: '0' },
       },
       participants: [
         {
@@ -93,6 +102,11 @@ describe('Play rehearsal setup', () => {
         },
       ],
       actorOrder: ['participant-2', 'participant-1'],
+    });
+    const submission = wrapper.emitted('create')?.[0]?.[0] as PlayRehearsalSetupSubmission;
+    expect(buildPlayRehearsalSessionInput(submission).eventPolicy).toEqual({
+      simulationMode: 'reactiveWorld', density: 'balanced',
+      allowOffscreen: true, allowHidden: false, maxExternalEventsPerTurn: 0,
     });
     wrapper.unmount();
   });

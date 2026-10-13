@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, opendir, realpath, rename, rm, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { PlaySession } from '@oh-awesome-novel/core';
 import { syncDirectory } from './directory-sync.js';
@@ -18,6 +18,63 @@ export interface PlayTurnRunReceipt {
 }
 
 const MAX_RECEIPT_BYTES = 8_192;
+const TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const RECEIPT_MAINTENANCE_BATCH_SIZE = 128;
+
+/**
+ * Opportunistic transport-metadata maintenance, never session-history cleanup.
+ * Keep terminal outcomes for at least 30 days; preserve every unresolved record.
+ * Directory names are streamed (O(N)), but memory and receipt reads/deletes are
+ * capped per invocation. The lexical cursor prevents retained records starving
+ * later entries and requires no persistent open directory handle.
+ */
+export async function prunePlayTurnRunReceipts(
+  root: string,
+  session: PlaySession,
+  afterTurnId?: string,
+): Promise<string | undefined> {
+  const directory = await receiptDirectory(root, session.id, false);
+  if (!directory) return undefined;
+  const candidates: string[] = [];
+  const entries = await opendir(directory);
+  for await (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const turnId = entry.name.slice(0, -5);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,179}$/u.test(turnId) || (afterTurnId && turnId <= afterTurnId)) continue;
+    if (candidates.length === RECEIPT_MAINTENANCE_BATCH_SIZE && turnId >= candidates.at(-1)!) continue;
+    const position = candidates.findIndex((candidate) => candidate > turnId);
+    candidates.splice(position < 0 ? candidates.length : position, 0, turnId);
+    if (candidates.length > RECEIPT_MAINTENANCE_BATCH_SIZE) candidates.pop();
+  }
+
+  const cutoff = Date.now() - TERMINAL_RETENTION_MS;
+  let removed = false;
+  for (const turnId of candidates) {
+    try {
+      const path = join(directory, `${turnId}.json`);
+      const before = await lstat(path);
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.mtimeMs > cutoff) continue;
+      const receipt = await readPlayTurnRunReceipt(root, session.id, turnId);
+      if (!receipt) continue;
+      const safeTerminal = receipt.phase === 'committed'
+        ? receiptMatchesCommittedArtifact(receipt, session)
+        : (receipt.phase === 'cancelled' || receipt.phase === 'failed') && !receipt.artifactHash;
+      if (!safeTerminal) continue;
+      // mtime determines retention only. Phase + artifact evidence determine
+      // terminal truth; replacement or mutation during inspection is preserved.
+      const after = await lstat(path);
+      if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size
+        || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.nlink !== 1) continue;
+      await unlink(path);
+      removed = true;
+    } catch {
+      // Damaged, unreadable or concurrently replaced metadata remains available
+      // for reconciliation; housekeeping must never prevent a new Play turn.
+    }
+  }
+  if (removed) await syncDirectory(directory);
+  return candidates.length === RECEIPT_MAINTENANCE_BATCH_SIZE ? candidates.at(-1) : undefined;
+}
 
 export function fingerprintPlayTurnArtifact(artifact: unknown): string {
   const stable = (value: unknown): unknown => Array.isArray(value)

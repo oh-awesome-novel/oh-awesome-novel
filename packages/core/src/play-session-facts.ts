@@ -1,3 +1,4 @@
+import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs } from './play-event-evidence.js';
 import { isDeepStrictEqual } from 'node:util';
 
 import { normalizePlayScheduledEvents } from './play-event-schedule.js';
@@ -932,6 +933,9 @@ function validatePlayBranchSnapshots(input: {
       );
     }
     if (!completeSnapshot) {
+      if (artifact.eventIds.some((id) => input.eventsById.get(id)?.stateDeltaRefs?.length)) {
+        throw new Error(`Play turn artifact ${artifact.id} stateDeltaRefs require a verifiable predecessor snapshot.`);
+      }
       if (
         (parent && hasCompletePlayBranchSnapshot(parent)) ||
         artifact.branchSnapshotVersion !== undefined ||
@@ -1018,6 +1022,11 @@ function validatePlayBranchSnapshots(input: {
         `Play turn artifact ${artifact.id} world clock does not follow its predecessor.`,
       );
     }
+    assertPlayEventStateDeltaRefs(
+      artifact.eventIds.map((eventId) => input.eventsById.get(eventId)!),
+      artifact.stateDelta,
+      predecessorState,
+    );
     const expectedState = mergePlayLocalState(
       predecessorState,
       artifact.stateDelta,
@@ -1589,12 +1598,14 @@ export function normalizePlayWorldRefereeEvent(value: unknown): PlayWorldReferee
     throw new Error('Every Play event cause requires a reason.');
   }
 
+  const stateDeltaRefs = normalizePlayStateDeltaRefs(value.stateDeltaRefs);
   return {
     kind,
     origin,
     title,
     summary,
     visibility,
+    ...(stateDeltaRefs !== undefined ? { stateDeltaRefs } : {}),
     cause: {
       reason,
       ...readOptionalCauseReferences(value.cause),

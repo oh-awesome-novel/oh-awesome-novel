@@ -1,3 +1,5 @@
+import type { PlayEventSettingsDraft } from '../../../composables/playEventPolicyForm';
+
 export type PlaySessionPurposeChoice = 'immersiveJourney' | 'sceneRehearsal';
 
 export type PlayRehearsalSetupStep = 'scene' | 'cast' | 'review';
@@ -18,6 +20,7 @@ export interface PlayRehearsalSceneDraft {
   risk: string;
   simulationMode: PlayRehearsalSimulationMode;
   density: PlayRehearsalEventDensity;
+  eventSettings?: PlayEventSettingsDraft;
 }
 
 export interface PlayRehearsalParticipantDraft {
@@ -33,7 +36,7 @@ export type PlayRehearsalParticipantDraftPatch = Partial<
 >;
 
 export type PlayRehearsalSceneErrors = Partial<Record<
-  'title' | 'opening' | 'location' | 'objective',
+  'title' | 'opening' | 'location' | 'objective' | 'eventSettings',
   string
 >>;
 

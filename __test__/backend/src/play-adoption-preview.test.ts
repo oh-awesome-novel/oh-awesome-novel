@@ -38,6 +38,45 @@ afterEach(async () => {
 });
 
 describe('evidence-backed Play adoption preview transport', () => {
+  it('saves a manual observation from a selected message, previews adoption, and rejects stale or unselected evidence', async () => {
+    const harness = await createSettledHarness();
+    const url = `${harness.backend.url}/api/workspace/play-sessions/${harness.session.id}`;
+    const loaded = await requestJson<{ session: SessionView & { transcript: Array<{ id: string }> } }>(url);
+    const sourceTurnId = loaded.body.session.transcript.at(-1)!.id;
+    const input = {
+      summary: 'My note about the gate', evidence: 'The public gate visibly changed.',
+      sourceTurnIds: [sourceTurnId], baseRevision: harness.session.revision,
+    };
+    const canonicalBefore = await readCanonicalTargets(harness.workspaceRoot);
+    const saved = await requestJson<{ session: SessionView }>(`${url}/observations`, { method: 'POST', body: input });
+    expect(saved.response.status, JSON.stringify(saved.body)).toBe(200);
+    harness.session = saved.body.session;
+    const observation = harness.session.observations.find((item) => item.summary === input.summary)!;
+    expect(observation).toMatchObject({ sourceTurnIds: [sourceTurnId], canonical: false, visibility: 'playerVisible' });
+    const reopened = await requestJson<{ detail: { snapshot: { observations: unknown[] } } }>(`${url}/detail`);
+    expect(reopened.response.status).toBe(200);
+    expect(reopened.body.detail.snapshot.observations).toContainEqual(expect.objectContaining({ id: observation.id }));
+    const preview = await createPreview(harness, { projection: 'player', seed: { kind: 'observation', observationId: observation.id } });
+    expect(preview.response.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.preview).toMatchObject({ summary: input.summary, canonicalUnchanged: true });
+
+    const observationPath = join(harness.workspaceRoot, '.workspace/play-sessions', harness.session.id, 'observations.yaml');
+    const before = await readFile(observationPath, 'utf-8');
+    const stale = await requestJson(`${url}/observations`, { method: 'POST', body: input });
+    expect(stale.response.status).toBe(409);
+    await expect(readFile(observationPath, 'utf-8')).resolves.toBe(before);
+    const restored = await requestJson<{ session: SessionView }>(`${url}/checkpoints/initial-world/restore`, {
+      method: 'POST', body: { baseRevision: harness.session.revision },
+    });
+    expect(restored.response.status, JSON.stringify(restored.body)).toBe(200);
+    const unselected = await requestJson(`${url}/observations`, {
+      method: 'POST', body: { ...input, baseRevision: restored.body.session.revision },
+    });
+    expect(unselected.response.status).toBe(400);
+    await expect(readFile(observationPath, 'utf-8')).resolves.toBe(before);
+    await expect(readCanonicalTargets(harness.workspaceRoot)).resolves.toEqual(canonicalBefore);
+  });
+
   it('rebuilds event, observation, and outcome seeds and previews all real targets without canonical writes', async () => {
     const harness = await createSettledHarness();
     const visibleEvent = harness.session.events.find((event) =>

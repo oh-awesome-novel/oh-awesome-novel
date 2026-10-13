@@ -1,3 +1,5 @@
+export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
+
 import type {
   NarrativeBlock,
   OanClient,
@@ -72,6 +74,10 @@ let activeAttempt = createDraftAttempt();
 let activeReferenceRun = referenceReviewReadyRun();
 
 const methods = {
+  async previewPlaySessionMigration(id: string) {
+    record('previewPlaySessionMigration', [id]);
+    return { preview: null };
+  },
   async getWritingProfiles() {
     record('getWritingProfiles', []);
     return { state: writingProfileState() };

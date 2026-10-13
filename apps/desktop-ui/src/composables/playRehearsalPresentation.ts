@@ -1,4 +1,5 @@
 import type { DeepReadonly } from 'vue';
+import { buildPlayEventSettings } from './playEventPolicyForm';
 
 import type {
   PlayRehearsalActorQueueItem,
@@ -138,6 +139,7 @@ export function buildPlayRehearsalSessionInput(
     eventPolicy: {
       simulationMode: submission.scene.simulationMode,
       density: submission.scene.density,
+      ...buildPlayEventSettings(submission.scene.eventSettings),
     },
     purpose: 'sceneRehearsal',
     startMode: submission.startMode,

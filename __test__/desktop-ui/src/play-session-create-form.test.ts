@@ -6,6 +6,30 @@ import { describe, expect, it } from 'vitest';
 import PlaySessionCreateForm from '../../../apps/desktop-ui/src/components/play/PlaySessionCreateForm.vue';
 
 describe('PlaySessionCreateForm world motion seeds', () => {
+  it('submits event settings and blocks invalid limits without silently changing them', async () => {
+    const wrapper = mount(PlaySessionCreateForm, { props: { creating: false } });
+    await field(wrapper, '标题').setValue('Last train');
+    await field(wrapper, '开场场景').setValue('Midnight at the station.');
+    expect(wrapper.get<HTMLInputElement>('[name="play-allow-offscreen"]').element.checked).toBe(true);
+    expect(wrapper.get<HTMLInputElement>('[name="play-allow-hidden"]').element.checked).toBe(true);
+    expect(wrapper.get<HTMLInputElement>('[name="play-event-limit"]').element.value).toBe('2');
+    await wrapper.get('[name="play-allow-offscreen"]').setValue(false);
+    await wrapper.get('[name="play-allow-hidden"]').setValue(false);
+    for (const limit of ['', '-1', '1.5', '7']) {
+      await wrapper.get('[name="play-event-limit"]').setValue(limit);
+      expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(true);
+      await wrapper.get('form').trigger('submit');
+      expect(wrapper.emitted('create')).toBeUndefined();
+    }
+    await wrapper.get('[name="play-event-limit"]').setValue('0');
+    await wrapper.get('form').trigger('submit');
+    expect(wrapper.emitted('create')?.[0]?.[0]).toMatchObject({
+      eventPolicy: { allowOffscreen: false, allowHidden: false, maxExternalEventsPerTurn: 0 },
+    });
+    expect(wrapper.text()).toContain('Due scheduled events are still settled');
+    wrapper.unmount();
+  });
+
   it('creates optional visible branch-base pressure and agenda seeds', async () => {
     const wrapper = mount(PlaySessionCreateForm, { props: { creating: false } });
 

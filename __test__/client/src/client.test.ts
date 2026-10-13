@@ -13,6 +13,27 @@ import {
 } from '@oh-awesome-novel/client';
 
 describe('createOanClient', () => {
+  it('preserves manual observation source evidence and rejects unsafe source IDs before HTTP', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ session: createEmptyPlaySessionEnvelope() }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    const client = createOanClient({ backendBaseUrl: 'http://backend.test', fetch: fetcher });
+    await client.addPlayObservation('play-1', {
+      summary: 'An author observation', evidence: 'The visible gate changed.',
+      sourceTurnIds: ['turn-1-message-2'], sourceEventIds: ['event-1'], baseRevision: 3,
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      summary: 'An author observation', evidence: 'The visible gate changed.',
+      sourceTurnIds: ['turn-1-message-2'], sourceEventIds: ['event-1'], baseRevision: 3,
+    });
+    for (const sourceTurnIds of [[], [''], ['../outside'], ['turn-1', 'turn-1']]) {
+      await expect(client.addPlayObservation('play-1', {
+        summary: 'A note', evidence: 'A source', sourceTurnIds,
+      })).rejects.toThrow('sourceTurnIds');
+    }
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('routes workspace requests through the configured HTTP base URL', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -21,6 +21,15 @@ export class PendingActionViewParseError extends Error {
 
 export type PublicPendingActionOrigin =
   | {
+      readonly kind: 'tavernImport';
+      readonly previewId: string;
+      readonly sourceHash: string;
+      readonly mappingHash: string;
+      readonly mode: 'create' | 'merge';
+      readonly characterId: string;
+      readonly baselineFiles: readonly { readonly path: string; readonly sha256: string | null }[];
+    }
+  | {
       readonly kind: 'manuscriptImport';
       readonly previewId: string;
       readonly sourceHash: string;
@@ -416,6 +425,23 @@ function parsePendingActionViewChange(value: unknown): PendingActionViewChange {
 function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrigin {
   if (!isRecord(value)) invalid('PendingActionView origin must be an object.');
   rejectLegacyOrInternalFields(value);
+  if (value.kind === 'tavernImport') {
+    assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash', 'mode', 'characterId', 'baselineFiles']);
+    const previewId = assertOpaqueId(value.previewId, 'origin preview id');
+    const characterId = assertOpaqueId(value.characterId, 'origin character id');
+    if (!/^pa_[0-9a-f-]{36}$/u.test(previewId) || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(characterId) || (value.mode !== 'create' && value.mode !== 'merge')) invalid('Invalid Tavern import origin.');
+    const targets = new Set(['meta.yaml', 'summary.md', 'personality.md', 'interaction.md', 'lorebook.yaml', 'assets.yaml', 'imports/tavern-card.yaml'].map((name) => `characters/${characterId}/${name}`));
+    if (!Array.isArray(value.baselineFiles) || value.baselineFiles.length !== targets.size) invalid('Invalid Tavern import baseline.');
+    const baselineFiles = value.baselineFiles.map((file: unknown) => {
+      if (!isRecord(file)) invalid('Invalid Tavern import baseline file.');
+      assertExactFields(file, ['path', 'sha256']);
+      if (typeof file.path !== 'string' || !targets.delete(file.path)) invalid('Invalid Tavern import baseline path.');
+      return { path: file.path, sha256: file.sha256 === null ? null : assertHash(file.sha256, 'origin baseline hash') };
+    });
+    if (value.mode === 'create' && baselineFiles.some((file) => file.sha256 !== null)) invalid('New character baseline must be absent.');
+    if (value.mode === 'merge' && !baselineFiles.some((file) => file.path === `characters/${characterId}/meta.yaml` && file.sha256 !== null)) invalid('Merge character metadata baseline is required.');
+    return deepFreeze({ kind: 'tavernImport', previewId, sourceHash: assertHash(value.sourceHash, 'origin source hash'), mappingHash: assertHash(value.mappingHash, 'origin mapping hash'), mode: value.mode, characterId, baselineFiles });
+  }
   if (value.kind === 'manuscriptImport') {
     assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash']);
     return deepFreeze({

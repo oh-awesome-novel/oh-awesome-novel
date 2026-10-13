@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import PlayWorldMomentum from './PlayWorldMomentum.vue';
+import { comparePlayIsoWorldTime } from '@oh-awesome-novel/client';
 import type {
   PlayActivatedSource,
   PlayAgenda,
@@ -10,7 +11,7 @@ import type {
 } from '../../composables/useWorkspaceApi';
 import type { PlayStateEntryView } from '../../composables/usePlayWorkspace';
 
-defineProps<{
+const props = defineProps<{
   clock: PlayWorldClock;
   policy: PlayEventPolicy;
   sceneStart: string;
@@ -39,6 +40,18 @@ function triggerLabel(event: PlayScheduledEvent): string {
     case 'manual':
       return 'manual trigger';
   }
+}
+
+function timeTriggerStatus(event: PlayScheduledEvent): string | undefined {
+  if (event.trigger.type !== 'atWorldTime') return undefined;
+  if (event.trigger.format !== 'iso8601') {
+    return 'Pending: this time has no explicit comparable format.';
+  }
+  const comparison = comparePlayIsoWorldTime(props.clock.anchor ?? '', event.trigger.value);
+  if (comparison === undefined) return 'Pending: the world clock needs an ISO date-time with timezone.';
+  return comparison >= 0
+    ? 'Due at the next turn settlement.'
+    : 'ISO time enabled; checked against the committed clock at each turn start.';
 }
 </script>
 
@@ -73,6 +86,7 @@ function triggerLabel(event: PlayScheduledEvent): string {
         <div><dt>Mode</dt><dd>{{ policy.simulationMode }}</dd></div>
         <div><dt>Density</dt><dd>{{ policy.density }}</dd></div>
         <div><dt>Offscreen</dt><dd>{{ policy.allowOffscreen ? 'on' : 'off' }}</dd></div>
+        <div><dt>Hidden</dt><dd>{{ policy.allowHidden ? 'on' : 'off' }}</dd></div>
         <div><dt>Turn cap</dt><dd>{{ policy.maxExternalEventsPerTurn }}</dd></div>
       </dl>
     </div>
@@ -95,6 +109,7 @@ function triggerLabel(event: PlayScheduledEvent): string {
         <article v-for="event in scheduledEvents" :key="event.id">
           <strong>{{ event.label }}</strong>
           <span>{{ triggerLabel(event) }} · priority {{ event.priority ?? 0 }}</span>
+          <span v-if="timeTriggerStatus(event)">{{ timeTriggerStatus(event) }}</span>
           <p>{{ event.template.summary }}</p>
         </article>
       </div>

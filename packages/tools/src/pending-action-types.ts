@@ -72,6 +72,15 @@ export type PendingActionSource =
 
 export type PendingActionOrigin =
   | {
+      readonly kind: 'tavernImport';
+      readonly previewId: string;
+      readonly sourceHash: string;
+      readonly mappingHash: string;
+      readonly mode: 'create' | 'merge';
+      readonly characterId: string;
+      readonly baselineFiles: readonly { readonly path: string; readonly sha256: string | null }[];
+    }
+  | {
       readonly kind: 'manuscriptImport';
       readonly previewId: string;
       readonly sourceHash: string;
@@ -288,6 +297,13 @@ export function parsePendingAction(
       || changes.some((change) => change.operation !== 'create' || !/^chapters\/(?!0000)\d{4}\/(?!0000)\d{4}\.md$/u.test(change.path)))) {
     invalidSchema('Manuscript import requires its matching preview origin and exact create-only chapter targets.');
   }
+  const tavernProducer = source.kind === 'deterministic-builder' && source.producer === 'tavern-import';
+  if (tavernProducer || origin?.kind === 'tavernImport') {
+    if (!tavernProducer || origin?.kind !== 'tavernImport' || origin.previewId !== id || source.capability !== 'character.edit') {
+      invalidSchema('Tavern import requires its matching preview origin and character capability.');
+    }
+    assertTavernImportTargets(origin, allowedTargets, changes);
+  }
   const settlementProducer = source.kind === 'deterministic-builder' && source.producer === 'chapter-settlement';
   if ((settlementProducer || origin?.kind === 'chapterSettlement')
     && (!settlementProducer || origin?.kind !== 'chapterSettlement' || source.capability !== 'novel.multi-file-edit')) {
@@ -321,7 +337,7 @@ export function parsePreparedChangePreview(
   assertWorkspaceEditCapability(value.capability);
   assertSha256(value.candidateFingerprint, 'Prepared preview candidate fingerprint');
   parseRepositoryBaseline(value.repository);
-  parsePendingActionOrigin(value.origin);
+  const origin = parsePendingActionOrigin(value.origin);
   const allowedTargets = parseAllowedTargets(value.allowedTargets);
   if (!Array.isArray(value.changes) || value.changes.length === 0) {
     invalidSchema('Prepared preview changes must be a non-empty array.');
@@ -335,6 +351,10 @@ export function parsePreparedChangePreview(
     );
   }
   parsePreview(value.preview, 'Prepared preview diff');
+  if (origin.kind === 'tavernImport') {
+    if (origin.previewId !== id || value.capability !== 'character.edit') invalidSchema('Tavern preview identity or capability mismatch.');
+    assertTavernImportTargets(origin, allowedTargets, changes);
+  }
   assertCanonicalIsoTimestamp(value.createdAt, 'Prepared preview createdAt');
   return deepFreeze(structuredClone(value)) as unknown as PreparedChangePreviewV1;
 }
@@ -426,9 +446,46 @@ export function parsePendingActionSource(value: unknown): PendingActionSource {
   invalidSchema('PendingAction source kind is invalid.');
 }
 
+function assertTavernImportTargets(
+  origin: Extract<PendingActionOrigin, { kind: 'tavernImport' }>,
+  allowedTargets: readonly string[],
+  changes: readonly PendingFileChange[],
+): void {
+  const base = `characters/${origin.characterId}/`;
+  const tails = new Set(['meta.yaml', 'summary.md', 'personality.md', 'interaction.md', 'lorebook.yaml', 'assets.yaml', 'imports/tavern-card.yaml']);
+  const canonical = new Set(['meta.yaml', 'summary.md', 'personality.md']);
+  const baselines = new Map(origin.baselineFiles.map((file) => [file.path, file.sha256]));
+  if (changes.length > 7 || allowedTargets.length !== changes.length
+    || allowedTargets.some((path) => !path.startsWith(base) || !tails.has(path.slice(base.length)))
+    || changes.some((change) => change.operation === 'delete'
+      || baselines.get(change.path) !== (change.baseline.exists ? change.baseline.sha256 : null)
+      || (origin.mode === 'create' && change.operation !== 'create')
+      || (origin.mode === 'merge' && change.operation === 'update' && canonical.has(change.path.slice(base.length))))) {
+    invalidSchema('Tavern import requires exact character targets and cannot overwrite existing canonical facts.');
+  }
+}
+
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
-  if (value.kind === 'manuscriptImport') {
+  if (value.kind === 'tavernImport') {
+    assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash', 'mode', 'characterId', 'baselineFiles']);
+    assertOpaquePendingActionId(value.previewId, 'Tavern import preview id');
+    assertSha256(value.sourceHash, 'Tavern import source hash');
+    assertSha256(value.mappingHash, 'Tavern import mapping hash');
+    if ((value.mode !== 'create' && value.mode !== 'merge') || typeof value.characterId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(value.characterId)) invalidSchema('Tavern import mode or character id is invalid.');
+    const expectedPaths = ['meta.yaml', 'summary.md', 'personality.md', 'interaction.md', 'lorebook.yaml', 'assets.yaml', 'imports/tavern-card.yaml']
+      .map((name) => `characters/${value.characterId}/${name}`).sort();
+    if (!Array.isArray(value.baselineFiles) || value.baselineFiles.length !== expectedPaths.length) invalidSchema('Tavern import requires the complete fixed baseline read set.');
+    for (const [index, file] of value.baselineFiles.entries()) {
+      if (!isRecord(file)) invalidSchema('Tavern import baseline must be an object.');
+      assertExactFields(file, ['path', 'sha256']);
+      if (file.path !== expectedPaths[index]) invalidSchema('Tavern import baseline paths must match its exact sorted character targets.');
+      if (file.sha256 !== null) assertSha256(file.sha256, 'Tavern import baseline hash');
+      if (value.mode === 'create' && file.sha256 !== null) invalidSchema('Tavern create requires absent targets.');
+      if (value.mode === 'merge' && file.path === `characters/${value.characterId}/meta.yaml` && file.sha256 === null) invalidSchema('Tavern merge requires an existing character.');
+    }
+  } else if (value.kind === 'manuscriptImport') {
     assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash']);
     assertOpaquePendingActionId(value.previewId, 'Import preview id');
     assertSha256(value.sourceHash, 'Import source hash');

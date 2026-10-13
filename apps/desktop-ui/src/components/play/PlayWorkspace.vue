@@ -3,10 +3,13 @@ import { computed, shallowRef, toRef } from 'vue';
 
 import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
+import PlayObservationForm from './PlayObservationForm.vue';
 import PlayComposer from './PlayComposer.vue';
 import PlayEventFeed from './PlayEventFeed.vue';
 import PlayHistoryControls from './PlayHistoryControls.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
+import PlaySessionMigration from './PlaySessionMigration.vue';
+import TavernImportPanel from './TavernImportPanel.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
 import PlayContextInspector from './context/PlayContextInspector.vue';
@@ -47,8 +50,12 @@ const emit = defineEmits<{
 
 const providerConfigured = toRef(props, 'providerConfigured');
 const launchOpen = shallowRef(false);
+const importOpen = shallowRef(false);
+const importBusy = shallowRef(false);
 
 const {
+  observation,
+  migration,
   actionKind,
   creating,
   error,
@@ -190,6 +197,7 @@ function prepareAdoption(seed: PlayAdoptionSeed): void {
 }
 
 function openLaunch(): void {
+  importOpen.value = false;
   if (!interactionBlocked.value) launchOpen.value = true;
 }
 
@@ -198,6 +206,7 @@ function cancelLaunch(): void {
 }
 
 function openSession(id: string): void {
+  importOpen.value = false;
   launchOpen.value = false;
   selectSession(id);
 }
@@ -207,6 +216,7 @@ async function createQuickSession(input: PlaySessionCreateRequest): Promise<void
 }
 
 function acceptGuidedSession(session: PlaySession): void {
+  importOpen.value = false;
   registerCreatedSession(session);
   launchOpen.value = false;
 }
@@ -221,6 +231,7 @@ function acceptGuidedSession(session: PlaySession): void {
         <small>Play-local rehearsal · canonical truth remains protected</small>
       </div>
       <div class="play-workspace-status">
+        <button type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; launchOpen = false">Import character</button>
         <span v-if="selectedSession && !launchOpen">
           {{ selectedSession.eventPolicy.simulationMode }} · {{ selectedSession.eventPolicy.density }}
         </span>
@@ -233,7 +244,7 @@ function acceptGuidedSession(session: PlaySession): void {
         </span>
         <button
           type="button"
-          :disabled="loading || refreshBlocked"
+          :disabled="loading || refreshBlocked || importBusy"
           aria-label="刷新 Play workspace"
           @click="refreshSessions"
         >
@@ -243,6 +254,7 @@ function acceptGuidedSession(session: PlaySession): void {
     </header>
 
     <p v-if="error" class="play-workspace-error" role="alert">{{ error }}</p>
+    <p v-if="migration.notice.value" role="status">{{ migration.notice.value }}</p>
 
     <div class="play-workspace-grid">
       <PlaySessionRail
@@ -250,15 +262,26 @@ function acceptGuidedSession(session: PlaySession): void {
         :selected-session-id="selectedSessionId"
         :loading="loading"
         :creating="creating"
-        :busy="interactionBlocked"
-        :refresh-disabled="refreshBlocked"
+        :busy="interactionBlocked || importBusy"
+        :refresh-disabled="refreshBlocked || importBusy"
         @select-session="openSession"
         @new-session="openLaunch"
         @refresh="refreshSessions"
       />
 
+      <TavernImportPanel
+        v-if="importOpen"
+        class="play-launch-stage"
+        :workspace-root="workspace.path"
+        @busy="importBusy = $event"
+        @close="importOpen = false"
+        @pending-action-created="emit('pendingActionCreated')"
+        @review-pending-action="emit('reviewPendingAction', $event)"
+        @created="acceptGuidedSession"
+      />
+
       <PlayLaunchFlow
-        v-if="launchOpen"
+        v-else-if="launchOpen"
         class="play-launch-stage"
         :files="files"
         :files-loading="filesLoading"
@@ -269,6 +292,28 @@ function acceptGuidedSession(session: PlaySession): void {
         @created="acceptGuidedSession"
         @cancel="cancelLaunch"
       />
+
+      <PlaySessionMigration
+        v-else-if="migration.preview.value"
+        :preview="migration.preview.value"
+        :busy="migration.busy.value"
+        :error="migration.error.value"
+        @confirm="migration.confirm"
+      >
+        <details v-if="selectedSession">
+          <summary>Read saved transcript without upgrading</summary>
+          <PlayTranscript
+            :title="selectedSession.title"
+            :scene-start="selectedSession.sceneStart"
+            :turns="selectedSession.transcript"
+            announcement="Legacy session · read only until upgrade is confirmed"
+            :total-count="transcriptWindow?.totalCount"
+            :has-more-before="transcriptWindow?.hasMoreBefore"
+            :loading-earlier="loadingEarlierTranscript"
+            @load-earlier="loadEarlierTranscript"
+          />
+        </details>
+      </PlaySessionMigration>
 
       <div
         v-else-if="selectedSession?.schemaVersion === 5"
@@ -389,7 +434,7 @@ function acceptGuidedSession(session: PlaySession): void {
       </section>
 
       <aside
-        v-if="!launchOpen && selectedSession?.schemaVersion === 4"
+        v-if="!importOpen && !launchOpen && !migration.preview.value && selectedSession?.schemaVersion === 4"
         class="play-world-inspector"
         aria-label="Play world inspector"
       >
@@ -445,7 +490,26 @@ function acceptGuidedSession(session: PlaySession): void {
           :disabled="interactionBlocked"
           notice=""
           @prepare-adoption="prepareAdoption"
-        />
+        >
+          <template #observation-form>
+            <PlayObservationForm
+              v-model:summary="observation.summary.value"
+              v-model:evidence="observation.evidence.value"
+              v-model:source-turn-id="observation.sourceTurnId.value"
+              :open="observation.open.value"
+              :sources="observation.sources.value"
+              :busy="observation.saving.value"
+              :disabled="interactionBlocked"
+              :can-save="observation.canSave.value"
+              :error="observation.error.value"
+              :notice="observation.notice.value"
+              @start="observation.start"
+              @cancel="observation.cancel"
+              @save="observation.save"
+              @refresh="refreshSessions"
+            />
+          </template>
+        </PlayAdoptionPanel>
         <PlayOutcomePanel
           :session="selectedSession"
           :show-spoilers="showSpoilers"
@@ -470,7 +534,7 @@ function acceptGuidedSession(session: PlaySession): void {
         />
       </aside>
 
-      <aside v-else-if="!launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
+      <aside v-else-if="!importOpen && !launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
         World HUD will appear after a session is selected.
       </aside>
     </div>

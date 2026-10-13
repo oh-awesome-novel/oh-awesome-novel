@@ -25,6 +25,7 @@ import {
   listPlaySessionCheckpoints,
   listPlaySessions,
   previewPlaySessionMigration,
+  confirmPlaySessionMigration,
   readPlaySessionFiles,
   readPlayWorldMomentum,
   resolvePlaySessionPath,
@@ -2363,7 +2364,8 @@ describe('Play session filesystem slice', () => {
         suggestedActions: [],
       });
 
-      await writePlaySessionFiles(workspaceRoot, migrated);
+      await expect(writePlaySessionFiles(workspaceRoot, migrated)).rejects.toThrow('explicit migration');
+      await confirmPlaySessionMigration(workspaceRoot, migrated.id, (await previewPlaySessionMigration(workspaceRoot, migrated.id))!);
       await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
         .resolves
         .toContain('customLegacyField: preserve-me');
@@ -2424,7 +2426,7 @@ describe('Play session filesystem slice', () => {
         });
 
       const session = await readPlaySessionFiles(workspaceRoot, 'v2-play');
-      await writePlaySessionFiles(workspaceRoot, session);
+      await confirmPlaySessionMigration(workspaceRoot, session.id, (await previewPlaySessionMigration(workspaceRoot, session.id))!);
 
       await expect(readFile(join(sessionRoot, 'session.yaml'), 'utf-8'))
         .resolves
@@ -2567,7 +2569,7 @@ describe('Play session filesystem slice', () => {
         id: 'adopt-cross',
         visibility: 'playerVisible',
       });
-      await expect(writePlaySessionFiles(workspaceRoot, session)).resolves.toBeTruthy();
+      await expect(confirmPlaySessionMigration(workspaceRoot, session.id, (await previewPlaySessionMigration(workspaceRoot, session.id))!)).resolves.toBeTruthy();
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -2612,7 +2614,7 @@ describe('Play session filesystem slice', () => {
           scheduledEvents: [],
         },
       });
-      await writePlaySessionFiles(workspaceRoot, session);
+      await confirmPlaySessionMigration(workspaceRoot, session.id, (await previewPlaySessionMigration(workspaceRoot, session.id))!);
       await expect(readFile(join(
         sessionRoot,
         '.migrations/v3-to-v4/original/session.yaml',

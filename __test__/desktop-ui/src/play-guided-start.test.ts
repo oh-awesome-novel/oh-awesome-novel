@@ -100,6 +100,21 @@ describe('Play Guided Start', () => {
     expect(calls).toEqual([]);
 
     await fillEntry(wrapper);
+    await wrapper.get('[name="guided-world-time"]').setValue('The following morning');
+    await wrapper.get('.guided-entry').trigger('submit');
+    await flushPromises();
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('Identity');
+    await buttonNamed(wrapper, 'Back to Entry').trigger('click');
+    await flushPromises();
+    await wrapper.get('[name="guided-world-time-format"]').setValue('iso8601');
+    await wrapper.get('[name="guided-world-time"]').setValue('2026-02-30T09:00:00+08:00');
+    await wrapper.get('.guided-entry').trigger('submit');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('Entry');
+    expect(wrapper.text()).toContain('Enter a valid date-time with timezone');
+    await wrapper.get('[name="guided-world-time"]').setValue('2026-10-07T09:00:00');
+    await wrapper.get('.guided-entry').trigger('submit');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('Entry');
+    await wrapper.get('[name="guided-world-time"]').setValue('2026-10-07T09:00:00+08:00');
     await wrapper.get('.guided-entry').trigger('submit');
     await flushPromises();
     expect(wrapper.get('[aria-current="step"]').text()).toContain('Identity');
@@ -132,6 +147,8 @@ describe('Play Guided Start', () => {
 
     const previewInput = previewPlayLaunchPackage.mock.calls[0]![0];
     expect(previewInput.startMode).toBe('guided');
+    expect(previewInput.entryPoint.worldTime?.value).toBe('2026-10-07T09:00:00+08:00');
+    expect(previewInput.entryPoint).not.toHaveProperty('worldTimeFormat');
     expect(previewInput.sources.map((source) => source.role)).toEqual([
       'chapter',
       'character',

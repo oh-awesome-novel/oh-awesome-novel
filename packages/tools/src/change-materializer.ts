@@ -27,6 +27,7 @@ import { syncDirectory, syncFile as fsyncFile } from './filesystem-durability';
 import { hostFileModesMatch } from './filesystem-modes';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
 import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
+import { assertTavernImportActionFresh } from './tavern-import-change-producer';
 import {
   assertRepositoryBaseline,
   commitPendingActionFiles,
@@ -403,6 +404,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
     }
     if (action.origin?.kind === 'manuscriptImport') {
       await assertManuscriptImportActionFresh(this.#workspaceRoot, action);
+    }
+    if (action.origin?.kind === 'tavernImport') {
+      await assertTavernImportActionFresh(this.#workspaceRoot, action);
     }
     if (requiresTrustedOrigin(action.source.capability) && action.origin === undefined) {
       throw materializerError(

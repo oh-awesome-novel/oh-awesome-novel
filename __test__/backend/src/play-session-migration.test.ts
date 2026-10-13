@@ -1,0 +1,28 @@
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createNovelHonoApp } from '@oh-awesome-novel/backend';
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+it('previews, blocks legacy mutation before model invocation, and confirms only the reviewed snapshot', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oan-migration-api-')); roots.push(root);
+  const directory = join(root, '.workspace/play-sessions/legacy'); await mkdir(directory, { recursive: true });
+  const path = join(directory, 'session.yaml');
+  const bytes = 'id: legacy\ntitle: Old session\ncreatedAt: 2026-06-19T00:00:00.000Z\nsceneStart: Station\ncharacters: []\ntranscript: []\n';
+  await writeFile(path, bytes);
+  const runPlayTurn = vi.fn(); const app = createNovelHonoApp({ workspaceRoot: root, runPlayTurn });
+  const url = '/api/workspace/play-sessions/legacy';
+  const post = (suffix: string, body: unknown) => app.request(url + suffix, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const { preview } = await (await app.request(url + '/migration')).json();
+  expect((await post('/turns/stream', { userText: 'Hello', baseRevision: 0 })).status).toBe(409);
+  expect(runPlayTurn).not.toHaveBeenCalled();
+  expect((await post('/migration', { baseRevision: preview.baseRevision, sourceFingerprint: preview.sourceFingerprint })).status).toBe(400);
+  expect(await readFile(path, 'utf8')).toBe(bytes);
+  expect((await post('/migration', { confirmed: true, baseRevision: preview.baseRevision, sourceFingerprint: '0'.repeat(64) })).status).toBe(409);
+  expect((await post('/migration', { confirmed: true, baseRevision: preview.baseRevision, sourceFingerprint: preview.sourceFingerprint })).status).toBe(200);
+  expect(await readFile(join(directory, preview.backupRelativePath, 'session.yaml'), 'utf8')).toBe(bytes);
+  const list = await app.request('/api/workspace/play-sessions');
+  expect(list.headers.get('Deprecation')).toMatch(/^@/u);
+  expect(list.headers.get('Link')).toContain('play-session-summaries');
+});

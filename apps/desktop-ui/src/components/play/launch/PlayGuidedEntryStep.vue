@@ -44,6 +44,10 @@ function updateDensity(event: Event): void {
   });
 }
 
+function updateWorldTimeFormat(event: Event): void {
+  emit('update', { worldTimeFormat: (event.target as HTMLSelectElement).value as 'narrative' | 'iso8601' });
+}
+
 function toggleSource(sourceId: string, event: Event): void {
   emit('toggleSource', sourceId, (event.target as HTMLInputElement).checked);
 }
@@ -119,10 +123,31 @@ function toggleSource(sourceId: string, event: Event): void {
         <span>Location</span>
         <input name="guided-location" type="text" :value="draft.location" :disabled="disabled" @input="updateText('location', $event)">
       </label>
-      <label>
-        <span>World time</span>
-        <input name="guided-world-time" type="text" :value="draft.worldTime" :disabled="disabled" @input="updateText('worldTime', $event)">
-      </label>
+      <div class="world-time-fields">
+        <label>
+          <span>World time format</span>
+          <select
+            name="guided-world-time-format"
+            :value="draft.worldTimeFormat ?? 'narrative'" :disabled="disabled"
+            @change="updateWorldTimeFormat"
+          >
+            <option value="narrative">Narrative / optional</option>
+            <option value="iso8601">ISO date-time with timezone</option>
+          </select>
+        </label>
+        <label>
+          <span>World time</span>
+          <input
+            name="guided-world-time" type="text" :value="draft.worldTime" :disabled="disabled"
+            :placeholder="draft.worldTimeFormat === 'iso8601' ? '2026-10-07T09:00:00+08:00' : 'The following morning'"
+            :aria-invalid="Boolean(errors.worldTime)"
+            :aria-describedby="`${prefix}-world-time-hint${errors.worldTime ? ` ${prefix}-world-time-error` : ''}`"
+            @input="updateText('worldTime', $event)"
+          >
+        </label>
+        <small :id="`${prefix}-world-time-hint`">An ISO date-time sets a comparable initial clock. Absolute scheduled events also need an explicit ISO trigger; narrative times are not ordered automatically.</small>
+        <small v-if="errors.worldTime" :id="`${prefix}-world-time-error`" class="field-error" role="alert">{{ errors.worldTime }}</small>
+      </div>
       <label>
         <span>Atmosphere</span>
         <input name="guided-atmosphere" type="text" :value="draft.atmosphere" :disabled="disabled" @input="updateText('atmosphere', $event)">
@@ -170,7 +195,8 @@ function toggleSource(sourceId: string, event: Event): void {
 <style scoped>
 .guided-entry,
 .guided-entry > header,
-.field-grid {
+.field-grid,
+.world-time-fields {
   display: grid;
   gap: 12px;
 }

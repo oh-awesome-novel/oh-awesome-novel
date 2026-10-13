@@ -31,6 +31,10 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
+    "./play-event-evidence": {
+      "types": "./dist/play-event-evidence.d.mts",
+      "import": "./dist/play-event-evidence.mjs"
+    },
     "./agent-usage": {
       "types": "./dist/agent-usage.d.mts",
       "import": "./dist/agent-usage.mjs"

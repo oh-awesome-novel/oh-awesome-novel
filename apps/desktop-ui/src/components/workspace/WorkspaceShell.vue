@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from 'vue';
 
 import PlayWorkspace from '../play/PlayWorkspace.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
@@ -7,6 +7,7 @@ import WorkspaceSearchDialog from './WorkspaceSearchDialog.vue';
 import ManuscriptExportDialog from './ManuscriptExportDialog.vue';
 import ManuscriptImportDialog from './ManuscriptImportDialog.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
+import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import type { WorkspaceMode } from '../../composables/useWorkspaceLayoutState';
@@ -56,6 +57,21 @@ let workspaceEpoch = 0;
 let pendingRequest = 0;
 onBeforeUnmount(() => { ++workspaceEpoch; ++pendingRequest; });
 const layout = useWorkspaceLayoutState(props.workspace.path);
+const playReview = useTemplateRef<HTMLElement>('play-review');
+let playReviewTrigger: HTMLElement | undefined;
+watch(
+  () => props.mode === 'play' && layout.rightShown.value,
+  async (visible, wasVisible) => {
+    if (visible) {
+      playReviewTrigger = document.activeElement instanceof HTMLElement
+        ? document.activeElement : undefined;
+      await nextTick();
+      playReview.value?.focus();
+    } else if (wasVisible && props.mode === 'play' && playReviewTrigger?.isConnected) {
+      playReviewTrigger.focus();
+    }
+  },
+);
 const activeFilePath = shallowRef('');
 const conversations = useAgentConversationSessions({
   getExactWritablePaths: () => activeFilePath.value ? [activeFilePath.value] : [],
@@ -540,7 +556,7 @@ async function refreshPendingActionSurface() {
       :guide-saving="guideSaving"
       :guide-error="guideError"
       :queued-prompt="queuedPrompt"
-      :right-shown="layout.rightShown.value"
+      :right-shown="mode === 'writing' && layout.rightShown.value"
       :right-tab="layout.rightTab.value"
       :pending-actions="decoratedPendingActions"
       :selected-pending-action="selectedPendingAction"
@@ -588,21 +604,91 @@ async function refreshPendingActionSurface() {
       @close-right="layout.rightShown.value = false"
     />
 
-    <PlayWorkspace
-      v-show="mode === 'play'"
-      :workspace="workspace"
-      :provider-configured="providerConfigured"
-      :files="tree"
-      :files-loading="treeLoading"
-      :files-error="treeError"
-      @configure-provider="emit('configureProvider')"
-      @pending-action-created="refreshPendingActionSurface"
-      @review-pending-action="reviewPendingActionById"
-      @writing-references-updated="conversations.refreshWritingReferences"
-    />
+    <div v-show="mode === 'play'" class="workspace-play-workbench">
+      <PlayWorkspace
+        :workspace="workspace"
+        :provider-configured="providerConfigured"
+        :files="tree"
+        :files-loading="treeLoading"
+        :files-error="treeError"
+        @configure-provider="emit('configureProvider')"
+        @pending-action-created="refreshPendingActionSurface"
+        @review-pending-action="reviewPendingActionById"
+        @writing-references-updated="conversations.refreshWritingReferences"
+      />
+
+      <div
+        v-if="mode === 'play' && layout.rightShown.value"
+        ref="play-review"
+        class="workspace-play-review"
+        role="region"
+        aria-label="Play review"
+        tabindex="-1"
+        @keydown.esc.stop="layout.rightShown.value = false"
+      >
+        <WorkspaceRightPanel
+          :workspace-path="workspace.path"
+          :active-tab="layout.rightTab.value"
+          :active-file-path="activeFilePath"
+          :file-content="fileContent"
+          :file-line="activeFileLine"
+          :file-loading="fileLoading"
+          :file-error="fileError"
+          :pending-actions="decoratedPendingActions"
+          :selected-pending-action="selectedPendingAction"
+          :pending-actions-loading="pendingActionsLoading"
+          :pending-actions-error="pendingActionsError"
+          :workspace-status="workspaceStatus"
+          :project-health="projectHealth"
+          :writing-profile-state="writingProfileState"
+          :writing-profiles-loading="writingProfilesLoading"
+          :writing-profiles-error="writingProfilesError"
+          @select-tab="layout.openRightPanel($event)"
+          @close="layout.rightShown.value = false"
+          @accept-pending-action="acceptPendingAction"
+          @reject-pending-action="rejectPendingAction"
+          @quick-commit-pending-action="quickCommitPendingAction"
+          @review-pending-action="reviewPendingAction"
+          @open-pending-action-diff="openPendingActionDiff"
+          @review-pending-action-id="reviewPendingActionById"
+          @refresh-writing-profiles="loadWritingProfiles"
+          @writing-profile-state-changed="updateWritingProfileState"
+        />
+      </div>
+    </div>
 
     <WorkspaceSearchDialog v-if="searchOpen" :workspace-path="workspace.path" :refresh-version="searchRefreshVersion" @close="searchOpen = false" @open-file="openSearchResult" />
     <ManuscriptExportDialog v-if="exportOpen" :workspace-path="workspace.path" @close="exportOpen = false" />
     <ManuscriptImportDialog v-if="manuscriptImportOpen" :workspace-path="workspace.path" @close="manuscriptImportOpen = false" @proposed="reviewManuscriptImport" />
   </main>
 </template>
+
+<style scoped>
+.workspace-play-workbench {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-play-review {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 20;
+  display: grid;
+  width: min(620px, 100%);
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--editor-hairline);
+  box-shadow: -12px 0 32px rgb(0 0 0 / 12%);
+}
+
+.workspace-play-review:focus-visible {
+  outline: 2px solid var(--editor-focus);
+  outline-offset: -2px;
+}
+
+.workspace-play-review :deep(.right-panel-tabs) {
+  flex-wrap: wrap;
+}
+</style>

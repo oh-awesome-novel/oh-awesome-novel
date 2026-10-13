@@ -7,10 +7,12 @@ import type {
   PlaySourceDriftStatus,
 } from '@oh-awesome-novel/client';
 import type { Mock } from 'vitest';
+import { vi } from 'vitest';
 
 type TestMock = Mock<(...args: any[]) => any>;
 
 export interface LegacyPlayReadModelApi {
+  previewPlaySessionMigration?: TestMock;
   listPlaySessions: TestMock;
   listPlaySessionSummaries: TestMock;
   getPlaySession: TestMock;
@@ -32,6 +34,8 @@ export interface LegacyPlayReadModelApi {
 export function installLegacyPlayReadModelMocks(
   api: LegacyPlayReadModelApi,
 ): void {
+  api.previewPlaySessionMigration ??= vi.fn();
+  api.previewPlaySessionMigration.mockResolvedValue({ preview: null });
   api.listPlaySessionSummaries.mockImplementation(async () => ({
     summaries: (await readLegacySessions(api)).map(toPlaySessionSummary),
   }));

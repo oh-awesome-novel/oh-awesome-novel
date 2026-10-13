@@ -246,6 +246,8 @@ export interface PlayWorldEvent {
   summary: string;
   visibility: PlayEventVisibility;
   cause: PlayWorldEventCause;
+  /** Explicit changed leaf paths in the owning artifact stateDelta. */
+  stateDeltaRefs?: string[];
   worldClock: PlayWorldClock;
   createdAt: string;
   canonical: false;
@@ -258,6 +260,8 @@ export interface PlayWorldRefereeSettlementEvent {
   summary: string;
   visibility: PlayEventVisibility;
   cause: PlayWorldEventCause;
+  /** Explicit changed leaf paths in the owning artifact stateDelta. */
+  stateDeltaRefs?: string[];
 }
 
 export interface PlayObservation {

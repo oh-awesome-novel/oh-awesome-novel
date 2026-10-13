@@ -62,6 +62,10 @@ function sourceStatus(
         <dt>World activity</dt>
         <dd>{{ preview.eventPolicy.simulationMode }} · {{ preview.eventPolicy.density }}</dd>
       </div>
+      <div v-if="preview.entryPoint.worldTime">
+        <dt>Initial world time</dt>
+        <dd>{{ preview.entryPoint.worldTime.value }}</dd>
+      </div>
       <div>
         <dt>Participants</dt>
         <dd>{{ preview.participantRoles.length }}</dd>

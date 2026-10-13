@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useId } from 'vue';
+import PlayEventPolicyFields from '../PlayEventPolicyFields.vue';
+import { createPlayEventSettingsDraft } from '../../../composables/playEventPolicyForm';
 
 import type {
   PlayRehearsalEventDensity,
@@ -175,6 +177,11 @@ function updateDensity(event: Event): void {
       </label>
     </div>
 
+    <PlayEventPolicyFields
+      :value="draft.eventSettings ?? createPlayEventSettingsDraft()"
+      :disabled="disabled"
+      @update="emit('updateDraft', { ...draft, eventSettings: $event })"
+    />
     <footer>
       <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
       <button class="play-rehearsal-primary" type="submit" :disabled="disabled">Continue to Cast</button>

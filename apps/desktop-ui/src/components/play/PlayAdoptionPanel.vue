@@ -25,6 +25,8 @@ const emit = defineEmits<{
       <span>{{ observations.length }}</span>
     </header>
 
+    <slot name="observation-form" />
+
     <div v-if="observations.length" class="play-observation-list">
       <article v-for="observation in observations" :key="observation.id">
         <div class="play-observation-copy">

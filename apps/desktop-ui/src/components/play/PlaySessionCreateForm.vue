@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
+import PlayEventPolicyFields from './PlayEventPolicyFields.vue';
+import { buildPlayEventSettings, createPlayEventSettingsDraft, playEventSettingsError } from '../../composables/playEventPolicyForm';
 
 import type {
   PlayAgenda,
@@ -27,6 +29,7 @@ const userPersona = shallowRef('');
 const characters = shallowRef('');
 const simulationMode = shallowRef<PlaySimulationMode>('reactiveWorld');
 const density = shallowRef<PlayEventDensity>('balanced');
+const eventSettings = shallowRef(createPlayEventSettingsDraft());
 const pressureKind = shallowRef<PlayPressure['kind']>('deadline');
 const pressureLabel = shallowRef('');
 const pressureNextConsequence = shallowRef('');
@@ -55,6 +58,7 @@ const agendaSeedValid = computed(() =>
 const canCreate = computed(() =>
   title.value.trim().length > 0 &&
   sceneStart.value.trim().length > 0 &&
+  !playEventSettingsError(eventSettings.value) &&
   pressureSeedValid.value &&
   agendaSeedValid.value,
 );
@@ -73,6 +77,7 @@ function submitCreate() {
     eventPolicy: {
       simulationMode: simulationMode.value,
       density: density.value,
+      ...buildPlayEventSettings(eventSettings.value),
     },
     ...(worldMomentum ? { worldMomentum } : {}),
   });
@@ -150,6 +155,7 @@ function splitCharacters(value: string): string[] {
         </select>
       </label>
     </div>
+    <PlayEventPolicyFields :value="eventSettings" :disabled="creating" @update="eventSettings = $event" />
     <fieldset class="play-world-seed-fields">
       <legend>World motion seeds <small>可选</small></legend>
       <p>为新世界提供一个正在逼近的压力，或一个 NPC / 组织的下一步。</p>

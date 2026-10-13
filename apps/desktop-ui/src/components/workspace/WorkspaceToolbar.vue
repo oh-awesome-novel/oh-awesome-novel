@@ -165,6 +165,21 @@ function chooseEditor(editor: ExternalEditor) {
         @select-mode="emit('selectWorkspaceMode', $event)"
       />
 
+      <button
+        v-if="workspaceMode === 'play'"
+        class="toolbar-icon-action"
+        :class="{ 'toolbar-icon-action-active': rightShown && rightTab === 'approval' }"
+        type="button"
+        aria-label="Pending actions"
+        title="Pending actions"
+        @click="emit('openPending')"
+      >
+        <ListChecks :size="18" aria-hidden="true" />
+        <span v-if="pendingActionCount > 0" class="toolbar-icon-badge" aria-hidden="true">
+          {{ pendingActionCount }}
+        </span>
+      </button>
+
       <nav v-if="workspaceMode === 'writing'" class="toolbar-nav-group" aria-label="Writing navigation">
         <button
           v-for="item in navigationItems"
@@ -232,7 +247,6 @@ function chooseEditor(editor: ExternalEditor) {
       </details>
 
       <button
-        v-if="workspaceMode === 'writing'"
         class="toolbar-icon-action"
         type="button"
         :aria-label="rightShown ? '隐藏审阅栏' : '显示审阅栏'"

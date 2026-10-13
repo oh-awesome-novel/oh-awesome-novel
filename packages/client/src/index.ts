@@ -1,3 +1,5 @@
+import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
+export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 import { parseGitDiffPreview, assertReviewedGitCommitInput, parseReviewedGitCommitResult } from './git-preview';
 import type { GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
 export type { GitCommitPreview, GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
@@ -14,6 +16,14 @@ import type { ManuscriptImportInput, ManuscriptImportPreviewResult, ManuscriptIm
 export { MANUSCRIPT_IMPORT_MAX_BYTES, parseManuscriptImportPreviewResult } from './manuscript-import.js';
 export type { ManuscriptImportMapping, ManuscriptImportInput, ManuscriptImportChapter, ManuscriptImportPreview, ManuscriptImportPreviewResult, ManuscriptImportProposalInput } from './manuscript-import.js';
 import { DefaultChatTransport } from 'ai';
+import { assertTavernImportInput, assertTavernImportConfirmation, parseTavernImportPreview } from './tavern-import.js';
+import type { TavernImportInput, TavernImportConfirmation, TavernImportPreview } from './tavern-import.js';
+export { TAVERN_JSON_MAX_BYTES, TAVERN_PNG_MAX_BYTES, parseTavernImportPreview } from './tavern-import.js';
+export type { TavernImportMode, TavernImportInput, TavernImportConfirmation, TavernImportPreview } from './tavern-import.js';
+import { assertPlayMigrationConfirmation, parsePlayMigrationPreview } from './play-session-migration.js';
+import type { PlaySessionMigrationPreview, PlaySessionMigrationConfirmation } from './play-session-migration.js';
+export { parsePlayMigrationPreview } from './play-session-migration.js';
+export type { PlaySessionMigrationPreview, PlaySessionMigrationConfirmation } from './play-session-migration.js';
 import type { ChatTransport, UIMessage } from 'ai';
 import {
   parsePendingActionDecisionEnvelope,
@@ -875,6 +885,7 @@ export interface PlayWorldEvent {
   summary: string;
   visibility: PlayEventVisibility;
   cause: PlayEventCause;
+  stateDeltaRefs?: string[];
   worldClock: PlayWorldClock;
   createdAt: string;
   canonical: false;
@@ -886,7 +897,7 @@ export type PlayEventTrigger =
   | { type: 'nextTurn' }
   | { type: 'afterTurns'; turns: number }
   | { type: 'flagEquals'; path: string; value: PlayFlagValue }
-  | { type: 'atWorldTime'; value: string }
+  | { type: 'atWorldTime'; value: string; format?: 'iso8601' }
   | { type: 'manual' };
 
 export type PlayScheduledEventStatus = 'scheduled' | 'occurred' | 'cancelled';
@@ -1814,6 +1825,9 @@ export interface OanClient extends PlayRehearsalClientMethods {
   searchWorkspace(query: string): Promise<WorkspaceSearchResponse>;
   exportManuscript(format: 'md' | 'txt'): Promise<ManuscriptExport>;
   previewManuscriptImport(input: ManuscriptImportInput): Promise<ManuscriptImportPreviewResult>;
+  previewTavernImport(input: TavernImportInput): Promise<{ preview: TavernImportPreview }>;
+  proposeTavernImport(previewId: string, input: TavernImportConfirmation): Promise<PendingActionViewEnvelopeV1>;
+  createTavernPlaySession(previewId: string, input: TavernImportConfirmation): Promise<{ session: PlaySession }>;
   proposeManuscriptImport(previewId: string, input: ManuscriptImportProposalInput): Promise<PendingActionViewEnvelopeV1>;
   getWorkspaceStatus(): Promise<WorkspaceStatus>;
   getWritingProfiles(): Promise<{ state: WritingProfileState }>;
@@ -1945,6 +1959,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
     files: string[];
   }>;
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
+  previewPlaySessionMigration(id: string): Promise<{ preview: PlaySessionMigrationPreview | null }>;
+  confirmPlaySessionMigration(id: string, input: PlaySessionMigrationConfirmation): Promise<{ session: PlaySession }>;
   getPlaySessionDetail(id: string, options?: {
     limit?: number;
     transcriptCursor?: string;
@@ -2036,6 +2052,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   addPlayObservation(id: string, observation: {
     summary: string;
     evidence: string;
+    sourceTurnIds?: string[];
+    sourceEventIds?: string[];
     baseRevision?: number;
   }): Promise<{ session: PlaySession }>;
   addPlayAdoptionCandidate(id: string, candidate: {
@@ -2290,6 +2308,29 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       if (response.format !== format) throw new Error('Mismatched manuscript export format.');
       return response;
     }),
+    previewTavernImport: async (input) => {
+      assertTavernImportInput(input);
+      const result = parseTavernImportPreview(await requestJson<unknown>('/api/workspace/tavern-imports/preview', { method: 'POST', body: input }));
+      if (result.preview.sourceName !== input.sourceName || result.preview.mode !== input.mode || (input.characterId && result.preview.characterId !== input.characterId)) throw new Error('Mismatched Tavern import preview.');
+      return result;
+    },
+    proposeTavernImport: async (previewId, input) => {
+      assertTavernImportConfirmation(previewId, input);
+      if (!previewId.startsWith('pa_')) throw new Error('Canonical import requires a canonical preview.');
+      const result = parsePendingActionViewEnvelope(await requestJson<unknown>(`/api/workspace/tavern-imports/${encodeURIComponent(previewId)}/propose`, { method: 'POST', body: input }));
+      if (result.pendingAction.id !== previewId || result.pendingAction.status !== 'pending' || result.pendingAction.origin?.kind !== 'tavernImport' || result.pendingAction.origin.previewId !== previewId) throw new Error('Mismatched Tavern import proposal.');
+      const origin = result.pendingAction.origin;
+      if (result.pendingAction.changes.some((change) => !origin.baselineFiles.some((file) => file.path === change.path) || change.operation === 'delete' || (origin.mode === 'create' && change.operation !== 'create') ||
+        (origin.mode === 'merge' && change.operation === 'update' && ['meta.yaml', 'summary.md', 'personality.md'].some((name) => change.path === `characters/${origin.characterId}/${name}`)))) throw new Error('Mismatched Tavern import targets.');
+      return result;
+    },
+    createTavernPlaySession: async (previewId, input) => {
+      assertTavernImportConfirmation(previewId, input);
+      if (!previewId.startsWith('tp_')) throw new Error('Play import requires a Play preview.');
+      const result = await requestJson<unknown>(`/api/workspace/tavern-imports/${encodeURIComponent(previewId)}/play-session`, { method: 'POST', body: input });
+      if (!isRecord(result) || !isRecord(result.session) || typeof result.session.id !== 'string') throw new Error('Invalid imported Play session response.');
+      return parsePlaySessionResponse(result, result.session.id);
+    },
     previewManuscriptImport: async (input) => {
       assertManuscriptImportInput(input);
       const result = parseManuscriptImportPreviewResult(await requestJson<unknown>('/api/workspace/manuscript/import/preview', { method: 'POST', body: input }));
@@ -2656,6 +2697,15 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         normalized.requestedSessionId,
       ));
     },
+    previewPlaySessionMigration: (id) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/migration`,
+    ).then((value) => parsePlayMigrationPreview(value, id)),
+    confirmPlaySessionMigration: (id, input) => {
+      assertPlayMigrationConfirmation(input);
+      return requestJson<unknown>(`/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/migration`, {
+        method: 'POST', body: input,
+      }).then((value) => parsePlaySessionResponse(value, id));
+    },
     getPlaySession: (id) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
@@ -2818,14 +2868,21 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
           body: turn,
         },
       ).then((value) => parsePlaySessionResponse(value, id)),
-    addPlayObservation: (id, observation) =>
-      requestJson<unknown>(
+    addPlayObservation: (id, observation) => {
+      for (const key of ['sourceTurnIds', 'sourceEventIds'] as const) {
+        const refs = observation[key];
+        if (refs !== undefined && (!isUniqueSafePlayIdArray(refs) || refs.length === 0)) {
+          return Promise.reject(new Error(`Play observation ${key} must contain unique, safe source IDs.`));
+        }
+      }
+      return requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/observations`,
         {
           method: 'POST',
           body: observation,
         },
-      ).then((value) => parsePlaySessionResponse(value, id)),
+      ).then((value) => parsePlaySessionResponse(value, id));
+    },
     addPlayAdoptionCandidate: (id, candidate) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/adoption-candidates`,
@@ -5182,6 +5239,7 @@ function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
         return false;
       }
     } else if (
+      artifact.eventIds.some((id) => eventsById.get(id)?.stateDeltaRefs?.length) ||
       parent?.schemaVersion === 2 ||
       artifact.branchSnapshotVersion !== undefined ||
       artifact.artifactKind !== undefined ||
@@ -5472,6 +5530,13 @@ function hasConsistentPlayV2Artifact(
   ) {
     return false;
   }
+  try {
+    assertPlayEventStateDeltaRefs(
+      artifact.eventIds.map((eventId) => eventsById.get(eventId)!),
+      artifact.stateDelta,
+      predecessorState,
+    );
+  } catch { return false; }
   const expectedTurn = predecessorClock.turn +
     (artifact.artifactKind === 'worldSettlement' ? 1 : 0);
   const expectedState = {
@@ -5500,6 +5565,7 @@ function hasConsistentPlayV2Artifact(
           event,
           artifactWorldClock.turn,
           predecessorState,
+          predecessorClock.anchor,
         ))
         .sort(compareClientScheduledEvents)
         .map((event) => event.id)
@@ -5915,7 +5981,12 @@ function isClientScheduledEventDue(
   event: PlayScheduledEvent,
   nextTurn: number,
   playLocalState: Record<string, unknown>,
+  currentWorldTime?: string,
 ): boolean {
+  if (event.trigger.type === 'atWorldTime' && event.trigger.format === 'iso8601' && currentWorldTime) {
+    const comparison = comparePlayIsoWorldTime(currentWorldTime, event.trigger.value);
+    return comparison !== undefined && comparison >= 0;
+  }
   if (event.trigger.type === 'nextTurn') {
     return nextTurn > event.scheduledAtTurn;
   }
@@ -6459,6 +6530,10 @@ function isPlayTranscriptTurn(value: unknown): value is PlayTranscriptTurn {
       || value.actionKind === 'wait');
 }
 
+function hasValidPlayStateDeltaRefs(value: unknown): boolean {
+  try { normalizePlayStateDeltaRefs(value); return true; } catch { return false; }
+}
+
 function isPlayWorldEventEnvelope(value: unknown): value is PlayWorldEvent {
   return isRecord(value)
     && hasOnlyKnownFields(value, [
@@ -6471,6 +6546,7 @@ function isPlayWorldEventEnvelope(value: unknown): value is PlayWorldEvent {
       'summary',
       'visibility',
       'cause',
+      'stateDeltaRefs',
       'worldClock',
       'createdAt',
       'canonical',
@@ -6484,6 +6560,7 @@ function isPlayWorldEventEnvelope(value: unknown): value is PlayWorldEvent {
     && isNonEmptyString(value.summary)
     && isPlayVisibility(value.visibility)
     && isPlayEventCauseEnvelope(value.cause)
+    && hasValidPlayStateDeltaRefs(value.stateDeltaRefs)
     && isPlayWorldClock(value.worldClock)
     && isNonEmptyString(value.createdAt)
     && value.canonical === false;
@@ -6714,8 +6791,10 @@ function isPlayEventTrigger(value: unknown): value is PlayEventTrigger {
         || (typeof value.value === 'number' && Number.isFinite(value.value)));
   }
   return value.type === 'atWorldTime'
-    && hasOnlyKnownFields(value, ['type', 'value'])
-    && isNonEmptyString(value.value);
+    && hasOnlyKnownFields(value, ['type', 'value', 'format'])
+    && isNonEmptyString(value.value)
+    && (value.format === undefined || (value.format === 'iso8601' &&
+      normalizePlayIsoWorldTime(value.value) !== undefined));
 }
 
 function isPlayScheduledEventTemplate(

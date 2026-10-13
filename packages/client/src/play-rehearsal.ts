@@ -1,3 +1,4 @@
+import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 import type {
   PlayAgendaStatus,
   PlayEventOrigin,
@@ -180,6 +181,7 @@ export interface PlayAgendaChange {
 }
 
 export interface PlayWorldRefereeSettlementEvent {
+  stateDeltaRefs?: string[];
   kind: PlayWorldEventKind;
   origin: PlayEventOrigin;
   title: string;
@@ -1996,6 +1998,7 @@ function isSettlement(value: unknown): value is PlayWorldRefereeSettlement {
     && value.scheduledEventChanges.length <= 8
     && value.scheduledEventChanges.every(isScheduledEventChange)
     && isRecord(value.stateDelta)
+    && hasValidSettlementStateDeltaRefs(value.events, value.stateDelta)
     && !Object.hasOwn(value.stateDelta, 'worldMomentum')
     && !Object.hasOwn(value.stateDelta, 'playKnowledge')
     && Array.isArray(value.observations)
@@ -2054,7 +2057,7 @@ function hasUniqueKnowledgeChanges(
 function isSettlementEvent(value: unknown): boolean {
   if (
     !isRecord(value) ||
-    !hasOnlyKnownFields(value, ['kind', 'origin', 'title', 'summary', 'visibility', 'cause']) ||
+    !hasOnlyKnownFields(value, ['kind', 'origin', 'title', 'summary', 'visibility', 'cause', 'stateDeltaRefs']) ||
     !isWorldEventKind(value.kind) ||
     !isEventOrigin(value.origin) ||
     !isNonEmptyString(value.title) ||
@@ -2062,6 +2065,7 @@ function isSettlementEvent(value: unknown): boolean {
     !isVisibility(value.visibility) ||
     !isRecord(value.cause)
   ) return false;
+  try { normalizePlayStateDeltaRefs(value.stateDeltaRefs); } catch { return false; }
   const cause = value.cause;
   return hasOnlyKnownFields(cause, [
       'reason',
@@ -2138,7 +2142,9 @@ function isEventTrigger(value: unknown): boolean {
   return (value.type === 'atWorldTime' || value.type === 'manual')
     && (value.type === 'manual'
       ? hasOnlyKnownFields(value, ['type'])
-      : hasOnlyKnownFields(value, ['type', 'value']) && isNonEmptyString(value.value));
+      : hasOnlyKnownFields(value, ['type', 'value', 'format']) && isNonEmptyString(value.value)
+        && (value.format === undefined || (value.format === 'iso8601' &&
+          normalizePlayIsoWorldTime(value.value) !== undefined)));
 }
 
 function isScheduledEventTemplate(value: unknown): boolean {
@@ -2706,4 +2712,9 @@ function isNonNegativeInteger(value: unknown): value is number {
 
 function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+function hasValidSettlementStateDeltaRefs(events: unknown, delta: Record<string, unknown>): boolean {
+  if (!Array.isArray(events)) return false;
+  try { assertPlayEventStateDeltaRefs(events, delta); return true; } catch { return false; }
 }

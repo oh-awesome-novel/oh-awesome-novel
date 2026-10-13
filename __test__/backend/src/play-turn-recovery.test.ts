@@ -114,6 +114,47 @@ describe('durable Play stream outcome reconciliation', () => {
     expect(await recovered.json()).toMatchObject({ status: 'cancelled', committed: false });
   });
 
+  it.each(['resolve', 'reject'] as const)('ignores a provider that settles with %s after its deadline and a later mutation', async (outcome) => {
+    let resolveProvider!: (value: string) => void;
+    let rejectProvider!: (error: Error) => void;
+    let signal: AbortSignal | undefined;
+    const { app, root } = await fixture({ playTurnDeadlineMs: 30, runPlayTurn: async (input) => {
+      signal = input.abortSignal;
+      return new Promise<string>((resolve, reject) => { resolveProvider = resolve; rejectProvider = reject; });
+    } });
+    const response = await request(app, `${path}/turns/stream`, { userText: 'Wait', baseRevision: 0 });
+    const runId = response.headers.get('x-oan-play-turn-id')!;
+    expect(await response.text()).toContain('deadline-exceeded');
+    expect(signal?.aborted).toBe(true);
+    const mutation = await request(app, `${path}/transcript`, { speaker: 'narrator', content: 'Newer committed truth.', baseRevision: 0 });
+    expect(mutation.status).toBe(200);
+    if (outcome === 'resolve') resolveProvider(settlement());
+    else rejectProvider(new Error('late provider socket failure'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const latest = await app.request(path);
+    expect(await latest.json()).toMatchObject({ session: { revision: 1 } });
+    expect((await receipt(root, runId)).phase).toBe('cancelled');
+    const recovered = await request(createNovelHonoApp({ workspaceRoot: root }), `${path}/turns/${runId}/cancel`);
+    expect(await recovered.json()).toMatchObject({ status: 'cancelled', committed: false });
+  });
+
+  it('closes a cooperative streaming provider after a mid-stream transport failure with zero session changes', async () => {
+    let disposed = false;
+    const { app, root } = await fixture({ streamPlayTurn: async function* () {
+      try { yield 'Provisional prose.'; throw new Error('provider connection reset'); }
+      finally { disposed = true; }
+    } });
+    const response = await request(app, `${path}/turns/stream`, { userText: 'Wait', baseRevision: 0 });
+    const runId = response.headers.get('x-oan-play-turn-id')!;
+    const events = await response.text();
+    expect(events).toContain('play.turn.failed');
+    expect(events).not.toContain('play.turn.committed');
+    expect(disposed).toBe(true);
+    expect((await receipt(root, runId)).phase).toBe('failed');
+    const mutation = await request(app, `${path}/transcript`, { speaker: 'narrator', content: 'Recovered.', baseRevision: 0 });
+    expect(mutation.status).toBe(200);
+  });
+
   it('gracefully closes an active stream and persists the cancellation before returning', async () => {
     const { root } = await fixture();
     let providerStarted!: () => void;

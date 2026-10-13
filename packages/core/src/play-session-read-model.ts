@@ -455,11 +455,13 @@ function projectEventPresentation(
     const containsHiddenEvent = artifact.eventIds.some((eventId) =>
       eventsById.get(eventId)?.visibility === 'playerUnknown');
     const allStateImpacts = projectArtifactStateImpacts(artifact, true, {
+      stateDeltaRefs: event.stateDeltaRefs,
       momentumChanged: Boolean(pressure || agenda),
     });
     const safeStateImpacts = containsHiddenEvent
       ? { items: [], omittedCount: 0 }
       : projectArtifactStateImpacts(artifact, false, {
+          stateDeltaRefs: event.stateDeltaRefs,
           momentumChanged: false,
         });
     const reveal = projectRevealEvidence(
@@ -533,7 +535,7 @@ function resolveScheduledCause(
 function projectArtifactStateImpacts(
   artifact: PlayTurnArtifact,
   author: boolean,
-  options: { momentumChanged: boolean },
+  options: { momentumChanged: boolean; stateDeltaRefs?: string[] },
 ): {
   items: PlayEventPresentationStateImpact[];
   omittedCount: number;
@@ -555,6 +557,7 @@ function projectArtifactStateImpacts(
     const rootVisibility = artifact.playLocalStateVisibilitySnapshot?.[rootPath];
     if (!author && rootVisibility !== 'playerVisible') continue;
     for (const [path, value] of flattenStateValue(rootPath, rootValue)) {
+      if (options.stateDeltaRefs !== undefined && !options.stateDeltaRefs.includes(path)) continue;
       if (
         !author &&
         artifact.playLocalStateVisibilitySnapshot?.[path] !== undefined &&

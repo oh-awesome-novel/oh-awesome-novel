@@ -1,3 +1,4 @@
+import { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from './play-event-evidence.js';
 import type {
   PlayEventOrigin,
   PlayEventVisibility,
@@ -10,7 +11,7 @@ export type PlayEventTrigger =
   | { type: 'nextTurn' }
   | { type: 'afterTurns'; turns: number }
   | { type: 'flagEquals'; path: string; value: PlayFlagValue }
-  | { type: 'atWorldTime'; value: string }
+  | { type: 'atWorldTime'; value: string; format?: 'iso8601' }
   | { type: 'manual' };
 
 export type PlayScheduledEventStatus = 'scheduled' | 'occurred' | 'cancelled';
@@ -176,10 +177,15 @@ export const normalizePlayEventTrigger = (value: unknown): PlayEventTrigger => {
         value: normalizePlayFlagValue(value.value),
       };
     case 'atWorldTime':
-      assertOnlyKnownFields(value, ['type', 'value'], 'Play atWorldTime trigger');
+      assertOnlyKnownFields(value, ['type', 'value', 'format'], 'Play atWorldTime trigger');
+      if (value.format !== undefined && (value.format !== 'iso8601' ||
+          typeof value.value !== 'string' || !normalizePlayIsoWorldTime(value.value))) {
+        throw new Error('Play atWorldTime format requires a valid ISO 8601 date-time with timezone.');
+      }
       return {
         type: 'atWorldTime',
         value: normalizeRequiredString(value.value, 'trigger.value'),
+        ...(value.format === 'iso8601' ? { format: 'iso8601' as const } : {}),
       };
     case 'manual':
       assertOnlyKnownFields(value, ['type'], 'Play manual trigger');
@@ -351,7 +357,12 @@ function isPlayScheduledEventDue(
         event.trigger.value;
     case 'atWorldTime': {
       const currentWorldTime = normalizeOptionalString(input.currentWorldTime);
-      if (!currentWorldTime || !input.compareWorldTime) {
+      if (!currentWorldTime) return false;
+      if (event.trigger.format === 'iso8601') {
+        const comparison = comparePlayIsoWorldTime(currentWorldTime, event.trigger.value);
+        return comparison !== undefined && comparison >= 0;
+      }
+      if (!input.compareWorldTime) {
         return false;
       }
       const comparison = input.compareWorldTime(

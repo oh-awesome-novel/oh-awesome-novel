@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   listPlaySessionSummaries: vi.fn(),
   getPlaySession: vi.fn(),
   getPlaySessionDetail: vi.fn(),
+  previewPlaySessionMigration: vi.fn(),
   listPlayContextTraces: vi.fn(),
   getPlaySourceDrift: vi.fn(),
   decidePlaySourceDrift: vi.fn(),
@@ -33,6 +34,7 @@ describe('PlayWorkspace M5 bounded history journey', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.resetAllMocks();
+    api.previewPlaySessionMigration.mockResolvedValue({ preview: null });
     api.listPlaySessionSummaries.mockResolvedValue({ summaries: [summary] });
     api.listPlayContextTraces.mockResolvedValue({ traces: [] });
     api.getPlaySourceDrift.mockResolvedValue({

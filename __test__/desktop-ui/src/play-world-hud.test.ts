@@ -6,6 +6,35 @@ import { describe, expect, it } from 'vitest';
 import PlayWorldHud from '../../../apps/desktop-ui/src/components/play/PlayWorldHud.vue';
 
 describe('PlayWorldHud', () => {
+  it('explains whether an absolute schedule can be checked against the current clock', async () => {
+    const template = {
+      kind: 'arrival' as const, origin: 'npc' as const, title: 'Train arrives',
+      summary: 'The train reaches the station.', visibility: 'playerVisible' as const,
+    };
+    const scheduledEvent = {
+      id: 'arrival', label: 'Train arrives', template, status: 'scheduled' as const,
+      scheduledAtTurn: 0, scheduledAtRevision: 0,
+    };
+    const wrapper = mount(PlayWorldHud, {
+      props: {
+        clock: { turn: 0, revision: 0, anchor: 'Nightfall' },
+        policy: { simulationMode: 'reactiveWorld', density: 'balanced', allowOffscreen: true, allowHidden: true, maxExternalEventsPerTurn: 2 },
+        sceneStart: 'Station', characters: [], stateEntries: [], sources: [], pressures: [], agendas: [],
+        scheduledEvents: [{ ...scheduledEvent, trigger: { type: 'atWorldTime', value: 'Midnight' } }],
+      },
+    });
+    expect(wrapper.text()).toContain('Pending: this time has no explicit comparable format.');
+    await wrapper.setProps({ scheduledEvents: [{ ...scheduledEvent, trigger: {
+      type: 'atWorldTime', value: '2026-10-07T01:00:00Z', format: 'iso8601',
+    } }] });
+    expect(wrapper.text()).toContain('Pending: the world clock needs an ISO date-time with timezone.');
+    await wrapper.setProps({ clock: { turn: 0, revision: 0, anchor: '2026-10-07T08:00:00+08:00' } });
+    expect(wrapper.text()).toContain('ISO time enabled; checked against the committed clock');
+    await wrapper.setProps({ clock: { turn: 0, revision: 0, anchor: '2026-10-07T09:00:00+08:00' } });
+    expect(wrapper.text()).toContain('Due at the next turn settlement.');
+    wrapper.unmount();
+  });
+
   it('shows pending scheduled world changes with deterministic trigger evidence', () => {
     const wrapper = mount(PlayWorldHud, {
       props: {

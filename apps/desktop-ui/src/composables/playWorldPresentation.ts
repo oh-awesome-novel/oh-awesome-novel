@@ -624,6 +624,7 @@ function buildStateImpacts(
       continue;
     }
     for (const [path, value] of flattenStateValue(stateKey, stateValue)) {
+      if (event.stateDeltaRefs !== undefined && !event.stateDeltaRefs.includes(path)) continue;
       if (
         !showSpoilers &&
         artifact.playLocalStateVisibilitySnapshot[path] !== undefined &&

@@ -29,6 +29,8 @@ Play 中的行动结果、角色认知和分支都属于该会话。它们不会
 2. **Cast**：添加参与角色，填写 Name、Position、Current goal 和 Initial knowledge。列表顺序就是初始角色行动队列，可上下调整。
 3. **Review**：核对场景和角色后确认创建。
 
+Quick Start 的 **Event settings** 可设置是否允许场外事件、隐藏事件，以及每回合 0–6 个自发外部事件。设为 0 仍会结算已到期的计划事件。沉浸模式的快速创建表单也提供这些设置。
+
 例如，开场可以写「暴雨封桥，两名旧识在渡口争夺最后一艘船」，试演目标写「验证双方是否会在不直接坦白秘密的情况下合作」。在 Initial knowledge 中分别写清每个人知道什么，能减少角色凭空知情的情况。
 
 这些表单内容是你为本次试演提供的材料。创建场景不会把新角色写入正式角色档案。
@@ -49,7 +51,30 @@ Play 中的行动结果、角色认知和分支都属于该会话。它们不会
 
 到 Review 仍只是预览。来源无效或诊断阻断时，返回对应步骤修正，再重新预览；不要把预览成功当作会话已创建。
 
+需要可比较的绝对世界时间时，在 Entry 选择 **ISO date-time with timezone**，填写带时区的时间，例如 `2026-10-07T09:00:00+08:00`。自然语言时间可以作为场景说明；到时自动触发的计划还必须明确使用 ISO 格式。World HUD 会说明不能比较或尚未启用的时间触发。
+
 > 截图待补：Guided Start 的 Sources 与 Launch Package 审阅。
+
+## 导入本地角色卡
+
+在 Play 顶部点击 **Import character**，选择本地 JSON 或 PNG 角色卡，再选择用途。
+
+| 模式 | 结果 |
+| --- | --- |
+| Play only | 确认预览后创建独立试演会话，不创建小说角色文件 |
+| Create a new character | 预览新角色文件，创建待审批修改；到 Review 中 Accept 后写入 |
+| Merge into an existing character | 输入已有角色文件夹 ID，保留已有正式资料，预览新增互动提示和世界书内容 |
+| Preview mapping only | 只查看映射和风险提示 |
+
+JSON 最大 1 MiB，PNG 最大 10 MiB；内嵌世界书最多 500 条、256 KiB。超限时先拆分或精简卡片。中文角色名可以保留，文件夹 ID 使用英文字母、数字、下划线或连字符；创建时可留空自动生成。
+
+合并预览会列出被保留的原有事实。点击 **Create changes for approval** 后仍需进入 **Review changes** 审阅并 Accept。修改卡片、模式或 ID 后必须重新预览。Play-only 预览在 15 分钟或后端重启后失效，已确认创建的会话可正常重开。
+
+角色卡中的提示和世界书始终是外部参考，不能覆盖你的创作宪法或正式设定。Play-only 按当前场景和输入选择世界书条目，卡内的系统覆盖指令不会主动加入提示词。已导入正式角色的互动资料，可在 Guided Start 中明确选择 `interaction.md` 和 `lorebook.yaml`。
+
+## 打开旧版会话
+
+遇到旧格式时，Play 显示升级预览，包括回合数量、保留字段和备份位置。可以先展开旧对话只读查看，再点击明确的升级确认。升级使用原始文件备份；若预览后文件发生变化，需要重新预览，不能直接继续写入旧格式。
 
 ## 逐步完成 Scene Rehearsal
 
@@ -97,6 +122,8 @@ Play 中的行动结果、角色认知和分支都属于该会话。它们不会
 
 ## 把试演结果带回 Writing
 
+沉浸会话的 **Observations → Add observation** 可以记录作者自己的发现：选择一条已提交的来源消息，填写摘要和依据，再保存。未完成的生成内容不能作为来源。保存只增加 Play 笔记，之后仍通过 **Bring to writing** 准备正式修改。
+
 先结束或取消当前试演尝试，然后在 **Outcome Report** 点击 **Generate report**。报告只总结当前所选、已经完成的分支，不包含未选择的替代版本和生成中的草稿。
 
 如果报告显示 **Report stale**，先刷新或重新生成。当前报告失效时，依赖报告的操作会被禁用。
@@ -118,6 +145,8 @@ Play 中的行动结果、角色认知和分支都属于该会话。它们不会
 4. 点击 **Preview canonical diff**，核对目标文件和完整差异。
 5. 点击 **Confirm and create PendingAction**，再进入 **Review PendingAction**。
 6. 在全局 Review 中 **Accept**，正式文件才会改变。
+
+在 Play 点击 **Review changes / Review PendingAction** 会打开旁边的共享审批抽屉，保留当前会话。关闭后可用顶栏 **Pending actions** 重开；Accept、Reject 和需要时的 Quick commit 都在该面板完成。
 
 修改目标或 payload 后需要重新生成预览。章节、状态、时间线和伏笔各有自己的格式约束；若预览报错，根据具体提示修改，不要直接把 Play 对话粘进结构化文件。
 

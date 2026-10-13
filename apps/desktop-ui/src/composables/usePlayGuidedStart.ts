@@ -7,6 +7,7 @@ import {
 } from 'vue';
 
 import type { OanClient } from '@oh-awesome-novel/client';
+import { normalizePlayIsoWorldTime } from '@oh-awesome-novel/client';
 
 import type {
   FileTreeNode,
@@ -63,6 +64,7 @@ export interface PlayGuidedEntryDraft {
   sourceRefs: readonly string[];
   location: string;
   worldTime: string;
+  worldTimeFormat?: 'narrative' | 'iso8601';
   atmosphere: string;
   trigger: string;
   objective: string;
@@ -96,6 +98,7 @@ export interface PlayGuidedStartErrors {
   label?: string;
   opening?: string;
   entrySources?: string;
+  worldTime?: string;
   persona?: string;
   directorPurpose?: string;
   cast?: string;
@@ -469,6 +472,7 @@ function createEntryDraft(): PlayGuidedEntryDraft {
     sourceRefs: [],
     location: '',
     worldTime: '',
+    worldTimeFormat: 'narrative',
     atmosphere: '',
     trigger: '',
     objective: '',
@@ -569,6 +573,9 @@ function validateDraft(
     ...(!entry.title.trim() ? { title: 'Session title is required.' } : {}),
     ...(!entry.label.trim() ? { label: 'Entry label is required.' } : {}),
     ...(!entry.opening.trim() ? { opening: 'Opening situation is required.' } : {}),
+    ...(entry.worldTimeFormat === 'iso8601' && !normalizePlayIsoWorldTime(entry.worldTime.trim())
+      ? { worldTime: 'Enter a valid date-time with timezone, for example 2026-10-07T09:00:00+08:00.' }
+      : {}),
     ...(entry.sourceRefs.length === 0
       ? { entrySources: 'Choose at least one source for the entry point.' }
       : {}),
@@ -598,6 +605,7 @@ function errorsForStep(
       label: errors.label,
       opening: errors.opening,
       entrySources: errors.entrySources,
+      worldTime: errors.worldTime,
     };
   }
   if (step === 'identity') {

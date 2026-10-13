@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'agent-usage': 'src/agent-usage.ts',
+    'play-event-evidence': 'src/play-event-evidence.ts',
   },
   format: 'esm',
   outDir: 'dist',

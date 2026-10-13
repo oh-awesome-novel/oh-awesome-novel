@@ -8,6 +8,8 @@ import {
 } from './usePlayRetryProjection';
 import { usePlaySessionHistory } from './usePlaySessionHistory';
 import { usePlaySessionHistoryWindow } from './usePlaySessionHistoryWindow';
+import { usePlaySessionMigration } from './usePlaySessionMigration';
+import { usePlayObservation } from './usePlayObservation';
 import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
 import { usePlayTurnStream } from './usePlayTurnStream';
 import {
@@ -84,10 +86,15 @@ export function usePlayWorkspace(
     sessionId: string;
     projection: PlayRetryBeforeTurnProjection;
   }>();
+  const migration = usePlaySessionMigration({
+    client: api, selectedSessionId,
+    onConfirmed: () => refreshSessionIndexAndDetail(selectedSessionId.value),
+  });
   const historyWindow = usePlaySessionHistoryWindow({
     client: api,
     selectedSessionId,
     directorLens: showSpoilers,
+    beforeLoad: migration.load,
     onDecision(result) {
       if (result.createdSessionId) rememberSelectedSession(result.createdSessionId);
       void refreshSessionSummaries().catch((caught) => {
@@ -123,7 +130,7 @@ export function usePlayWorkspace(
     ? materializeBoundedPlaySession(historyWindow.detail.value)
     : undefined);
   const selectedJourneySession = computed(() =>
-    selectedSession.value?.schemaVersion === 4 ? selectedSession.value : undefined,
+    !migration.preview.value && selectedSession.value?.schemaVersion === 4 ? selectedSession.value : undefined,
   );
   const rehearsalWorkspace = usePlayRehearsalWorkspace({
     client: api,
@@ -193,7 +200,15 @@ export function usePlayWorkspace(
       error.value = toErrorMessage(caught);
     },
   });
-  const interactionBlocked = computed(() =>
+  const observation = usePlayObservation({
+    client: api,
+    session: selectedJourneySession,
+    blocked: computed(() => interactionBlocked.value),
+    onSaved: () => refreshSessionIndexAndDetail(selectedSessionId.value),
+  });
+  const interactionBlocked = computed<boolean>(() =>
+    observation.saving.value ||
+    migration.busy.value ||
     loading.value ||
     creating.value ||
     historyWindow.loading.value ||
@@ -206,6 +221,8 @@ export function usePlayWorkspace(
     Boolean(historyRetryingArtifactId.value),
   );
   const refreshBlocked = computed(() =>
+    observation.saving.value ||
+    migration.busy.value ||
     loading.value ||
     creating.value ||
     historyWindow.loading.value ||
@@ -403,6 +420,7 @@ export function usePlayWorkspace(
 
     if (
       !session ||
+      migration.preview.value ||
       session.schemaVersion !== 4 ||
       !text ||
       interactionBlocked.value ||
@@ -536,6 +554,8 @@ export function usePlayWorkspace(
   }
 
   return {
+    observation,
+    migration,
     actionKind,
     creating,
     error,

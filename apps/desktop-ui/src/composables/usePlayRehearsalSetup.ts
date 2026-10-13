@@ -1,4 +1,5 @@
 import { computed, readonly, shallowRef } from 'vue';
+import { createPlayEventSettingsDraft, playEventSettingsError } from './playEventPolicyForm';
 
 import type {
   PlayRehearsalCastErrors,
@@ -207,6 +208,7 @@ function createSceneDraft(): PlayRehearsalSceneDraft {
     risk: '',
     simulationMode: 'reactiveWorld',
     density: 'balanced',
+    eventSettings: createPlayEventSettingsDraft(),
   };
 }
 
@@ -216,6 +218,8 @@ function validateScene(scene: PlayRehearsalSceneDraft): PlayRehearsalSceneErrors
   if (!scene.opening.trim()) errors.opening = 'Opening situation is required.';
   if (!scene.location.trim()) errors.location = 'Location is required.';
   if (!scene.objective.trim()) errors.objective = 'Rehearsal objective is required.';
+  if (scene.eventSettings) errors.eventSettings = playEventSettingsError(scene.eventSettings);
+  if (!errors.eventSettings) delete errors.eventSettings;
   return errors;
 }
 

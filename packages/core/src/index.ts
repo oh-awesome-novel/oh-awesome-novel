@@ -375,6 +375,7 @@ export {
   listPlaySessionSummaries,
   listPlaySessions,
   previewPlaySessionMigration,
+  confirmPlaySessionMigration,
   readPlaySessionFiles,
   readPlaySessionSelectedDetail,
   resolvePlaySessionPath,
@@ -434,6 +435,7 @@ export {
 } from './play-turn-graph.js';
 export type { PlayCheckpointKind } from './play-turn-graph.js';
 export {
+  TAVERN_IMPORT_LIMITS,
   auditTavernCardSafety,
   createOanTavernImportPreview,
   extractTavernCardJsonFromPng,
@@ -1173,3 +1175,7 @@ export * from './agent-usage';
 export * from './agent-usage-store';
 
 export * from './manuscript-import';
+
+export { normalizePlayIsoWorldTime, comparePlayIsoWorldTime, normalizePlayStateDeltaRefs, assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
+
+export { TAVERN_PLAY_IMPORT_METADATA_KEY, prepareTavernCardPlaySession, resolveTavernPlaySourceContent, isTavernInteractionSourcePath, formatTavernLorebookContext } from './tavern-play.js';

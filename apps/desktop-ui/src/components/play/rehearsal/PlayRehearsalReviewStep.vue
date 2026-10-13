@@ -43,6 +43,7 @@ const prefix = `${useId()}-rehearsal-review`;
         <div><dt>Objective</dt><dd>{{ scene.objective }}</dd></div>
         <div><dt>Risk</dt><dd>{{ scene.risk || 'Not specified' }}</dd></div>
         <div><dt>World</dt><dd>{{ scene.simulationMode }} · {{ scene.density }}</dd></div>
+        <div v-if="scene.eventSettings"><dt>Events</dt><dd>Offscreen {{ scene.eventSettings.allowOffscreen ? 'on' : 'off' }} · Hidden {{ scene.eventSettings.allowHidden ? 'on' : 'off' }} · Limit {{ scene.eventSettings.maxExternalEventsPerTurn }}</dd></div>
       </dl>
       <p class="play-rehearsal-review-opening">{{ scene.opening }}</p>
     </section>

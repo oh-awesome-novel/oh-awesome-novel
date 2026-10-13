@@ -53,6 +53,7 @@
 - [1030 Review And Settlement Workflow](1030.md)
 - [1040 Session Artifacts And Author Reports](1040.md)
 - [1050 Projections And Project Health](1050.md)
+- [1060 Play Mode And Tavern Character Import](1060.md)
 - [1070 Agent Context Trace And Session Artifact Autowiring](1070.md)
 - [1080 Reference Context Selector And Loading Map](1080.md)
 - [1090 Play Mode UI And Adoption Workflow](1090.md)
@@ -85,7 +86,6 @@
 
 - [0580 Git History And Sync Page](0580.md)
 - [0700 Summary Workflow Extensions Polish](0700.md)
-- [1060 Play Mode And Tavern Character Import](1060.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 - [1230 Review-driven Reliability Corrections](1230.md)
 

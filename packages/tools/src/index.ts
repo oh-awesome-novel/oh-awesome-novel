@@ -338,5 +338,6 @@ export {
 export type { SandboxReadSource } from './sandbox-edit-session';
 
 export * from './manuscript-import-change-producer';
+export * from './tavern-import-change-producer';
 export { prepareGitCommitPreview } from './git-reviewed-commit';
 export type { GitCommitPreview, GitDiffPreview, ReviewedGitCommitInput } from './git-reviewed-commit';
