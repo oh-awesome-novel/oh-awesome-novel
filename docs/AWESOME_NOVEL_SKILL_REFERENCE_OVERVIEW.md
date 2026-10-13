@@ -1,14 +1,105 @@
 # awesome-novel-skill 参考项目现状分析
 
+> **导航**：现状分析（本文）→ 后续：[可吸收点候选清单](AWESOME_NOVEL_SKILL_REFERENCE_LESSONS.md) ｜ 前置/历史：[多项目横向分析（v4.8.x）](NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md)、[OAN 写作参考笔记](OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md) ｜ 同类：[StoryForge 现状分析](STORYFORGE_REFERENCE_OVERVIEW.md)
+>
+> **本文内部**：[v4.28.0 现状增量与修正](#v4280-现状增量与修正)（最新）→ [历史快照 v4.12.3](#历史快照结论概览v4123)（旧）→ [对 OAN 的建议](#对-oan-的建议)
+
 > 范围：本文分析 `reference-only/awesome-novel-skill` 当前检出的最新主线，并与 OAN 的稳定架构事实进行对照。
 >
-> 当前基准：`main@e7d19936bac10e165ab42cb744f7d5c549c19f77`（2026-08-11），与 `origin/main` 一致；`VERSION` 为 `v4.12.3`，当前 HEAD 位于该 tag 之后 4 个提交。
+> 当前基准：`main@dcd1920`（2026-09-25，合并 PR #137），`VERSION` 为 `v4.28.0`；工作树与远端主线一致。
 >
-> 对比基准：OAN 已完成 Play 升级计划曾使用 `1f24b2c`（2026-07-10，`v4.8.1`）。从该基准到当前共有 65 个提交、91 个文件变化，约 7,264 行新增、803 行删除。
+> 上一版基准：`main@e7d19936`（2026-08-11，`v4.12.3`）。此后约 70 个非合并提交、230 个文件变化，约 18,101 行新增、4,227 行删除，版本经历 v4.13 → v4.28。更早的对比基准仍是 `1f24b2c`（2026-07-10，`v4.8.1`）。
 >
-> 验证范围：本轮尝试运行仓库检查，但 `tools/check-agents.py` 按最新 fail-fast 规则因本地缺少 PyYAML 立即退出；没有安装依赖，也不把上游发布说明中的检查数量当成本次独立结果。
+> **阅读方式**：“历史快照”之后的章节写于 v4.12.3。其中“固定 1 + 7 Agent”“style-distiller 尚未实现”“许可证为 GPL-3.0”等表述已过时，请先读下面的“v4.28.0 现状增量与修正”。
+>
+> 验证范围：本轮只做了 git 历史、release note、目录、`agents/` / `skills/` / `tools/` 与知识库结构的静态阅读；因本地 `python3` 在当前沙箱内无法执行，**没有运行** `tools/check-*.py` 或测试，也没有安装依赖。上游 release note 中的“全绿”只作为项目自述。
 
-## 结论概览
+## v4.28.0 现状增量与修正
+
+### 结论
+
+`awesome-novel-skill`（仓库自称 awesome-novel-agent）仍是宿主编码 Agent 执行的 filesystem-persisted 小说写作 SOP，不是应用、也没有自建 runtime。v4.13 以后的重点不是新架构，而是三条线：
+
+1. **写作质量工程**：确定性检查脚本与“生成 / 清创分离”的去 AI 味管线。
+2. **文风蒸馏与长短分轨**：style-distiller 落地，新增完整的短篇流水线与独立工具。
+3. **分发与合规**：平台从 4 个扩到 7 个，许可证切换到 AGPL-3.0。
+
+```text
+awesome-novel-skill (v4.28)
+  =
+State-driven Writing SOP
+  +
+Long-form: 1 Dispatcher + 7 Specialists
+Short-form: 1 Dispatcher + 4 Specialists (复用 reader)
+Style: style-distiller (LLM 蒸馏卡)
+  +
+Deterministic Prose Tools (check-prose / check-chapter / style-*)
+  +
+7 Host Adapters (claude / opencode / reasonix / codex / grok / zcode / dsh)
+```
+
+### 对旧结论的修正
+
+| 旧结论（v4.12.3） | 当前状态（v4.28.0） |
+|---|---|
+| 当前 `agents/` 只有总调度者加 7 个子 Agent，没有 `style-distiller` | `agents/` 共 14 个文件：长篇调度者 + 7 子 Agent、`style-distiller`，以及短篇 `short-agent`、`short-planner`、`short-writer`、`short-editor`、`short-verifier` |
+| style-distiller 是“已确认但未实现”的设计 | v4.14.0 起“双态重构”：放弃 jieba / 统计引擎，改为 LLM 蒸馏卡 + 提示词验收；`tools/style_*.py` 与测试进入仓库 |
+| 平台为 Claude / OpenCode / Reasonix / Codex | `tools/platforms.py` 现含 7 个平台：新增 ZCode（v4.14）、`deepseek-harness`（dsh，v4.15.1）、Grok Build（v4.20，含 `spawn_subagent` 调度，随后又移除子 agent 派发授权） |
+| SOLO 模式可委托确认权 | 当前文案为“你全权写 / 别等确认”（全自动模式）：展示摘要后视为确认，**单次有效**，下一关卡仍停；v4.16 新增设定阶段的作者确认门禁，v4.21 起卷纲 / 章纲规划后停等作者、不再自动开写正文。方向在收紧，但确认权仍可由作者口头委托给 Agent |
+| 许可证为 GPL-3.0 | v4.28.0 起整体切换为 AGPL-3.0，并在 README 增加第三方 LLM API / Token 服务声明；仍保留“个人免费、商用需作者授权”的立场 |
+| 文档漂移：`ARCHITECTURE.md` 页首版本落后 | v4.16 的架构评审 P1/P2/P3 修复后专门做了版本统一与调度契约单源；之后版本检查进入 CI（`check-version`） |
+| 没有统一 typed 校验，AI 判断为主 | 新增 `check-prose.py`、`check-chapter.py`，并挂入 anti-ai 的 Phase 2 初筛与 Phase 4 复跑；脚本只报警、不自动改文 |
+
+### 新增或显著增强的能力
+
+1. **确定性正文检查工具链**
+   - `check-prose.py`（v4.18，移植自 MIT 许可的 human-writing skill，并按本项目口径调整）：硬禁令词表、统计形态、破折号密度等；退出码区分“无失败 / 有失败 / 读取失败”。
+   - `check-chapter.py`（v4.22）：章节结构热源的确定性检查，并支持回归库 / 白名单文件以 `#` 开头的注释行。
+   - 两个脚本并列进入 anti-ai Phase 2，命中并入既有 Gate A/B 清单优先清零；工具缺失时按降级语义继续，不阻塞主流程。
+   - 同步新增 `test_check_prose.py`、`test_check_chapter.py`、`test_style_*.py`，以及 `check-conflicts.py` 检查规则冲突。
+
+2. **生成与清创分离**
+   - v4.18：prompt 只注入正向要点 + T1 简表，Phase 3 先改结构再清句子；新增“活人感”正向方法论 `living-voice`，并把闲笔 / 情绪错位从“配方式验收”改为“有来路才合格”。
+   - v4.22–v4.23：结构热源定律（问答乒乓链拍数上限、章首冷开场、同场单回执、章尾禁总结升华）、writer 每场动笔前的“五行反闭环卡”；提示词注入带裁决顺序声明：作者设定与章纲 > 题材知识 > 结构默认值 > 检测优化。
+   - 防冲突纪律：细则只在知识文件、管线只引用不复制；新刻度不重复定义既有句数 / 标点 / 章尾口径。
+
+3. **作者触发的外部检测闭环（`detect-loop`，v4.24）**
+   - 默认离线、不进默认管线；作者说“送检”才触发。
+   - 仓库不含检测平台脚本 / 密钥，只约定输入稿件与输出结果文件的格式契约。
+   - 修复纪律：每轮只修最高分片段、首末句锁定、等长微调、两轮无改善即止损、作者设定永远优先；达标后以 SHA-256 锁版，经确认的翻车句进入项目回归库。
+   - 每本书在 `sandbox/` 积累 `detect-battles.md`、`prose-regressions.txt`、`locked-lines.txt` 三个文件。
+
+4. **短篇流水线（v4.25–v4.27）**
+   - `init.py --length short` 生成 `stories/{slug}/` 篇目制骨架，与长篇的卷章体系互斥，`sync-project` 按项目长度同步并带篡改检测兜底。
+   - 流程：定情绪 → 构思排纲 → 写作契约组装 → 契约独立审计 → 分批写作 → 去 AI 精修 → 兑现度核对 → 验收交付；复用 `reader`。
+   - **篇级写作契约**（`stories/{slug}/prompt.md`）：六元素、扁平化“不可违反规则”、内联冲突裁定表；同时是验收基线，定稿后逐项核对兑现度，未兑现项附原文证据回退。
+   - **机器可验的结构硬门槛**：反转揭穿位置 > 60% 才通过（< 50% 判无效）；伏笔回查；每节 ≥ 800 字、整篇 ≥ 8000 字，全部通过脚本实测，禁止模型估算。
+   - 职责互斥：审计者不组装、核对者不写作不清创、组装者不自审。
+   - v4.26 补齐 11 个写作深度参考、9 个题材风格包、跨篇作者偏好记忆；v4.27 新增 `short-scan`（扫榜，三级数据来源逐级降级且必须标注“未实时校验”）与 `short-analyze`（拆文，五阶段串行、崩溃安全写盘、三道验收闸门），作为独立 skill 部署到所有平台。
+
+5. **对话与交付纪律**
+   - v4.17：视角单一来源传递、对话密度验收对齐；提示词链路冲突修复（蒸馏态严格匹配、基线去重）。
+   - v4.16：面向作者的沟通必须用大白话（`author-communication` 规范），并堵住三处内部词泄漏。
+   - v4.14：蒸馏产出新增 `novel-samples/`、`settings/style-profiles/` 与 `.style-versions/`，文风版本留痕。
+   - v4.15：章纲默认单章字数统一为 2500 字且可全局调整。
+
+6. **平台层成熟度**
+   - 修复 Windows 路径正斜杠导致孤儿检测全量误报、`install.ps1` UTF-8 BOM、`Join-Path` 等问题；init / sync 去重，部署集路径统一。
+   - 仍由 canonical 源 + `tools/platforms.py` 生成各宿主产物，并有 `test_platforms.py` 防漂移。
+
+### 仍然成立的局限
+
+- 固定多 Agent 拓扑进一步扩大（长篇 8 + 短篇 5 + 蒸馏 1）；权限仍是 prompt 声明，不是 capability isolation。
+- 没有 CandidateChangeSet / PendingAction / Git diff；归档和回滚仍由 updater 直接改正式文件。
+- 确认权仍可口头委托（全自动模式，虽已改为单次有效）。
+- 检测闭环的“达标”依赖外部平台分数，这对 OAN 的目标并不构成约束，也不应引入检测平台绑定。
+- 多处自述“全绿”未经本轮复现。
+
+### 许可证边界更新
+
+当前为 AGPL-3.0（含网络提供服务的开源义务）。README 同时保留“个人免费、商用需作者授权”的表述，两者关系仍需专业判断。OAN 仍只学习公开机制，不复制源码、prompt、Agent 定义、知识库文本或 UI 文案；`check-prose.py` 还带有第三方 MIT 移植声明，更不能整体搬运。
+
+## 历史快照：结论概览（v4.12.3）
 
 `awesome-novel-skill` 是一套由宿主编码 Agent 执行的 filesystem-persisted 小说写作工作流，不是独立应用，也没有自建 LLM runtime。当前版本以一个总调度 Agent 和 7 个子 Agent 为中心，通过 `.agent/status.md`、order 文件、阶段产物、checkpoint 和归档文件推进长篇创作。
 

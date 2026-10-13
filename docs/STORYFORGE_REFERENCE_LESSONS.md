@@ -1,10 +1,14 @@
 # StoryForge 可吸收点候选清单
 
+> **导航**：前置：[现状分析](STORYFORGE_REFERENCE_OVERVIEW.md) ｜ 同类：[awesome-novel-skill 候选清单](AWESOME_NOVEL_SKILL_REFERENCE_LESSONS.md)
+>
+> **本文内部**：[2026-10 新增候选 N1–N8](#2026-10-12-更新新增候选与降级项)（最新）→ [吸收原则](#吸收原则) → [建议优先级](#建议优先级) → [原 1–20 号候选](#候选吸收点) → [不建议吸收](#不建议直接吸收的部分)
+
 > 状态：候选参考笔记，不是 OAN 架构规范或实施计划。
 >
-> 当前基准：`reference-only/storyforge` 已检出 `main@d78a7371cb4c8bcd6db9bcd59bc7c15cf16f7e45`（2026-08-12），并与 `origin/main` 一致；本轮最后一个功能提交为 `927b5d0`（2026-08-06）。
+> 当前基准：`reference-only/storyforge` 已检出 `main@83ad0231c7ab85f1b9725940861899b07a7d69b1`（2026-10-12），并与 `origin/main` 一致；上一轮基准为 `d78a7371`（2026-08-12），此后 1015 个提交、3165 个文件变化。
 >
-> 配套现状分析：`docs/STORYFORGE_REFERENCE_OVERVIEW.md`。
+> 配套现状分析：`docs/STORYFORGE_REFERENCE_OVERVIEW.md`（先读其中的“2026-10-12 现状增量与修正”）。本轮只做静态阅读，未重跑上游检查与测试。
 >
 > 约束：本文不会自动修改 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。只有用户明确确认的条目，才能以 `[StoryForge]` 来源标记合并到 OAN 的正式参考笔记、task 或 plan。
 
@@ -24,6 +28,34 @@
 - StoryForge 当前许可证是 MIT。即便如此，OAN 仍应遵守自身 reference no-copy 约束，不直接复制其 prompt、源码结构、UI 文案或产品表达。
 
 因此，本文件不再只罗列“StoryForge 有什么”，而是区分：OAN 已有但值得复核的能力、真正的新候选，以及明确不应进入 OAN 核心的部分。
+
+## 2026-10-12 更新：新增候选与降级项
+
+StoryForge 在 8 月中旬之后完成了 Agent + Harness 重建、Context Gateway、可编辑记忆工作区，并扩张出短篇、剧本、漫画、漫剧、跑团和文字游戏等多条产品线。下面只列对 OAN 有参考价值的新增点；编号 N1–N8 与后文原有的 1–20 号候选并列，不替换它们。
+
+| 编号 | 候选 | 来源 | OAN 映射 | 建议 |
+|---|---|---|---|---|
+| N1 | **Run Contract 在运行前冻结**：scope、所需上下文、允许工具与写入目标、输入 revision、stale 规则、预算、状态机、最大 repair 次数 | `HARNESS-QUALITY-STANDARD.md` | 把现有 capability / ToolSet / ContextPackage / PendingAction 约束整理成可检查的 run manifest，写入 session artifact；不新增运行时抽象 | P0 复核 |
+| N2 | **候选 stale 规则统一**：目标字段、关键上下文 revision、世界版本、配置或上游已采纳产物变化即 stale，stale 只可查看复制 | 同上 | 与已有 source drift、PendingAction 过期合并成一份规则；Accept 时重验 | P0 复核 |
+| N3 | **外部调用结果未知时不盲目重放**，终态需 post-state 回读证据 | 同上 | 对应 shadow recovery：provider 调用状态、候选状态、真实写入状态三分；回读用 Git blob / receipt | P1 |
+| N4 | **目录优先的渐进式上下文**：先给 Agent“能读什么”，再按需加载；记录选择理由、实际读取、hash、被排除来源与不足状态；晚出现或被锁定的关键事实有独立召回路径 | `src/lib/context-gateway/`、CTXG-1~5 | 扩展 `ContextPackage.trace`：增加“目录视图”和“伏笔 / 锁定事实强制召回”路径，用 Object File Tree 与引用索引实现，不上向量库 | P0 / P1 |
+| N5 | **单次定向 repair 且输入只含错误路径**，相同错误 / 权限 / 余额 / 限流 / stale 必须停止 | 质量标准 §5 | OAN 已避免隐藏 retry；可吸收“repair 要带路径、最多一次、必须对作者可见”作为规则，写成显式 repair candidate | P1 |
+| N6 | **本地工作区映像的冲突分类**：项目改动 / 本地改动 / 同改 / 双方冲突 / 缺失 / 额外 / 损坏；覆盖与删除前保留 history / trash | `MEMORY-WORKSPACE-GUIDE.md` | OAN 本身以文件为准，可吸收的是“外部编辑 → 字段候选 → 影响计划”的产品语言：用户在编辑器或 Git 外改动文件时，生成可审查的影响说明而不是静默覆盖 | P1 |
+| N7 | **修改上游设定后的影响计划**：外部改 story-core / creative-rules 后提示受影响的生成、审校和下游内容，不自动批量改稿，也不连续调用模型 | 同上 + `workspace-impact.ts` | 基于对象文件引用图生成影响清单；只提示，不执行 | P1 |
+| N8 | **产品能力研发与具体作品生产分成两条生命周期** | `PROJECT-MASTER-CHARTER.md` §2.1 | 对 OAN 的 built-in skill / 项目覆盖也适用：能力实现与某本书的配置不得混写，也不得用单本书的完成度证明能力完成 | P2 |
+
+另有两项工程习惯值得借鉴：
+
+- **文档权威层级与路由**：`DOCUMENT-AUTHORITY.md`、`CONTEXT-ROUTING.md` 明确“哪份文档是权威、哪份只是历史”，并把过期文档迁出主干。OAN 的 `docs/` 已有类似约定，可补一份“参考分析文档的权威等级与过期声明”。
+- **自述状态与证据分离**：能力基线用 `implemented / partial` 加“缺口”列，且明确“治理完成不代表产品完成”。OAN 的 task 状态可参考这种写法。
+
+### 本轮降级或不建议吸收
+
+- **产品线扩张**（剧本、漫画、漫剧、跑团、AI 小镇、文字开放世界等）：与 OAN 的长篇小说 Copilot 定位不同，只保留“不可变 Release + 逐章确认 + 双审查”这类可复用思想；不新增对应模块。
+- **Codex 本机订阅 provider**：浏览器应用经本地 bridge 复用本机登录的做法依赖其 IndexedDB 架构；OAN 的 provider 方案以自身 AI SDK 配置为准，且 OAN 不应读取或转发他人订阅凭据。
+- **本地插件 / Workshop 预览**：目前没有 OAN 对应范围，暂不设计。
+- **World / WorldRelease 封存**：OAN 用 Git tag / 文件树表达版本即可，不引入独立 release 实体，除非未来出现可分享 package 需求。
+- **“记忆工作区”不等于 filesystem-first**：它仍以 IndexedDB 为运行时权威，双向同步靠作者手动触发，不能当作 OAN Object File Tree + Git 的参照实现。
 
 ## 吸收原则
 

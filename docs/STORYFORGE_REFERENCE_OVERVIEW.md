@@ -1,16 +1,100 @@
 # StoryForge 参考项目现状分析
 
+> **导航**：现状分析（本文）→ 后续：[可吸收点候选清单](STORYFORGE_REFERENCE_LESSONS.md) ｜ 同类：[awesome-novel-skill 现状分析](AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md)
+>
+> **本文内部**：[2026-10-12 现状增量与修正](#2026-10-12-现状增量与修正)（最新）→ [历史快照 2026-08-12](#历史快照结论概览2026-08-12)（旧）→ [对 OAN 的具体参考建议](#对-oan-的具体参考建议)
+
 > 范围：本文分析 `reference-only/storyforge` 当前检出的最新主线，说明 StoryForge 作为 OAN 早期灵感来源在当前阶段的真实形态，并与 OAN 的稳定架构事实进行对照。
 >
-> 旧基准：本文上一版使用 `main@f3316b119175ce1f630f8fc5469cd5cab5a009ca`（2026-07-31）。
+> 当前基准：`main@83ad0231c7ab85f1b9725940861899b07a7d69b1`（2026-10-12，合并网站体验 PR #122），工作树干净且与 `origin/main` 一致；`package.json` 与最新 tag 仍为 `3.9.1`，大量新功能仍在 Unreleased。
 >
-> 新基准：`main@d78a7371cb4c8bcd6db9bcd59bc7c15cf16f7e45`（2026-08-12），与 `origin/main` 一致。该提交只是流量数据归档；本轮最后一个功能提交为 `927b5d0`（2026-08-06，World Engine workspace slice）。
+> 上一版基准：`main@d78a7371`（2026-08-12）。此后共 1015 个提交（其中大量为 star history / 流量归档），3165 个文件变化，约 677,137 行新增、62,989 行删除；非合并提交里约 254 个 `feat`、288 个 `fix`。
 >
-> 检出状态：参考目录当前已检出最新 `main`，本文所列证据路径均可直接在工作树中阅读。
+> **阅读方式**：“历史快照”之后的章节描述的是 2026-08-12 快照（58 张表、47 个 Context Source、只读 AgentRunner、固定五领域主 Agent 等）。2026-08 中旬之后 StoryForge 经历了架构重建，那些数字和部分结论已被替代。请先读下面的“2026-10-12 现状增量与修正”，再把旧章节当作历史基线。
 >
-> 验证范围：本次对最新主线快照运行了 required tables、AI manual、architecture、source reachability、roadmap、agent context、Canon coverage 和 project metrics 检查；19 个本轮新增回归 suite 因本地缺少 `fake-indexeddb/auto` 在 setup 阶段退出，原因见“工程治理与验证状态”。
+> 验证范围：本轮只对 git 历史、CHANGELOG、`docs/roadmap/CAPABILITY-BASELINE.md`、Harness 质量标准、产品契约与源码目录做静态阅读；**没有重新运行** `npm run check:*`、Vitest 或 Playwright。上游自述的测试数量、“implemented”状态与门禁结果只作为项目自述，不作为本轮独立验证证据。
 
-## 结论概览
+## 2026-10-12 现状增量与修正
+
+### 定位变化
+
+StoryForge 已从“创作平台 + 有界主 Agent”继续扩张为 **local-first 的多产品创作 / 运行平台**。`docs/PROJECT-MASTER-CHARTER.md` 把目标写成：长篇与节点、短篇、小说转剧本 / 漫画 / 漫剧前期包、可封存分享的世界引擎，以及基于世界引擎的跑团、角色聊天、AI 小镇和三类文字游戏（文字冒险、AVG、文字开放世界）。长篇仍是主线，新增产品大多是“Run Contract + Skill + durable run + 候选 + 确认 + 不可变 Release”的同构复制。
+
+```text
+StoryForge (2026-10)
+  =
+Local-first Browser App (IndexedDB 仍是 Canon)
+  +
+Agent + Harness 统一执行架构 (Run Contract / Ledger / Receipt)
+  +
+Context Gateway (目录优先、渐进披露、证据 manifest)
+  +
+可编辑本地记忆工作区 (硬盘映像，作者手动同步)
+  +
+World / Work 分离 + 不可变 WorldRelease
+  +
+上层产品 (短篇 / 剧本 / 漫画 / 漫剧 / 跑团 / 文字游戏)
+  +
+本地插件与 Codex 本机订阅 provider
+```
+
+### 对旧结论的修正
+
+| 旧结论（2026-08-12） | 当前状态 |
+|---|---|
+| 58 张表、schema v48 | 能力基线称 Dexie 当前 schema 为 v6，`check:required-tables` 校验 118 张 required / project tables；schema 编号与表数口径已重置，不能与旧数字直接比较 |
+| 只读 `AgentRunner` + 自定义 JSON 动作协议是主要 Agent 机制 | Harness 质量标准要求正式入口走 Run Contract、`CreativeArtifact`、Context Gateway tool session；缺环节的入口必须在 AI 入口注册表声明有限边界 |
+| 固定五领域主 Agent 是主要编排 | 主 Agent 仍在，但提交显示正式运行改为“从 Agent Skill 派生 formal run”，并有 fail-closed 的正式大纲 harness、候选草稿串行持久化、作者编辑与 stale 协调 |
+| 一致性 Fast / Deep Audit 是新能力 | 已升级为正式 durable Run；终态与 `memory.settlement.recorded` 在同一 IndexedDB 事务提交 |
+| IndexedDB 是唯一数据源，JSON 仅导出 | 新增“可编辑记忆工作区”：IndexedDB 与作者选择的本地目录形成双向映像（Workspace / World / Work / 章节 Markdown / `story-core.yaml` / `creative-rules.yaml`），仍由作者手动检查、确认；IndexedDB 仍是运行时权威，**仍不是 filesystem-first** |
+| World community / AI Harness 只是目标设计 | Harness 重建已合入主线并发布说明；World 已有 `WorldRelease` 封存与 S1/S2/S3 闸门；在线社区仍不存在 |
+| Node 模式缺跨模式验收 | 官方节点动作通过类型化 binding 调用正式领域 action / Skill；B-NODE-02 仍标 partial |
+| 模拟运行时只有 TTRPG / 聊天 | 扩张为跑团、角色互动、AI 小镇、文字冒险、AVG、文字开放世界六个“上层产品身份”，各有需求适配器与生产模块 |
+
+### 新增或显著增强的能力
+
+1. **Agent + Harness 统一执行架构**（2026-08-17 起）
+   - 最小闭环：产品入口 → 登记 Skill → Run Contract → Context Manifest / Gateway → 模型与闭集只读工具 → 原始响应留存 → schema 校验 → `CreativeArtifact` 候选 → 确定性检查 / 最多一次定向 repair → 作者预览编辑采纳 → `adopt()` 与事务 → post-state 回读 → terminal receipt。
+   - 质量标准（v1.4.0）要求 Run Contract 在运行前冻结 scope、所需上下文、允许工具与写入目标、输入 revision、stale 规则、模型路由、预算、状态机与最大修复次数；运行中模型不能扩权。
+   - 候选保存原始输出、编辑稿、manifest hash、目标 revision、模型 / Skill / Prompt 版本、问题、用量和修复记录；目标、上下文、世界版本或上游产物变化即 stale，stale 候选只能查看和复制。
+   - 状态机覆盖 created / planned / running / waiting-author / repairing / adopting / completed / rejected / failed / cancelled / stale；外部调用结果未知时不盲目重放。
+   - 结构化输出保留原始响应，仅对确定性问题做最多一次定向 repair（输入含错误路径）；相同错误、权限、余额、限流、stale、预算不足必须停止并说明。
+
+2. **Context Gateway 与渐进式披露**（CTXG-1 ~ CTXG-5）
+   - 先给 Agent “能读什么”的目录，再按任务 / 实体 / 时间 / 故事线按需加载；记录候选来源、选择理由、实际读取、hash、token 估算、被排除来源与不足状态。
+   - 稳定 resource descriptor、可移植 context evidence、受治理的上下文工具、确定性 selector；晚出现、低频但关键、伏笔或用户锁定事实有独立召回路径，不再只靠固定前缀与 token 截断。
+   - 基线称 10 万 / 30 万 / 100 万字符工程规模门已通过；同时自述“只能声明工程支撑，真实作者长期文学一致性仍是持续研究”。
+
+3. **可编辑记忆工作区与恢复**（PR #66 / #71）
+   - 作者选择项目根目录；检查、解析、hash、差异、冲突与影响计划全部本地完成、0 token。
+   - 外部修改先形成字段候选，经 CAS、作用域与影响计划后才采纳；冲突不默认选边，覆盖 / 删除前进入 `.storyforge/history` / `trash`。
+   - 浏览器数据丢失后可凭 manifest、逐文件 hash 与恢复胶囊重建；旧终态凭据保留并标记待复核。
+   - 官方明确不含云同步、多人协作、**Git 自动提交**或服务端托管。这是 StoryForge 向“可读文件映像”靠近的最强信号，但仍是 IndexedDB-first、手动同步的双向映像，与 OAN 的 Object File Tree + Git 不是同一模型。
+
+4. **产品面扩张**
+   - 短篇 `ShortNovelProductionV1`：六个专属 Skill / durable run、3～8 章工作台、逐章确认、证据审校与定向重写、完成门、append-only `CreationReleaseV1`、Markdown / TXT / JSON 导出。
+   - 小说转剧本：九页入口、原作冻结事实 / 因果 / 删改决定、Beat / Scene Card / 场景 AST、十个专属 Skill、来源与戏剧双审查、Fountain / FDX / 打印导出。
+   - 小说转漫画：十二阶段改编、漫画脚本 / 分页 / 阅读链 / 视觉圣经、provider 参考图实传证据、双审查、不可变 Release、PNG / WebP / CBZ / PDF 导出。
+   - 漫剧：三种来源入口、八个 Skill、Image / Video Prompt IR、Seedance / Runway / LTX / generic 确定性适配包；明确不含视频生成与剪辑。
+   - 文字开放世界 / 文字冒险 / AVG：大量 `open-world`、`text-adventure` 提交，覆盖确定性战斗、制作、背包、任务、地图、存档、创作者 DAG、不可变 release 与存档迁移。
+
+5. **世界引擎与 S1 / S2 / S3 闸门**
+   - `S1 世界封存 → S2 产品定向 → S3 产品执行`：世界语义草稿封存为不可变 `WorldRelease`（code / revision / hash），上层产品只通过 `describe / search / read / readOriginalEvidence` 中立 provider 读取。
+   - 明确区分“产品能力研发”与“具体作品生产”两条生命周期，避免用实例完成度冒充产品能力。
+
+6. **工程与分发**
+   - 本地插件 / Workshop 1.0 预览（2026-10-08、10-09）；Codex 本机订阅 provider（2026-10-10，经 `codex app-server` JSON-RPC，仅回环访问，不读取 `auth.json`，费用记为 `null`）。
+   - 文档体系重建（2026-08-26）：旧 Blueprint / 施工卡归档到外部文档，主干只保留总纲、权威索引、质量标准、产品契约与能力基线；`docs/ARCHITECTURE.md` 的旧描述应以 `CAPABILITY-BASELINE.md` 与生成指标为准。
+   - 网站展示构建（2026-10-12）：隔离、无 AI 的真实 UI 展示。
+
+### 新增风险与边界
+
+- **范围爆炸**：1,000+ 提交里大部分是产品纵切面；StoryForge 现在是“小说 + 剧本 + 漫画 + 漫剧 + 跑团 + 三类文字游戏”的平台，维护成本远高于 OAN 目标。
+- **自述状态偏高**：能力基线大量标 `implemented`，同时多处缺口写“持续质量研究”。应把它们当作“工程闭环已声明”，而不是质量证据。
+- **版本号滞后**：代码已远超 `3.9.1`，Unreleased 与 tag 的关系需要看 CHANGELOG 才能确认。
+- **仍然不是 filesystem-first、没有 Git diff 审批**：工作区映像、`adopt()`、候选卡都不能替代 OAN 的 PendingAction + Git diff。
+
+## 历史快照：结论概览（2026-08-12）
 
 StoryForge 当前仍是一个 **纯前端、local-first、IndexedDB 驱动的小说创作平台**。它依然不是 filesystem-first，也不是 Aider-style runtime；React UI、Zustand store、Dexie schema、Prompt 模板、Context Source 注册表和 Adoption Schema 仍然是主体。
 
@@ -675,5 +759,28 @@ StoryForge 目前更适合作为 OAN 的：
 - `src/lib/product/world-package.ts`
 - `src/lib/export/backup-trust.ts`
 - `src/lib/world-engine/domain.ts`
+
+2026-10-12 增量证据路径（均位于 `reference-only/storyforge/`）：
+
+- `docs/PROJECT-MASTER-CHARTER.md`
+- `docs/DOCUMENT-AUTHORITY.md`
+- `docs/CONTEXT-ROUTING.md`
+- `docs/HARNESS-QUALITY-STANDARD.md`
+- `docs/MEMORY-WORKSPACE-GUIDE.md`
+- `docs/products/README.md`
+- `docs/products/UPPER-PRODUCTS.md`
+- `docs/products/INDEPENDENT-CREATION.md`
+- `docs/roadmap/CAPABILITY-BASELINE.md`
+- `docs/roadmap/CODEX-PROVIDER.md`
+- `src/lib/context-gateway/`
+- `src/lib/memory/`
+- `src/lib/workspace/`
+- `src/lib/creation-release/`
+- `src/lib/short-novel/`
+- `src/lib/screenplay/`
+- `src/lib/comic/`
+- `src/lib/motion-drama/`
+- `src/lib/open-world/`
+- `CHANGELOG.md`
 
 本文只吸收设计与现状判断，不建议直接复制 StoryForge 的源码或 prompt。即使其许可证已明确为 MIT，OAN 仍应遵循自身的独立架构、reference no-copy 约束和人类确认工作流。
