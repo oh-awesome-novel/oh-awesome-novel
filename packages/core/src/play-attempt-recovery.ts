@@ -551,7 +551,7 @@ async function acquirePlayAttemptRecoveryLock(
         await removePlayAttemptRecoveryLockIfOwned(lockRoot, owner.token);
       };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (!(await isPlayAttemptRecoveryLockContention(lockRoot, error))) throw error;
       if (await removeStalePlayAttemptRecoveryLock(lockRoot)) continue;
       await new Promise<void>((resolveWait) => {
         setTimeout(resolveWait, PLAY_ATTEMPT_RECOVERY_LOCK_WAIT_MS);
@@ -560,6 +560,25 @@ async function acquirePlayAttemptRecoveryLock(
   }
 
   throw new Error(`Play session ${sessionId} recovery lock did not stabilize.`);
+}
+
+async function isPlayAttemptRecoveryLockContention(
+  lockRoot: string,
+  error: unknown,
+): Promise<boolean> {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === 'EEXIST') return true;
+  // CreateDirectoryW can report ERROR_ACCESS_DENIED while another caller
+  // creates the same lock directory. Retry only when that directory is
+  // already present; a missing path is a real permission failure.
+  if (process.platform !== 'win32' || code !== 'EPERM') return false;
+  if ((error as NodeJS.ErrnoException).syscall !== 'mkdir') return false;
+  try {
+    return (await stat(lockRoot)).isDirectory();
+  } catch (statError) {
+    if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw statError;
+  }
 }
 
 async function removePlayAttemptRecoveryLockIfOwned(

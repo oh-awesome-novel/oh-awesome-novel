@@ -195,8 +195,9 @@ describe('Play Scene Rehearsal filesystem pairing', () => {
     );
     try {
       const files = await writePlaySessionFiles(workspaceRoot, session);
-      expect(files.some((file) => file.endsWith('scene-rehearsal.yaml'))).toBe(true);
-      expect(files.some((file) => file.endsWith('scenes/scene-station.yaml'))).toBe(true);
+      const portable = (file: string) => file.replaceAll('\\', '/');
+      expect(files.some((file) => portable(file).endsWith('scene-rehearsal.yaml'))).toBe(true);
+      expect(files.some((file) => portable(file).endsWith('scenes/scene-station.yaml'))).toBe(true);
       await expect(readPlaySessionFiles(workspaceRoot, session.id)).resolves.toMatchObject({
         schemaVersion: 5,
         sceneRehearsal: { sessionId: session.id },

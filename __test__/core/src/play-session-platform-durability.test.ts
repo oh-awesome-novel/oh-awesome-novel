@@ -90,7 +90,8 @@ describe('Play snapshot platform durability through the public writer', () => {
     await expect(actualFs.readFile(join(root, '.workspace/play-sessions', session.id, 'session.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('keeps POSIX file flush read-only and strict', async () => {
+  // A read-only handle cannot be fsynced on Windows, so this POSIX branch is covered on other hosts.
+  it.skipIf(process.platform === 'win32')('keeps POSIX file flush read-only and strict', async () => {
     const { root, session } = await fixture('linux'); const injected = injectFailure('file', 'sync', 'EINVAL');
     await expect(writePlaySessionFiles(root, session, { expectedAbsent: true })).rejects.toBe(injected.error);
     expect(injected.calls.every((call) => call.flags === 'r')).toBe(true); expect(injected.closed()).toBeGreaterThan(0);

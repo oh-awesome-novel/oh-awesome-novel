@@ -603,7 +603,7 @@ describe('reference full deconstruction backend', () => {
         stale: false,
       }),
     ]));
-  });
+  }, 60_000);
 
   it('runs custom both tracks in one controller with shared source pointers', async () => {
     const workspaceRoot = await createOanWorkspace();

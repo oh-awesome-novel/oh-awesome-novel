@@ -75,14 +75,15 @@ describe('Backend recovery metadata directory durability', () => {
     },
   );
 
-  it.each([
+  it.each(([
     { platform: 'linux', code: 'EPERM', target: 'directory', operation: 'open' },
     { platform: 'linux', code: 'EINVAL', target: 'directory', operation: 'sync' },
     { platform: 'win32', code: 'EIO', target: 'directory', operation: 'sync' },
     { platform: 'win32', code: 'ENOSPC', target: 'directory', operation: 'open' },
     { platform: 'win32', code: 'EPERM', target: 'file', operation: 'sync' },
     { platform: 'win32', code: 'EIO', target: 'file', operation: 'sync' },
-  ] as const)('fails before model execution on $platform $target $operation $code', async ({ platform, code, target, operation }) => {
+  ] as const).filter((item) => process.platform !== 'win32' || item.platform === 'win32'))(
+    'fails before model execution on $platform $target $operation $code', async ({ platform, code, target, operation }) => {
     const { app, provider } = await fixture(platform, code, operation, target);
     const response = await request(app, `${sessionUrl}/turns/stream`, { userText: 'Wait', baseRevision: 0 });
     expect(response.status).toBe(500);

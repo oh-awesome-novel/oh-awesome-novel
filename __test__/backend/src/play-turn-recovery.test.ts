@@ -41,10 +41,11 @@ async function committed(app: NovelHonoApp) {
 }
 
 async function waitForTerminal(root: string, runId: string) {
-  for (let attempt = 0; attempt < 200; attempt++) {
+  const deadline = Date.now() + (process.platform === 'win32' ? 15_000 : 2_000);
+  while (Date.now() < deadline) {
     const value = await receipt(root, runId);
     if (['committed', 'cancelled', 'failed'].includes(value.phase)) return value;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, process.platform === 'win32' ? 20 : 5));
   }
   throw new Error('Run did not settle.');
 }

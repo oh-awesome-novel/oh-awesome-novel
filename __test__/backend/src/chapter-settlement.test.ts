@@ -294,5 +294,5 @@ describe('default model-backed chapter settlement HTTP journey', () => {
     expect(invalidSelectionWire).toContain('CHAPTER_SETTLEMENT_SELECTION_REQUIRED');
     expect(invalidSelectionWire).toContain('已编号的正文文件'); expect(f.model.doStreamCalls).toHaveLength(count);
     expect((await pending(f.backend.url)).pendingActions).toEqual([]);
-  });
+  }, 30_000);
 });

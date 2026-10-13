@@ -42,7 +42,8 @@ describe('workspace creation Git entrypoint', () => {
     expect(await readFile(join(root, 'summaries/global.md'), 'utf8')).toBe('# Author draft\n');
 
     const unsupported = 'summaries/line\nbreak.md';
-    await writeFile(join(root, unsupported), 'unsupported\n');
+    // Windows filenames cannot contain this newline; the route still rejects the path text.
+    if (process.platform !== 'win32') await writeFile(join(root, unsupported), 'unsupported\n');
     const preview = await fetch(`${backend.url}/api/git/diff?file=${encodeURIComponent(unsupported)}`);
     expect(preview.status).toBe(400);
     expect(await preview.json()).toMatchObject({ error: expect.stringContaining('Unsupported workspace path') });
