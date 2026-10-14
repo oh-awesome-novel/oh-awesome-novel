@@ -12,6 +12,11 @@ const renameFault = vi.hoisted(() => ({ source: '', mode: '', hits: 0 }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
   return { ...original, rename: async (...args: Parameters<typeof original.rename>) => {
+    if (renameFault.mode.startsWith('publish-') && String(args[0]).startsWith(`${renameFault.source}.candidate-`)
+      && (renameFault.mode === 'publish-permanent' || renameFault.hits === 0)) {
+      renameFault.hits++;
+      throw Object.assign(new Error('Injected Windows publication race'), { code: 'EPERM' });
+    }
     if (String(args[0]) === renameFault.source && renameFault.hits === 0) {
       renameFault.hits++;
       if (renameFault.mode === 'collision') await original.rename(...args);
@@ -25,9 +30,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   } };
 });
 
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', platformDescriptor);
   Object.assign(renameFault, { source: '', mode: '', hits: 0 });
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -77,6 +84,28 @@ describe('PendingAction cross-process lock ownership', () => {
     await expect(store.withMaterializationLocks('contender', async () => undefined))
       .rejects.toThrow(/lock is busy/u);
     expect(await readFile(join(breaker, 'owner.json'), 'utf8')).toBe(owner);
+  });
+
+  it.each(['publish-once', 'publish-permanent'])('bounds retry when a Windows breaker publication target disappears: %s', async (mode) => {
+    const { root, child, applyLock } = await holdingProcess();
+    await finish(child, 'crash');
+    await expire(applyLock);
+    const original = await readFile(applyLock, 'utf8');
+    const store = await createPendingActionStore({ workspaceRoot: root, lockMaxAttempts: 5 });
+    Object.assign(renameFault, { source: `${applyLock}.break`, mode, hits: 0 });
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+    let entered = 0;
+    const attempt = store.withMaterializationLocks('contender', async () => { entered++; });
+    if (mode === 'publish-once') {
+      await expect(attempt).resolves.toBeUndefined();
+      expect(entered).toBe(1);
+      expect(renameFault.hits).toBe(1);
+    } else {
+      await expect(attempt).rejects.toThrow(/lock is busy/u);
+      expect(entered).toBe(0);
+      expect(renameFault.hits).toBe(5);
+      expect(await readFile(applyLock, 'utf8')).toBe(original);
+    }
   });
 
   it.each(['collision', 'denied', 'wrong-owner'])('handles Windows rename denial only with a matching fence: %s', async (mode) => {

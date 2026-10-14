@@ -1032,7 +1032,10 @@ class FilePendingActionStore implements PendingActionStore {
         await rename(candidate, breaker);
       } catch (error) {
         if (!(await this.#pathExists(breaker))) {
-          if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') return undefined;
+          // The winner may already have released the destination before this
+          // probe. No lock was acquired, so a bounded retry is safe.
+          if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY'
+            || isWindowsRenameContention(error)) return undefined;
           throw error;
         }
         await this.#removeAbandonedBreaker(breaker);
