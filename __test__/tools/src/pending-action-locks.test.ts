@@ -8,10 +8,25 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPendingActionStore } from '@oh-awesome-novel/tools';
 
+const openFault = vi.hoisted(() => ({ path: '', mode: '', hits: 0 }));
 const renameFault = vi.hoisted(() => ({ source: '', mode: '', hits: 0 }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...original, rename: async (...args: Parameters<typeof original.rename>) => {
+  return { ...original, open: async (...args: Parameters<typeof original.open>) => {
+    if (String(args[0]) === openFault.path && args[1] === 'wx') {
+      if (openFault.mode === 'open-permanent' || openFault.hits === 0) {
+        openFault.hits++;
+        const fail = () => { throw Object.assign(new Error('Injected Windows open denial'), { code: 'EPERM' }); };
+        if (openFault.mode === 'write-failure') {
+          const handle = await original.open(...args);
+          handle.writeFile = async () => fail();
+          return handle;
+        }
+        return fail();
+      }
+    }
+    return original.open(...args);
+  }, rename: async (...args: Parameters<typeof original.rename>) => {
     if (renameFault.mode.startsWith('publish-') && String(args[0]).startsWith(`${renameFault.source}.candidate-`)
       && (renameFault.mode === 'publish-permanent' || renameFault.hits === 0)) {
       renameFault.hits++;
@@ -36,6 +51,7 @@ const children: ChildProcess[] = [];
 afterEach(async () => {
   Object.defineProperty(process, 'platform', platformDescriptor);
   Object.assign(renameFault, { source: '', mode: '', hits: 0 });
+  Object.assign(openFault, { path: '', mode: '', hits: 0 });
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
@@ -84,6 +100,26 @@ describe('PendingAction cross-process lock ownership', () => {
     await expect(store.withMaterializationLocks('contender', async () => undefined))
       .rejects.toThrow(/lock is busy/u);
     expect(await readFile(join(breaker, 'owner.json'), 'utf8')).toBe(owner);
+  });
+
+  it.each(['open-once', 'open-permanent', 'write-failure'])('retries Windows open contention only before a handle is acquired: %s', async (mode) => {
+    const { root, child, applyLock } = await holdingProcess();
+    await finish(child, 'release');
+    const store = await createPendingActionStore({ workspaceRoot: root, lockMaxAttempts: 5 });
+    Object.assign(openFault, { path: applyLock, mode, hits: 0 });
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+    let entered = 0;
+    const attempt = store.withMaterializationLocks('contender', async () => { entered++; });
+    if (mode === 'open-once') {
+      await expect(attempt).resolves.toBeUndefined();
+      expect(entered).toBe(1);
+      expect(openFault.hits).toBe(1);
+    } else {
+      if (mode === 'open-permanent') await expect(attempt).rejects.toThrow(/lock is busy/u);
+      else await expect(attempt).rejects.toMatchObject({ code: 'EPERM' });
+      expect(entered).toBe(0);
+      expect(openFault.hits).toBe(mode === 'open-permanent' ? 5 : 1);
+    }
   });
 
   it.each(['publish-once', 'publish-permanent'])('bounds retry when a Windows breaker publication target disappears: %s', async (mode) => {

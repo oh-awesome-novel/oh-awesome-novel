@@ -933,26 +933,37 @@ class FilePendingActionStore implements PendingActionStore {
     const token = randomUUID();
     let acquired: FileHandle | undefined;
     for (let attempt = 0; attempt < this.#lockMaxAttempts; attempt += 1) {
+      let handle: FileHandle;
       try {
-        const handle = await open(path, 'wx', 0o600);
-        try {
-          await handle.writeFile(`${JSON.stringify({
-            token,
-            pid: this.#lockOwnerPid,
-            instance: LOCK_PROCESS_INSTANCE,
-          })}\n`, 'utf8');
-          await handle.sync();
-        } catch (error) {
-          await handle.close();
-          throw error;
-        }
-        acquired = handle;
-        break;
+        handle = await open(path, 'wx', 0o600);
       } catch (error) {
-        if (!isAlreadyExistsError(error)) throw error;
-        if (await this.#recoverStaleLock(path)) continue;
+        if (!isAlreadyExistsError(error) && !isWindowsLockContention(error)) throw error;
+        if (isAlreadyExistsError(error)) {
+          try {
+            if (await this.#recoverStaleLock(path)) continue;
+          } catch (recoveryError) {
+            if (!isWindowsLockContention(recoveryError)) throw recoveryError;
+          }
+        }
+        // Windows may deny creation while an old lock is pending deletion.
+        // No handle/ownership was obtained, so retry within the same budget.
         await new Promise<void>((resolveWait) => setTimeout(resolveWait, LOCK_RETRY_MS));
+        continue;
       }
+      try {
+        await handle.writeFile(`${JSON.stringify({
+          token,
+          pid: this.#lockOwnerPid,
+          instance: LOCK_PROCESS_INSTANCE,
+        })}\n`, 'utf8');
+        await handle.sync();
+      } catch (error) {
+        // Once created, a failed owner write is not acquisition contention.
+        await handle.close();
+        throw error;
+      }
+      acquired = handle;
+      break;
     }
     if (!acquired) throw new Error(`PendingAction lock is busy: ${relativePath}`);
     const heldHandle = acquired;
@@ -1036,7 +1047,7 @@ class FilePendingActionStore implements PendingActionStore {
           // our rename attempt and this check; Windows reports that collision
           // as EPERM/EACCES/EBUSY instead of EEXIST/ENOTEMPTY.
           if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY'
-            || isWindowsRenameContention(error)) return undefined;
+            || isWindowsLockContention(error)) return undefined;
           throw error;
         }
         await this.#removeAbandonedBreaker(breaker);
@@ -1091,7 +1102,7 @@ class FilePendingActionStore implements PendingActionStore {
         // treat that as contention if the exact observed owner is fenced;
         // genuine permission errors must still fail closed.
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'EPERM' || code === 'EACCES' || isWindowsRenameContention(error)) {
+        if (code === 'EPERM' || code === 'EACCES' || isWindowsLockContention(error)) {
           let fencedOwner: unknown;
           try {
             fencedOwner = await this.#readJson(join(quarantine, 'owner.json'));
@@ -1636,12 +1647,11 @@ function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boo
 }
 
 /**
- * Windows reports a directory rename onto an existing (fence) directory, or
- * over a path another process briefly holds open, as EPERM/EACCES/EBUSY rather
- * than ENOTEMPTY. This identifies a possible race, not proof of one: the
- * caller must verify the exact fenced owner before retrying.
+ * Windows may report sharing or pending-deletion conflicts as permission
+ * errors during lock creation/rename. Before acquisition these permit only
+ * bounded retries; recovery of an observed owner still requires a fence.
  */
-function isWindowsRenameContention(error: unknown): boolean {
+function isWindowsLockContention(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
 }
