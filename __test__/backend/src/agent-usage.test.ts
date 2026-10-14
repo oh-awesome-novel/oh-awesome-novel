@@ -10,7 +10,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((r) => rm(r, { rec
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'oan-usage-http-')); roots.push(root);
   const app = createNovelHonoApp({ workspaceRoot: root });
-  const client = createOanClient({ backendBaseUrl: 'http://test', fetch: ((input, init) => app.request(String(input), init)) as typeof fetch });
+  const client = createOanClient({ backendBaseUrl: 'http://127.0.0.1', fetch: ((input, init) => app.request(String(input), init)) as typeof fetch });
   return { root, app, client };
 }
 describe('workspace-bound usage history HTTP', () => {

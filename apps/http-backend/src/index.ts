@@ -19,12 +19,15 @@ const workspaceRoot = resolvePath(
 const globalConfigDir = resolvePath(cliOptions.globalConfigDir ?? process.env.OAN_GLOBAL_CONFIG_DIR);
 const host = cliOptions.host ?? process.env.OAN_HTTP_HOST ?? '127.0.0.1';
 const port = cliOptions.port ?? readPort(process.env.OAN_HTTP_PORT) ?? 3210;
+// Optional shared secret; the Vite dev proxy forwards the same env var as `x-oan-token`.
+const authToken = process.env.OAN_HTTP_TOKEN?.trim() || undefined;
 const backend = await startNovelHttpBackend({
   workspaceRoot,
   seedWorkspaceRoot: workspaceRoot,
   globalConfigDir,
   host,
   port,
+  authToken,
 });
 
 console.log(`Oh Awesome Novel HTTP backend listening at ${backend.url}`);

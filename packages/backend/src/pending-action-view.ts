@@ -1,3 +1,4 @@
+import { redactHostPaths } from './error-redaction.js';
 import {
   PendingActionProtocolError,
   UNSUPPORTED_PENDING_ACTION_SCHEMA,
@@ -409,7 +410,7 @@ export function toPendingActionViewErrorResponse(
     return {
       status: 409,
       body: {
-        error: publicError.message,
+        error: redactHostPaths(publicError.message),
         code: publicError.code,
         resetRequired: true,
       },
@@ -431,7 +432,7 @@ export function toPendingActionViewErrorResponse(
         : 500;
   return {
     status,
-    body: { error: publicError.message, code },
+    body: { error: redactHostPaths(publicError.message), code },
   };
 }
 

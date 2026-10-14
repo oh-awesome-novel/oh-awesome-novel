@@ -18,7 +18,7 @@ async function fixture() {
 describe('workspace search and export HTTP contract', () => {
   it('returns client-valid canonical search and ordered manuscript responses without a provider', async () => {
     const { app } = await fixture();
-    const client = createOanClient({ backendBaseUrl: 'http://test', fetch: ((input, init) => app.request(String(input), init)) as typeof fetch });
+    const client = createOanClient({ backendBaseUrl: 'http://127.0.0.1', fetch: ((input, init) => app.request(String(input), init)) as typeof fetch });
     const response = await client.searchWorkspace('清越风雪');
     expect(response.results).toEqual([expect.objectContaining({ path: 'chapters/0001/0001.md', line: 5, snippet: '林清越风雪归来' })]);
     expect((await client.exportManuscript('txt')).content).toBe('雪夜\n林清越风雪归来\n');

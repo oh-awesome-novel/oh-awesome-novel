@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
 import type { OpenDialogOptions } from 'electron';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
@@ -22,6 +23,9 @@ if (started) {
 }
 
 let backend: NovelBackendHandle | undefined;
+// Per-launch secret shared only with our own renderer through the preload
+// bridge, so other local pages cannot drive the backend even if they find the port.
+const backendAuthToken = randomBytes(32).toString('base64url');
 let packagedSmokeWorkspacePath: string | undefined;
 const packagedMainSmokeEnabled = process.argv.some((argument) => (
   argument === '--oan-packaged-main-smoke'
@@ -106,7 +110,7 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: backend
-        ? [`--oan-backend-base-url=${backend.url}`]
+        ? [`--oan-backend-base-url=${backend.url}`, `--oan-backend-token=${backendAuthToken}`]
         : [],
     },
   });
@@ -145,6 +149,7 @@ app.on('ready', async () => {
 
   backend = await startNovelHttpBackend({
     seedWorkspaceRoot: resolveWorkspaceRoot(),
+    authToken: backendAuthToken,
   });
   createWindow();
 });

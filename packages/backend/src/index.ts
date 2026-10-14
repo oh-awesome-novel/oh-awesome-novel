@@ -11,7 +11,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
@@ -21,6 +21,12 @@ import { createAdaptorServer } from '@hono/node-server';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
+import { redactHostPaths } from './error-redaction.js';
+import {
+  BACKEND_AUTH_TOKEN_HEADER,
+  createBackendRequestGuard,
+  resolveBackendCorsOrigin,
+} from './request-guard.js';
 
 import {
   MAX_PLAY_LAUNCH_SOURCE_BYTES,
@@ -292,6 +298,13 @@ export interface NovelBackendOptions {
   tools?: ToolSet;
   host?: string;
   port?: number;
+  /**
+   * Per-launch secret every request must present in the `x-oan-token` header.
+   * The desktop shell always sets one; leave it unset only for dev/test servers.
+   */
+  authToken?: string;
+  /** Extra browser origins allowed besides loopback (and file:// when a token is set). */
+  allowedOrigins?: readonly string[];
   mode?: 'checkpoint' | 'model';
   /** Includes activated sources and provider generation; commit itself is never timed out. */
   playTurnDeadlineMs?: number;
@@ -582,12 +595,19 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   state.referenceMaterialAdoption = referenceMaterialAdoption;
 
+  const guardOptions = {
+    authToken: options.authToken,
+    allowedOrigins: options.allowedOrigins,
+    host: options.host,
+  };
   app.use('*', cors({
-    origin: '*',
-    allowHeaders: ['content-type'],
+    origin: (origin) => resolveBackendCorsOrigin(origin, guardOptions),
+    allowHeaders: ['content-type', BACKEND_AUTH_TOKEN_HEADER],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     exposeHeaders: ['X-OAN-Play-Turn-Id', 'X-OAN-Play-Step-Run-Id'],
   }));
+  // CORS runs first so rejections below still carry CORS headers for allowed origins.
+  app.use('*', createBackendRequestGuard(guardOptions));
 
   app.onError((error, context) => jsonResponse(
     context,
@@ -600,7 +620,7 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       ? { error: error.message }
       : hasPendingActionErrorCode(error)
         ? toPendingActionViewErrorResponse(error).body
-        : { error: error instanceof Error ? error.message : String(error) },
+        : { error: redactHostPaths(error instanceof Error ? error.message : String(error)) },
   ));
 
   app.get('/api/health', (context) => context.json({ ok: true }));
@@ -1507,7 +1527,17 @@ async function handleSaveProviderConfig(
   }
 
   const existingProvider = state.providerConfigState.providers.find((provider) => provider.id === id);
-  const apiKey = getOptionalString(body, 'apiKey')?.trim() || existingProvider?.apiKey;
+  const baseUrl = getOptionalString(body, 'baseUrl')?.trim() || providerDefaultBaseUrl(kind);
+  const requestApiKey = getOptionalString(body, 'apiKey')?.trim();
+  // A stored credential stays bound to the endpoint it was entered for; moving
+  // the provider elsewhere requires the caller to supply the key again.
+  const keepsStoredCredential = existingProvider !== undefined
+    && isSameProviderEndpoint(baseUrl, existingProvider);
+
+  if (!requestApiKey && existingProvider && !keepsStoredCredential
+    && (existingProvider.apiKey || existingProvider.apiKeyEnv)) {
+    return jsonResponse(context, 400, { error: PROVIDER_KEY_REENTRY_ERROR });
+  }
 
   const provider: LlmProviderConfig = {
     id,
@@ -1515,9 +1545,9 @@ async function handleSaveProviderConfig(
     model,
     models,
     displayName: getOptionalString(body, 'displayName')?.trim() || id,
-    baseUrl: getOptionalString(body, 'baseUrl')?.trim() || providerDefaultBaseUrl(kind),
-    apiKey,
-    apiKeyEnv: existingProvider?.apiKeyEnv,
+    baseUrl,
+    apiKey: requestApiKey || (keepsStoredCredential ? existingProvider?.apiKey : undefined),
+    apiKeyEnv: keepsStoredCredential ? existingProvider?.apiKeyEnv : undefined,
     default: body.default === true || state.providerConfigState.providers.length === 0,
   };
 
@@ -1574,7 +1604,7 @@ async function handleListProviderModels(
   const baseUrl = normalizeProviderBaseUrl(
     getOptionalString(body, 'baseUrl') ?? savedProvider?.baseUrl ?? (kind ? providerDefaultBaseUrl(kind) : undefined),
   );
-  const apiKey = getOptionalString(body, 'apiKey')?.trim() || savedProvider?.apiKey;
+  const apiKey = resolveProviderRequestApiKey(body, baseUrl, savedProvider);
 
   if (!kind || !isSupportedProviderKind(kind)) {
     return jsonResponse(context, 400, { error: 'Provider kind is invalid.' });
@@ -1628,7 +1658,7 @@ async function handleCheckProviderConfig(
   const baseUrl = normalizeProviderBaseUrl(
     getOptionalString(body, 'baseUrl') ?? savedProvider?.baseUrl ?? providerDefaultBaseUrl(kind),
   );
-  const apiKey = getOptionalString(body, 'apiKey')?.trim() || savedProvider?.apiKey;
+  const apiKey = resolveProviderRequestApiKey(body, baseUrl, savedProvider);
 
   if (!baseUrl) {
     return jsonResponse(context, 400, { error: 'Base URL is required.' });
@@ -6761,15 +6791,38 @@ async function saveProviderConfigState(
     providers: state.providers.map(normalizeLlmProviderConfig),
   };
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(
+  await writeOwnerOnlyFileAtomically(
     filePath,
     `${JSON.stringify({
       kind: 'llm-provider-config',
       version: 1,
       state: normalizedState,
     }, null, 2)}\n`,
-    'utf-8',
   );
+}
+
+/**
+ * The provider file holds API keys: write it owner-readable only (0600,
+ * regardless of umask) and swap it in with a rename so a crash mid-write
+ * can never leave a truncated config behind.
+ */
+async function writeOwnerOnlyFileAtomically(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  const handle = await open(tempPath, 'wx', 0o600);
+  try {
+    await handle.writeFile(content, 'utf-8');
+    await handle.chmod(0o600);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  try {
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function providerConfigFilePath(options: NovelBackendOptions): string {
@@ -6812,6 +6865,33 @@ function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
 
 function providerRequiresApiKey(kind: LlmProviderKind): boolean {
   return kind !== 'ollama';
+}
+
+const PROVIDER_KEY_REENTRY_ERROR = 'API key must be entered again when the Base URL changes.';
+
+/**
+ * The saved key is only reused for the endpoint it was saved with; any other
+ * Base URL must come with its own key so a caller cannot redirect the stored
+ * credential to a server of its choosing.
+ */
+function resolveProviderRequestApiKey(
+  body: JsonBody,
+  baseUrl: string | undefined,
+  savedProvider: LlmProviderConfig | undefined,
+): string | undefined {
+  const requestApiKey = getOptionalString(body, 'apiKey')?.trim();
+  if (requestApiKey) {
+    return requestApiKey;
+  }
+
+  return savedProvider && isSameProviderEndpoint(baseUrl, savedProvider)
+    ? savedProvider.apiKey
+    : undefined;
+}
+
+function isSameProviderEndpoint(baseUrl: string | undefined, provider: LlmProviderConfig): boolean {
+  const savedBaseUrl = normalizeProviderBaseUrl(provider.baseUrl ?? providerDefaultBaseUrl(provider.kind));
+  return normalizeProviderBaseUrl(baseUrl) === savedBaseUrl;
 }
 
 function normalizeProviderBaseUrl(value?: string): string | undefined {
@@ -8596,3 +8676,4 @@ export type {
   ReferenceMaterialAdoptionPreviewEnvelope,
   StoredReferenceMaterialAdoptionPreview,
 } from './reference-material-adoption-preview.js';
+export { BACKEND_AUTH_TOKEN_HEADER } from './request-guard.js';

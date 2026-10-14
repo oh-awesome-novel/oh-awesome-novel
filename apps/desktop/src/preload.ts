@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-const backendBaseUrl = process.argv
-  .find((arg) => arg.startsWith('--oan-backend-base-url='))
-  ?.slice('--oan-backend-base-url='.length);
+const backendBaseUrl = readArgument('--oan-backend-base-url=');
+const backendToken = readArgument('--oan-backend-token=');
 
 contextBridge.exposeInMainWorld('ohAwesomeNovel', {
   backendBaseUrl,
+  backendToken,
   app: {
     getVersion: () => ipcRenderer.invoke('oan:app:get-version'),
   },
@@ -21,3 +21,7 @@ contextBridge.exposeInMainWorld('ohAwesomeNovel', {
     selectDirectory: () => ipcRenderer.invoke('oan:workspace:select-directory'),
   },
 });
+
+function readArgument(prefix: string): string | undefined {
+  return process.argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+}

@@ -369,6 +369,33 @@ describe('PendingActionStore v1', () => {
     })).rejects.toThrow(/lock is busy/u);
     expect(await readFile(lockPath, 'utf8')).toContain(`"pid":${process.pid}`);
   });
+
+  it('keeps a live PID locked when a random instance ID cannot prove PID reuse', async () => {
+    const workspaceRoot = await createWorkspace();
+    const store = await createPendingActionStore({
+      workspaceRoot,
+      repositoryValidator: async () => undefined,
+      lockMaxAttempts: 5,
+    });
+    const lockPath = join(
+      workspaceRoot,
+      '.workspace/change-engine/v1/locks/actions/reused-pid.lock',
+    );
+    await mkdir(dirname(lockPath), { recursive: true });
+    // A random instance label and old mtime cannot distinguish a paused live
+    // owner from a reused PID. Unknown ownership must fail closed.
+    await writeFile(lockPath, `${JSON.stringify({ token: 'crashed', pid: process.pid, instance: 'previous-run' })}\n`);
+    const expired = new Date(Date.now() - 120_000);
+    await utimes(lockPath, expired, expired);
+
+    await expect(store.proposeCandidate({
+      id: 'reused-pid',
+      candidate: createMixedCandidate(),
+      title: 'Keep uncertain owner locked',
+      description: 'Only confirmed process exit permits recovery.',
+    })).rejects.toThrow(/lock is busy/u);
+    expect(await readFile(lockPath, 'utf8')).toContain('previous-run');
+  });
 });
 
 async function createWorkspace(): Promise<string> {

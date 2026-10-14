@@ -54,7 +54,7 @@ async function fixture() {
     return new Response(body, { status: response.status, headers: response.headers });
   });
   vi.stubGlobal('fetch', fetcher);
-  const client = createOanClient({ backendBaseUrl: 'http://sdk-usage.test', fetch: fetcher });
+  const client = createOanClient({ backendBaseUrl: 'http://127.0.0.1', fetch: fetcher });
   api.createAgentChatTransport.mockImplementation(() => client.createAgentChatTransport());
   api.listAgentUsageSessions.mockResolvedValue({ sessions: [] });
   let state!: ReturnType<typeof useAgentConversationSessions>;

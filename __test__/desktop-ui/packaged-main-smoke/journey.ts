@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
@@ -14,6 +14,7 @@ const APPROVED = '冒烟验收：林安推开旧城的门，晨光落在书页�
 const REJECTED = '这段候选将在重启后拒绝，不能进入正文。';
 const API_KEY = 'packaged-smoke-local-only';
 const MODEL = 'oan-packaged-smoke-local';
+const BACKEND_TOKEN = randomBytes(32).toString('base64url');
 interface Action { id: string; status: string; diff: string; git?: { status: string; commit?: string }; changes: Array<{ operation: string; path: string }> }
 interface ActionEnvelope { pendingAction: Action }
 interface Evidence {
@@ -43,14 +44,14 @@ export async function runPackagedWritingJourney(context: DesktopContext) {
   let window: ElectronWindow | undefined;
   let provider: Awaited<ReturnType<typeof startLocalProvider>> | undefined;
   try {
-    backend = await startNovelHttpBackend({ globalConfigDir: path.join(fixture.root, 'config') });
+    backend = await startNovelHttpBackend({ globalConfigDir: path.join(fixture.root, 'config'), authToken: BACKEND_TOKEN });
     if (fixture.phase === 'write') {
       provider = await startLocalProvider();
       await json(backend.url, '/api/provider-config', { id: 'packaged-smoke', kind: 'custom', model: MODEL,
         baseUrl: `${provider.url}/v1`, apiKey: API_KEY, default: true });
     }
     window = new context.BrowserWindow({ show: false, width: 1360, height: 1000, webPreferences: {
-      preload: context.preloadPath, additionalArguments: [`--oan-backend-base-url=${backend.url}`],
+      preload: context.preloadPath, additionalArguments: [`--oan-backend-base-url=${backend.url}`, `--oan-backend-token=${BACKEND_TOKEN}`],
       contextIsolation: true, nodeIntegration: false,
     } });
     window.webContents.on('console-message', (details) => { if (details.level === 'error') rendererErrors.push(details.message); });
@@ -282,7 +283,7 @@ async function readRunnerFixture() {
   return { root, phase };
 }
 async function json<T = Record<string, unknown>>(baseUrl: string, route: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${baseUrl}${route}`, { ...(body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(`${baseUrl}${route}`, { headers: { 'x-oan-token': BACKEND_TOKEN, ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }), signal: AbortSignal.timeout(20_000) });
   const result = await response.json(); check(response.ok, `${route}: ${response.status} ${JSON.stringify(result)}`); return result as T;
 }
 async function pending(baseUrl: string) { return (await json<{ pendingActions: Action[] }>(baseUrl, '/api/workspace/pending-actions')).pendingActions; }

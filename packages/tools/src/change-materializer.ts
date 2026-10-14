@@ -177,6 +177,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
   readonly #now: () => Date;
   readonly #idFactory: () => string;
   readonly #faultInjector?: ChangeMaterializerOptions['faultInjector'];
+  #orphanSweepDone = false;
 
   constructor(options: ChangeMaterializerOptions) {
     this.#store = options.store;
@@ -191,7 +192,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
   async accept(input: AcceptChangeInput): Promise<AcceptedChangeResult> {
     const actionId = assertOpaquePendingActionId(input.actionId);
     const autoCommitRequested = input.autoCommitOnAccept ?? true;
-    await this.recover();
+    await this.#recoverBeforeDecision();
 
     let action!: PendingAction;
     let receipt!: PendingActionDecisionReceipt;
@@ -260,7 +261,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         throw error;
       }
 
-      await this.#finalize(journal);
+      await this.#finalize(journal, { verifyAcceptedTargets: true });
       if (autoCommitRequested) {
         const git = gitPreflight.dirtyBaselineFiles.length > 0
           ? ({ status: 'failed', errorCode: 'dirty_before_proposal' } as const)
@@ -284,7 +285,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
 
   async reject(input: RejectChangeInput): Promise<RejectedChangeResult> {
     const actionId = assertOpaquePendingActionId(input.actionId);
-    await this.recover();
+    await this.#recoverBeforeDecision();
     let receipt!: PendingActionDecisionReceipt;
     await this.#store.withMaterializationLocks(actionId, async (locked) => {
       const record = await locked.readRecord();
@@ -310,12 +311,31 @@ class FileChangeMaterializer implements ChangeMaterializer {
   }
 
   async recover(): Promise<void> {
+    await this.#recoverJournals();
+    await this.#sweepOrphans();
+  }
+
+  /**
+   * Every decision must first finish interrupted transactions, which only
+   * requires the (few) live journals. Orphan cleanup walks every historical
+   * record, and orphans only appear after a crash, so this instance runs that
+   * sweep once instead of on each Accept/Reject.
+   */
+  async #recoverBeforeDecision(): Promise<void> {
+    await this.#recoverJournals();
+    if (!this.#orphanSweepDone) await this.#sweepOrphans();
+  }
+
+  async #recoverJournals(): Promise<void> {
     const ids = await this.#listJournalIds();
     for (const id of ids) {
       await this.#store.withMaterializationLocks(id, async (locked) => {
         await this.#recoverJournalUnlocked(id, { access: locked });
       });
     }
+  }
+
+  async #sweepOrphans(): Promise<void> {
     const records = await this.#store.listRecords();
     for (const record of records) {
       await this.#store.withMaterializationLocks(record.action.id, async (locked) => {
@@ -341,6 +361,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         }
       });
     }
+    this.#orphanSweepDone = true;
   }
 
   async quickCommit(actionIdValue: string): Promise<PendingActionDecisionReceipt> {
@@ -705,7 +726,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
       journal.phase = 'accepted-finalize-only';
       await this.#writeJournal(journal, false);
     }
-    await this.#finalize(journal);
+    await this.#finalize(journal, { verifyAcceptedTargets: false });
     let receipt = await this.#store.readDecisionReceipt(actionId);
     if (receipt) assertReceiptMatchesRecord(receipt, record);
     if (journal.autoCommitRequested && receipt?.git.status !== 'committed') {
@@ -820,15 +841,24 @@ class FileChangeMaterializer implements ChangeMaterializer {
     await this.#removeJournal(journal.actionId);
   }
 
-  async #finalize(journal: TransactionJournal): Promise<void> {
+  async #finalize(
+    journal: TransactionJournal,
+    options: { verifyAcceptedTargets: boolean },
+  ): Promise<void> {
     // This durable phase proves file cleanup finished. Git bookkeeping must
     // not require the author to keep accepted canonical bytes unchanged.
     if (journal.phase === 'accepted-git-only') return;
     if (journal.phase !== 'accepted-finalize-only') {
       throw materializerError('CHANGE_JOURNAL_CORRUPT', 'Only accepted transactions may be finalized.');
     }
+    // A live Accept verifies the approved bytes before it may auto-commit them.
+    // Recovery never commits, and past the accepted terminal the backups can no
+    // longer roll anything back, so its cleanup must not depend on the
+    // canonical target: an author edit made before restart only blocks this
+    // action's later quick commit (ACCEPTED_TARGET_DRIFT), never every other
+    // approval.
     for (const operation of journal.operations) {
-      await this.#assertAcceptedOperation(operation);
+      if (options.verifyAcceptedTargets) await this.#assertAcceptedOperation(operation);
       if (operation.stageFile) {
         await rm(this.#resolveJournalArtifact(operation.stageFile, '.stage'), { force: true });
       }

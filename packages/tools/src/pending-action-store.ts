@@ -9,6 +9,7 @@ import {
   rename,
   rm,
 } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import {
   basename,
   dirname,
@@ -85,6 +86,13 @@ const MAX_STORED_JSON_BYTES = 16 * 1024 * 1024;
 const LOCK_RETRY_MS = 10;
 const LOCK_MAX_ATTEMPTS = 3_000;
 const LOCK_STALE_MS = 60_000;
+/** Live holders refresh their lock's mtime well inside the stale window. */
+const LOCK_HEARTBEAT_MS = 10_000;
+/**
+ * Diagnostic identity only. Random IDs cannot prove that another process
+ * incarnation exited; an alive PID must remain locked even after expiry.
+ */
+const LOCK_PROCESS_INSTANCE = randomUUID();
 
 export interface PendingActionStoreOptions {
   workspaceRoot: string;
@@ -923,28 +931,47 @@ class FilePendingActionStore implements PendingActionStore {
     const path = this.#engineRelativePath(relativePath);
     await this.#ensureEngineDirectory(relativePath.split('/').slice(0, -1));
     const token = randomUUID();
-    let acquired = false;
+    let acquired: FileHandle | undefined;
     for (let attempt = 0; attempt < this.#lockMaxAttempts; attempt += 1) {
+      let handle: FileHandle;
       try {
-        const handle = await open(path, 'wx', 0o600);
-        try {
-          await handle.writeFile(`${JSON.stringify({ token, pid: this.#lockOwnerPid })}\n`, 'utf8');
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-        acquired = true;
-        break;
+        handle = await open(path, 'wx', 0o600);
       } catch (error) {
-        if (!isAlreadyExistsError(error)) throw error;
-        if (await this.#recoverStaleLock(path)) continue;
+        if (!isAlreadyExistsError(error) && !isWindowsLockContention(error)) throw error;
+        if (isAlreadyExistsError(error) && await this.#recoverStaleLock(path)) continue;
+        // Windows may deny creation while an old lock is pending deletion.
+        // No handle/ownership was obtained, so retry within the same budget.
         await new Promise<void>((resolveWait) => setTimeout(resolveWait, LOCK_RETRY_MS));
+        continue;
       }
+      try {
+        await handle.writeFile(`${JSON.stringify({
+          token,
+          pid: this.#lockOwnerPid,
+          instance: LOCK_PROCESS_INSTANCE,
+        })}\n`, 'utf8');
+        await handle.sync();
+      } catch (error) {
+        // Once created, a failed owner write is not acquisition contention.
+        await handle.close();
+        throw error;
+      }
+      acquired = handle;
+      break;
     }
     if (!acquired) throw new Error(`PendingAction lock is busy: ${relativePath}`);
+    const heldHandle = acquired;
+    const heartbeat = setInterval(() => {
+      const touchedAt = new Date();
+      // Touch the held inode, never a replacement lock at the same pathname.
+      void heldHandle.utimes(touchedAt, touchedAt).catch(() => undefined);
+    }, LOCK_HEARTBEAT_MS);
+    heartbeat.unref?.();
     try {
       return await operation();
     } finally {
+      clearInterval(heartbeat);
+      await heldHandle.close();
       try {
         const owner = JSON.parse(await readFile(path, 'utf8')) as { token?: unknown };
         if (owner.token === token) await rm(path, { force: true });
@@ -955,42 +982,135 @@ class FilePendingActionStore implements PendingActionStore {
   }
 
   async #recoverStaleLock(path: string): Promise<boolean> {
+    if (!(await this.#lockLooksExpired(path))) return false;
+    try {
+      const owner = await this.#readJson(path);
+      if (!isRecord(owner) || !isAbandonedLockOwner(owner)) return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return true;
+      throw error;
+    }
+
+    // Serialize recoverers with a fully populated directory published by
+    // rename. A live recoverer cannot be displaced merely by a stale mtime.
+    const releaseBreaker = await this.#acquireBreaker(`${path}.break`);
+    if (!releaseBreaker) return false;
+
+    try {
+      if (!(await this.#lockLooksExpired(path))) return false;
+      let owner: { pid?: unknown; instance?: unknown };
+      try {
+        owner = JSON.parse(await readFile(path, 'utf8')) as { pid?: unknown; instance?: unknown };
+      } catch (error) {
+        if (isNotFoundError(error)) return true;
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner is invalid.');
+      }
+      if (!isAbandonedLockOwner(owner)) return false;
+      const quarantine = `${path}.stale-${randomUUID()}`;
+      try {
+        await rename(path, quarantine);
+      } catch (error) {
+        if (isNotFoundError(error) || isAlreadyExistsError(error)) return true;
+        throw error;
+      }
+      await rm(quarantine, { force: true });
+      return true;
+    } finally {
+      await releaseBreaker();
+    }
+  }
+
+  async #acquireBreaker(breaker: string): Promise<(() => Promise<void>) | undefined> {
+    const token = randomUUID();
+    const candidate = `${breaker}.candidate-${token}`;
+    await mkdir(candidate, { mode: 0o700 });
+    try {
+      const handle = await open(join(candidate, 'owner.json'), 'wx', 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify({ token, pid: process.pid })}\n`, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      try {
+        // An existing breaker is always nonempty, so rename cannot replace it.
+        await rename(candidate, breaker);
+      } catch (error) {
+        if (!(await this.#pathExists(breaker))) {
+          // The holder may have released (renamed away) the breaker between
+          // our rename attempt and this check; Windows reports that collision
+          // as EPERM/EACCES/EBUSY instead of EEXIST/ENOTEMPTY.
+          if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY'
+            || isWindowsLockContention(error)) return undefined;
+          throw error;
+        }
+        await this.#removeAbandonedBreaker(breaker);
+        return undefined;
+      }
+      return async () => {
+        // Keep the same fence used by crash recovery, including on normal
+        // release. A delayed observer may have read this owner just before it
+        // released the breaker and exited. Never empty the published path.
+        await rename(breaker, `${breaker}.stale-${token}`);
+      };
+    } finally {
+      await rm(candidate, { recursive: true, force: true });
+    }
+  }
+
+  /** True when the lock exists and has not been touched within the stale window. */
+  async #lockLooksExpired(path: string): Promise<boolean> {
     let information: Awaited<ReturnType<typeof lstat>>;
     try {
       information = await lstat(path);
     } catch (error) {
-      if (isNotFoundError(error)) return true;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
     if (information.isSymbolicLink() || !information.isFile()) {
       throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock path is invalid.');
     }
-    if (Date.now() - information.mtimeMs < LOCK_STALE_MS) return false;
-    let owner: { pid?: unknown };
+    return Date.now() - information.mtimeMs >= LOCK_STALE_MS;
+  }
+
+  async #removeAbandonedBreaker(breaker: string): Promise<void> {
     try {
-      owner = JSON.parse(await readFile(path, 'utf8')) as { pid?: unknown };
-    } catch {
-      throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner is invalid.');
-    }
-    if (Number.isSafeInteger(owner.pid) && (owner.pid as number) > 0) {
-      try {
-        process.kill(owner.pid as number, 0);
-        return false;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'EPERM') return false;
-        if (code !== 'ESRCH') throw error;
+      const information = await lstat(breaker);
+      if (information.isSymbolicLink() || !information.isDirectory()) {
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock breaker is invalid.');
       }
-    }
-    const quarantine = `${path}.stale-${randomUUID()}`;
-    try {
-      await rename(path, quarantine);
+      if (Date.now() - information.mtimeMs < LOCK_STALE_MS) return;
+      const owner = await this.#readJson(join(breaker, 'owner.json'));
+      if (!isRecord(owner) || typeof owner.token !== 'string' || !/^[a-f0-9-]{36}$/u.test(owner.token)) {
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock breaker owner is invalid.');
+      }
+      if (!isAbandonedLockOwner(owner)) return;
+      // Every observer of this dead owner shares one nonempty destination.
+      // Keep it as a fence: a delayed observer then cannot rename a NEW live
+      // breaker over it, even after another recoverer acquired/released one.
+      const quarantine = `${breaker}.stale-${owner.token}`;
+      try {
+        await rename(breaker, quarantine);
+      } catch (error) {
+        // Windows reports a nonempty destination as EPERM/EACCES. Only
+        // treat that as contention if the exact observed owner is fenced;
+        // genuine permission errors must still fail closed.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EACCES' || isWindowsLockContention(error)) {
+          let fencedOwner: unknown;
+          try {
+            fencedOwner = await this.#readJson(join(quarantine, 'owner.json'));
+          } catch (readError) {
+            if (!isNotFoundError(readError)) throw readError;
+          }
+          if (isRecord(fencedOwner) && fencedOwner.token === owner.token && fencedOwner.pid === owner.pid) return;
+        }
+        throw error;
+      }
     } catch (error) {
-      if (isNotFoundError(error) || isAlreadyExistsError(error)) return true;
-      throw error;
+      if (!isNotFoundError(error) && !isAlreadyExistsError(error)
+        && (error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error;
     }
-    await rm(quarantine, { force: true });
-    return true;
   }
 
   async #ensureEngineDirectory(parts: readonly string[]): Promise<string> {
@@ -1502,6 +1622,32 @@ function invalidCandidate(message: string): never {
 
 function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+/** Expiry is only a reason to probe. Only ESRCH proves the owner is gone. */
+function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boolean {
+  if (!Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0) {
+    throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner PID is invalid.');
+  }
+  try {
+    process.kill(owner.pid as number, 0);
+    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM') return false;
+    if (code !== 'ESRCH') throw error;
+    return true;
+  }
+}
+
+/**
+ * Windows may report sharing or pending-deletion conflicts as permission
+ * errors during lock creation/rename. Before acquisition these permit only
+ * bounded retries; recovery of an observed owner still requires a fence.
+ */
+function isWindowsLockContention(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

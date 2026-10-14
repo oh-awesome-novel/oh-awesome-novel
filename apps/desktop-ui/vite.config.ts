@@ -23,6 +23,9 @@ export default defineConfig({
       "/api": {
         target: backendProxyTarget,
         changeOrigin: true,
+        headers: process.env.OAN_HTTP_TOKEN
+          ? { "x-oan-token": process.env.OAN_HTTP_TOKEN }
+          : undefined,
       },
     },
   },

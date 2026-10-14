@@ -217,7 +217,7 @@ describe('accepted file transactions and Git recovery', () => {
     expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(fixture.head);
   });
 
-  it('still fails closed when an accepted file transaction has not finished cleanup', async () => {
+  it('finishes accepted cleanup without blocking other approvals when the author edited the target', async () => {
     const fixture = await createFixture();
     await fixture.propose('a');
     const interrupted = createChangeMaterializer({
@@ -229,10 +229,35 @@ describe('accepted file transactions and Git recovery', () => {
     await expect(interrupted.accept({ actionId: 'a' })).rejects.toThrow('unfinished file cleanup');
     await writeFile(join(fixture.root, 'state/a.yaml'), 'value: author-during-incomplete-transaction\n');
     await fixture.propose('b');
-    await expect(fixture.materializer.reject({ actionId: 'b' })).rejects.toMatchObject({ code: 'ACCEPTED_TARGET_DRIFT' });
-    expect((await fixture.store.readRecord('b')).status).toBe('pending');
-    expect(JSON.parse(await readFile(journalPath(fixture.root, 'a'), 'utf8')).phase).toBe('accepted-finalize-only');
+    await expect(fixture.materializer.reject({ actionId: 'b' }))
+      .resolves.toMatchObject({ action: { status: 'rejected' } });
+    await expectNoJournal(fixture.root, 'a');
+    expect(await fixture.store.readDecisionReceipt('a')).toMatchObject({
+      git: { status: 'failed', errorCode: 'automatic_commit_interrupted' },
+    });
+    await expect(fixture.materializer.quickCommit('a')).rejects.toMatchObject({ code: 'ACCEPTED_TARGET_DRIFT' });
     expect(await readFile(join(fixture.root, 'state/a.yaml'), 'utf8')).toBe('value: author-during-incomplete-transaction\n');
+    expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(fixture.head);
+  });
+
+  it('auto-commits a CRLF checkout produced by core.autocrlf and still detects real author edits', async () => {
+    const fixture = await createFixture();
+    await git(fixture.root, ['config', 'core.autocrlf', 'true']);
+    for (const name of ['a', 'b']) {
+      await rm(join(fixture.root, `state/${name}.yaml`));
+      await git(fixture.root, ['checkout', '--', `state/${name}.yaml`]);
+    }
+    expect(await readFile(join(fixture.root, 'state/a.yaml'), 'utf8')).toBe('value: baseline\r\n');
+
+    await fixture.propose('a');
+    const accepted = await fixture.materializer.accept({ actionId: 'a' });
+    expect(accepted.receipt.git).toMatchObject({ status: 'committed' });
+    expect(await git(fixture.root, ['show', 'HEAD:state/a.yaml'])).toBe('value: accepted');
+
+    await writeFile(join(fixture.root, 'state/b.yaml'), 'value: author-before-proposal\r\n');
+    await fixture.propose('b');
+    expect((await fixture.materializer.accept({ actionId: 'b' })).receipt.git)
+      .toEqual({ status: 'failed', errorCode: 'dirty_before_proposal' });
   });
 });
 
