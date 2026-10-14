@@ -949,6 +949,12 @@ class FilePendingActionStore implements PendingActionStore {
         acquired = handle;
         break;
       } catch (error) {
+        // Windows reports a lock file that another process just unlinked or
+        // renamed away (still pending delete) as EPERM; it is plain contention.
+        if (isWindowsRenameContention(error)) {
+          await new Promise<void>((resolveWait) => setTimeout(resolveWait, LOCK_RETRY_MS));
+          continue;
+        }
         if (!isAlreadyExistsError(error)) throw error;
         if (await this.#recoverStaleLock(path)) continue;
         await new Promise<void>((resolveWait) => setTimeout(resolveWait, LOCK_RETRY_MS));
