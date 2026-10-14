@@ -28,6 +28,7 @@ import { hostFileModesMatch } from './filesystem-modes';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
 import { assertSummaryGenerationActionFresh } from './summary-generation';
 import { parseSummaryDocument } from '@oh-awesome-novel/core';
+import type { SummaryDocument, SummaryGenerationSource } from '@oh-awesome-novel/core';
 import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
 import { assertTavernImportActionFresh } from './tavern-import-change-producer';
 import {
@@ -200,7 +201,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         throw terminalConflict(record);
       }
       action = record.action;
-      const policy = await this.#validateAction(action);
+      const { policy, summarySource } = await this.#validateAction(action);
 
       const gitPreflight = await inspectPendingActionGitPreflight({
         workspaceRoot: this.#workspaceRoot,
@@ -214,7 +215,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
         );
       }
 
-      const prepared = await this.#preflight(action, locked, policy);
+      const prepared = await this.#preflight(action, locked, policy, summarySource);
       const decisionReceiptId = assertOpaquePendingActionId(this.#idFactory(), 'Decision receipt id');
       const acceptedAt = this.#now().toISOString();
       const journal = createJournal(
@@ -399,10 +400,11 @@ class FileChangeMaterializer implements ChangeMaterializer {
     return receipt;
   }
 
-  async #validateAction(action: PendingAction): Promise<WorkspaceChangePolicy> {
+  async #validateAction(action: PendingAction): Promise<{ policy: WorkspaceChangePolicy; summarySource?: SummaryGenerationSource }> {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
+    let summarySource: SummaryGenerationSource | undefined;
     if (action.origin?.kind === 'summaryGeneration') {
-      await assertSummaryGenerationActionFresh(this.#workspaceRoot, action);
+      summarySource = await assertSummaryGenerationActionFresh(this.#workspaceRoot, action);
     }
     if (action.origin?.kind === 'chapterSettlement') {
       await assertChapterSettlementActionFresh(this.#workspaceRoot, action);
@@ -433,13 +435,14 @@ class FileChangeMaterializer implements ChangeMaterializer {
       throw materializerError('PENDING_ACTION_POLICY_MISMATCH', 'PendingAction capability changed before Accept.');
     }
     for (const change of action.changes) assertPathWritableByPolicy(change.path, policy);
-    return policy;
+    return { policy, ...(summarySource ? { summarySource } : {}) };
   }
 
   async #preflight(
     action: PendingAction,
     locked: LockedPendingActionAccess,
     policy: WorkspaceChangePolicy,
+    summarySource?: SummaryGenerationSource,
   ): Promise<PreparedOperation[]> {
     const prepared: PreparedOperation[] = [];
     for (let index = 0; index < action.changes.length; index += 1) {
@@ -521,16 +524,26 @@ class FileChangeMaterializer implements ChangeMaterializer {
             `No policy-bound final validator exists for ${change.path}.`,
           );
         }
+        if (action.origin?.kind === 'summaryGeneration') {
+          let document: SummaryDocument | undefined;
+          try {
+            document = parseSummaryDocument(draft!, change.path)?.document;
+            if (!document || document.sourceFingerprint !== action.origin.sourceFingerprint) throw new Error('Source fingerprint differs.');
+          } catch {
+            throw materializerError('PENDING_ACTION_DRAFT_INTEGRITY_ERROR', 'Summary draft is malformed or does not match its approved source evidence.');
+          }
+          const references = summarySource?.sources.map(({ path, sourceHash, payloadHash }) => ({ path, sourceHash, payloadHash }));
+          if (!summarySource || JSON.stringify(document.chapterIds) !== JSON.stringify(summarySource.chapterIds)
+            || JSON.stringify(document.sources) !== JSON.stringify(references)) {
+            throw materializerError('STALE_PENDING_ACTION_BASELINE', 'Summary verified payload or source coverage changed; regenerate the summary.');
+          }
+        }
         validateFinalDocument({
           path: change.path,
           content: draft!,
           validator,
           context: policy.validationContext,
         });
-        if (action.origin?.kind === 'summaryGeneration'
-          && parseSummaryDocument(draft!, change.path)?.document.sourceFingerprint !== action.origin.sourceFingerprint) {
-          throw materializerError('PENDING_ACTION_DRAFT_INTEGRITY_ERROR', 'Summary draft does not match its approved source evidence.');
-        }
       }
       prepared.push({
         operation: change.operation,

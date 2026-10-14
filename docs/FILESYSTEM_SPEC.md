@@ -459,7 +459,9 @@ summaries/global.md
 
 上下文组装时优先使用摘要，不加载全部章节全文。
 
-卷/全书摘要的受管格式是单个 `oan:summary:v1` Markdown 注释区块：严格 JSON 元数据包含 `schemaVersion: 1`、`targetPath`、排序去重的 `chapterIds`、直接 `sources`（`path/sourceHash/payloadHash`）、传递来源 `sourceFingerprint` 和带 `sourcePaths` 的段落；其后是由同一段落确定性渲染的可读正文。元数据与可读正文必须一致，未知版本、错位身份或损坏区块为 unverified。区块之外的作者文字按原样保留，不进入上层生成的已验证输入；更新仅替换合法受管区块，旧版本由 Git 保存。
+卷/全书摘要的受管格式是单个 `oan:summary:v1` Markdown 注释区块：严格 JSON 元数据包含 `schemaVersion: 1`、`targetPath`、排序去重的 `chapterIds`、直接 `sources`（`path/sourceHash/payloadHash`）、传递来源 `sourceFingerprint` 和带 `sourcePaths` 的段落；其后是由同一段落确定性渲染的可读正文。元数据与可读正文必须一致，未知版本、错位身份或损坏区块为 unverified。解析允许块内 LF / CRLF 差异，但来源 hash 仍按整文件原始字节计算。普通文字中的标记名称不算受管注释。区块之外的作者文字按原样保留，不进入上层生成的已验证输入；更新替换合法受管区块，缺少一级标题时在同一候选中补齐标题，旧版本由 Git 保存。
+
+上层生成使用已验证观察/段落的原始文本；Markdown 显示转义不重复传递到下一层。`payloadHash` 绑定此派生输入，Accept 同时核对其来源引用与传递 fingerprint。来源包含特殊字符的旧摘要可能需要重新生成，不提供兼容 reader 或自动迁移。整文件依赖包括正文、章摘要全文、章状态 `.yaml` / `.yml` 及缺失槽位；全书还绑定直接卷摘要全文。
 
 卷摘要完整覆盖当前卷的正文章节；全书摘要完整覆盖当前所有有正文的卷。`0000.md` 卷元信息不计入正文覆盖。来源链为正文 → 已接受章级证据/摘要 → 卷摘要 → 全书摘要；即便中间摘要未重新生成，正文变化、增删章或跨卷移动也会使上层摘要失效。只 touch 不影响内容 hash。缺失、过期或未验证来源不生成部分覆盖的候选。
 

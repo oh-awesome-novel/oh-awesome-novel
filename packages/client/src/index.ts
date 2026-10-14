@@ -1,4 +1,5 @@
 import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
+export { resolveSummarySelection } from '@oh-awesome-novel/core/novel-copilot-contract';
 export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 import { parseGitDiffPreview, assertReviewedGitCommitInput, parseReviewedGitCommitResult } from './git-preview';
 import type { GitDiffPreview, ReviewedGitCommitInput } from './git-preview';

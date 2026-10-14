@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNovelAgentTurnEditEnvironment, createNovelAgentWorkspaceSnapshotFromProjection, inferNovelAgentCapability } from '@oh-awesome-novel/agent';
 import { createPendingActionStore } from '@oh-awesome-novel/tools';
+import { NOVEL_COPILOT_QUICK_COMMANDS } from '@oh-awesome-novel/core';
 import { settledSummaryFiles, summaryDraft, appendSummary, fixtureFingerprint } from '../../fixtures/summary-generation';
 
 const git = promisify(execFile); const roots: string[] = []; const targetPath = 'summaries/volume/0001.md';
@@ -68,5 +69,35 @@ describe('default summary generation environment', () => {
     expect(stale.summaries).toBeUndefined();
     expect(stale.omittedContextFiles?.find((file) => file.path === 'summaries/global.md')?.selectionReason).toContain('stale');
     expect(stale.chapterEvidenceCoverage).toContain('summaries/global.md: stale');
+  });
+
+  it.each(['帮我看看怎么整理第一卷摘要，先别写', '不要整理本卷，只解释流程', '整理本卷怎么用？', '/整理本卷说明', '如何生成全书摘要？'])('does not turn a mention into aggregate generation: %s', (request) => {
+    expect(['novel.summarize_volume', 'novel.summarize_global']).not.toContain(inferNovelAgentCapability(request));
+  });
+  it('preserves explicit command priority and routes catalog prompts and planning correctly', () => {
+    expect(inferNovelAgentCapability('/整理本卷\n全书中的这一卷')).toBe('novel.summarize_volume');
+    expect(inferNovelAgentCapability('/整理全书：请简练')).toBe('novel.summarize_global');
+    expect(inferNovelAgentCapability('规划下一卷并整理卷摘要')).toBe('novel.plan_volume');
+    expect(inferNovelAgentCapability('/规划下一章请延续当前主线')).toBe('novel.plan_chapter');
+    for (const command of NOVEL_COPILOT_QUICK_COMMANDS.filter((command) => command.id.startsWith('summary.'))) expect(inferNovelAgentCapability(command.prompt)).toBe(command.capabilityId);
+  });
+  it('withholds generation inputs and tools when the existing target is damaged', async () => {
+    const f = await fixture();
+    await writeFile(join(f.root, targetPath), '# 摘要\n<!-- oan:summary:v1\n损坏区块');
+    const env = await createNovelAgentTurnEditEnvironment({ workspaceRoot: f.root, capability: 'novel.summarize_volume', exactWritablePaths: ['chapters/0001/0001.md'] });
+    try {
+      expect(Object.keys(env.tools)).toEqual([]); expect(env.selectedContext).toHaveLength(1);
+      expect(env.selectedContext![0].content).toContain('target-invalid');
+      expect(env.selectedContext![0].content).toContain('系统不会覆盖损坏内容');
+      expect(await (await createPendingActionStore({ workspaceRoot: f.root })).listViews()).toEqual([]);
+    } finally { await env.dispose(); }
+  });
+  it('unions chapter and volume selections and explains non-active volumes accurately', () => {
+    const files = [...settledSummaryFiles(), ...settledSummaryFiles('0002/0001'), ...settledSummaryFiles('0003/0001')];
+    for (const id of ['0001', '0002', '0003']) appendSummary(files, `summaries/volume/${id}.md`);
+    const projection = { workspaceRoot: '/fixture', projectionFingerprint: fixtureFingerprint, files: files.map((file) => ({ ...file, mode: 0o644, mtimeMs: 0 })), directories: [] };
+    const context = createNovelAgentWorkspaceSnapshotFromProjection(projection, { targetPaths: ['chapters/0001/0001.md', 'summaries/volume/0002.md'] });
+    expect(context.contextFiles?.filter((file) => file.path.startsWith('summaries/volume/')).map((file) => file.path).sort()).toEqual(['summaries/volume/0001.md', 'summaries/volume/0002.md']);
+    expect(context.omittedContextFiles?.find((file) => file.path === 'summaries/volume/0003.md')?.selectionReason).toBe('non-active volume summary; available through fixed-projection tools');
   });
 });

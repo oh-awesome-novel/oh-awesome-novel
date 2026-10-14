@@ -17,11 +17,11 @@ bash-tool + just-bash fixed sandbox
 
 优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database。
 
-## Current Delivery Priority (2026-10-05)
+## Current Delivery Priority (2026-10-14)
 
 按 [1230 修正任务](tasks/1230.md) 的最新记录推进，原评审只作带日期的基线。首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复和已记录的 Play 可靠性修正已交付。
 
-现已交付标准Agent usage治理、受限多领域结构化结算、正文搜索、Markdown/TXT导出、Play派生窗口/快照优化，以及[1290](tasks/1290.md)章级来源新鲜度与长篇历史加载、[1300](tasks/1300.md)作者Markdown旧稿导入。[1310](tasks/1310.md)承接生产类型/发行质量门禁、Git预览绑定提交与打包写作旅程，其最终验证以任务记录为准。后续候选是 `0700` 卷/全局摘要、`0580` 远端同步收尾与更多环境验收、`1120`剩余Play可靠性。完整Play mutation/CAS成本仍线性，进一步优化以实测门槛为准。
+现已交付标准Agent usage治理、受限多领域结构化结算、正文搜索、Markdown/TXT导出、Play派生窗口/快照优化，以及[1290](tasks/1290.md)章级来源新鲜度与长篇历史加载、[1300](tasks/1300.md)作者Markdown旧稿导入、[0700](tasks/0700.md)卷/全书摘要及评审修正。[1310](tasks/1310.md)承接生产类型/发行质量门禁、Git预览绑定提交与打包写作旅程，其最终验证以任务记录为准。后续按 `0580` 远端同步收尾与更多环境验收、`1120` 剩余 Play 可靠性及 `1230` 独立剩余范围推进。完整Play mutation/CAS成本仍线性，进一步优化以实测门槛为准。
 
 **Extension 系统开发暂缓。** 不新增动态 Tool 注册、extension host code、更多 Director 控制或 Reference 分析层；保留已经交付的能力。恢复扩展前，先证明已有写作、审批、导出与 Play adoption 的真实创作旅程。
 

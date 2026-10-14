@@ -166,6 +166,7 @@ const emit = defineEmits<{
         @configure-provider="emit('configureProvider')"
       />
       <CopilotPanel
+        :active-file-path="activeFilePath"
         :workspace-key="workspace.path"
         @open-source="emit('openFile', $event)"
         v-else

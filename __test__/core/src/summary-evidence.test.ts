@@ -133,7 +133,7 @@ describe('volume/global evidence provenance', () => {
       files[index + 2].content = files[index + 2].content.replace('- 林安: 到达城门 (lines', `- 林安: ${observation} (lines`);
     }
     const source = prepareSummaryGeneration({ files }, 'summaries/volume/0001.md');
-    expect(source.sources).toHaveLength(200); expect(source.chapterIds).toHaveLength(200);
+    expect(source.sources).toHaveLength(0); expect(source.verifiedSourceCount).toBe(200); expect(source.chapterIds).toHaveLength(200);
     expect(source.ready).toBe(false); expect(source.problems).toMatchObject([{ status: 'limit' }]);
     expect(formatSummaryGenerationCoverage(source)).toContain('不会静默截断');
   });
@@ -147,5 +147,95 @@ describe('volume/global evidence provenance', () => {
     expect(statuses(files)['summaries/volume/0001.md']).toBe('current');
     const file = files.find((file) => file.path === 'summaries/global.md')!;
     expect(parseSummaryDocument(file.content, file.path)?.document.chapterIds).toHaveLength(3);
+  });
+
+  it('preflights a damaged target and manual frontmatter without blocking regeneration of stale summaries', () => {
+    const files = fixture(); const target = files.find((file) => file.path === 'summaries/volume/0001.md')!;
+    target.content = target.content.replace('\n林安到达城门。\n', '\n修改受管正文。\n');
+    let source = prepareSummaryGeneration({ files }, target.path);
+    expect(source.ready).toBe(false); expect(source.problems).toContainEqual(expect.objectContaining({ path: target.path, status: 'target-invalid' }));
+    expect(formatSummaryGenerationCoverage(source)).toContain('不会自动补写来源或覆盖损坏目标');
+    target.content = '---\nid: 0002\n---\n# 手工卷摘要\n';
+    expect(prepareSummaryGeneration({ files }, target.path).ready).toBe(false);
+    target.content = '# 手工卷摘要\n'; summarize(files, target.path);
+    files.push(...chapter('0001/0003'));
+    expect(statuses(files)[target.path]).toBe('stale');
+    expect(prepareSummaryGeneration({ files }, target.path).ready).toBe(true);
+  });
+
+  it('allows marker names and safely rendered literal comments while rejecting real unknown or duplicate blocks', () => {
+    const files = chapter('0001/0001'); const path = 'summaries/volume/0001.md';
+    const author = '# 作者笔记\n提到 `oan:summary:v1` 与 oan:summary: 字面量。\n';
+    files.push({ path, content: author }); summarize(files, path);
+    const file = files.at(-1)!; const parsed = parseSummaryDocument(file.content, path)!;
+    expect(parsed.authorContent).toContain(author);
+    const text = '提到 oan:summary: 与 <!-- 注释 -->，A&B <门>。';
+    file.content = mergeSummaryDocument(file.content, { ...parsed.document, paragraphs: [{ text, sourcePaths: parsed.document.sources.map((item) => item.path) }] });
+    expect(parseSummaryDocument(file.content, path)!.document.paragraphs[0].text).toBe(text);
+    expect(prepareSummaryGeneration({ files }, 'summaries/global.md').sources[0].payload).toBe(text);
+    for (const suffix of ['\n<!-- oan:summary:v2\n{}\n-->', '\n<!-- oan:summary:v1\n', '\n<!-- /oan:summary:v1 -->']) {
+      expect(() => parseSummaryDocument(file.content + suffix, path)).toThrow();
+    }
+  });
+
+  it('preserves CRLF author bytes and raw offsets through no-op and changed managed updates', () => {
+    const files = fixture(); const path = 'summaries/volume/0001.md';
+    const generated = files.find((file) => file.path === path)!.content;
+    const prefix = '---\r\nid: "0001"\r\n---\r\n# 作者标题\r\n\r\n批注 oan:summary:。\r\n';
+    const suffix = '\r\n作者后记\r\n';
+    const existing = prefix + parseSummaryDocument(generated, path)!.block.replaceAll('\n', '\r\n') + suffix;
+    const parsed = parseSummaryDocument(existing, path)!;
+    expect(existing.slice(parsed.start, parsed.end)).toBe(parsed.block);
+    expect(mergeSummaryDocument(existing, parsed.document)).toBe(existing);
+    files.find((file) => file.path === path)!.content = existing;
+    expect(statuses(files)[path]).toBe('current');
+    expect(statuses(files)['summaries/global.md']).toBe('stale');
+    const next = mergeSummaryDocument(existing, { ...parsed.document, paragraphs: [{ text: '林安抵达城门。', sourcePaths: parsed.document.sources.map((source) => source.path) }] });
+    expect(next.startsWith(prefix)).toBe(true); expect(next.endsWith(suffix)).toBe(true);
+    expect(parseSummaryDocument(next, path)!.document.paragraphs[0].text).toBe('林安抵达城门。');
+    expect(() => parseSummaryDocument(existing.replace('林安到达城门。\r\n', '被改坏。\r\n'), path)).toThrow();
+  });
+
+  it('keeps book scope complete and discards oversized payloads with an actionable book-specific report', () => {
+    const files = fixture();
+    for (const file of files.filter((file) => file.path.startsWith('summaries/volume/'))) {
+      const parsed = parseSummaryDocument(file.content, file.path)!;
+      file.content = mergeSummaryDocument(file.content, { ...parsed.document, paragraphs: Array.from({ length: 32 }, () => ({ text: '文'.repeat(2048), sourcePaths: parsed.document.sources.map((source) => source.path) })) });
+    }
+    const source = prepareSummaryGeneration({ files }, 'summaries/global.md');
+    expect(source.ready).toBe(false); expect(source.chapterIds).toHaveLength(3);
+    expect(source.sources).toEqual([]); expect(source.verifiedSourceCount).toBe(2);
+    expect(formatSummaryGenerationCoverage(source)).toContain('不能选择卷子集');
+    expect(formatSummaryGenerationCoverage(source)).not.toContain('请缩小卷范围');
+  });
+
+  it('supports more than 32 volumes with grouped references and preserves raw text through both summary levels', () => {
+    const files = Array.from({ length: 33 }, (_, index) => chapter(`${String(index + 1).padStart(4, '0')}/0001`)).flat();
+    for (let volume = 1; volume <= 33; volume++) summarize(files, `summaries/volume/${String(volume).padStart(4, '0')}.md`);
+    const volume = files.find((file) => file.path === 'summaries/volume/0001.md')!;
+    const parsed = parseSummaryDocument(volume.content, volume.path)!;
+    volume.content = mergeSummaryDocument(volume.content, { ...parsed.document, paragraphs: [{ text: '<门> 与 A&B。', sourcePaths: parsed.document.sources.map((source) => source.path) }] });
+    const source = prepareSummaryGeneration({ files }, 'summaries/global.md');
+    expect(source.ready).toBe(true); expect(source.sources).toHaveLength(33);
+    expect(source.sources[0].payload).toBe('<门> 与 A&B。');
+    const draft = parseSummaryGenerationDraft({ schemaVersion: 1, sourceFingerprint: source.sourceFingerprint, paragraphs: [{ text: source.sources[0].payload, sourcePaths: source.sources.map((file) => file.path) }] }, source.sourceFingerprint, source.sources.map((file) => file.path));
+    const book = mergeSummaryDocument(undefined, { schemaVersion: 1, targetPath: 'summaries/global.md', chapterIds: source.chapterIds,
+      sources: source.sources.map(({ path, sourceHash, payloadHash }) => ({ path, sourceHash, payloadHash })), sourceFingerprint: draft.sourceFingerprint, paragraphs: draft.paragraphs });
+    expect(book).toContain('\n&lt;门&gt; 与 A&amp;B。\n'); expect(book).not.toContain('&amp;lt;');
+  });
+
+  it('uses raw chapter observations and requires regenerating summaries bound to an escaped payload', () => {
+    const files = chapter('0001/0001'); const path = 'summaries/volume/0001.md';
+    const state = JSON.parse(files[1].content); state.observations[0].subject = 'A&B'; state.observations[0].observation = '看见 <门>';
+    files[1].content = JSON.stringify(state);
+    files[2].content = files[2].content.replace('- 林安: 到达城门 (lines', '- A&amp;B: 看见 &lt;门&gt; (lines');
+    const source = prepareSummaryGeneration({ files }, path);
+    expect(source.ready).toBe(true); expect(source.sources[0].payload).toBe('- A&B: 看见 <门> (lines 2-2)');
+    files.push({ path, content: mergeSummaryDocument(undefined, { schemaVersion: 1, targetPath: path, chapterIds: source.chapterIds,
+      sources: source.sources.map(({ path, sourceHash }) => ({ path, sourceHash, payloadHash: hash('- A&amp;B: 看见 &lt;门&gt; (lines 2-2)') })),
+      sourceFingerprint: source.sourceFingerprint, paragraphs: [{ text: '旧摘要', sourcePaths: source.sources.map((file) => file.path) }] }) });
+    expect(statuses(files)[path]).toBe('unverified');
+    expect(prepareSummaryGeneration({ files }, path).ready).toBe(true);
+    summarize(files, path); expect(statuses(files)[path]).toBe('current');
   });
 });

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
 import type { ChatStatus, UIMessage } from 'ai';
+import { resolveSummarySelection } from '@oh-awesome-novel/client';
 
 import AgentUsageInspector from '../agent-checkpoint/AgentUsageInspector.vue';
 import AgentTimeline from '../agent-checkpoint/AgentTimeline.vue';
@@ -18,6 +19,7 @@ import type { PendingActionView } from '../../composables/useAgentCheckpointChat
 
 const props = defineProps<{
   workspaceKey?: string;
+  activeFilePath?: string;
   providerConfigured: boolean;
   queuedPrompt: string;
   chatStatus: ChatStatus;
@@ -77,6 +79,13 @@ const quickCommands = [
   { id: 'foreshadow.plan', label: '补伏笔', prompt: '/补伏笔' },
   { id: 'chapter.deAi', label: '去AI味', prompt: '/去AI味' },
 ];
+const availableQuickCommands = computed(() => {
+  let volumeHint = '';
+  try { resolveSummarySelection('volume', props.activeFilePath ? [props.activeFilePath] : []); }
+  catch (error) { volumeHint = (error as Error).message; }
+  return quickCommands.map((command) => command.id === 'summary.volume' && volumeHint
+    ? { ...command, disabledReason: volumeHint } : command);
+});
 const decoratedPendingActions = computed(() =>
   mergePendingActions(props.pendingActions, props.chatPendingActions).map((action) => ({
     ...action,
@@ -202,7 +211,7 @@ function mergePendingActions(
       <ChatComposer
         v-model="inputModel"
         :disabled="chatStatus !== 'ready'"
-        :quick-commands="quickCommands"
+        :quick-commands="availableQuickCommands"
         :quick-commands-disabled="!providerConfigured"
         @configure-model="emit('configureProvider')"
         @submit="emit('sendChatInput')"

@@ -41,7 +41,7 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
   const latestVolume = allSummaries.map((file) => volumeNumber(file.path))
     .filter((volume) => volume !== undefined).toSorted((a, b) => b - a)[0];
   const explicitlySelectedVolumes = (options.targetPaths ?? []).map(volumeNumber).filter((volume) => volume !== undefined);
-  const activeVolumes = new Set(explicitlySelectedVolumes.length ? explicitlySelectedVolumes : targets.length ? targets.map((target) => target.volume)
+  const activeVolumes = new Set(explicitlySelectedVolumes.length || targets.length ? [...explicitlySelectedVolumes, ...targets.map((target) => target.volume)]
     : [latestChapter?.volume ?? latestVolume].filter((volume) => volume !== undefined));
   const summaries = allSummaries.filter((file) => !bySummary.has(file.path) || bySummary.get(file.path)!.context !== undefined).toSorted((a, b) => {
     const rank = (file: File) => {
@@ -112,6 +112,7 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
       modelVisibleChars: 0, estimatedTokens: 0,
       selectionReason: bySummary.get(file.path)?.context === undefined && bySummary.has(file.path)
         ? `${bySummary.get(file.path)!.status}: ${bySummary.get(file.path)!.reason} Available only through explicit fixed-projection reads.`
+        : volumeNumber(file.path) !== undefined ? 'non-active volume summary; available through fixed-projection tools'
         : 'outside the twelve nearest/latest summary anchors; available through fixed-projection tools',
     })), ...allState.filter((file) => !state.includes(file)).map((file) => ({
       sourceId: 'latestState', path: file.path, sourceHash: hash(file.content), modelVisibleChars: 0, estimatedTokens: 0,

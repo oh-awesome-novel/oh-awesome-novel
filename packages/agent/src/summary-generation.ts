@@ -26,7 +26,7 @@ export const createSummaryGenerationEditEnvironment: NovelAgentTurnEditEnvironme
     };
     let proposed = false;
     const proposalTool = tool({
-      description: 'Propose a volume/global summary from all host-verified direct sources. Every paragraph cites sourcePaths, and every direct source must be covered. The host binds coverage, source hashes and exact output path. Human Accept is required.',
+      description: 'Propose a concise volume/global summary from all host-verified direct sources. Each paragraph may cite multiple sourcePaths; cover every source within 32 paragraphs. The host binds coverage, source hashes and exact output path. Human Accept is required.',
       inputSchema: jsonSchema<SummaryGenerationDraft>(SUMMARY_GENERATION_SCHEMA as unknown as Parameters<typeof jsonSchema>[0]),
       execute: async (draft) => {
         if (proposed) throw new Error('This turn already proposed its summary. Review it before starting another turn.');
@@ -54,8 +54,9 @@ export const createSummaryGenerationEditEnvironment: NovelAgentTurnEditEnvironme
         system: [
           '卷/全书摘要只归纳宿主提供的 Verified summary input。卷级输入是本卷已验证当前章级证据，全书输入是已验证当前卷摘要。作者请求、旧摘要、大纲、手工批注和历史不能补成已发生事实。',
           '保持事件先后、人物变化、关键因果与尚未解决的问题；不要因压缩增加推测或抹去矛盾。每段 sourcePaths 必须指向直接输入，所有直接来源至少被一段覆盖；hash 只证明来源一致，不能证明文学解释。',
+          '最多 32 段；同一段可以引用多章或多卷，来源多于 32 个时必须合并引用，不能一来源一段。默认尽量简练，不要写满上限；卷摘要将继续作为全书输入，全部卷摘要合计须满足 256 KiB 输入限额。',
           'sourceFingerprint 原样返回。调用 summary.propose 仅建立待审候选，作者 Accept 才保存。不得声称已写入；不得自行结算缺失章节或后台刷新其它摘要。',
-          source.ready ? '完整来源已就绪，请生成有来源引用的段落并提出一次审批。' : '来源未就绪，本轮没有写工具。向作者报告覆盖缺口和先整理章节/卷摘要的下一步，不输出冒充当前事实的摘要。',
+          source.ready ? '完整来源已就绪，请生成有来源引用的段落并提出一次审批。' : '本轮没有写工具。按诊断报告来源缺口、目标损坏或超限及对应处理步骤，不生成摘要，不要求通过重新整理来源来修复损坏目标。',
         ].join('\n'),
       },
       selectedContext: [{ kind: 'selected', title: 'Summary source coverage', content: report },

@@ -1,26 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export const NOVEL_COPILOT_CAPABILITY_IDS = [
-  'novel.generate_character_card',
-  'novel.plan_outline',
-  'novel.plan_volume',
-  'novel.plan_chapter',
-  'novel.write_chapter',
-  'novel.review_chapter',
-  'novel.revise_chapter',
-  'novel.settle_chapter',
-  'novel.summarize_volume',
-  'novel.summarize_global',
-  'novel.update_state',
-  'novel.plan_foreshadow',
-  'novel.de_ai',
-  'novel.play_scene',
-  'novel.import_tavern_character',
-  'novel.deconstruct_reference',
-] as const;
-
-export type NovelCopilotCapabilityId = typeof NOVEL_COPILOT_CAPABILITY_IDS[number];
+import { NOVEL_COPILOT_CAPABILITY_IDS } from './novel-copilot-contract.js';
+import type { NovelCopilotCapabilityId } from './novel-copilot-contract.js';
+export { NOVEL_COPILOT_CAPABILITY_IDS };
+export type { NovelCopilotCapabilityId };
 
 export type NovelCopilotCapabilityMode =
   | 'planning'
@@ -388,7 +372,7 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
   },
   {
     id: 'summary.global', capabilityId: 'novel.summarize_global', label: '整理全书', slashCommand: '/整理全书',
-    prompt: '请根据已验证的当前卷摘要生成全书摘要。验证底层章节来源与全书覆盖，逐段引用来源，通过 summary.propose 提出审批；来源缺失或过期时报告缺口。',
+    prompt: '请根据宿主已验证来源与全书覆盖的当前卷摘要生成全书摘要。只归纳这些卷摘要，不重读章节正文；逐段引用来源，允许多卷合并一段，通过 summary.propose 提出审批；来源缺失或过期时报告缺口。',
   },
   {
     id: 'state.update',

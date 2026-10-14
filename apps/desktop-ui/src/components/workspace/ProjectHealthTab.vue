@@ -30,7 +30,8 @@ const gitLabel = computed(() => {
   return props.status.git.dirty ? 'dirty' : 'clean';
 });
 
-const issues = computed(() => props.health?.issues ?? []);
+const issues = computed(() => (props.health?.issues ?? []).filter((issue) => !issue.id.startsWith('aggregate-summary-missing:')));
+const optionalSummaries = computed(() => (props.health?.issues ?? []).filter((issue) => issue.id.startsWith('aggregate-summary-missing:')));
 
 async function rebuildProjections() {
   rebuilding.value = true;
@@ -84,6 +85,13 @@ async function rebuildProjections() {
       </div>
     </div>
     <p v-else class="empty-copy">No health issues.</p>
+    <details v-if="optionalSummaries.length" class="health-issue-list">
+      <summary>可选完善：{{ optionalSummaries.length }} 份卷 / 全书摘要尚未建立</summary>
+      <p class="muted-copy">不影响继续写作。需要汇总时，先整理章节，再按卷和全书生成。</p>
+      <div v-for="issue in optionalSummaries" :key="issue.id" class="health-issue-row">
+        <span>{{ issue.path }}</span>
+      </div>
+    </details>
     <p v-if="rebuildError" class="error-copy">{{ rebuildError }}</p>
     <div v-if="rebuildResult" class="health-issue-list">
       <div v-for="projection in rebuildResult.projections" :key="projection.path" class="health-issue-row">

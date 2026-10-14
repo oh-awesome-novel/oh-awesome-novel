@@ -27,6 +27,10 @@
     "vitest": "^4.1.8"
   },
   "exports": {
+    "./novel-copilot-contract": {
+      "types": "./dist/novel-copilot-contract.d.mts",
+      "import": "./dist/novel-copilot-contract.mjs"
+    },
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"

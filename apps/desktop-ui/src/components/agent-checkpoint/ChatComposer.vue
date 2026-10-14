@@ -10,6 +10,7 @@ export interface ChatQuickCommand {
   id: string;
   label: string;
   prompt: string;
+  disabledReason?: string;
 }
 
 const model = defineModel<string>({ required: true });
@@ -35,6 +36,7 @@ const {
   setShortcut,
 } = useComposerShortcutPreference();
 const canSubmit = computed(() => !props.disabled && model.value.trim().length > 0);
+const unavailableCommands = computed(() => props.quickCommands.filter((command) => command.disabledReason));
 
 function submit() {
   if (!canSubmit.value) {
@@ -45,7 +47,7 @@ function submit() {
 }
 
 function useQuickCommand(command: ChatQuickCommand) {
-  if (props.disabled || props.quickCommandsDisabled) {
+  if (props.disabled || props.quickCommandsDisabled || command.disabledReason) {
     return;
   }
 
@@ -70,12 +72,16 @@ function handleKeydown(event: KeyboardEvent) {
         :key="command.id"
         class="composer-command-chip"
         type="button"
-        :disabled="disabled || quickCommandsDisabled"
+        :disabled="disabled || quickCommandsDisabled || Boolean(command.disabledReason)"
+        :aria-describedby="command.disabledReason ? `command-hint-${command.id}` : undefined"
         @click="useQuickCommand(command)"
       >
         {{ command.label }}
       </button>
     </div>
+    <p v-for="command in unavailableCommands" :id="`command-hint-${command.id}`" :key="command.id" class="muted-copy">
+      {{ command.disabledReason }}
+    </p>
 
     <div class="composer-surface">
       <label class="visually-hidden" for="agent-composer-input">Ask the checkpoint agent</label>

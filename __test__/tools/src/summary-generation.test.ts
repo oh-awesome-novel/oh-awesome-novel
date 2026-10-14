@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
-import { evaluateAggregateSummaries } from '@oh-awesome-novel/core';
+import { evaluateAggregateSummaries, parseSummaryDocument, mergeSummaryDocument, createChapterSettlementSource } from '@oh-awesome-novel/core';
 import { createSummaryGenerationChangeProposal, createChangeMaterializer, createPendingActionStore, createWorkspaceProjection,
-  readRepositoryBaseline, parsePendingAction, parsePendingActionOrigin, validateFinalDocument, summaryGenerationProjectionRules } from '@oh-awesome-novel/tools';
-import { settledSummaryFiles, summaryDraft, appendSummary } from '../../fixtures/summary-generation';
+  readRepositoryBaseline, parsePendingAction, parsePendingActionOrigin, validateFinalDocument, summaryGenerationProjectionRules,
+  CandidateChangeSetBuilder, createChapterSettlementChangeProposal } from '@oh-awesome-novel/tools';
+import { settledSummaryFiles, summaryDraft, appendSummary, fixtureRepository, fixtureFingerprint } from '../../fixtures/summary-generation';
 
 const git = promisify(execFile); const roots: string[] = [];
 const volumePath = 'summaries/volume/0001.md'; const globalPath = 'summaries/global.md';
@@ -89,6 +90,7 @@ describe('aggregate summary approval and immutable origin', () => {
     expect(() => validateFinalDocument({ path: volumePath, content: '<!-- oan:summary:v2\n{}\n-->' })).toThrow();
     const generated = createSummaryGenerationChangeProposal(f.input).proposal!.candidate.changes[0]!.draft!.content;
     expect(() => validateFinalDocument({ path: globalPath, content: generated })).toThrow();
+    expect(() => validateFinalDocument({ path: 'summaries/volume/0000.md', content: generated })).toThrow();
   });
   it('commits only the accepted summary when autoCommitOnAccept is enabled', async () => {
     const f = await fixture(); await git('git', ['-C', f.root, 'config', 'user.name', 'Test']); await git('git', ['-C', f.root, 'config', 'user.email', 'test@example.invalid']);
@@ -96,5 +98,49 @@ describe('aggregate summary approval and immutable origin', () => {
     const result = await f.materializer.accept({ actionId: action.id, autoCommitOnAccept: true });
     expect(result.receipt.git.status).toBe('committed');
     expect((await git('git', ['-C', f.root, 'show', '--format=', '--name-only', 'HEAD'])).stdout.trim()).toBe(volumePath);
+  });
+
+  it.each(['', '作者笔记 oan:summary:。\n', '## 作者笔记\n', '---\nid: "0001"\n---\n作者笔记\n', '---\nid: "0001"\n---', 'managed', 'managed-inline'])('adds a reviewable heading without rewriting existing author bytes: %s', async (existing) => {
+    const f = await fixture(false, true);
+    if (existing.startsWith('managed')) {
+      const generated = createSummaryGenerationChangeProposal(f.input).proposal!.candidate.changes[0].draft!.content;
+      existing = existing === 'managed-inline' ? `作者笔记${parseSummaryDocument(generated, f.targetPath)!.block}` : generated.replace(/^# .+\n/u, '');
+    }
+    await writeFile(join(f.root, f.targetPath), existing);
+    const baselineFiles = f.input.baselineFiles.map((file) => file.path === f.targetPath ? { ...file, content: existing } : file);
+    const proposal = createSummaryGenerationChangeProposal({ ...f.input, baselineFiles, draft: summaryDraft(baselineFiles, f.targetPath, '林安抵达城门。') }).proposal!;
+    const action = await f.store.proposeCandidate({ ...proposal, title: '补齐摘要标题', description: '保留作者笔记' });
+    expect(await readFile(join(f.root, f.targetPath), 'utf8')).toBe(existing);
+    await f.materializer.accept({ actionId: action.id, autoCommitOnAccept: false });
+    const saved = await readFile(join(f.root, f.targetPath), 'utf8');
+    expect(() => validateFinalDocument({ path: f.targetPath, content: saved })).not.toThrow();
+    const beforeAuthor = parseSummaryDocument(existing, f.targetPath)?.authorContent ?? existing;
+    expect(parseSummaryDocument(saved, f.targetPath)!.authorContent).toContain(beforeAuthor.trim());
+  });
+
+  it('allows marker names in chapter observations through the actual settlement producer', () => {
+    const chapterId = '0001/0001'; const content = '# 正文\n林安看见 oan:summary: 字样。\n';
+    const source = createChapterSettlementSource(chapterId, content);
+    const result = createChapterSettlementChangeProposal({ source, observations: { schemaVersion: 1, chapterId, sourceHash: source.sourceHash,
+      observations: [{ id: 'marker', category: 'location', subject: '林安', observation: '看见 oan:summary: 字样', confidence: 'high', evidence: { startLine: 2, endLine: 2, quote: '林安看见 oan:summary: 字样。' } }], unresolvedAmbiguities: [] },
+      sessionId: 'marker-test', repository: fixtureRepository, projectionFingerprint: fixtureFingerprint, baselineFiles: [{ path: `chapters/${chapterId}.md`, content }] });
+    expect(result.proposal!.candidate.changes.find((change) => change.path.startsWith('summaries/'))!.draft!.content).toContain('看见 oan:summary: 字样');
+  });
+
+  it.each(['malformed', 'fingerprint', 'payload'])('rejects a checksum-consistent but invalid summary draft after restart: %s', async (kind) => {
+    const f = await fixture();
+    let content = createSummaryGenerationChangeProposal(f.input).proposal!.candidate.changes[0].draft!.content;
+    const document = parseSummaryDocument(content, f.targetPath)!.document;
+    if (kind === 'malformed') content = content.replace('\n林安到达城门。\n', '\n篡改正文。\n');
+    if (kind === 'fingerprint') content = mergeSummaryDocument(undefined, { ...document, sourceFingerprint: 'c'.repeat(64) });
+    if (kind === 'payload') content = mergeSummaryDocument(undefined, { ...document, sources: document.sources.map((source) => ({ ...source, payloadHash: 'c'.repeat(64) })) });
+    // Simulate a buggy/older trusted producer: storage hashes match these bytes.
+    const builder = new CandidateChangeSetBuilder({ sessionId: 'invalid-summary', producer: 'summary-generation', capability: 'summary.edit', repository: f.input.repository, projectionFingerprint: f.input.projectionFingerprint, baselineFiles: [] });
+    builder.write(f.targetPath, content);
+    const action = await f.store.proposeCandidate({ candidate: builder.finalize()!, title: '不可接受的摘要', description: '校验来源', origin: { kind: 'summaryGeneration', targetPath: f.targetPath, sourceFingerprint: f.input.draft.sourceFingerprint } });
+    const materializer = createChangeMaterializer({ store: await createPendingActionStore({ workspaceRoot: f.root }), assertOriginFresh: async () => {} });
+    await expect(materializer.accept({ actionId: action.id, autoCommitOnAccept: false })).rejects.toMatchObject({ code: kind === 'payload' ? 'STALE_PENDING_ACTION_BASELINE' : 'PENDING_ACTION_DRAFT_INTEGRITY_ERROR' });
+    await expect(readFile(join(f.root, f.targetPath))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await f.store.readRecord(action.id)).status).toBe('pending');
   });
 });

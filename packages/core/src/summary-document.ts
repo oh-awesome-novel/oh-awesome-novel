@@ -18,7 +18,8 @@ const HASH = /^[a-f0-9]{64}$/u;
 const CHAPTER_ID = /^(?!0000)\d{4}\/(?!0000)\d{4}$/u;
 const START = '<!-- oan:summary:v1\n';
 const END = '<!-- /oan:summary:v1 -->';
-const MARKER = 'oan:summary:';
+// Only actual reserved comments own a block; prose may discuss marker names.
+const MANAGED_COMMENT = /<!--\s*\/?oan:summary:/u;
 
 export const SUMMARY_GENERATION_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['schemaVersion', 'sourceFingerprint', 'paragraphs'],
@@ -38,15 +39,7 @@ export function assertSummaryTargetPath(path: unknown): asserts path is string {
   if (typeof path !== 'string' || !(path === 'summaries/global.md' || /^summaries\/volume\/(?!0000)\d{4}\.md$/u.test(path))) throw new Error('Summary target must be summaries/volume/<four-digit-volume>.md or summaries/global.md.');
 }
 
-/** The volume is selected by the host UI, never by model arguments. */
-export function resolveSummarySelection(scope: 'volume' | 'global', paths: readonly string[]): string {
-  if (scope === 'global') return 'summaries/global.md';
-  if (paths.length !== 1) throw new Error('整理本卷需要先打开一个已编号的章节、卷信息或卷摘要文件。');
-  const volume = /^(?:chapters|summaries\/chapter)\/((?!0000)\d{4})\/\d{4}\.md$/u.exec(paths[0]!)?.[1]
-    ?? /^summaries\/volume\/((?!0000)\d{4})\.md$/u.exec(paths[0]!)?.[1];
-  if (!volume) throw new Error('整理本卷需要先打开一个已编号的章节、卷信息或卷摘要文件。');
-  return `summaries/volume/${volume}.md`;
-}
+export { resolveSummarySelection } from './novel-copilot-contract.js';
 
 export function parseSummaryGenerationDraft(value: unknown, sourceFingerprint: string, sourcePaths: readonly string[]): SummaryGenerationDraft {
   exact(value, ['schemaVersion', 'sourceFingerprint', 'paragraphs']);
@@ -57,18 +50,22 @@ export function parseSummaryGenerationDraft(value: unknown, sourceFingerprint: s
 
 /** Undefined means author-owned prose; any malformed managed marker throws. */
 export function parseSummaryDocument(content: string, targetPath: string): { document: SummaryDocument; block: string; start: number; end: number; authorContent: string } | undefined {
-  if (!content.includes(MARKER)) return undefined;
   assertSummaryTargetPath(targetPath);
   if (Buffer.byteLength(content) > SUMMARY_LIMITS.documentBytes) throw new Error('Managed summary exceeds its document limit.');
   assertFrontmatterIdentity(content, targetPath);
-  const start = content.indexOf(START); const ending = content.indexOf(END);
-  if (start < 0 || ending < start || content.indexOf(START, start + START.length) >= 0 || content.indexOf(END, ending + END.length) >= 0) throw new Error('Missing or duplicate summary evidence block.');
+  if (!MANAGED_COMMENT.test(content)) return undefined;
+  const starts = [...content.matchAll(/<!-- oan:summary:v1\r?\n/gu)];
+  const start = starts[0]?.index ?? -1; const ending = content.indexOf(END);
+  if (starts.length !== 1 || ending < start || content.indexOf(END, ending + END.length) >= 0) throw new Error('Missing, duplicate or unsupported summary evidence block.');
   const end = ending + END.length;
   const authorContent = content.slice(0, start) + content.slice(end);
-  if (authorContent.includes(MARKER)) throw new Error('Unsupported summary evidence marker.');
-  const metadataEnd = content.indexOf('\n-->\n', start + START.length);
-  if (metadataEnd < 0 || metadataEnd >= ending) throw new Error('Malformed summary evidence metadata.');
-  const value: unknown = JSON.parse(content.slice(start + START.length, metadataEnd));
+  if (MANAGED_COMMENT.test(authorContent)) throw new Error('Unsupported summary evidence marker.');
+  // Normalize only for parsing/comparison. Offsets and author bytes stay original.
+  const block = content.slice(start, end);
+  const normalizedBlock = block.replaceAll('\r\n', '\n');
+  const metadataEnd = normalizedBlock.indexOf('\n-->\n', START.length);
+  if (metadataEnd < 0 || metadataEnd >= normalizedBlock.length - END.length) throw new Error('Malformed summary evidence metadata.');
+  const value: unknown = JSON.parse(normalizedBlock.slice(START.length, metadataEnd));
   exact(value, ['schemaVersion', 'targetPath', 'chapterIds', 'sources', 'sourceFingerprint', 'paragraphs']);
   if (value.targetPath !== targetPath) throw new Error('Summary evidence identity differs from its path.');
   const chapterIds = orderedStrings(value.chapterIds, SUMMARY_LIMITS.chapters, (id) => CHAPTER_ID.test(id));
@@ -86,8 +83,7 @@ export function parseSummaryDocument(content: string, targetPath: string): { doc
   if (sources.length !== expectedPaths.length) throw new Error('Summary source coverage is incomplete.');
   const draft = parseSummaryGenerationDraft(valueWithoutMetadata(value), String(value.sourceFingerprint), expectedPaths);
   const document: SummaryDocument = Object.freeze({ schemaVersion: 1, targetPath, chapterIds, sources: Object.freeze(sources), sourceFingerprint: draft.sourceFingerprint, paragraphs: draft.paragraphs });
-  const block = content.slice(start, end);
-  if (block !== renderSummaryBlock(document)) throw new Error('Managed summary content or metadata was edited.');
+  if (normalizedBlock !== renderSummaryBlock(document).replaceAll('\r\n', '\n')) throw new Error('Managed summary content or metadata was edited.');
   return { document, block, start, end, authorContent };
 }
 
@@ -96,14 +92,19 @@ export function renderSummaryParagraphs(paragraphs: readonly SummaryParagraph[],
 }
 
 export function mergeSummaryDocument(existing: string | undefined, document: SummaryDocument): string {
-  const block = renderSummaryBlock(document);
+  let block = renderSummaryBlock(document);
   // Validate even internally assembled metadata through the same canonical parser.
   parseSummaryDocument(block, document.targetPath);
   const previous = existing === undefined ? undefined : parseSummaryDocument(existing, document.targetPath);
+  const newline = (previous?.block ?? existing)?.includes('\r\n') ? '\r\n' : '\n';
+  if (newline === '\r\n') block = block.replace(/\r?\n/gu, newline);
+  const body = (previous?.authorContent ?? existing ?? '').replace(/^\uFEFF/u, '').replace(/^---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/u, '');
+  const heading = /^#[ \t]+\S.*$/mu.test(body) ? ''
+    : `# ${document.targetPath === 'summaries/global.md' ? '全书摘要' : `第 ${document.targetPath.slice(-7, -3)} 卷摘要`}${newline}${newline}`;
   const result = existing === undefined
-    ? `# ${document.targetPath === 'summaries/global.md' ? '全书摘要' : `第 ${document.targetPath.slice(-7, -3)} 卷摘要`}\n\n${block}\n`
-    : previous ? `${existing.slice(0, previous.start)}${block}${existing.slice(previous.end)}`
-    : `${existing}${existing.endsWith('\n') ? '\n' : '\n\n'}${block}\n`;
+    ? `${heading}${block}${newline}`
+    : previous ? `${existing.slice(0, previous.start)}${heading && previous.start > 0 && existing[previous.start - 1] !== '\n' ? newline + newline : ''}${heading}${block}${existing.slice(previous.end)}`
+    : `${existing}${existing.endsWith('\n') ? newline : newline + newline}${heading}${block}${newline}`;
   if (Buffer.byteLength(result) > SUMMARY_LIMITS.documentBytes) throw new Error('Managed summary exceeds its document limit.');
   return result;
 }
@@ -118,7 +119,7 @@ function parseParagraphs(value: unknown, paths: readonly string[]): readonly Sum
   const result = value.map((paragraph: unknown) => {
     exact(paragraph, ['text', 'sourcePaths']);
     if (typeof paragraph.text !== 'string' || !paragraph.text.trim() || paragraph.text.length > SUMMARY_LIMITS.paragraphChars
-      || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(paragraph.text) || paragraph.text.includes(MARKER)) throw new Error('Invalid summary paragraph text.');
+      || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(paragraph.text)) throw new Error('Invalid summary paragraph text.');
     if (!Array.isArray(paragraph.sourcePaths) || paragraph.sourcePaths.length === 0 || paragraph.sourcePaths.length > SUMMARY_LIMITS.sources
       || new Set(paragraph.sourcePaths).size !== paragraph.sourcePaths.length
       || paragraph.sourcePaths.some((path: unknown) => typeof path !== 'string' || !allowed.has(path))) throw new Error('Summary paragraph must reference verified direct inputs.');
@@ -140,7 +141,7 @@ function escapeText(text: string): string { return text.replaceAll('&', '&amp;')
 function assertFrontmatterIdentity(content: string, targetPath: string): void {
   const text = content.replace(/^\uFEFF/u, '');
   if (!/^---\r?\n/u.test(text)) return;
-  const raw = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\r?\n/u.exec(text)?.[1];
+  const raw = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/u.exec(text)?.[1];
   if (raw === undefined) throw new Error('Malformed summary frontmatter.');
   const parsed = parseDocument(raw, { uniqueKeys: true }); const value: unknown = parsed.toJS({ maxAliasCount: 100 });
   if (parsed.errors.length || !value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid summary frontmatter.');

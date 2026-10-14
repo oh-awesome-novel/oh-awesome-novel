@@ -9,6 +9,7 @@ export interface SummaryGenerationSource {
   readonly targetPath: string;
   readonly chapterIds: readonly string[];
   readonly sources: readonly SummaryInput[];
+  readonly verifiedSourceCount: number;
   readonly sourceFingerprint: string;
   readonly ready: boolean;
   readonly problems: readonly { readonly path: string; readonly status: string; readonly reason: string }[];
@@ -28,15 +29,24 @@ export function evaluateAggregateSummaries(snapshot: FrozenWorkspaceSnapshot, ch
 
 export function prepareSummaryGeneration(snapshot: FrozenWorkspaceSnapshot, targetPath: string): SummaryGenerationSource {
   assertSummaryTargetPath(targetPath);
-  return createEvaluator(snapshot, evaluateChapterEvidence(snapshot)).source(targetPath);
+  const source = createEvaluator(snapshot, evaluateChapterEvidence(snapshot)).source(targetPath);
+  const existing = snapshot.files.find((file) => file.path === targetPath)?.content;
+  if (existing !== undefined) {
+    try { parseSummaryDocument(existing, targetPath); } catch {
+      return Object.freeze({ ...source, ready: false, problems: Object.freeze([Object.freeze({
+        path: targetPath, status: 'target-invalid', reason: '目标摘要无法安全更新。请检查受管区块、frontmatter 身份或文件大小；系统不会覆盖损坏内容。',
+      }), ...source.problems]) });
+    }
+  }
+  return source;
 }
 
 export function formatSummaryGenerationCoverage(source: SummaryGenerationSource): string {
   return [
     `摘要目标：${source.targetPath}`,
-    `覆盖正文：${source.chapterIds.length} 章；已验证直接来源：${source.sources.length}；缺口：${source.problems.length}。`,
+    `覆盖正文：${source.chapterIds.length} 章；已验证直接来源：${source.verifiedSourceCount}；缺口：${source.problems.length}。`,
     `Source fingerprint: ${source.sourceFingerprint}`,
-    source.ready ? '所有范围内来源均为 current；摘要解释仍需作者审阅。' : '未生成候选。请先整理并接受缺失或失效的章/卷摘要，再重试；不会自动补写来源。',
+    source.ready ? '所有范围内来源均为 current；摘要解释仍需作者审阅。' : '未生成候选。请按下方诊断处理来源、目标或输入限额后重试；不会自动补写来源或覆盖损坏目标。',
     ...source.problems.slice(0, 12).map((problem) => `${problem.path}: ${problem.status} — ${problem.reason}`),
     ...(source.problems.length > 12 ? [`另有 ${source.problems.length - 12} 项缺口未在此有界报告展开。`] : []),
   ].join('\n');
@@ -74,19 +84,27 @@ function createEvaluator(snapshot: FrozenWorkspaceSnapshot, chapterCoverage: rea
     const sourceFingerprint = hash(JSON.stringify({ targetPath, chapterIds: covered,
       files: [...dependencyPaths].sort().map((path) => [path, fileHash(path)]) }));
     const sources: SummaryInput[] = []; const problems: Array<{ path: string; status: string; reason: string }> = [];
+    let verifiedSourceCount = 0; let inputBytes = 2;
+    let overLimit = covered.length > SUMMARY_LIMITS.chapters || directPaths.length > SUMMARY_LIMITS.sources;
     for (const path of directPaths) {
       const evidence = volume ? byChapter.get(path.slice('summaries/chapter/'.length, -3))! : assess(path);
       if (evidence.status !== 'current' || evidence.verifiedContent === undefined) {
         problems.push({ path, status: evidence.status, reason: evidence.reason }); continue;
       }
-      sources.push(Object.freeze({ path, sourceHash: fileHash(path)!, payloadHash: hash(evidence.verifiedContent), payload: evidence.verifiedContent }));
+      const input = Object.freeze({ path, sourceHash: fileHash(path)!, payloadHash: hash(evidence.verifiedContent), payload: evidence.verifiedContent });
+      inputBytes += Buffer.byteLength(JSON.stringify(input)) + (verifiedSourceCount++ ? 1 : 0);
+      overLimit ||= inputBytes > SUMMARY_LIMITS.inputBytes;
+      // Keep counting/validating coverage, but never retain a partial oversized payload.
+      if (overLimit) sources.length = 0;
+      else sources.push(input);
     }
     if (!covered.length) problems.push({ path: targetPath, status: 'missing', reason: '范围内没有正文章节；0000.md 卷信息不计入正文。' });
-    if (covered.length > SUMMARY_LIMITS.chapters || directPaths.length > SUMMARY_LIMITS.sources
-      || Buffer.byteLength(JSON.stringify(sources)) > SUMMARY_LIMITS.inputBytes) {
-      problems.push({ path: targetPath, status: 'limit', reason: '摘要输入超出 4096 章 / 1024 来源 / 256 KiB 限额；请缩小卷范围，不会静默截断。' });
+    if (overLimit) {
+      problems.push({ path: targetPath, status: 'limit', reason: `摘要输入超出 4096 章 / 1024 来源 / 256 KiB 限额，不会静默截断。${volume
+        ? '本卷固定覆盖全部正文；可按创作结构拆卷，或精简观察后重新整理并接受章摘要。'
+        : '全书固定覆盖全部正文，不能选择卷子集；请用更简短的段落重新整理并接受各卷摘要。'}` });
     }
-    const result = Object.freeze({ targetPath, chapterIds: Object.freeze([...covered]), sources: Object.freeze(sources), sourceFingerprint,
+    const result = Object.freeze({ targetPath, chapterIds: Object.freeze([...covered]), sources: Object.freeze(sources), verifiedSourceCount, sourceFingerprint,
       ready: problems.length === 0, problems: Object.freeze(problems.map((problem) => Object.freeze(problem))) });
     packages.set(targetPath, result); return result;
   }
@@ -110,9 +128,10 @@ function createEvaluator(snapshot: FrozenWorkspaceSnapshot, chapterCoverage: rea
           } else {
             // The canonical file retains every citation. Carry only verified prose to
             // the next layer/default context so the full leaf inventory is not repeated.
-            const verifiedContent = renderSummaryParagraphs(document.paragraphs, { includeSourceReferences: false });
+            const verifiedContent = document.paragraphs.map((paragraph) => paragraph.text).join('\n\n');
+            const renderedContent = renderSummaryParagraphs(document.paragraphs, { includeSourceReferences: false });
             result = { path, status: 'current', reason: 'Complete chapter inventory and transitive source hashes match verified current inputs.', sourceFingerprint: document.sourceFingerprint,
-              verifiedContent, context: `Freshness: current summary; ${document.chapterIds.length} chapters covered. Hashes verify provenance, not literary interpretation. Full source citations remain in the canonical file; this is a derived prose view.\n\n${verifiedContent}${parsed.authorContent.trim() ? `\n\nAuthor text (unverified reference; not covered by the evidence check):\n${parsed.authorContent.trim()}` : ''}` };
+              verifiedContent, context: `Freshness: current summary; ${document.chapterIds.length} chapters covered. Hashes verify provenance, not literary interpretation. Full source citations remain in the canonical file; this is a derived prose view.\n\n${renderedContent}${parsed.authorContent.trim() ? `\n\nAuthor text (unverified reference; not covered by the evidence check):\n${parsed.authorContent.trim()}` : ''}` };
           }
         }
       } catch {

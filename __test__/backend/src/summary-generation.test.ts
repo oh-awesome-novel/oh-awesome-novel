@@ -17,11 +17,12 @@ const usage = { inputTokens: { total: 5, noCache: 5, cacheRead: 0, cacheWrite: 0
 type Part = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never;
 const response = (chunks: Part[]) => ({ stream: simulateReadableStream({ chunks, initialDelayInMs: null, chunkDelayInMs: null }) });
 afterEach(async () => { for (const server of servers.splice(0)) await server.close(); await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
-async function fixture(options: { global?: boolean; incomplete?: boolean; invalid?: boolean; autoCommit?: boolean } = {}) {
+async function fixture(options: { global?: boolean; incomplete?: boolean; invalid?: boolean; autoCommit?: boolean; damagedTarget?: boolean; consultation?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'oan-summary-http-')); roots.push(root);
   const files = settledSummaryFiles();
   if (options.global) appendSummary(files, volumePath);
   if (options.incomplete) files.push({ path: 'chapters/0001/0002.md', content: '未结算章节' });
+  if (options.damagedTarget) files.push({ path: options.global ? globalPath : volumePath, content: '# 作者摘要\n<!-- oan:summary:v1\n损坏区块' });
   await mkdir(join(root, '.oan'), { recursive: true });
   await writeFile(join(root, '.oan/config.yaml'), `version: 1\nnovelName: Summary test\ngit:\n  autoCommitOnAccept: ${options.autoCommit === true}\n`);
   for (const file of files) { await mkdir(dirname(join(root, file.path)), { recursive: true }); await writeFile(join(root, file.path), file.content); }
@@ -33,9 +34,10 @@ async function fixture(options: { global?: boolean; incomplete?: boolean; invali
   let step = 0;
   const model = new MockLanguageModelV4({ doStream: async (call) => {
     step++;
-    if (options.incomplete) expect(call.tools ?? []).toHaveLength(0);
+    if (options.consultation) expect(call.tools?.map((item) => item.name) ?? []).not.toContain('summary.propose');
+    else if (options.incomplete || options.damagedTarget) expect(call.tools ?? []).toHaveLength(0);
     else expect(call.tools?.map((item) => item.name)).toEqual(['summary.propose']);
-    return !options.incomplete && step % 2 === 1 ? response([
+    return !options.incomplete && !options.damagedTarget && !options.consultation && step % 2 === 1 ? response([
       { type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: `summary-${step}`, toolName: 'summary.propose', input: JSON.stringify(draft) },
       { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage },
     ]) : response([
@@ -50,9 +52,9 @@ async function fixture(options: { global?: boolean; incomplete?: boolean; invali
     await backend.close(); servers.splice(servers.indexOf(backend), 1); backend = await start(); servers.push(backend);
   } };
 }
-async function chat(url: string, global = false, paths = global ? [] : [chapterPath]) {
+async function chat(url: string, global = false, paths = global ? [] : [chapterPath], request = global ? '/整理全书' : '/整理本卷') {
   return fetch(`${url}/api/agent/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-    messages: [{ id: 'summary-request', role: 'user', parts: [{ type: 'text', text: global ? '/整理全书' : '/整理本卷' }] }], editContext: { exactWritablePaths: paths },
+    messages: [{ id: 'summary-request', role: 'user', parts: [{ type: 'text', text: request }] }], editContext: { exactWritablePaths: paths },
   }) });
 }
 async function pending(url: string) { return parsePendingActionViewListEnvelope(await (await fetch(`${url}/api/workspace/pending-actions`)).json()).pendingActions; }
@@ -109,5 +111,20 @@ describe('SDK → HTTP/SSE → summary review → Accept', () => {
     const res = await decide(f.backend.url, action!.id, 'accept'); expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ receipt: { git: { status: 'committed' } } });
     expect((await git('git', ['-C', f.root, 'show', '--format=', '--name-only', 'HEAD'])).stdout.trim()).toBe(volumePath);
+  });
+  it('does not require a volume selection for a consultation mentioning volume summaries', async () => {
+    const f = await fixture({ consultation: true });
+    const res = await chat(f.backend.url, false, [], '帮我看看怎么整理第一卷摘要，先别写');
+    expect(res.status).toBe(200); await res.text();
+    expect(f.model.doStreamCalls).toHaveLength(1); expect(await pending(f.backend.url)).toEqual([]);
+  });
+  it('reports a damaged target with no generation inputs or proposal tool', async () => {
+    const f = await fixture({ damagedTarget: true }); const before = await readFile(join(f.root, volumePath), 'utf8');
+    const res = await chat(f.backend.url); expect(res.status).toBe(200); await res.text();
+    expect(f.model.doStreamCalls).toHaveLength(1);
+    expect(JSON.stringify(f.model.doStreamCalls[0].prompt)).toContain('target-invalid');
+    expect(JSON.stringify(f.model.doStreamCalls[0].prompt)).not.toContain('Verified summary input summaries/');
+    expect(JSON.stringify(f.model.doStreamCalls[0].prompt)).not.toContain('林安到达城门');
+    expect(await pending(f.backend.url)).toEqual([]); expect(await readFile(join(f.root, volumePath), 'utf8')).toBe(before);
   });
 });

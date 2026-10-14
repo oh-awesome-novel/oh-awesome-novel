@@ -1,4 +1,5 @@
 import { assertSummaryTargetPath, prepareSummaryGeneration, formatSummaryGenerationCoverage, parseSummaryGenerationDraft, mergeSummaryDocument } from '@oh-awesome-novel/core';
+import type { SummaryGenerationSource } from '@oh-awesome-novel/core';
 import { CandidateChangeSetBuilder } from './deterministic-change-producers';
 import { createWorkspaceChangePolicy, validateCandidateChangeSetAgainstPolicy } from './workspace-change-policy';
 import { createWorkspaceProjection } from './workspace-projection';
@@ -44,7 +45,7 @@ export function createSummaryGenerationChangeProposal(input: {
 }
 
 /** Materializer-owned guard; remains effective after restart and with permissive host hooks. */
-export async function assertSummaryGenerationActionFresh(workspaceRoot: string, action: PendingAction): Promise<void> {
+export async function assertSummaryGenerationActionFresh(workspaceRoot: string, action: PendingAction): Promise<SummaryGenerationSource> {
   const origin = action.origin;
   if (origin?.kind !== 'summaryGeneration' || action.source.kind !== 'deterministic-builder'
     || action.source.producer !== SUMMARY_GENERATION_PRODUCER || action.source.capability !== 'summary.edit'
@@ -56,6 +57,7 @@ export async function assertSummaryGenerationActionFresh(workspaceRoot: string, 
     const projection = await createWorkspaceProjection({ workspaceRoot, rules: summaryGenerationProjectionRules(origin.targetPath) });
     const source = prepareSummaryGeneration({ files: projection.baselineFiles }, origin.targetPath);
     if (!source.ready || source.sourceFingerprint !== origin.sourceFingerprint) throw new Error('Summary chapter inventory or source evidence changed; regenerate the summary.');
+    return source;
   } catch (error) {
     throw Object.assign(new Error(`Summary sources are stale or unreadable: ${error instanceof Error ? error.message : String(error)}`), { code: 'STALE_PENDING_ACTION_BASELINE' });
   }

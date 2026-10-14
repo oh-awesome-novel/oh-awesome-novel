@@ -689,6 +689,8 @@ function assertExternalContextIsBound(input: NovelAgentTurnInput): void {
 /**
  * Maps a trusted product capability to one sandbox family. A write capability
  * is granted only when the host also supplies at least one exact target.
+ * Deterministic settlement/summary factories derive their own targets and do
+ * not use this selection as their policy or as a readiness check.
  */
 export function selectNovelAgentSandboxPolicy(input: {
   capability?: NovelCopilotCapabilityId;
@@ -1212,9 +1214,13 @@ export const inferNovelAgentCapability = (
   quickCommands: NovelCopilotQuickCommand[] = NOVEL_COPILOT_QUICK_COMMANDS,
 ): NovelCopilotCapabilityId | undefined => {
   const normalized = request.trim();
-  const quickCommand = quickCommands.find((command) =>
-    normalized.startsWith(command.slashCommand),
-  );
+  const quickCommand = quickCommands.find((command) => {
+    const aggregate = command.capabilityId === 'novel.summarize_volume' || command.capabilityId === 'novel.summarize_global';
+    if (!aggregate) return normalized.startsWith(command.slashCommand);
+    return (normalized.startsWith(command.slashCommand)
+      && (normalized.length === command.slashCommand.length || /^[\s，。,:：;；!?！？]/u.test(normalized.slice(command.slashCommand.length))))
+      || normalized === command.prompt;
+  });
 
   if (quickCommand) {
     return quickCommand.capabilityId;
@@ -1225,8 +1231,8 @@ export const inferNovelAgentCapability = (
     capability: NovelCopilotCapabilityId;
     patterns: RegExp[];
   }> = [
-    { capability: 'novel.summarize_volume', patterns: [/整理本卷/u, /(?:生成|更新|整理).*卷(?:级)?摘要/u, /summarize (?:the )?volume/u] },
-    { capability: 'novel.summarize_global', patterns: [/整理全书/u, /(?:生成|更新|整理).*(?:全书|全局)摘要/u, /summarize (?:the )?(?:book|novel)/u] },
+    // Aggregate generation is explicit: use its slash command or catalog prompt.
+    // Mentioning a summary in a question or a negated request never selects it.
     {
       capability: 'novel.write_chapter',
       patterns: [/写.*章/u, /下一章/u, /chapter draft/u, /\bdraft\b/u],

@@ -11,24 +11,10 @@ import { WRITING_PROFILE_OUTPUTS } from './writing-profile.js';
 import type { WritingProfileOutput } from './writing-profile.js';
 import { parsePendingActionView } from './pending-action-view.js';
 import type { PendingActionViewV1 } from './pending-action-view.js';
+import { NOVEL_COPILOT_CAPABILITY_IDS } from '@oh-awesome-novel/core/novel-copilot-contract';
+import type { NovelCopilotCapabilityId } from '@oh-awesome-novel/core/novel-copilot-contract';
 
-export type NovelCopilotCapabilityId =
-  | 'novel.generate_character_card'
-  | 'novel.plan_outline'
-  | 'novel.plan_volume'
-  | 'novel.plan_chapter'
-  | 'novel.write_chapter'
-  | 'novel.review_chapter'
-  | 'novel.revise_chapter'
-  | 'novel.settle_chapter'
-  | 'novel.summarize_volume'
-  | 'novel.summarize_global'
-  | 'novel.update_state'
-  | 'novel.plan_foreshadow'
-  | 'novel.de_ai'
-  | 'novel.play_scene'
-  | 'novel.import_tavern_character'
-  | 'novel.deconstruct_reference';
+export type { NovelCopilotCapabilityId };
 
 export type ReferenceDeconstructionRunStatus =
   | 'created'
@@ -387,24 +373,7 @@ export interface ActiveReferenceDeconstructionRunReadResult {
   run: ReferenceDeconstructionRun | null;
 }
 
-const CAPABILITY_IDS: ReadonlySet<string> = new Set([
-  'novel.generate_character_card',
-  'novel.plan_outline',
-  'novel.plan_volume',
-  'novel.plan_chapter',
-  'novel.write_chapter',
-  'novel.review_chapter',
-  'novel.revise_chapter',
-  'novel.settle_chapter',
-  'novel.summarize_volume',
-  'novel.summarize_global',
-  'novel.update_state',
-  'novel.plan_foreshadow',
-  'novel.de_ai',
-  'novel.play_scene',
-  'novel.import_tavern_character',
-  'novel.deconstruct_reference',
-]);
+const CAPABILITY_IDS: ReadonlySet<string> = new Set(NOVEL_COPILOT_CAPABILITY_IDS);
 
 const RUN_STATUSES: ReadonlySet<string> = new Set([
   'created',
