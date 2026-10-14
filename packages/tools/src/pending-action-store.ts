@@ -1082,7 +1082,8 @@ class FilePendingActionStore implements PendingActionStore {
       await rename(breaker, `${breaker}.stale-${owner.token}`);
     } catch (error) {
       if (!isNotFoundError(error) && !isAlreadyExistsError(error)
-        && (error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error;
+        && (error as NodeJS.ErrnoException).code !== 'ENOTEMPTY'
+        && !isWindowsRenameContention(error)) throw error;
     }
   }
 
@@ -1611,6 +1612,17 @@ function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boo
     if (code !== 'ESRCH') throw error;
     return true;
   }
+}
+
+/**
+ * Windows reports a directory rename onto an existing (fence) directory, or
+ * over a path another process briefly holds open, as EPERM/EACCES/EBUSY rather
+ * than ENOTEMPTY. For a concurrent breaker recoverer that means it lost the
+ * race; the caller retries instead of failing the approval.
+ */
+function isWindowsRenameContention(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
