@@ -1,16 +1,34 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPendingActionStore } from '@oh-awesome-novel/tools';
+
+const renameFault = vi.hoisted(() => ({ source: '', mode: '', hits: 0 }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...original, rename: async (...args: Parameters<typeof original.rename>) => {
+    if (String(args[0]) === renameFault.source && renameFault.hits === 0) {
+      renameFault.hits++;
+      if (renameFault.mode === 'collision') await original.rename(...args);
+      if (renameFault.mode === 'wrong-owner') {
+        await original.mkdir(args[1], { recursive: true });
+        await original.writeFile(join(String(args[1]), 'owner.json'), JSON.stringify({ token: 'different', pid: process.pid }));
+      }
+      throw Object.assign(new Error('Injected Windows rename denial'), { code: 'EPERM' });
+    }
+    return original.rename(...args);
+  } };
+});
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(async () => {
+  Object.assign(renameFault, { source: '', mode: '', hits: 0 });
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
@@ -61,6 +79,25 @@ describe('PendingAction cross-process lock ownership', () => {
     expect(await readFile(join(breaker, 'owner.json'), 'utf8')).toBe(owner);
   });
 
+  it.each(['collision', 'denied', 'wrong-owner'])('handles Windows rename denial only with a matching fence: %s', async (mode) => {
+    const { root, child, applyLock } = await holdingProcess();
+    const pid = child.pid!;
+    await finish(child, 'crash');
+    await expire(applyLock);
+    const breaker = `${applyLock}.break`;
+    await mkdir(breaker);
+    await writeFile(join(breaker, 'owner.json'), JSON.stringify({ token: randomUUID(), pid }));
+    await expire(breaker);
+    Object.assign(renameFault, { source: breaker, mode, hits: 0 });
+    const store = await createPendingActionStore({ workspaceRoot: root, lockMaxAttempts: 5 });
+    let entered = false;
+    const attempt = store.withMaterializationLocks('contender', async () => { entered = true; });
+    if (mode === 'collision') await expect(attempt).resolves.toBeUndefined();
+    else await expect(attempt).rejects.toMatchObject({ code: 'EPERM' });
+    expect(entered).toBe(mode === 'collision');
+    expect(renameFault.hits).toBeGreaterThan(0);
+  });
+
   it('recovers a crashed breaker concurrently and retains a fence against delayed recoverers', async () => {
     const { root, child, applyLock } = await holdingProcess();
     const pid = child.pid!;
@@ -78,7 +115,7 @@ describe('PendingAction cross-process lock ownership', () => {
 });
 
 async function holdingProcess() {
-  const root = await mkdtemp(join(tmpdir(), 'oan-pending-locks-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'oan-pending-locks-')));
   roots.push(root);
   const child = fork(new URL('./fixtures/pending-action-lock-holder.mjs', import.meta.url), [root], {
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
@@ -117,13 +154,16 @@ async function assertExclusiveContenders(root: string) {
   let active = 0;
   let maximum = 0;
   let completed = 0;
-  await Promise.all(stores.map((store, index) => store.withMaterializationLocks(`contender-${index}`, async () => {
+  const outcomes = await Promise.allSettled(stores.map((store, index) => store.withMaterializationLocks(`contender-${index}`, async () => {
     active += 1;
     maximum = Math.max(maximum, active);
     await delay(15);
     active -= 1;
     completed += 1;
   })));
+  for (const outcome of outcomes) {
+    if (outcome.status === 'rejected') throw outcome.reason;
+  }
   expect(maximum).toBe(1);
   expect(completed).toBe(8);
 }

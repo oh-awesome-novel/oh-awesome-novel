@@ -1079,7 +1079,25 @@ class FilePendingActionStore implements PendingActionStore {
       // Every observer of this dead owner shares one nonempty destination.
       // Keep it as a fence: a delayed observer then cannot rename a NEW live
       // breaker over it, even after another recoverer acquired/released one.
-      await rename(breaker, `${breaker}.stale-${owner.token}`);
+      const quarantine = `${breaker}.stale-${owner.token}`;
+      try {
+        await rename(breaker, quarantine);
+      } catch (error) {
+        // Windows reports a nonempty destination as EPERM/EACCES. Only
+        // treat that as contention if the exact observed owner is fenced;
+        // genuine permission errors must still fail closed.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EACCES') {
+          let fencedOwner: unknown;
+          try {
+            fencedOwner = await this.#readJson(join(quarantine, 'owner.json'));
+          } catch (readError) {
+            if (!isNotFoundError(readError)) throw readError;
+          }
+          if (isRecord(fencedOwner) && fencedOwner.token === owner.token && fencedOwner.pid === owner.pid) return;
+        }
+        throw error;
+      }
     } catch (error) {
       if (!isNotFoundError(error) && !isAlreadyExistsError(error)
         && (error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error;
