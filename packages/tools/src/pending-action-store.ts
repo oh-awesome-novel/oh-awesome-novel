@@ -1087,7 +1087,7 @@ class FilePendingActionStore implements PendingActionStore {
         // treat that as contention if the exact observed owner is fenced;
         // genuine permission errors must still fail closed.
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'EPERM' || code === 'EACCES') {
+        if (code === 'EPERM' || code === 'EACCES' || isWindowsRenameContention(error)) {
           let fencedOwner: unknown;
           try {
             fencedOwner = await this.#readJson(join(quarantine, 'owner.json'));
@@ -1629,6 +1629,17 @@ function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boo
     if (code !== 'ESRCH') throw error;
     return true;
   }
+}
+
+/**
+ * Windows reports a directory rename onto an existing (fence) directory, or
+ * over a path another process briefly holds open, as EPERM/EACCES/EBUSY rather
+ * than ENOTEMPTY. This identifies a possible race, not proof of one: the
+ * caller must verify the exact fenced owner before retrying.
+ */
+function isWindowsRenameContention(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
 }
 
 function isAlreadyExistsError(error: unknown): boolean {
