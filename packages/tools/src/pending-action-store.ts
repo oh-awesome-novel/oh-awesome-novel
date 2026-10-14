@@ -938,13 +938,7 @@ class FilePendingActionStore implements PendingActionStore {
         handle = await open(path, 'wx', 0o600);
       } catch (error) {
         if (!isAlreadyExistsError(error) && !isWindowsLockContention(error)) throw error;
-        if (isAlreadyExistsError(error)) {
-          try {
-            if (await this.#recoverStaleLock(path)) continue;
-          } catch (recoveryError) {
-            if (!isWindowsLockContention(recoveryError)) throw recoveryError;
-          }
-        }
+        if (isAlreadyExistsError(error) && await this.#recoverStaleLock(path)) continue;
         // Windows may deny creation while an old lock is pending deletion.
         // No handle/ownership was obtained, so retry within the same budget.
         await new Promise<void>((resolveWait) => setTimeout(resolveWait, LOCK_RETRY_MS));

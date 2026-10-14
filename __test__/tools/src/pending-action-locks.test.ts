@@ -154,6 +154,7 @@ describe('PendingAction cross-process lock ownership', () => {
     await writeFile(join(breaker, 'owner.json'), JSON.stringify({ token: randomUUID(), pid }));
     await expire(breaker);
     Object.assign(renameFault, { source: breaker, mode, hits: 0 });
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
     const store = await createPendingActionStore({ workspaceRoot: root, lockMaxAttempts: 5 });
     let entered = false;
     const attempt = store.withMaterializationLocks('contender', async () => { entered = true; });
