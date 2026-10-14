@@ -7,6 +7,7 @@ import type { ContextBudgetOptions } from './context-budget';
 export type { ContextBudgetOptions } from './context-budget';
 import { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
 import { createChapterSettlementEditEnvironment } from './chapter-settlement';
+import { createSummaryGenerationEditEnvironment } from './summary-generation';
 export { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -466,6 +467,8 @@ export const createNovelAgentTurnEditEnvironment = async (
   const factory = input.editEnvironmentFactory
     ?? (input.capability === 'novel.settle_chapter'
       ? createChapterSettlementEditEnvironment
+      : input.capability === 'novel.summarize_volume' || input.capability === 'novel.summarize_global'
+      ? createSummaryGenerationEditEnvironment
       : createSandboxNovelAgentEditEnvironmentFactory(selection));
   const environment = await factory({
     workspaceRoot: input.workspaceRoot,
@@ -714,6 +717,8 @@ function editCapabilityForNovelCapability(
     case 'novel.revise_chapter':
     case 'novel.de_ai': return 'chapter.edit';
     case 'novel.settle_chapter': return 'novel.multi-file-edit';
+    case 'novel.summarize_volume':
+    case 'novel.summarize_global': return 'summary.edit';
     case 'novel.update_state': return 'state.edit';
     case 'novel.plan_foreshadow': return 'foreshadow.edit';
     case 'novel.play_scene':
@@ -1220,6 +1225,8 @@ export const inferNovelAgentCapability = (
     capability: NovelCopilotCapabilityId;
     patterns: RegExp[];
   }> = [
+    { capability: 'novel.summarize_volume', patterns: [/整理本卷/u, /(?:生成|更新|整理).*卷(?:级)?摘要/u, /summarize (?:the )?volume/u] },
+    { capability: 'novel.summarize_global', patterns: [/整理全书/u, /(?:生成|更新|整理).*(?:全书|全局)摘要/u, /summarize (?:the )?(?:book|novel)/u] },
     {
       capability: 'novel.write_chapter',
       patterns: [/写.*章/u, /下一章/u, /chapter draft/u, /\bdraft\b/u],
@@ -1891,6 +1898,8 @@ function shouldWriteSessionArtifacts(input: {
     'novel.review_chapter',
     'novel.revise_chapter',
     'novel.settle_chapter',
+    'novel.summarize_volume',
+    'novel.summarize_global',
     'novel.update_state',
     'novel.plan_foreshadow',
     'novel.de_ai',

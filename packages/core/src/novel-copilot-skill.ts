@@ -10,6 +10,8 @@ export const NOVEL_COPILOT_CAPABILITY_IDS = [
   'novel.review_chapter',
   'novel.revise_chapter',
   'novel.settle_chapter',
+  'novel.summarize_volume',
+  'novel.summarize_global',
   'novel.update_state',
   'novel.plan_foreshadow',
   'novel.de_ai',
@@ -48,6 +50,8 @@ export type NovelCopilotQuickCommandId =
   | 'chapter.planNext'
   | 'chapter.writeNext'
   | 'chapter.settle'
+  | 'summary.volume'
+  | 'summary.global'
   | 'chapter.review'
   | 'state.update'
   | 'foreshadow.plan'
@@ -282,6 +286,8 @@ export const NOVEL_COPILOT_CAPABILITIES: NovelCopilotCapability[] = [
     status: 'available',
     description: 'Convert chapter evidence into observation log and settlement PendingActions.',
   },
+  { id: 'novel.summarize_volume', label: 'Summarize Volume', mode: 'settlement', status: 'available', description: 'Propose a volume summary from verified current chapter evidence with complete source coverage.' },
+  { id: 'novel.summarize_global', label: 'Summarize Book', mode: 'settlement', status: 'available', description: 'Propose a book summary from verified current volume summaries and transitive chapter evidence.' },
   {
     id: 'novel.update_state',
     label: 'Update State',
@@ -375,6 +381,14 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     label: '审稿',
     slashCommand: '/审稿',
     prompt: '请审查当前章节的连续性、人设、世界规则、剧情、伏笔、节奏和 AI 味。默认只输出 report-only 审稿报告和 finding schema；只有我明确要求改写时，才在固定内存工作区编辑、预览并提出 changes。',
+  },
+  {
+    id: 'summary.volume', capabilityId: 'novel.summarize_volume', label: '整理本卷', slashCommand: '/整理本卷',
+    prompt: '请根据当前打开章节所属卷的已验证章级摘要生成卷摘要。完整覆盖当前章节，逐段引用来源，通过 summary.propose 提出审批；来源缺失或过期时报告缺口。',
+  },
+  {
+    id: 'summary.global', capabilityId: 'novel.summarize_global', label: '整理全书', slashCommand: '/整理全书',
+    prompt: '请根据已验证的当前卷摘要生成全书摘要。验证底层章节来源与全书覆盖，逐段引用来源，通过 summary.propose 提出审批；来源缺失或过期时报告缺口。',
   },
   {
     id: 'state.update',

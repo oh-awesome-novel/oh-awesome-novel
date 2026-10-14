@@ -26,6 +26,8 @@ import { DEFAULT_CREATED_FILE_MODE } from './candidate-change-set';
 import { syncDirectory, syncFile as fsyncFile } from './filesystem-durability';
 import { hostFileModesMatch } from './filesystem-modes';
 import { assertChapterSettlementActionFresh } from './chapter-settlement';
+import { assertSummaryGenerationActionFresh } from './summary-generation';
+import { parseSummaryDocument } from '@oh-awesome-novel/core';
 import { assertManuscriptImportActionFresh } from './manuscript-import-change-producer';
 import { assertTavernImportActionFresh } from './tavern-import-change-producer';
 import {
@@ -399,6 +401,9 @@ class FileChangeMaterializer implements ChangeMaterializer {
 
   async #validateAction(action: PendingAction): Promise<WorkspaceChangePolicy> {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
+    if (action.origin?.kind === 'summaryGeneration') {
+      await assertSummaryGenerationActionFresh(this.#workspaceRoot, action);
+    }
     if (action.origin?.kind === 'chapterSettlement') {
       await assertChapterSettlementActionFresh(this.#workspaceRoot, action);
     }
@@ -522,6 +527,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
           validator,
           context: policy.validationContext,
         });
+        if (action.origin?.kind === 'summaryGeneration'
+          && parseSummaryDocument(draft!, change.path)?.document.sourceFingerprint !== action.origin.sourceFingerprint) {
+          throw materializerError('PENDING_ACTION_DRAFT_INTEGRITY_ERROR', 'Summary draft does not match its approved source evidence.');
+        }
       }
       prepared.push({
         operation: change.operation,

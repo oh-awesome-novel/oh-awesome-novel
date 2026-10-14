@@ -21,6 +21,11 @@ export class PendingActionViewParseError extends Error {
 
 export type PublicPendingActionOrigin =
   | {
+      readonly kind: 'summaryGeneration';
+      readonly targetPath: string;
+      readonly sourceFingerprint: string;
+    }
+  | {
       readonly kind: 'tavernImport';
       readonly previewId: string;
       readonly sourceHash: string;
@@ -450,6 +455,11 @@ function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrig
       sourceHash: assertHash(value.sourceHash, 'Manuscript source hash'),
       mappingHash: assertHash(value.mappingHash, 'Manuscript mapping hash'),
     });
+  }
+  if (value.kind === 'summaryGeneration') {
+    assertExactFields(value, ['kind', 'targetPath', 'sourceFingerprint']);
+    if (typeof value.targetPath !== 'string' || !/^(?:summaries\/global\.md|summaries\/volume\/(?!0000)\d{4}\.md)$/u.test(value.targetPath)) invalid('Invalid aggregate summary target.');
+    return deepFreeze({ kind: value.kind, targetPath: value.targetPath, sourceFingerprint: assertHash(value.sourceFingerprint, 'Summary source fingerprint') });
   }
   if (value.kind === 'chapterSettlement') {
     assertExactFields(value, ['kind', 'chapterId', 'sourceHash', 'characterInventoryHash', 'inputFiles']);

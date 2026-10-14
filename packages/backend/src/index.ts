@@ -26,6 +26,7 @@ import {
   MAX_PLAY_LAUNCH_SOURCE_BYTES,
   NOVEL_COPILOT_CAPABILITY_IDS,
   resolveChapterSettlementSelection,
+  resolveSummarySelection,
   PlaySessionWriteConflictError,
   PlayLaunchSourceValidationError,
   activateWritingProfile,
@@ -1158,6 +1159,11 @@ async function handleAgentChat(
   if (inferNovelAgentCapability(requestText) === 'novel.settle_chapter') {
     try { resolveChapterSettlementSelection(exactWritablePaths); } catch (error) {
       return jsonResponse(context, 400, { code: 'CHAPTER_SETTLEMENT_SELECTION_REQUIRED', error: (error as Error).message });
+    }
+  }
+  if (inferNovelAgentCapability(requestText) === 'novel.summarize_volume') {
+    try { resolveSummarySelection('volume', exactWritablePaths); } catch (error) {
+      return jsonResponse(context, 400, { code: 'SUMMARY_VOLUME_SELECTION_REQUIRED', error: (error as Error).message });
     }
   }
   if ('error' in attachmentIds) {
@@ -6109,7 +6115,7 @@ async function assertPendingActionOriginFresh(
   const origin = action.origin;
   assertCapabilityOriginBinding(action.source.capability, origin);
   if (origin === undefined || origin.kind === 'agentTurn') return;
-  if (origin.kind === 'chapterSettlement' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
+  if (origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
     // ChangeMaterializer always validates this origin and its complete input
     // read set before invoking the host hook. Avoid scanning it twice.
     return;

@@ -21,6 +21,8 @@ export type NovelCopilotCapabilityId =
   | 'novel.review_chapter'
   | 'novel.revise_chapter'
   | 'novel.settle_chapter'
+  | 'novel.summarize_volume'
+  | 'novel.summarize_global'
   | 'novel.update_state'
   | 'novel.plan_foreshadow'
   | 'novel.de_ai'
@@ -394,6 +396,8 @@ const CAPABILITY_IDS: ReadonlySet<string> = new Set([
   'novel.review_chapter',
   'novel.revise_chapter',
   'novel.settle_chapter',
+  'novel.summarize_volume',
+  'novel.summarize_global',
   'novel.update_state',
   'novel.plan_foreshadow',
   'novel.de_ai',

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { evaluateChapterEvidence, formatChapterEvidenceCoverage } from '@oh-awesome-novel/core';
+import { evaluateChapterEvidence, formatChapterEvidenceCoverage, evaluateAggregateSummaries, formatAggregateSummaryCoverage } from '@oh-awesome-novel/core';
 import type { SandboxProjectionSnapshot } from '@oh-awesome-novel/tools';
 import type { NovelAgentWorkspaceContextFile, NovelAgentWorkspaceSnapshot } from './index';
 import { estimateContextTokens } from './context-budget';
@@ -22,7 +22,8 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
   const constitution = select('.oan/constitution', ['.md']);
   const allState = select('state', ['.yaml', '.yml']);
   const coverage = evaluateChapterEvidence(projection);
-  const bySummary = new Map(coverage.map((item) => [item.summary.path, item.summary]));
+  const aggregateCoverage = evaluateAggregateSummaries(projection, coverage);
+  const bySummary = new Map([...coverage.map((item) => [item.summary.path, item.summary] as const), ...aggregateCoverage.map((item) => [item.path, item] as const)]);
   const byState = new Map(coverage.map((item) => [item.state.path, item.state]));
   const selectedPaths = new Set(options.targetPaths ?? []);
   const selectedChapterIds = new Set((options.targetPaths ?? []).flatMap((path) => {
@@ -39,7 +40,8 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     .filter((position) => position !== undefined).toSorted((a, b) => b.order - a.order)[0];
   const latestVolume = allSummaries.map((file) => volumeNumber(file.path))
     .filter((volume) => volume !== undefined).toSorted((a, b) => b - a)[0];
-  const activeVolumes = new Set(targets.length ? targets.map((target) => target.volume)
+  const explicitlySelectedVolumes = (options.targetPaths ?? []).map(volumeNumber).filter((volume) => volume !== undefined);
+  const activeVolumes = new Set(explicitlySelectedVolumes.length ? explicitlySelectedVolumes : targets.length ? targets.map((target) => target.volume)
     : [latestChapter?.volume ?? latestVolume].filter((volume) => volume !== undefined));
   const summaries = allSummaries.filter((file) => !bySummary.has(file.path) || bySummary.get(file.path)!.context !== undefined).toSorted((a, b) => {
     const rank = (file: File) => {
@@ -101,7 +103,7 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     ...(workflow ? { workflow: workflow.content } : {}),
     ...(chosen.length ? { summaries: Object.freeze(chosen.map((file) => payloadFor('previousChapterEnding', 'summaries', file))) } : {}),
     ...(state.length ? { state: state.map((file) => payloadFor('latestState', 'state', file)).join('\n\n') } : {}),
-    chapterEvidenceCoverage: formatChapterEvidenceCoverage(coverage, [...selectedChapterIds]),
+    chapterEvidenceCoverage: `${formatChapterEvidenceCoverage(coverage, [...selectedChapterIds])}\n\n${formatAggregateSummaryCoverage(aggregateCoverage)}`,
     ...(timeline.length ? { timeline: timeline.map((file) => format('timeline', file)).join('\n\n') } : {}),
     ...(foreshadow.length ? { foreshadow: foreshadow.map((file) => format('foreshadow', file)).join('\n\n') } : {}),
     contextFiles: Object.freeze(contextFiles),

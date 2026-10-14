@@ -2,6 +2,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
 import { evaluateChapterEvidence } from './chapter-evidence-freshness.js';
+import { evaluateAggregateSummaries } from './summary-evidence.js';
 import type { FrozenWorkspaceSnapshot } from './chapter-evidence-freshness.js';
 import { readWorkspaceTextFile } from './workspace-text.js';
 
@@ -24,6 +25,7 @@ export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options
   }))].sort();
   const missingCharacterCards = characterIds.filter((id) => !files.has(`characters/${id}/meta.yaml`) || !files.has(`characters/${id}/summary.md`));
   const coverage = evaluateChapterEvidence(snapshot);
+  const aggregateSummaries = evaluateAggregateSummaries(snapshot, coverage);
   const chapters = snapshot.files.flatMap(({ path }) => {
     const id = /^chapters\/(.+)\.md$/u.exec(path)?.[1]; return id && !id.endsWith('/0000') ? [id] : [];
   }).sort();
@@ -43,6 +45,10 @@ export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options
       return [{ id: `chapter-${kind}-${assessment.status}:${item.chapterId}`, severity: assessment.status === 'stale' ? 'warning' : 'info',
         title: `Chapter ${kind} ${assessment.status}`, detail: `${item.chapterId}: ${assessment.reason}`, path: assessment.path }];
     })),
+    ...aggregateSummaries.flatMap((item): ProjectHealthIssue[] => item.status === 'current' || (item.status === 'missing' && chapters.length === 0) ? [] : [{
+      id: `aggregate-summary-${item.status}:${item.path}`, severity: item.status === 'stale' ? 'warning' : 'info',
+      title: `Volume/global summary ${item.status}`, detail: item.reason, path: item.path,
+    }]),
     ...timelineGaps.map((id): ProjectHealthIssue => ({ id: `timeline-gap:${id}`, severity: 'info', title: 'No timeline event for chapter', detail: `${id} has chapter text but no timeline event.`, path: `chapters/${id}.md` })),
   ];
   if (latestStateStale) issues.push({ id: 'latest-state-stale', severity: 'warning', title: 'Chapter state has stale source evidence', detail: 'At least one settled chapter no longer matches its recorded source hash. Global state is not automatically retracted.', path: 'state/chapters' });

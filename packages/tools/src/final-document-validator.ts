@@ -6,6 +6,7 @@ import {
   assertReferenceDeconstructionDiagnostics,
   assertReferenceDeconstructionManifest,
   assertReferenceProgress,
+  parseSummaryDocument,
 } from '@oh-awesome-novel/core';
 
 import {
@@ -334,6 +335,7 @@ function validateChapterMarkdown(path: string, content: string): void {
 
 function validateSummaryMarkdown(path: string, content: string): void {
   const parts = validateMarkdown(path, content, 'summary');
+  if (content.includes('oan:summary:')) parseSummaryDocument(content, path);
   const chapter = /^summaries\/chapter\/(\d{4})\/(\d{4})\.md$/u.exec(path);
   const volume = /^summaries\/volume\/(\d{4})\.md$/u.exec(path);
   if (!parts.frontmatter) return;

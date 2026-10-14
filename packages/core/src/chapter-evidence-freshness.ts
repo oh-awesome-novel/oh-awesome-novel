@@ -13,6 +13,8 @@ export interface ChapterEvidenceAssessment {
   readonly sourceHash?: string;
   /** Explicitly derived context, never canonical bytes or an approval draft. */
   readonly context?: string;
+  /** Verified current evidence only, without author fields or historical snapshots. */
+  readonly verifiedContent?: string;
 }
 export interface ChapterEvidenceCoverage {
   readonly chapterId: string;
@@ -118,6 +120,7 @@ function assessSummary(path: string, content: string | undefined, chapterId: str
     const expected = state.currentObservations.map((item) => `- ${markdownText(item.subject)}: ${markdownText(item.observation)} (lines ${item.evidence.startLine}-${item.evidence.endLine})`).join('\n');
     if (evidence !== `${prefix}${expected}\n${snapshotEnd}`) throw new Error('Summary evidence was edited.');
     return result(path, 'current', 'Current summary evidence matches chapter hash and validated chapter observations.', { sourceHash,
+      verifiedContent: expected,
       context: `Freshness: current evidence snapshot; historical snapshots omitted. Source SHA-256: ${sourceHash}\n\n${expected}${authorContent.trim() ? `\n\nAuthor text (unverified reference; not covered by the evidence check):\n${authorContent.trim()}` : ''}`,
     });
   } catch {

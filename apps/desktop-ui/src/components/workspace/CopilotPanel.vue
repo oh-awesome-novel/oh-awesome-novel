@@ -69,6 +69,8 @@ const quickCommands = [
   { id: 'chapter.planNext', label: '规划下一章', prompt: '/规划下一章' },
   { id: 'chapter.writeNext', label: '写下一章', prompt: '/写下一章' },
   { id: 'chapter.settle', label: '整理本章', prompt: '/整理本章' },
+  { id: 'summary.volume', label: '整理本卷', prompt: '/整理本卷' },
+  { id: 'summary.global', label: '整理全书', prompt: '/整理全书' },
   { id: 'character.generateCard', label: '生成角色卡', prompt: '/生成角色卡' },
   { id: 'chapter.review', label: '审稿', prompt: '/审稿' },
   { id: 'state.update', label: '更新状态', prompt: '/更新状态' },

@@ -139,7 +139,7 @@ Deliverables: chat streaming、tool activity、PendingAction list/detail、creat
 
 Goal: 使用 chapter/volume/global summaries、state、timeline 与 foreshadow 构造 bounded context，不加载整本小说，不把向量数据库当事实源。
 
-Current delivery: `1030` 章节证据结算与 `1290` 章级 freshness / 历史分层已完成。卷/全局摘要可作为明确未验证的手工参考读取，生成和多层来源覆盖传播仍待独立实现。
+Current delivery: `1030` 章节证据结算、`1290` 章级 freshness / 历史分层，以及 `0700` 显式卷/全书摘要生成已接通。卷摘要使用已验证当前章级证据，全书摘要使用已验证当前卷摘要；共享冻结 evaluator 核对覆盖清单、直接来源 byte/payload hash 与底层正文依赖。修改旧章或增删章会传递为上层 stale；生成及更新仍需 PendingAction / Accept，手工无来源摘要继续作为 unverified 参考。
 
 ## M10. Workflow And Skills
 

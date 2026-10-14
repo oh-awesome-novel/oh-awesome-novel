@@ -334,6 +334,7 @@ export {
   createChapterSettlementChangeProposal,
   assertChapterSettlementActionFresh,
 } from './chapter-settlement';
+export { SUMMARY_GENERATION_PRODUCER, summaryGenerationProjectionRules, createSummaryGenerationChangeProposal, assertSummaryGenerationActionFresh } from './summary-generation';
 
 export type { SandboxReadSource } from './sandbox-edit-session';
 

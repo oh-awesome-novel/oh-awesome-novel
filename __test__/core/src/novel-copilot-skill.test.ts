@@ -23,6 +23,8 @@ const expectedQuickCommandIds: NovelCopilotQuickCommandId[] = [
   'chapter.writeNext',
   'chapter.settle',
   'chapter.review',
+  'summary.volume',
+  'summary.global',
   'state.update',
   'foreshadow.plan',
   'chapter.deAi',

@@ -21,6 +21,14 @@ const HASH_C = 'c'.repeat(64);
 const HASH_D = 'd'.repeat(64);
 
 describe('strict PendingActionView client boundary', () => {
+  it('preserves aggregate summary provenance and rejects unknown scope or fingerprint fields', () => {
+    const origin = { kind: 'summaryGeneration', targetPath: 'summaries/global.md', sourceFingerprint: HASH_A };
+    expect(parsePendingActionView({ ...createPendingView(), origin }).origin).toEqual(origin);
+    for (const invalid of [{ ...origin, extra: true }, { ...origin, sourceFingerprint: undefined }, { ...origin, sourceFingerprint: 'bad' },
+      ...['../global.md', 'chapters/0001/0001.md', 'summaries/volume/0000.md', 'summaries/volume/1.md'].map((targetPath) => ({ ...origin, targetPath }))]) {
+      expect(() => parsePendingActionView({ ...createPendingView(), origin: invalid })).toThrow();
+    }
+  });
   it('preserves the chapter settlement identity and rejects unknown or malformed origin fields', () => {
     const origin = { kind: 'chapterSettlement', chapterId: '0001/0002', sourceHash: HASH_A, characterInventoryHash: HASH_B,
       inputFiles: [{ path: 'chapters/0001/0002.md', sha256: HASH_A },

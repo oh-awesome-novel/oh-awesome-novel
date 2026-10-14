@@ -72,6 +72,11 @@ export type PendingActionSource =
 
 export type PendingActionOrigin =
   | {
+      readonly kind: 'summaryGeneration';
+      readonly targetPath: string;
+      readonly sourceFingerprint: string;
+    }
+  | {
       readonly kind: 'tavernImport';
       readonly previewId: string;
       readonly sourceHash: string;
@@ -309,6 +314,13 @@ export function parsePendingAction(
     && (!settlementProducer || origin?.kind !== 'chapterSettlement' || source.capability !== 'novel.multi-file-edit')) {
     invalidSchema('Settlement producer requires its matching chapter evidence origin.');
   }
+  const summaryProducer = source.kind === 'deterministic-builder' && source.producer === 'summary-generation';
+  if ((summaryProducer || origin?.kind === 'summaryGeneration')
+    && (!summaryProducer || origin?.kind !== 'summaryGeneration' || source.capability !== 'summary.edit'
+      || allowedTargets.length !== 1 || allowedTargets[0] !== origin.targetPath || changes.length !== 1
+      || changes[0]!.path !== origin.targetPath || changes[0]!.operation === 'delete')) {
+    invalidSchema('Summary producer requires its evidence origin and one exact create/update target.');
+  }
   return deepFreeze(structuredClone(value)) as unknown as PendingAction;
 }
 
@@ -467,7 +479,11 @@ function assertTavernImportTargets(
 
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
-  if (value.kind === 'tavernImport') {
+  if (value.kind === 'summaryGeneration') {
+    assertExactFields(value, ['kind', 'targetPath', 'sourceFingerprint']);
+    if (typeof value.targetPath !== 'string' || !/^(?:summaries\/global\.md|summaries\/volume\/(?!0000)\d{4}\.md)$/u.test(value.targetPath)) invalidSchema('Invalid aggregate summary target.');
+    assertSha256(value.sourceFingerprint, 'Summary source fingerprint');
+  } else if (value.kind === 'tavernImport') {
     assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash', 'mode', 'characterId', 'baselineFiles']);
     assertOpaquePendingActionId(value.previewId, 'Tavern import preview id');
     assertSha256(value.sourceHash, 'Tavern import source hash');

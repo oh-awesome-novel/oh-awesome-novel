@@ -237,6 +237,8 @@ Core 的冻结输入 evaluator 供 host health 与 Agent 共用，按正文原�
 
 canonical source hash 与派生 payload hash 分别记录。此策略不删除历史、不调用隐式压缩模型，也不自动撤销过去已接受的全局事实。具体范围和规模验收见 [1290](tasks/1290.md)。
 
+卷/全书摘要由作者显式 `/整理本卷`、`/整理全书` 生成，见 [0700](tasks/0700.md)。宿主根据选择推导唯一目标，模型只提供引用已验证直接来源的摘要段落。卷输入不含章摘要的作者批注或历史块，全书输入不含卷摘要的手工文字；来源不完整时只报告缺口。受管 Markdown 记录章节覆盖、直接来源 byte/payload hash 和传递到正文的 source fingerprint。共享 evaluator 不依赖中间文件重写即可判定上层 stale；默认消息排除 stale/损坏的受管摘要。`summary-generation` producer 经同一 PendingAction/materializer，Accept 内建重验全范围正文清单及证据，重启后仍有效。
+
 ### Author Manuscript Import
 
 作者旧稿导入是独立的确定性 workflow：有界 Markdown 上传 → 保留原文的拆章/映射 → immutable prepared preview → PendingAction → Accept。它不读取调用方提供的宿主路径、不使用模型，仅对宿主验证后的规范章节路径授予 `chapter.edit`，初版只允许 create。

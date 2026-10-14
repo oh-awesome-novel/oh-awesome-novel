@@ -201,6 +201,10 @@ export type {
 // Writing Settlement
 export { CHAPTER_SETTLEMENT_OBSERVATION_SCHEMA, assertChapterSettlementId, resolveChapterSettlementSelection, createChapterSettlementSource, parseChapterSettlementObservationLog, formatChapterSettlementObservationLog } from './chapter-settlement.js';
 export type { ChapterSettlementSource, ChapterSettlementObservation, ChapterSettlementObservationLog, ChapterSettlementDomainChange, ChapterSettlementStateField } from './chapter-settlement.js';
+export { SUMMARY_LIMITS, SUMMARY_GENERATION_SCHEMA, assertSummaryTargetPath, resolveSummarySelection, parseSummaryGenerationDraft, parseSummaryDocument, renderSummaryParagraphs, mergeSummaryDocument } from './summary-document.js';
+export type { SummaryParagraph, SummarySourceReference, SummaryGenerationDraft, SummaryDocument } from './summary-document.js';
+export { evaluateAggregateSummaries, prepareSummaryGeneration, formatSummaryGenerationCoverage, formatAggregateSummaryCoverage } from './summary-evidence.js';
+export type { SummaryInput, SummaryGenerationSource, AggregateSummaryAssessment } from './summary-evidence.js';
 export {
   SETTLEMENT_HOOK_OPERATIONS,
   formatObservationLogMarkdown,

@@ -459,6 +459,10 @@ summaries/global.md
 
 上下文组装时优先使用摘要，不加载全部章节全文。
 
+卷/全书摘要的受管格式是单个 `oan:summary:v1` Markdown 注释区块：严格 JSON 元数据包含 `schemaVersion: 1`、`targetPath`、排序去重的 `chapterIds`、直接 `sources`（`path/sourceHash/payloadHash`）、传递来源 `sourceFingerprint` 和带 `sourcePaths` 的段落；其后是由同一段落确定性渲染的可读正文。元数据与可读正文必须一致，未知版本、错位身份或损坏区块为 unverified。区块之外的作者文字按原样保留，不进入上层生成的已验证输入；更新仅替换合法受管区块，旧版本由 Git 保存。
+
+卷摘要完整覆盖当前卷的正文章节；全书摘要完整覆盖当前所有有正文的卷。`0000.md` 卷元信息不计入正文覆盖。来源链为正文 → 已接受章级证据/摘要 → 卷摘要 → 全书摘要；即便中间摘要未重新生成，正文变化、增删章或跨卷移动也会使上层摘要失效。只 touch 不影响内容 hash。缺失、过期或未验证来源不生成部分覆盖的候选。
+
 ## Constitution Format
 
 Constitution 拆成目录：

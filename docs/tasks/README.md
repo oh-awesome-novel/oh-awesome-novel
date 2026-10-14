@@ -45,6 +45,7 @@
 - [0555 Chapter Navigation View](0555.md)
 - [0560 Workspace Home Quick Actions And Copilot Visibility](0560.md)
 - [0600 Human Approval Vertical Slice](0600.md)
+- [0700 Summary Workflow Extensions Polish](0700.md)
 - [0800 Sandbox Change Engine Migration](0800.md)
 - [0900 Project References](0900.md)
 - [1000 Agent Writing Guide vNext Spec And Skill Contracts](1000.md)
@@ -85,7 +86,6 @@
 ## Needs Review Tasks
 
 - [0580 Git History And Sync Page](0580.md)
-- [0700 Summary Workflow Extensions Polish](0700.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 - [1230 Review-driven Reliability Corrections](1230.md)
 
@@ -96,7 +96,7 @@
 
 ## Deferred Development (2026-10-01)
 
-Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。已交付0570搜索、1270正文导出、1290来源新鲜度/长篇上下文、1300作者旧稿导入及1310类型/发行门禁、预览绑定Git提交与打包旅程；后续按作者反馈推进0700卷/全局摘要，0580远端同步/环境验收和1120剩余可靠性范围。合同/helper 完成不等于生产接线或真实旅程完成。
+Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。已交付0570搜索、1270正文导出、1290来源新鲜度/长篇上下文、1300作者旧稿导入及1310类型/发行门禁、预览绑定Git提交与打包旅程。2026-10-14由0700补齐卷/全书摘要生成、多层来源覆盖和递归失效传播；后续按作者反馈推进0580远端同步/环境验收和1120剩余可靠性范围。合同/helper 完成不等于生产接线或真实旅程完成。
 
 ## Package Call Route
 

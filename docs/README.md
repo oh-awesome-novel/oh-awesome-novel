@@ -55,6 +55,8 @@ Git Diff Human Approval
 
 评估文档是带日期的建议，不替代稳定合同；尚未实施的建议不能视为当前功能或已更新的 task 状态。
 
+2026-10-14：[0700](tasks/0700.md) 已完成卷/全书摘要生成、来源 hash 覆盖与递归 stale 传播，补齐 M9 当前摘要链路。作者入口与操作顺序见[整理本卷与全书](../wiki/guide/writing.md#整理本卷与全书)。
+
 ## ADR
 
 - [ADR 0001: Filesystem First](adr/0001-filesystem-first.md)
