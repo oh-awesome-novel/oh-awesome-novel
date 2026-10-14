@@ -8,8 +8,8 @@ import {
   realpath,
   rename,
   rm,
-  utimes,
 } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import {
   basename,
   dirname,
@@ -89,8 +89,8 @@ const LOCK_STALE_MS = 60_000;
 /** Live holders refresh their lock's mtime well inside the stale window. */
 const LOCK_HEARTBEAT_MS = 10_000;
 /**
- * Identifies this process incarnation in lock files. A PID alone cannot tell a
- * crashed owner from an unrelated process that later reused the same PID.
+ * Diagnostic identity only. Random IDs cannot prove that another process
+ * incarnation exited; an alive PID must remain locked even after expiry.
  */
 const LOCK_PROCESS_INSTANCE = randomUUID();
 
@@ -931,7 +931,7 @@ class FilePendingActionStore implements PendingActionStore {
     const path = this.#engineRelativePath(relativePath);
     await this.#ensureEngineDirectory(relativePath.split('/').slice(0, -1));
     const token = randomUUID();
-    let acquired = false;
+    let acquired: FileHandle | undefined;
     for (let attempt = 0; attempt < this.#lockMaxAttempts; attempt += 1) {
       try {
         const handle = await open(path, 'wx', 0o600);
@@ -942,10 +942,11 @@ class FilePendingActionStore implements PendingActionStore {
             instance: LOCK_PROCESS_INSTANCE,
           })}\n`, 'utf8');
           await handle.sync();
-        } finally {
+        } catch (error) {
           await handle.close();
+          throw error;
         }
-        acquired = true;
+        acquired = handle;
         break;
       } catch (error) {
         if (!isAlreadyExistsError(error)) throw error;
@@ -954,15 +955,18 @@ class FilePendingActionStore implements PendingActionStore {
       }
     }
     if (!acquired) throw new Error(`PendingAction lock is busy: ${relativePath}`);
+    const heldHandle = acquired;
     const heartbeat = setInterval(() => {
       const touchedAt = new Date();
-      void utimes(path, touchedAt, touchedAt).catch(() => undefined);
+      // Touch the held inode, never a replacement lock at the same pathname.
+      void heldHandle.utimes(touchedAt, touchedAt).catch(() => undefined);
     }, LOCK_HEARTBEAT_MS);
     heartbeat.unref?.();
     try {
       return await operation();
     } finally {
       clearInterval(heartbeat);
+      await heldHandle.close();
       try {
         const owner = JSON.parse(await readFile(path, 'utf8')) as { token?: unknown };
         if (owner.token === token) await rm(path, { force: true });
@@ -974,19 +978,18 @@ class FilePendingActionStore implements PendingActionStore {
 
   async #recoverStaleLock(path: string): Promise<boolean> {
     if (!(await this.#lockLooksExpired(path))) return false;
-
-    // Serialize breakers so two recoverers cannot both judge the same stale
-    // lock and then have the slower one quarantine a freshly acquired lock.
-    const breaker = `${path}.break`;
-    let breakerHandle: Awaited<ReturnType<typeof open>>;
     try {
-      breakerHandle = await open(breaker, 'wx', 0o600);
+      const owner = await this.#readJson(path);
+      if (!isRecord(owner) || !isAbandonedLockOwner(owner)) return false;
     } catch (error) {
-      if (!isAlreadyExistsError(error)) throw error;
-      await this.#removeAbandonedBreaker(breaker);
-      return false;
+      if (isNotFoundError(error)) return true;
+      throw error;
     }
-    await breakerHandle.close();
+
+    // Serialize recoverers with a fully populated directory published by
+    // rename. A live recoverer cannot be displaced merely by a stale mtime.
+    const releaseBreaker = await this.#acquireBreaker(`${path}.break`);
+    if (!releaseBreaker) return false;
 
     try {
       if (!(await this.#lockLooksExpired(path))) return false;
@@ -1008,7 +1011,41 @@ class FilePendingActionStore implements PendingActionStore {
       await rm(quarantine, { force: true });
       return true;
     } finally {
-      await rm(breaker, { force: true });
+      await releaseBreaker();
+    }
+  }
+
+  async #acquireBreaker(breaker: string): Promise<(() => Promise<void>) | undefined> {
+    const token = randomUUID();
+    const candidate = `${breaker}.candidate-${token}`;
+    await mkdir(candidate, { mode: 0o700 });
+    try {
+      const handle = await open(join(candidate, 'owner.json'), 'wx', 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify({ token, pid: process.pid })}\n`, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      try {
+        // An existing breaker is always nonempty, so rename cannot replace it.
+        await rename(candidate, breaker);
+      } catch (error) {
+        if (!(await this.#pathExists(breaker))) {
+          if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') return undefined;
+          throw error;
+        }
+        await this.#removeAbandonedBreaker(breaker);
+        return undefined;
+      }
+      return async () => {
+        // Keep the same fence used by crash recovery, including on normal
+        // release. A delayed observer may have read this owner just before it
+        // released the breaker and exited. Never empty the published path.
+        await rename(breaker, `${breaker}.stale-${token}`);
+      };
+    } finally {
+      await rm(candidate, { recursive: true, force: true });
     }
   }
 
@@ -1027,13 +1064,25 @@ class FilePendingActionStore implements PendingActionStore {
     return Date.now() - information.mtimeMs >= LOCK_STALE_MS;
   }
 
-  /** A breaker only lives for a few file operations; one older than the stale window was orphaned by a crash. */
   async #removeAbandonedBreaker(breaker: string): Promise<void> {
     try {
       const information = await lstat(breaker);
-      if (Date.now() - information.mtimeMs >= LOCK_STALE_MS) await rm(breaker, { force: true });
+      if (information.isSymbolicLink() || !information.isDirectory()) {
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock breaker is invalid.');
+      }
+      if (Date.now() - information.mtimeMs < LOCK_STALE_MS) return;
+      const owner = await this.#readJson(join(breaker, 'owner.json'));
+      if (!isRecord(owner) || typeof owner.token !== 'string' || !/^[a-f0-9-]{36}$/u.test(owner.token)) {
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock breaker owner is invalid.');
+      }
+      if (!isAbandonedLockOwner(owner)) return;
+      // Every observer of this dead owner shares one nonempty destination.
+      // Keep it as a fence: a delayed observer then cannot rename a NEW live
+      // breaker over it, even after another recoverer acquired/released one.
+      await rename(breaker, `${breaker}.stale-${owner.token}`);
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+      if (!isNotFoundError(error) && !isAlreadyExistsError(error)
+        && (error as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw error;
     }
   }
 
@@ -1548,14 +1597,11 @@ function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
 }
 
-/**
- * Heartbeat-era locks (those that record a process instance) are refreshed by
- * their holder, so an expired one is abandoned even if its PID is now alive
- * under another process. Older locks fall back to the PID liveness check.
- */
+/** Expiry is only a reason to probe. Only ESRCH proves the owner is gone. */
 function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boolean {
-  if (typeof owner.instance === 'string') return true;
-  if (!Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0) return true;
+  if (!Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0) {
+    throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner PID is invalid.');
+  }
   try {
     process.kill(owner.pid as number, 0);
     return false;

@@ -370,7 +370,7 @@ describe('PendingActionStore v1', () => {
     expect(await readFile(lockPath, 'utf8')).toContain(`"pid":${process.pid}`);
   });
 
-  it('recovers an expired lock left by a crashed incarnation even when its PID was reused', async () => {
+  it('keeps a live PID locked when a random instance ID cannot prove PID reuse', async () => {
     const workspaceRoot = await createWorkspace();
     const store = await createPendingActionStore({
       workspaceRoot,
@@ -382,8 +382,8 @@ describe('PendingActionStore v1', () => {
       '.workspace/change-engine/v1/locks/actions/reused-pid.lock',
     );
     await mkdir(dirname(lockPath), { recursive: true });
-    // The recorded PID is alive (it is this process), but the owner instance
-    // stopped refreshing the lock long ago.
+    // A random instance label and old mtime cannot distinguish a paused live
+    // owner from a reused PID. Unknown ownership must fail closed.
     await writeFile(lockPath, `${JSON.stringify({ token: 'crashed', pid: process.pid, instance: 'previous-run' })}\n`);
     const expired = new Date(Date.now() - 120_000);
     await utimes(lockPath, expired, expired);
@@ -391,10 +391,10 @@ describe('PendingActionStore v1', () => {
     await expect(store.proposeCandidate({
       id: 'reused-pid',
       candidate: createMixedCandidate(),
-      title: 'Recovers abandoned lock',
-      description: 'A heartbeat lock that stopped refreshing is abandoned.',
-    })).resolves.toMatchObject({ id: 'reused-pid' });
-    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      title: 'Keep uncertain owner locked',
+      description: 'Only confirmed process exit permits recovery.',
+    })).rejects.toThrow(/lock is busy/u);
+    expect(await readFile(lockPath, 'utf8')).toContain('previous-run');
   });
 });
 
