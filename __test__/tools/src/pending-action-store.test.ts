@@ -369,6 +369,33 @@ describe('PendingActionStore v1', () => {
     })).rejects.toThrow(/lock is busy/u);
     expect(await readFile(lockPath, 'utf8')).toContain(`"pid":${process.pid}`);
   });
+
+  it('recovers an expired lock left by a crashed incarnation even when its PID was reused', async () => {
+    const workspaceRoot = await createWorkspace();
+    const store = await createPendingActionStore({
+      workspaceRoot,
+      repositoryValidator: async () => undefined,
+      lockMaxAttempts: 5,
+    });
+    const lockPath = join(
+      workspaceRoot,
+      '.workspace/change-engine/v1/locks/actions/reused-pid.lock',
+    );
+    await mkdir(dirname(lockPath), { recursive: true });
+    // The recorded PID is alive (it is this process), but the owner instance
+    // stopped refreshing the lock long ago.
+    await writeFile(lockPath, `${JSON.stringify({ token: 'crashed', pid: process.pid, instance: 'previous-run' })}\n`);
+    const expired = new Date(Date.now() - 120_000);
+    await utimes(lockPath, expired, expired);
+
+    await expect(store.proposeCandidate({
+      id: 'reused-pid',
+      candidate: createMixedCandidate(),
+      title: 'Recovers abandoned lock',
+      description: 'A heartbeat lock that stopped refreshing is abandoned.',
+    })).resolves.toMatchObject({ id: 'reused-pid' });
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });
 
 async function createWorkspace(): Promise<string> {

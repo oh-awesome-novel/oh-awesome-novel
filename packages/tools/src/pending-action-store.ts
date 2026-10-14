@@ -8,6 +8,7 @@ import {
   realpath,
   rename,
   rm,
+  utimes,
 } from 'node:fs/promises';
 import {
   basename,
@@ -85,6 +86,13 @@ const MAX_STORED_JSON_BYTES = 16 * 1024 * 1024;
 const LOCK_RETRY_MS = 10;
 const LOCK_MAX_ATTEMPTS = 3_000;
 const LOCK_STALE_MS = 60_000;
+/** Live holders refresh their lock's mtime well inside the stale window. */
+const LOCK_HEARTBEAT_MS = 10_000;
+/**
+ * Identifies this process incarnation in lock files. A PID alone cannot tell a
+ * crashed owner from an unrelated process that later reused the same PID.
+ */
+const LOCK_PROCESS_INSTANCE = randomUUID();
 
 export interface PendingActionStoreOptions {
   workspaceRoot: string;
@@ -928,7 +936,11 @@ class FilePendingActionStore implements PendingActionStore {
       try {
         const handle = await open(path, 'wx', 0o600);
         try {
-          await handle.writeFile(`${JSON.stringify({ token, pid: this.#lockOwnerPid })}\n`, 'utf8');
+          await handle.writeFile(`${JSON.stringify({
+            token,
+            pid: this.#lockOwnerPid,
+            instance: LOCK_PROCESS_INSTANCE,
+          })}\n`, 'utf8');
           await handle.sync();
         } finally {
           await handle.close();
@@ -942,9 +954,15 @@ class FilePendingActionStore implements PendingActionStore {
       }
     }
     if (!acquired) throw new Error(`PendingAction lock is busy: ${relativePath}`);
+    const heartbeat = setInterval(() => {
+      const touchedAt = new Date();
+      void utimes(path, touchedAt, touchedAt).catch(() => undefined);
+    }, LOCK_HEARTBEAT_MS);
+    heartbeat.unref?.();
     try {
       return await operation();
     } finally {
+      clearInterval(heartbeat);
       try {
         const owner = JSON.parse(await readFile(path, 'utf8')) as { token?: unknown };
         if (owner.token === token) await rm(path, { force: true });
@@ -955,42 +973,68 @@ class FilePendingActionStore implements PendingActionStore {
   }
 
   async #recoverStaleLock(path: string): Promise<boolean> {
+    if (!(await this.#lockLooksExpired(path))) return false;
+
+    // Serialize breakers so two recoverers cannot both judge the same stale
+    // lock and then have the slower one quarantine a freshly acquired lock.
+    const breaker = `${path}.break`;
+    let breakerHandle: Awaited<ReturnType<typeof open>>;
+    try {
+      breakerHandle = await open(breaker, 'wx', 0o600);
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      await this.#removeAbandonedBreaker(breaker);
+      return false;
+    }
+    await breakerHandle.close();
+
+    try {
+      if (!(await this.#lockLooksExpired(path))) return false;
+      let owner: { pid?: unknown; instance?: unknown };
+      try {
+        owner = JSON.parse(await readFile(path, 'utf8')) as { pid?: unknown; instance?: unknown };
+      } catch (error) {
+        if (isNotFoundError(error)) return true;
+        throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner is invalid.');
+      }
+      if (!isAbandonedLockOwner(owner)) return false;
+      const quarantine = `${path}.stale-${randomUUID()}`;
+      try {
+        await rename(path, quarantine);
+      } catch (error) {
+        if (isNotFoundError(error) || isAlreadyExistsError(error)) return true;
+        throw error;
+      }
+      await rm(quarantine, { force: true });
+      return true;
+    } finally {
+      await rm(breaker, { force: true });
+    }
+  }
+
+  /** True when the lock exists and has not been touched within the stale window. */
+  async #lockLooksExpired(path: string): Promise<boolean> {
     let information: Awaited<ReturnType<typeof lstat>>;
     try {
       information = await lstat(path);
     } catch (error) {
-      if (isNotFoundError(error)) return true;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
     if (information.isSymbolicLink() || !information.isFile()) {
       throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock path is invalid.');
     }
-    if (Date.now() - information.mtimeMs < LOCK_STALE_MS) return false;
-    let owner: { pid?: unknown };
+    return Date.now() - information.mtimeMs >= LOCK_STALE_MS;
+  }
+
+  /** A breaker only lives for a few file operations; one older than the stale window was orphaned by a crash. */
+  async #removeAbandonedBreaker(breaker: string): Promise<void> {
     try {
-      owner = JSON.parse(await readFile(path, 'utf8')) as { pid?: unknown };
-    } catch {
-      throw new PendingActionProtocolError('PENDING_ACTION_CORRUPT', 'Lock owner is invalid.');
-    }
-    if (Number.isSafeInteger(owner.pid) && (owner.pid as number) > 0) {
-      try {
-        process.kill(owner.pid as number, 0);
-        return false;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'EPERM') return false;
-        if (code !== 'ESRCH') throw error;
-      }
-    }
-    const quarantine = `${path}.stale-${randomUUID()}`;
-    try {
-      await rename(path, quarantine);
+      const information = await lstat(breaker);
+      if (Date.now() - information.mtimeMs >= LOCK_STALE_MS) await rm(breaker, { force: true });
     } catch (error) {
-      if (isNotFoundError(error) || isAlreadyExistsError(error)) return true;
-      throw error;
+      if (!isNotFoundError(error)) throw error;
     }
-    await rm(quarantine, { force: true });
-    return true;
   }
 
   async #ensureEngineDirectory(parts: readonly string[]): Promise<string> {
@@ -1502,6 +1546,25 @@ function invalidCandidate(message: string): never {
 
 function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+/**
+ * Heartbeat-era locks (those that record a process instance) are refreshed by
+ * their holder, so an expired one is abandoned even if its PID is now alive
+ * under another process. Older locks fall back to the PID liveness check.
+ */
+function isAbandonedLockOwner(owner: { pid?: unknown; instance?: unknown }): boolean {
+  if (typeof owner.instance === 'string') return true;
+  if (!Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0) return true;
+  try {
+    process.kill(owner.pid as number, 0);
+    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM') return false;
+    if (code !== 'ESRCH') throw error;
+    return true;
+  }
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

@@ -136,6 +136,9 @@ UI 必须展示 PendingAction title/status、create/update/delete path list、�
 - 隐藏路径、secrets、未投影文件名、non-regular files 与 host process 不可见。
 - command、output、source、scratch、candidate、file count、单文件与 diff 均有独立累计上限。
 - stdout/stderr 和 command preview 去除控制字符并按纯文本渲染。
+- 本地 HTTP 后端只信任本应用自己的 renderer：校验 `Host` 为 loopback（防 DNS rebinding），拒绝非 loopback 的浏览器 `Origin`，不使用 `Access-Control-Allow-Origin: *`；桌面端每次启动生成随机 token，经 preload 交给 renderer，后端对每个请求校验 `x-oan-token`。
+- 已保存的 provider API Key 只发往保存时的 Base URL；请求或保存中更换 Base URL 时必须重新提供 Key。Key 文件以 0600 权限原子写入。
+- 返回给 renderer 的错误信息不得包含宿主机绝对路径。
 
 ### Simplicity And Observability
 

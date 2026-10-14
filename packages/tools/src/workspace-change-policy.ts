@@ -115,18 +115,20 @@ export function createWorkspaceChangePolicy(
   input: CreateWorkspaceChangePolicyInput = {},
 ): WorkspaceChangePolicy {
   const capability = normalizeHostSelectedCapability(input.capability);
-  const maxChangedFiles = positiveInteger(
+  // The documented candidate gate (64 files / 8 MiB / 2 MiB per file) is a
+  // ceiling: a caller may narrow it, never widen it.
+  const maxChangedFiles = Math.min(positiveInteger(
     input.maxChangedFiles ?? DEFAULT_MAX_CHANGED_FILES,
     'maxChangedFiles',
-  );
-  const maxCandidateBytes = positiveInteger(
+  ), DEFAULT_MAX_CHANGED_FILES);
+  const maxCandidateBytes = Math.min(positiveInteger(
     input.maxCandidateBytes ?? DEFAULT_MAX_CANDIDATE_BYTES,
     'maxCandidateBytes',
-  );
-  const maxFileBytes = positiveInteger(
+  ), DEFAULT_MAX_CANDIDATE_BYTES);
+  const maxFileBytes = Math.min(positiveInteger(
     input.maxFileBytes ?? DEFAULT_MAX_FINAL_DOCUMENT_BYTES,
     'maxFileBytes',
-  );
+  ), DEFAULT_MAX_FINAL_DOCUMENT_BYTES);
   if (maxFileBytes > maxCandidateBytes) {
     throw new Error('maxFileBytes must not exceed maxCandidateBytes.');
   }

@@ -251,4 +251,20 @@ describe('workspace change policy', () => {
     });
     expect(validateCandidateChangeSetAgainstPolicy(candidate!, policy)).toBe(candidate);
   });
+
+  it('caps caller limits at the documented candidate gate', () => {
+    const widened = createWorkspaceChangePolicy({
+      capability: 'novel.multi-file-edit',
+      maxChangedFiles: 500,
+      maxCandidateBytes: 64 * 1024 * 1024,
+      maxFileBytes: 16 * 1024 * 1024,
+    });
+    expect(widened).toMatchObject({
+      maxChangedFiles: 64,
+      maxCandidateBytes: 8 * 1024 * 1024,
+      maxFileBytes: 2 * 1024 * 1024,
+    });
+    expect(createWorkspaceChangePolicy({ capability: 'novel.multi-file-edit', maxChangedFiles: 3 }).maxChangedFiles)
+      .toBe(3);
+  });
 });

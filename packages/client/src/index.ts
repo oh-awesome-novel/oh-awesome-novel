@@ -268,6 +268,8 @@ export interface AppConfigState {
 
 export interface OanDesktopBridge {
   backendBaseUrl?: string;
+  /** Per-launch backend secret handed over by the desktop preload. */
+  backendToken?: string;
   app?: {
     getVersion: () => Promise<string>;
   };
@@ -286,6 +288,7 @@ export interface OanDesktopBridge {
 
 export interface OanClientOptions {
   backendBaseUrl?: string;
+  backendToken?: string;
   bridge?: OanDesktopBridge;
   fetch?: typeof fetch;
   systemTheme?: () => ThemeMode;
@@ -2141,7 +2144,8 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   const backendBaseUrl = normalizeBackendBaseUrl(
     bridge?.backendBaseUrl ?? options.backendBaseUrl ?? '',
   );
-  const fetcher = options.fetch ?? detectFetch();
+  const backendToken = bridge?.backendToken ?? options.backendToken;
+  const fetcher = withBackendToken(options.fetch ?? detectFetch(), backendToken);
   const systemTheme = options.systemTheme ?? detectSystemThemePreference;
   const requestJson = <T>(
     path: string,
@@ -2215,6 +2219,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       const normalizedEditContext = normalizeAgentChatEditContext(editContext);
       return new DefaultChatTransport<UIMessage>({
         api: joinUrl(backendBaseUrl, '/api/agent/chat'),
+        ...(backendToken ? { headers: { [BACKEND_TOKEN_HEADER]: backendToken } } : {}),
         ...(normalizedEditContext === undefined
           ? {}
           : { body: { editContext: normalizedEditContext } }),
@@ -8057,6 +8062,20 @@ function detectDesktopBridge(): OanDesktopBridge | undefined {
   return typeof window === 'undefined'
     ? undefined
     : (window as unknown as { ohAwesomeNovel?: OanDesktopBridge }).ohAwesomeNovel;
+}
+
+const BACKEND_TOKEN_HEADER = 'x-oan-token';
+
+function withBackendToken(fetcher: typeof fetch, token: string | undefined): typeof fetch {
+  if (!token) {
+    return fetcher;
+  }
+
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set(BACKEND_TOKEN_HEADER, token);
+    return fetcher(input, { ...init, headers });
+  };
 }
 
 function detectFetch(): typeof fetch {

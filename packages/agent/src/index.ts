@@ -1232,50 +1232,52 @@ export const inferNovelAgentCapability = (
     patterns: RegExp[];
   }> = [
     // Aggregate generation is explicit: use its slash command or catalog prompt.
+    // English keywords are whole words so e.g. "unsettled" or "preview" never
+    // widen the turn's write capability.
     // Mentioning a summary in a question or a negated request never selects it.
     {
       capability: 'novel.write_chapter',
-      patterns: [/写.*章/u, /下一章/u, /chapter draft/u, /\bdraft\b/u],
+      patterns: [/写.*章/u, /下一章/u, /\bchapter draft\b/u, /\bdraft\b/u],
     },
     {
       capability: 'novel.settle_chapter',
-      patterns: [/整理本章/u, /结算/u, /settle/u],
+      patterns: [/整理本章/u, /结算/u, /\bsettl(?:e|es|ed|ing|ement)\b/u],
     },
     {
       capability: 'novel.review_chapter',
-      patterns: [/审稿/u, /review/u, /检查.*章节/u],
+      patterns: [/审稿/u, /\breview(?:s|ed|ing)?\b/u, /检查.*章节/u],
     },
     {
       capability: 'novel.de_ai',
-      patterns: [/去\s*ai\s*味/u, /去ai味/u, /de-?ai/u],
+      patterns: [/去\s*ai\s*味/u, /去ai味/u, /\bde-?ai\b/u],
     },
     {
       capability: 'novel.plan_chapter',
-      patterns: [/规划.*章/u, /chapter plan/u],
+      patterns: [/规划.*章/u, /\bchapter plan\b/u],
     },
     {
       capability: 'novel.plan_volume',
-      patterns: [/规划.*卷/u, /volume plan/u],
+      patterns: [/规划.*卷/u, /\bvolume plan\b/u],
     },
     {
       capability: 'novel.plan_outline',
-      patterns: [/大纲/u, /outline/u],
+      patterns: [/大纲/u, /\boutlines?\b/u],
     },
     {
       capability: 'novel.update_state',
-      patterns: [/更新状态/u, /state/u],
+      patterns: [/更新状态/u, /\bstates?\b/u],
     },
     {
       capability: 'novel.plan_foreshadow',
-      patterns: [/伏笔/u, /foreshadow/u],
+      patterns: [/伏笔/u, /\bforeshadow\w*/u],
     },
     {
       capability: 'novel.play_scene',
-      patterns: [/play mode/u, /play scene/u, /跑团/u, /扮演/u],
+      patterns: [/\bplay mode\b/u, /\bplay scene\b/u, /跑团/u, /扮演/u],
     },
     {
       capability: 'novel.deconstruct_reference',
-      patterns: [/参考/u, /reference/u, /拆解/u],
+      patterns: [/参考/u, /\breferences?\b/u, /拆解/u],
     },
   ];
 

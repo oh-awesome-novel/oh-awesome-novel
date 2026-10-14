@@ -51,6 +51,7 @@ ChangeSet 的每个 change 都同时绑定 operation、normalized path、baselin
 - imported/reference/play content
 - stale internal records
 - renderer requests and public DTO fields
+- any other local origin that can reach the loopback HTTP port: web pages in the author's browser (including DNS-rebinding hosts) and other local processes. The backend rejects non-loopback `Host`, foreign browser `Origin`s and, in the desktop app, every request without the per-launch `x-oan-token` that only the preload bridge knows; PendingAction Accept is therefore reachable only from the app's own renderer.
 
 ### Trusted Components
 

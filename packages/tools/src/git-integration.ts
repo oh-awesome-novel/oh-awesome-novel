@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { gitFileModesMatch } from './filesystem-modes';
@@ -422,9 +422,12 @@ export async function inspectPendingActionGitPreflight(input: {
     }
     if (
       headEntry === undefined
-      || headEntry.sha256 !== file.sha256
       || file.mode === undefined
       || !gitFileModesMatch(file.mode, headEntry.mode, tracksExecutableMode)
+      || (
+        headEntry.sha256 !== file.sha256
+        && !(await baselineMatchesHeadAfterGitFilters(input.workspaceRoot, file, headEntry.oid))
+      )
     ) {
       dirtyBaselineFiles.push(file.path);
     }
@@ -624,11 +627,35 @@ export function createPendingActionCommitMessage(input: {
   ].join('\n');
 }
 
+/**
+ * Raw bytes can differ from the HEAD blob purely because of checkout filters
+ * (`core.autocrlf`, `.gitattributes` eol/text conversion). When the worktree
+ * file still holds the proposal baseline, let Git hash it with the same
+ * filters it would apply on `git add` and compare blob ids instead.
+ */
+async function baselineMatchesHeadAfterGitFilters(
+  workspaceRoot: string,
+  file: PendingActionGitBaselineFile,
+  headOid: string,
+): Promise<boolean> {
+  let content: Buffer;
+  try {
+    content = await readFile(join(workspaceRoot, ...file.path.split('/')));
+  } catch {
+    return false;
+  }
+  if (createHash('sha256').update(content).digest('hex') !== file.sha256) return false;
+
+  const hashed = await runGit(workspaceRoot, ['hash-object', '--', file.path]);
+  if (!hashed.ok) throw gitResultError(hashed.error);
+  return hashed.stdout.trim() === headOid;
+}
+
 async function readHeadFile(
   workspaceRoot: string,
   head: string,
   path: string,
-): Promise<{ sha256: string; mode: number } | undefined> {
+): Promise<{ sha256: string; mode: number; oid: string } | undefined> {
   const tree = await runGit(workspaceRoot, ['ls-tree', '-z', head, '--', path]);
   if (!tree.ok) throw gitResultError(tree.error);
   const records = tree.stdout.split('\0').filter((record) => record.length > 0);
@@ -649,6 +676,7 @@ async function readHeadFile(
   return {
     sha256: createHash('sha256').update(blob.stdout, 'utf8').digest('hex'),
     mode: Number.parseInt(match[1]!, 8) & 0o777,
+    oid: match[2]!,
   };
 }
 

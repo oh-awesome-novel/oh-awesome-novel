@@ -49,6 +49,8 @@ Useful options:
 
 The same values can also be supplied through `OAN_WORKSPACE_ROOT`, `OAN_GLOBAL_CONFIG_DIR`, `OAN_HTTP_HOST`, and `OAN_HTTP_PORT`.
 
+The backend only answers requests whose `Host` is a loopback name and whose browser `Origin` (if any) is a loopback origin, so other websites cannot drive it. To additionally require a shared secret, set `OAN_HTTP_TOKEN` for both the backend and the Vite dev server; the dev proxy forwards it as the `x-oan-token` header. The desktop app always generates a per-launch token and hands it to its renderer through the preload bridge.
+
 ## Start the Web UI
 
 In a second terminal, run:
