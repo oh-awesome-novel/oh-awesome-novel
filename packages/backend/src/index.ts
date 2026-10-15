@@ -165,6 +165,8 @@ import type {
 import {
   createAiSdkProviderResolver,
   inferNovelAgentCapability,
+  resolveWritingCommandTargets,
+  WritingCommandTargetError,
   runNovelAgentTurn,
   runtimeEventsToUiMessageStream,
   streamNovelAgentCheckpointTurn,
@@ -1171,10 +1173,25 @@ async function handleAgentChat(
   }
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
   const attachmentIds = readPlayWritingReferenceAttachmentIds(body);
-  const exactWritablePaths = readAgentExactWritablePaths(body);
+  let exactWritablePaths = readAgentExactWritablePaths(body);
 
   if (!requestText.trim()) {
     return jsonResponse(context, 400, { error: 'A user message is required.' });
+  }
+  // Explicit writing commands get host-derived targets (next chapter, the named
+  // character, the active outline) instead of whatever file happens to be open.
+  try {
+    const commandTargets = await resolveWritingCommandTargets({
+      workspaceRoot: requireActiveWorkspaceRoot(options, state),
+      request: requestText,
+      selectedPaths: exactWritablePaths,
+    });
+    if (commandTargets) exactWritablePaths = commandTargets.exactWritablePaths;
+  } catch (error) {
+    if (error instanceof WritingCommandTargetError) {
+      return jsonResponse(context, 400, { code: error.code, error: error.message });
+    }
+    throw error;
   }
   if (inferNovelAgentCapability(requestText) === 'novel.settle_chapter') {
     try { resolveChapterSettlementSelection(exactWritablePaths); } catch (error) {

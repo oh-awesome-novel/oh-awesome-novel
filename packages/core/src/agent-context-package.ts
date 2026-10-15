@@ -12,6 +12,8 @@ export const CONTEXT_SOURCE_IDS = [
   'workflow',
   'constitution',
   'chapterContract',
+  'outline',
+  'previousChapterText',
   'previousChapterEnding',
   'latestState',
   'characters',

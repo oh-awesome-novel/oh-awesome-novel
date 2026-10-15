@@ -2535,6 +2535,9 @@ async function createOanWorkspace(): Promise<string> {
       'novelName: backend-full-sample',
       'git:',
       '  autoCommitOnAccept: false',
+      // Runs default to the technique-only track of the commercial Profile.
+      'writingProfile:',
+      '  activeProfileId: commercialWriting',
       '',
     ].join('\n'),
     'utf-8',

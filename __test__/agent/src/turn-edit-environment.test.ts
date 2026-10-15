@@ -19,6 +19,7 @@ const { jsonSchema } = await vi.importActual<typeof import('ai')>('ai');
 const {
   createSandboxNovelAgentEditEnvironmentFactory,
   createNovelAgentTurnEditEnvironment,
+  resolveWritingCommandTargets,
   runNovelAgentTurn,
   streamNovelAgentTurn,
 } = await import('@oh-awesome-novel/agent');
@@ -398,6 +399,43 @@ describe('turn-scoped agent edit environment injection', () => {
 
     await expect(consume()).rejects.toThrow('stream provider failed');
     expect(order).toEqual(['finalize:error', 'dispose']);
+  });
+});
+
+describe('write next chapter through the fixed projection', () => {
+  it('creates the host-derived next chapter as a PendingAction without touching canonical files', async () => {
+    const root = await createGitWorkspace({
+      'chapters/0001/0001.md': '# 第一章\n\n穿越者醒来。\n',
+      'outline/main.md': '# 主线\n\n改写原作结局。\n',
+    });
+    const targets = await resolveWritingCommandTargets({
+      workspaceRoot: root, request: '/写下一章', selectedPaths: ['chapters/0001/0001.md'],
+    });
+    expect(targets?.exactWritablePaths).toEqual(['chapters/0001/0002.md']);
+    streamText
+      .mockReturnValueOnce(modelStream({ toolCalls: [{
+        toolCallId: 'call_write', toolName: 'writeFile',
+        input: { path: 'chapters/0001/0002.md', content: '# 第二章\n\n他决定改变命运。\n' },
+      }] }))
+      .mockReturnValueOnce(modelStream({ text: ['已提出第二章草稿。'] }));
+
+    const result = await runNovelAgentTurn({
+      ...baseTurnInput(),
+      workspaceRoot: root,
+      workspace: { workspaceRoot: root },
+      request: '/写下一章',
+      capability: targets!.capability,
+      exactWritablePaths: targets!.exactWritablePaths,
+    });
+
+    expect(result.pendingActions).toHaveLength(1);
+    expect(result.pendingActions[0]?.changes.map((change) => [change.operation, change.path]))
+      .toEqual([['create', 'chapters/0001/0002.md']]);
+    await expect(readdir(join(root, 'chapters/0001'))).resolves.toEqual(['0001.md']);
+    const system = JSON.stringify(streamText.mock.calls[0]?.[0]);
+    expect(system).toContain('Writable targets granted by the host for this turn: chapters/0001/0002.md');
+    expect(system).toContain('改写原作结局');
+    expect(system).toContain('穿越者醒来');
   });
 });
 

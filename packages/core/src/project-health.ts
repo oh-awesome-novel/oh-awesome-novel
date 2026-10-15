@@ -14,6 +14,8 @@ export interface ProjectHealth {
   /** Known chapter evidence whose source hash is stale; missing/unverified are separate issues. */
   latestStateStale: boolean;
   timelineGapCount: number; pendingActionCount: number; issues: ProjectHealthIssue[];
+  /** Chapter text paths, in reading order, whose chapter summary is not current (missing, stale or unverified). */
+  unsettledChapters: string[];
 }
 export interface ReadProjectHealthOptions { generatedAt?: string; pendingActionCount?: number }
 
@@ -36,6 +38,10 @@ export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options
   const timelineChapters = new Set(record(timeline) && Array.isArray(timeline.events) ? timeline.events.filter(record).map((event) => event.chapter) : []);
   const timelineGaps = chapters.filter((id) => !timelineChapters.has(id));
   const latestStateStale = coverage.some((item) => item.state.status === 'stale');
+  const summaryStatus = new Map(coverage.map((item) => [item.chapterId, item.summary.status]));
+  const unsettledChapters = chapters
+    .filter((id) => /^\d{4}\/\d{4}$/u.test(id) && (files.get(`chapters/${id}.md`) ?? '').trim().length > 0 && summaryStatus.get(id) !== 'current')
+    .map((id) => `chapters/${id}.md`);
   const issues: ProjectHealthIssue[] = [
     ...missingCharacterCards.map((id): ProjectHealthIssue => ({ id: `missing-character-card:${id}`, severity: 'warning', title: 'Missing character card file', detail: `${id} is missing meta.yaml or summary.md.`, path: `characters/${id}` })),
     ...chaptersWithoutSummaries.map((id): ProjectHealthIssue => ({ id: `chapter-summary:${id}`, severity: 'warning', title: 'Chapter has no summary', detail: `${id} has no matching summaries/chapter file.`, path: `chapters/${id}.md` })),
@@ -53,7 +59,7 @@ export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options
   ];
   if (latestStateStale) issues.push({ id: 'latest-state-stale', severity: 'warning', title: 'Chapter state has stale source evidence', detail: 'At least one settled chapter no longer matches its recorded source hash. Global state is not automatically retracted.', path: 'state/chapters' });
   if (options.pendingActionCount && options.pendingActionCount > 0) issues.push({ id: 'pending-actions', severity: 'info', title: 'PendingAction exists', detail: `${options.pendingActionCount} pending action(s) need review.` });
-  return { generatedAt: options.generatedAt ?? '1970-01-01T00:00:00.000Z', missingCharacterCards, chaptersWithoutSummaries, activeHookCount, latestStateStale, timelineGapCount: timelineGaps.length, pendingActionCount: options.pendingActionCount ?? 0, issues };
+  return { generatedAt: options.generatedAt ?? '1970-01-01T00:00:00.000Z', missingCharacterCards, chaptersWithoutSummaries, activeHookCount, latestStateStale, timelineGapCount: timelineGaps.length, pendingActionCount: options.pendingActionCount ?? 0, issues, unsettledChapters };
 }
 
 /** Capture only public novel roots. Hidden paths, symlinks and non-regular files never enter health inputs. */

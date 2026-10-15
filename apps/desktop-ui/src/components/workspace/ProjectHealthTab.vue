@@ -13,6 +13,10 @@ const props = defineProps<{
   health?: ProjectHealth;
 }>();
 
+const emit = defineEmits<{
+  settleChapter: [path: string];
+}>();
+
 const api = useWorkspaceApi();
 const rebuilding = shallowRef(false);
 const rebuildError = shallowRef('');
@@ -30,6 +34,7 @@ const gitLabel = computed(() => {
   return props.status.git.dirty ? 'dirty' : 'clean';
 });
 
+const unsettledChapters = computed(() => props.health?.unsettledChapters ?? []);
 const issues = computed(() => (props.health?.issues ?? []).filter((issue) => !issue.id.startsWith('aggregate-summary-missing:')));
 const optionalSummaries = computed(() => (props.health?.issues ?? []).filter((issue) => issue.id.startsWith('aggregate-summary-missing:')));
 
@@ -77,6 +82,13 @@ async function rebuildProjections() {
         <span>Timeline gaps</span>
         <strong>{{ health?.timelineGapCount ?? 0 }}</strong>
       </div>
+    </div>
+    <div v-if="unsettledChapters.length" class="health-issue-row health-unsettled-row">
+      <strong>{{ unsettledChapters.length }} 章尚未整理</strong>
+      <span>继续写作前先整理，摘要和状态才会跟上正文。最早的是 {{ unsettledChapters[0] }}。</span>
+      <button class="secondary-button tight-button" type="button" @click="emit('settleChapter', unsettledChapters[0]!)">
+        整理这一章
+      </button>
     </div>
     <div v-if="issues.length" class="health-issue-list">
       <div v-for="issue in issues" :key="issue.id" class="health-issue-row">

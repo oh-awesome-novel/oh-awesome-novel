@@ -7,7 +7,7 @@ import ProjectHealthTab from '../../../apps/desktop-ui/src/components/workspace/
 describe('optional aggregate summary health', () => {
   it('separates summaries not yet created from broken evidence without hiding either', () => {
     const wrapper = mount(ProjectHealthTab, { props: { health: {
-      generatedAt: '2026-10-14T00:00:00.000Z', missingCharacterCards: [], chaptersWithoutSummaries: [], activeHookCount: 0,
+      generatedAt: '2026-10-14T00:00:00.000Z', missingCharacterCards: [], chaptersWithoutSummaries: [], activeHookCount: 0, unsettledChapters: [],
       latestStateStale: false, timelineGapCount: 0, pendingActionCount: 0,
       issues: [
         { id: 'aggregate-summary-missing:summaries/global.md', title: 'Missing book summary', detail: 'No summary.', path: 'summaries/global.md', severity: 'info' },
@@ -21,6 +21,19 @@ describe('optional aggregate summary health', () => {
       expect(wrapper.get('details').text()).not.toContain('Stale volume summary');
       expect(wrapper.findAll('.health-issue-list').find((item) => item.element.tagName === 'DIV')!.text()).toContain('Stale volume summary');
       expect(wrapper.text()).toContain('Chapter has no summary');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('offers to settle the earliest unsettled chapter', async () => {
+    const wrapper = mount(ProjectHealthTab, { props: { health: {
+      generatedAt: '2026-10-15T00:00:00.000Z', missingCharacterCards: [], chaptersWithoutSummaries: [], activeHookCount: 0,
+      unsettledChapters: ['chapters/0001/0002.md', 'chapters/0001/0003.md'],
+      latestStateStale: false, timelineGapCount: 0, pendingActionCount: 0, issues: [],
+    } } });
+    try {
+      expect(wrapper.get('.health-unsettled-row').text()).toContain('2 章尚未整理');
+      await wrapper.get('.health-unsettled-row button').trigger('click');
+      expect(wrapper.emitted('settleChapter')).toEqual([['chapters/0001/0002.md']]);
     } finally { wrapper.unmount(); }
   });
 });

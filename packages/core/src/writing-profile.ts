@@ -11,7 +11,10 @@ import { writeFileAtomically } from './atomic-file.js';
 import { loadWorkspaceConfig } from './workspace.js';
 
 export const WRITING_PROFILE_VERSION = 1 as const;
-export const DEFAULT_WRITING_PROFILE_ID = 'commercialWriting' as const;
+export const COMMERCIAL_WRITING_PROFILE_ID = 'commercialWriting' as const;
+export const FANFICTION_WRITING_PROFILE_ID = 'fanfictionWriting' as const;
+/** OAN is a personal fanfiction workbench; commercial writing is opt-in. */
+export const DEFAULT_WRITING_PROFILE_ID = FANFICTION_WRITING_PROFILE_ID;
 export const WRITING_PROFILE_OUTPUTS = [
   'techniques',
   'world',
@@ -78,22 +81,7 @@ export interface CloneWritingProfileInput {
 const BUILTIN_WRITING_PROFILES: readonly WritingProfile[] = [
   {
     version: WRITING_PROFILE_VERSION,
-    id: DEFAULT_WRITING_PROFILE_ID,
-    displayName: '商业写作',
-    description: '强调独立表达，并在审稿与修订中关注机械化 AI 表达。',
-    deconstruction: {
-      outputs: ['techniques'],
-    },
-    writingReminders: {
-      originality: true,
-      aiVoice: true,
-      characterConsistency: false,
-      adaptationFreedom: false,
-    },
-  },
-  {
-    version: WRITING_PROFILE_VERSION,
-    id: 'fanfictionWriting',
+    id: FANFICTION_WRITING_PROFILE_ID,
     displayName: '同人二创写作',
     description: '强调当前 workspace 中已接受材料的人物一致性与改编自由。',
     deconstruction: {
@@ -104,6 +92,21 @@ const BUILTIN_WRITING_PROFILES: readonly WritingProfile[] = [
       aiVoice: false,
       characterConsistency: true,
       adaptationFreedom: true,
+    },
+  },
+  {
+    version: WRITING_PROFILE_VERSION,
+    id: COMMERCIAL_WRITING_PROFILE_ID,
+    displayName: '商业写作',
+    description: '强调独立表达，并在审稿与修订中关注机械化 AI 表达。',
+    deconstruction: {
+      outputs: ['techniques'],
+    },
+    writingReminders: {
+      originality: true,
+      aiVoice: true,
+      characterConsistency: false,
+      adaptationFreedom: false,
     },
   },
 ];
@@ -236,7 +239,7 @@ export async function loadWritingProfileState(
   activeProfile ??= profiles.find((item) =>
     item.profile.id === DEFAULT_WRITING_PROFILE_ID)?.profile;
   if (!activeProfile) {
-    throw new Error('Built-in commercialWriting Profile is unavailable.');
+    throw new Error('Built-in default Writing Profile is unavailable.');
   }
 
   for (const item of profiles) {

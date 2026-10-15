@@ -118,7 +118,7 @@ describe('initWorkspace', () => {
       'utf-8',
     );
     expect(configContent).toContain('version: 1');
-    expect(configContent).toContain('activeProfileId: commercialWriting');
+    expect(configContent).toContain('activeProfileId: fanfictionWriting');
   });
 
   it('throws when initialising a non-empty directory', async () => {

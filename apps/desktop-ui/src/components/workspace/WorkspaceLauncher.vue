@@ -471,9 +471,10 @@ function formatOpenedAt(value?: string) {
           <h2 class="panel-title">推荐写作流程</h2>
         </div>
         <ol class="guide-flow">
-          <li>先用 `/生成角色卡` 和 `/规划下一章` 固定人物关系、章节目标与冲突。</li>
-          <li>再用 `/写下一章` 生成章节草稿 PendingAction，在右侧查看文件或差异后决定接受。</li>
-          <li>每章结束后用 `/整理本章` 更新摘要、角色状态、timeline 和 foreshadow。</li>
+          <li>同人改写可以先在 Play 里穿越或导演推演，再把结果采纳为写作参考。</li>
+          <li>用 `/生成角色卡 角色ID` 和 `/规划下一章` 固定人物关系、章节目标与冲突；保存位置由系统决定。</li>
+          <li>再用 `/写下一章` 生成下一个章节文件的草稿 PendingAction，在右侧查看文件或差异后决定接受。</li>
+          <li>定稿后按提示 `/整理本章` 更新摘要、角色状态、timeline 和 foreshadow；这类派生记录可以整批接受。</li>
           <li>需要润色时使用 `/审稿` 或 `/去AI味`，仍然通过 PendingAction 审批落盘。</li>
         </ol>
       </section>

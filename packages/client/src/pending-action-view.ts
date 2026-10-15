@@ -112,6 +112,62 @@ export interface PendingActionViewV1 {
 
 export type PendingActionView = PendingActionViewV1;
 
+const DERIVED_RECORD_PATHS: readonly RegExp[] = [
+  /^summaries\/.+\.md$/u,
+  /^state\/.+\.ya?ml$/u,
+  /^timeline\/.+\.ya?ml$/u,
+  /^foreshadow\/.+\.ya?ml$/u,
+  /^characters\/[^/]+\/growth\.md$/u,
+];
+const DERIVED_RECORD_ORIGINS = new Set<PublicPendingActionOrigin['kind'] | undefined>([
+  undefined,
+  'agentTurn',
+  'chapterSettlement',
+  'summaryGeneration',
+]);
+
+/**
+ * Pending summaries, chapter state, timeline, foreshadow and growth records
+ * derived from accepted text. These may be accepted as a batch; prose,
+ * character profiles, constitution and Play/Reference adoption never qualify.
+ * Batch acceptance is still one ordinary Accept per action.
+ */
+export function isDerivedRecordPendingAction(action: PendingActionViewV1): boolean {
+  return action.status === 'pending'
+    && action.changes.length > 0
+    && DERIVED_RECORD_ORIGINS.has(action.origin?.kind)
+    && action.changes.every((change) => change.operation !== 'delete'
+      && DERIVED_RECORD_PATHS.some((pattern) => pattern.test(change.path)));
+}
+
+export interface PendingActionBatchResult {
+  readonly accepted: readonly string[];
+  readonly failed?: { readonly id: string; readonly error: string };
+  /** Actions not attempted because an earlier Accept failed. */
+  readonly notAttempted: readonly string[];
+}
+
+/** Accepts actions one at a time, stopping at the first failure without retrying. */
+export async function acceptPendingActionsInOrder(
+  actionIds: readonly string[],
+  accept: (id: string) => Promise<unknown>,
+): Promise<PendingActionBatchResult> {
+  const accepted: string[] = [];
+  for (const [index, id] of actionIds.entries()) {
+    try {
+      await accept(id);
+      accepted.push(id);
+    } catch (error) {
+      return {
+        accepted,
+        failed: { id, error: error instanceof Error ? error.message : String(error) },
+        notAttempted: actionIds.slice(index + 1),
+      };
+    }
+  }
+  return { accepted, notAttempted: [] };
+}
+
 export interface PendingActionDecisionReceiptV1 {
   readonly schemaVersion: 1;
   readonly kind: 'pending-action-decision-receipt';

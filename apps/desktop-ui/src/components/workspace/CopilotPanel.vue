@@ -36,6 +36,7 @@ const props = defineProps<{
   writingReferencesError: string;
   writingProfileState?: WritingProfileState;
   writingProfilesError: string;
+  unsettledChapters?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -52,6 +53,7 @@ const emit = defineEmits<{
   openPendingActionDiff: [action: PendingActionView];
   refreshWritingReferences: [];
   toggleWritingReference: [id: string];
+  settleChapter: [path: string];
 }>();
 
 const inputModel = computed({
@@ -73,7 +75,7 @@ const quickCommands = [
   { id: 'chapter.settle', label: '整理本章', prompt: '/整理本章' },
   { id: 'summary.volume', label: '整理本卷', prompt: '/整理本卷' },
   { id: 'summary.global', label: '整理全书', prompt: '/整理全书' },
-  { id: 'character.generateCard', label: '生成角色卡', prompt: '/生成角色卡' },
+  { id: 'character.generateCard', label: '生成角色卡', prompt: '/生成角色卡 ' },
   { id: 'chapter.review', label: '审稿', prompt: '/审稿' },
   { id: 'state.update', label: '更新状态', prompt: '/更新状态' },
   { id: 'foreshadow.plan', label: '补伏笔', prompt: '/补伏笔' },
@@ -86,6 +88,39 @@ const availableQuickCommands = computed(() => {
   return quickCommands.map((command) => command.id === 'summary.volume' && volumeHint
     ? { ...command, disabledReason: volumeHint } : command);
 });
+const CHAPTER_PATH = /^chapters\/\d{4}\/(?!0000\.md$)\d{4}\.md$/u;
+
+// Chapter lifecycle: an accepted chapter without a current summary needs
+// /整理本章 before the next one, otherwise memory falls behind the text.
+const chapterGuide = computed(() => {
+  if (!props.unsettledChapters) return undefined;
+  const unsettled = props.unsettledChapters;
+  const active = props.activeFilePath && CHAPTER_PATH.test(props.activeFilePath) ? props.activeFilePath : '';
+  if (active && unsettled.includes(active)) {
+    return { text: `${active} 已定稿但尚未整理。`, steps: [
+      { label: '整理本章', settle: active },
+      { label: '审稿', prompt: '/审稿' },
+    ] };
+  }
+  if (unsettled.length) {
+    return { text: `${unsettled.length} 章尚未整理，最早的是 ${unsettled[0]}。`, steps: [
+      { label: '整理这一章', settle: unsettled[0]! },
+    ] };
+  }
+  if (active) {
+    return { text: '本章已整理。', steps: [
+      { label: '写下一章', prompt: '/写下一章' },
+      { label: '规划下一章', prompt: '/规划下一章' },
+    ] };
+  }
+  return undefined;
+});
+
+function runGuideStep(step: { settle?: string; prompt?: string }) {
+  if (step.settle) emit('settleChapter', step.settle);
+  else if (step.prompt) emit('updateChatInput', step.prompt);
+}
+
 const decoratedPendingActions = computed(() =>
   mergePendingActions(props.pendingActions, props.chatPendingActions).map((action) => ({
     ...action,
@@ -199,6 +234,19 @@ function mergePendingActions(
         @review="emit('reviewPendingAction', $event)"
         @open-diff="emit('openPendingActionDiff', $event)"
       />
+      <div v-if="chapterGuide" class="copilot-chapter-guide" role="status">
+        <span>{{ chapterGuide.text }}</span>
+        <button
+          v-for="step in chapterGuide.steps"
+          :key="step.label"
+          class="ghost-button tight-button"
+          type="button"
+          :disabled="chatStatus !== 'ready'"
+          @click="runGuideStep(step)"
+        >
+          {{ step.label }}
+        </button>
+      </div>
       <WritingReferenceSelector
         :attachments="writingReferenceAttachments"
         :selected-attachment-ids="selectedWritingReferenceAttachmentIds"
@@ -219,3 +267,15 @@ function mergePendingActions(
     </template>
   </section>
 </template>
+
+
+<style scoped>
+.copilot-chapter-guide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--editor-muted, inherit);
+}
+</style>

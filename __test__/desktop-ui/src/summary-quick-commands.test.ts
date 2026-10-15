@@ -38,4 +38,25 @@ describe('summary workflow entry in the existing Copilot composer', () => {
       for (const button of wrapper.findAll<HTMLButtonElement>('.composer-command-chip')) expect(button.element.disabled).toBe(true);
     } finally { wrapper.unmount(); }
   });
+
+  it('guides an accepted chapter to settlement before the next chapter', async () => {
+    const wrapper = mount(CopilotPanel, { props: {
+      activeFilePath: 'chapters/0001/0002.md', providerConfigured: true, queuedPrompt: '', chatStatus: 'ready', chatInput: '', chatMessages: [], chatPendingActions: [],
+      pendingActions: [], pendingActionsLoading: false, pendingActionsError: '', rightPanelShown: true,
+      writingReferenceAttachments: [], selectedWritingReferenceAttachmentIds: [], writingReferencesLoading: false,
+      writingReferencesError: '', writingProfilesError: '', unsettledChapters: ['chapters/0001/0002.md'],
+    }, global: { stubs: { AgentTimeline: true, AgentUsageInspector: true, CompactApprovalTray: true, PendingActionPanel: true, WritingReferenceSelector: true, WritingProfileSummary: true } } });
+    const guideButton = (label: string) => wrapper.findAll('.copilot-chapter-guide button').find((button) => button.text() === label);
+    try {
+      expect(wrapper.get('.copilot-chapter-guide').text()).toContain('已定稿但尚未整理');
+      await guideButton('整理本章')!.trigger('click');
+      expect(wrapper.emitted('settleChapter')).toEqual([['chapters/0001/0002.md']]);
+      await wrapper.setProps({ unsettledChapters: [] });
+      await guideButton('写下一章')!.trigger('click');
+      expect(wrapper.emitted('updateChatInput')?.at(-1)).toEqual(['/写下一章']);
+      expect(wrapper.emitted('sendChatInput')).toBeUndefined();
+      await wrapper.setProps({ unsettledChapters: undefined });
+      expect(wrapper.find('.copilot-chapter-guide').exists()).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
 });

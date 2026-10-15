@@ -23,10 +23,10 @@ describe('Writing Profile HTTP API', () => {
     expect(initial.response.status).toBe(200);
     expect(initial.data).toMatchObject({
       state: {
-        activeProfileId: 'commercialWriting',
+        activeProfileId: 'fanfictionWriting',
         profiles: [
-          { builtIn: true, profile: { id: 'commercialWriting' } },
           { builtIn: true, profile: { id: 'fanfictionWriting' } },
+          { builtIn: true, profile: { id: 'commercialWriting' } },
         ],
       },
     });

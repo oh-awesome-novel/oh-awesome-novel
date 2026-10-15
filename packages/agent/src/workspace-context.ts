@@ -9,7 +9,7 @@ type File = SandboxProjectionSnapshot['files'][number];
 /** Selection only: the fixed VFS still contains every allowlisted source. */
 export function createNovelAgentWorkspaceSnapshotFromProjection(
   projection: SandboxProjectionSnapshot,
-  options: { targetPaths?: readonly string[] } = {},
+  options: { targetPaths?: readonly string[]; writableTargets?: readonly string[] } = {},
 ): NovelAgentWorkspaceSnapshot {
   const select = (root: string, extensions: readonly string[]) => projection.files
     .filter((file) => file.path.startsWith(`${root}/`)
@@ -63,11 +63,32 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
   const chosen = [...required, ...summaries.filter((file) => !required.includes(file)
     && volumeNumber(file.path) === undefined).slice(0, 12)];
   const workflow = projection.files.find((file) => file.path === '.oan/workflow.yaml' && file.content.length > 0);
+  // Writing and planning need the story plan and the text right before the
+  // target; both come from the same fixed projection as every other source.
+  const chapterFiles = projection.files.filter((file) => /^chapters\/\d{4}\/\d{4}\.md$/u.test(file.path)
+    && !file.path.endsWith('/0000.md')).toSorted((a, b) => chapterPosition(a.path)!.order - chapterPosition(b.path)!.order);
+  const outlineVolumes = new Set((options.targetPaths ?? []).flatMap((path) => {
+    const id = /^(?:chapters|outline\/volumes)\/(\d{4})(?:\/|\.md$)/u.exec(path)?.[1]; return id ? [id] : [];
+  }));
+  if (!outlineVolumes.size && chapterFiles.length) outlineVolumes.add(chapterFiles.at(-1)!.path.slice('chapters/'.length, 'chapters/0000'.length));
+  const outline = projection.files.filter((file) => file.content.length > 0 && (file.path === 'outline/main.md'
+    || [...outlineVolumes].some((volume) => file.path === `outline/volumes/${volume}.md`)))
+    .toSorted((a, b) => compare(a.path, b.path));
+  const targetChapter = targets.toSorted((a, b) => a.order - b.order)[0];
+  const previousChapter = targetChapter
+    ? chapterFiles.filter((file) => chapterPosition(file.path)!.order < targetChapter.order && file.content.trim().length > 0).at(-1)
+    : undefined;
   const contextFiles: NovelAgentWorkspaceContextFile[] = [];
   const payloadFor = (sourceId: string, root: string, file: File) => {
     if (sourceId === 'previousChapterEnding') {
       const evidence = bySummary.get(file.path);
       return `# ${file.path.slice(root.length + 1)}\n\n${evidence?.context ?? `Freshness: unverified author reference. This volume/global summary has no verified chapter source coverage; check source chapters before using it as current facts.\n\n${file.content}`}`;
+    }
+    if (sourceId === 'previousChapterText') {
+      const tail = file.content.length > PREVIOUS_CHAPTER_TAIL_CHARS
+        ? `……（前文省略，完整正文可通过固定投影读取）\n\n${file.content.slice(-PREVIOUS_CHAPTER_TAIL_CHARS)}`
+        : file.content;
+      return `# ${file.path}（上一章正文结尾）\n\n${tail}`;
     }
     if (sourceId === 'latestState' && file.path.startsWith('state/chapters/')) {
       const evidence = byState.get(file.path);
@@ -82,7 +103,9 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
       contextFiles.push({ sourceId, path: file.path,
         sourceHash: hash(file.content), payloadHash: hash(payload), payload, originalChars: file.content.length,
         modelVisibleChars: payload.length, estimatedTokens: estimateContextTokens(payload),
-        selectionReason: sourceId === 'previousChapterEnding'
+        selectionReason: sourceId === 'outline' ? 'story outline and active volume outline for planning and continuation'
+          : sourceId === 'previousChapterText' ? 'ending of the chapter immediately before the target chapter'
+          : sourceId === 'previousChapterEnding'
           ? `${bySummary.get(file.path)?.status ?? 'unverified'} summary: current evidence only, or explicitly unverified author reference; historical snapshots omitted`
           : file.path.startsWith('state/chapters/') ? selectedPaths.has(file.path) ? 'explicitly selected complete chapter state file' : 'derived selected chapter current evidence and author fields; historical records omitted'
           : 'complete protected current source or continuity ledger from the fixed projection',
@@ -91,6 +114,8 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
   };
   describe('constitution', '.oan/constitution', constitution);
   describe('workflow', '', workflow ? [workflow] : []);
+  describe('outline', 'outline', outline);
+  describe('previousChapterText', '', previousChapter ? [previousChapter] : []);
   describe('previousChapterEnding', 'summaries', chosen);
   describe('latestState', 'state', state);
   describe('timeline', 'timeline', timeline);
@@ -101,6 +126,9 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     projectionFingerprint: projection.projectionFingerprint,
     ...(constitution.length ? { constitution: constitution.map((file) => format('.oan/constitution', file)).join('\n\n') } : {}),
     ...(workflow ? { workflow: workflow.content } : {}),
+    ...(outline.length ? { outline: outline.map((file) => format('outline', file)).join('\n\n') } : {}),
+    ...(previousChapter ? { previousChapter: payloadFor('previousChapterText', '', previousChapter) } : {}),
+    ...(options.writableTargets ? { writableTargets: Object.freeze([...options.writableTargets]) } : {}),
     ...(chosen.length ? { summaries: Object.freeze(chosen.map((file) => payloadFor('previousChapterEnding', 'summaries', file))) } : {}),
     ...(state.length ? { state: state.map((file) => payloadFor('latestState', 'state', file)).join('\n\n') } : {}),
     chapterEvidenceCoverage: `${formatChapterEvidenceCoverage(coverage, [...selectedChapterIds])}\n\n${formatAggregateSummaryCoverage(aggregateCoverage)}`,
@@ -120,6 +148,8 @@ export function createNovelAgentWorkspaceSnapshotFromProjection(
     }))]),
   });
 }
+
+const PREVIOUS_CHAPTER_TAIL_CHARS = 3_000;
 
 function volumeNumber(path: string): number | undefined {
   const value = /^summaries\/volume\/(\d+)\.md$/u.exec(path)?.[1];
