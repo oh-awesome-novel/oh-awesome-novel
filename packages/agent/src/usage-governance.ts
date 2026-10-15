@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendAgentUsageRecord, formatContextPackageSummary } from '@oh-awesome-novel/core';
 import type { ContextPackage, ContextSourceRef, LlmProviderConfig } from '@oh-awesome-novel/core';
-import { estimateTextTokens, isUsageSourcePath, safeEndpointOrigin, USAGE_ESTIMATOR, usageSourceKey } from '@oh-awesome-novel/core/agent-usage';
-import type { UsageSourceEvidence, UsageRequestMetadata } from '@oh-awesome-novel/core/agent-usage';
+import { aggregateModelUsage, assertUsageSessionId, estimateTextTokens, isUsageSourcePath, normalizeModelUsage, safeEndpointOrigin, USAGE_ESTIMATOR, usageSourceKey } from '@oh-awesome-novel/core/agent-usage';
+import type { ModelRequestStats, ModelRequestUsageRecord, ModelStepUsageRecord, NormalizedModelUsage, ProviderEgressSummary, TurnUsageSummary, UsageBudget, UsageMessageStats, UsageSourceEvidence, UsageRequestMetadata, UsageTokenField } from '@oh-awesome-novel/core/agent-usage';
 import { estimateRuntimeModelRequest } from '@oh-awesome-novel/runtime';
 import type { CopilotRuntimeOptions, RuntimeMessage } from '@oh-awesome-novel/runtime';
 import { resolveContextBudget } from './context-budget';
@@ -24,6 +24,181 @@ export function createContextEvidence(input: {
   };
 }
 
+const PROVIDER_ORIGIN_DEFAULTS: Record<string, string> = {
+  openai: 'https://api.openai.com', deepseek: 'https://api.deepseek.com',
+  ollama: 'http://127.0.0.1:11434', 'opencode-go': 'https://api.opencodego.com', 'xiaomi-mimo': 'https://api.mimo.mi.com',
+};
+
+export function createProviderEgressSummary(provider: LlmProviderConfig): ProviderEgressSummary {
+  const endpointOrigin = safeEndpointOrigin(provider.baseUrl ?? PROVIDER_ORIGIN_DEFAULTS[provider.kind]);
+  return {
+    providerId: safeLabel(provider.id),
+    providerKind: safeLabel(provider.kind),
+    modelId: safeLabel(provider.model),
+    ...(endpointOrigin ? { endpointOrigin } : {}),
+    status: 'prepared',
+  };
+}
+
+export function extractAiSdkUsageFields(
+  usage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+    outputTokenDetails?: { reasoningTokens?: number };
+  } | undefined,
+): Partial<Record<UsageTokenField, unknown>> {
+  return {
+    inputTokens: usage?.inputTokens,
+    outputTokens: usage?.outputTokens,
+    totalTokens: usage?.totalTokens,
+    cacheReadTokens: usage?.inputTokenDetails?.cacheReadTokens,
+    cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens,
+    reasoningTokens: usage?.outputTokenDetails?.reasoningTokens,
+  };
+}
+
+export interface RecordSpecializedModelUsageTurnInput {
+  workspaceRoot?: string;
+  sessionId?: string;
+  turnId?: string;
+  provider: LlmProviderConfig;
+  systemPrompt: string;
+  userPrompt: string;
+  sourceId?: string;
+  sourceKind?: string;
+  sourcePath?: string;
+  sourceHash?: string;
+  budgetOptions?: ContextBudgetOptions;
+  rawUsage?: Partial<Record<UsageTokenField, unknown>>;
+  finishReason?: string;
+  outcome: 'completed' | 'failed' | 'aborted';
+  createdAt?: string;
+}
+
+export async function recordSpecializedModelUsageTurn(
+  input: RecordSpecializedModelUsageTurnInput,
+): Promise<{
+  actualUsage: NormalizedModelUsage;
+  egress: ProviderEgressSummary;
+  requestStats: ModelRequestStats;
+}> {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const rawTurnId = input.turnId ?? `turn_${randomUUID()}`;
+  const turnId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(rawTurnId) && !rawTurnId.includes('..')
+    ? rawTurnId
+    : `turn_${randomUUID()}`;
+  const egress = createProviderEgressSummary(input.provider);
+  const systemTokens = estimateTextTokens(input.systemPrompt);
+  const userTokens = estimateTextTokens(input.userPrompt);
+  const systemSource: UsageSourceEvidence = {
+    sourceId: 'systemInstructions',
+    kind: safeLabel(input.sourceKind ?? 'specializedSystem'),
+    payloadHash: hash(input.systemPrompt),
+    originalChars: input.systemPrompt.length,
+    modelVisibleChars: input.systemPrompt.length,
+    estimatedTokens: systemTokens,
+    budgetLayer: 'L0',
+    semanticBoundary: 'protected',
+    outcome: 'selected',
+    reason: 'selected',
+    estimator: USAGE_ESTIMATOR,
+    attribution: 'exact',
+  };
+  const userSource: UsageSourceEvidence = {
+    sourceId: safeLabel(input.sourceId ?? 'specializedInput'),
+    kind: safeLabel(input.sourceKind ?? 'specializedPrompt'),
+    ...(isUsageSourcePath(input.sourcePath) ? { path: input.sourcePath } : {}),
+    ...(input.sourceHash && /^[a-f0-9]{64}$/u.test(input.sourceHash) ? { sourceHash: input.sourceHash } : {}),
+    payloadHash: hash(input.userPrompt),
+    originalChars: input.userPrompt.length,
+    modelVisibleChars: input.userPrompt.length,
+    estimatedTokens: userTokens,
+    budgetLayer: 'L1',
+    semanticBoundary: 'protected',
+    outcome: 'selected',
+    reason: 'selected',
+    estimator: USAGE_ESTIMATOR,
+    attribution: 'exact',
+  };
+  const messages: UsageMessageStats[] = [
+    { index: 0, role: 'system', chars: input.systemPrompt.length, estimatedTokens: systemTokens, sourceRefs: [usageSourceKey(systemSource)] },
+    { index: 1, role: 'user', chars: input.userPrompt.length, estimatedTokens: userTokens, sourceRefs: [usageSourceKey(userSource)] },
+  ];
+  const estimatedMessageTokens = systemTokens + userTokens;
+  const estimatedRequestTokens = Math.ceil(estimatedMessageTokens * 1.2);
+  const requestStats: ModelRequestStats = {
+    messageCount: 2,
+    messages,
+    estimatedMessageTokens,
+    estimatedRequestTokens,
+    toolCount: 0,
+    estimator: USAGE_ESTIMATOR,
+    estimationScope: 'messages-tools-json-with-20-percent-margin',
+  };
+  const resolvedBudget = resolveContextBudget(input.provider, input.budgetOptions);
+  const budget: UsageBudget = resolvedBudget.inputTokens === undefined
+    ? { status: 'unknown', estimatedRequestTokens }
+    : {
+        status: estimatedRequestTokens > resolvedBudget.inputTokens ? 'overflow' : 'within',
+        inputTokens: resolvedBudget.inputTokens,
+        estimatedRequestTokens,
+      };
+  const actualUsage = normalizeModelUsage(input.rawUsage);
+  const aggregated = aggregateModelUsage([actualUsage]);
+
+  if (input.workspaceRoot && input.sessionId) {
+    try {
+      assertUsageSessionId(input.sessionId);
+      const requestRecord: ModelRequestUsageRecord = {
+        schemaVersion: 1,
+        recordType: 'request',
+        sessionId: input.sessionId,
+        turnId,
+        stepIndex: 0,
+        createdAt,
+        request: requestStats,
+        sources: [systemSource, userSource],
+        budget,
+        egress,
+      };
+      const stepRecord: ModelStepUsageRecord = {
+        schemaVersion: 1,
+        recordType: 'step',
+        sessionId: input.sessionId,
+        turnId,
+        stepIndex: 0,
+        createdAt,
+        actualUsage,
+        outcome: input.outcome,
+        ...(input.finishReason ? { finishReason: safeLabel(input.finishReason) } : {}),
+      };
+      const turnRecord: TurnUsageSummary = {
+        schemaVersion: 1,
+        recordType: 'turn',
+        sessionId: input.sessionId,
+        turnId,
+        createdAt,
+        stepCount: 1,
+        estimatedMessageTokens,
+        estimatedRequestTokens,
+        actualUsage: aggregated.actualUsage,
+        actualCoverage: aggregated.actualCoverage,
+        fieldCoverage: aggregated.fieldCoverage,
+        outcome: input.outcome,
+      };
+      await appendAgentUsageRecord(input.workspaceRoot, input.sessionId, requestRecord);
+      await appendAgentUsageRecord(input.workspaceRoot, input.sessionId, stepRecord);
+      await appendAgentUsageRecord(input.workspaceRoot, input.sessionId, turnRecord);
+    } catch {
+      // Disposable telemetry must never fail a specialized Reference or Play run.
+    }
+  }
+
+  return { actualUsage, egress, requestStats };
+}
+
 export function createUsageGovernance(input: {
   budgetOptions?: ContextBudgetOptions;
   provider: LlmProviderConfig; workspaceRoot: string; sessionId?: string; contextPackage?: ContextPackage;
@@ -31,15 +206,7 @@ export function createUsageGovernance(input: {
 }): Pick<CopilotRuntimeOptions, 'prepareModelRequest' | 'toolResultProvenance' | 'onEvent'> & { takePersistenceWarning(): boolean } {
   const declared = input.contextPackage ? structuredClone(input.contextPackage) : undefined;
   let pendingWarning = false;
-  const defaults: Record<string, string> = {
-    openai: 'https://api.openai.com', deepseek: 'https://api.deepseek.com',
-    ollama: 'http://127.0.0.1:11434', 'opencode-go': 'https://api.opencodego.com', 'xiaomi-mimo': 'https://api.mimo.mi.com',
-  };
-  const endpointOrigin = safeEndpointOrigin(input.provider.baseUrl ?? defaults[input.provider.kind]);
-  const egress = {
-    providerId: safeLabel(input.provider.id), providerKind: safeLabel(input.provider.kind), modelId: safeLabel(input.provider.model),
-    ...(endpointOrigin ? { endpointOrigin } : {}), status: 'prepared' as const,
-  };
+  const egress = createProviderEgressSummary(input.provider);
   return {
     async prepareModelRequest(request) {
       let messages = request.messages.map((message) => ({ ...message, ...(message.provenance ? { provenance: message.provenance.map((p) => ({ ...p })) } : {}) }));

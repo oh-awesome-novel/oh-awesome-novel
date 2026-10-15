@@ -240,6 +240,19 @@ describe('accepted file transactions and Git recovery', () => {
     expect(await git(fixture.root, ['rev-parse', 'HEAD'])).toBe(fixture.head);
   });
 
+  it('rejects mismatched receipt identity on store.readView without rolling back accepted files', async () => {
+    const fixture = await createFixture();
+    await fixture.propose('a');
+    await fixture.materializer.accept({ actionId: 'a', autoCommitOnAccept: false });
+    const receiptFile = join(fixture.root, '.workspace/change-engine/v1/receipts/a.json');
+    const stored = JSON.parse(await readFile(receiptFile, 'utf8')) as Record<string, unknown>;
+    await writeFile(receiptFile, `${JSON.stringify({ ...stored, id: 'tampered-receipt-id' }, null, 2)}\n`);
+    await expect(fixture.store.readView('a')).rejects.toMatchObject({
+      code: 'PENDING_ACTION_CORRUPT',
+    });
+    expect(await readFile(join(fixture.root, 'state/a.yaml'), 'utf8')).toBe('value: accepted\n');
+  });
+
   it('auto-commits a CRLF checkout produced by core.autocrlf and still detects real author edits', async () => {
     const fixture = await createFixture();
     await git(fixture.root, ['config', 'core.autocrlf', 'true']);

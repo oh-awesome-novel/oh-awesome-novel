@@ -26,6 +26,8 @@ bash-tool + just-bash fixed sandbox
 3. **Play 保持高优先级**：[1120](tasks/1120.md) 剩余可靠性，以及作者使用中提出的穿越/导演/世界线体验改进，直接立项推进。
 4. 其余：[0580](tasks/0580.md) 远端同步与更多环境验收、[1230](tasks/1230.md) 独立剩余范围。
 
+第一梯队可靠性与治理收尾（2026-10-15）：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复提示与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 跨管线 usage/egress 记录（Reference 与 Play）、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试。三份 Needs Review task 仍未全部关闭：设备断电、商业 provider、远端鉴权/多平台与发行环境验收留在各自 Remaining。
+
 不做商业写作、连载平台或团队协作相关功能。**Extension 系统开发继续暂缓**：不新增动态 Tool 注册或 extension host code。
 
 此前交付记录：首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复、Play 可靠性修正、usage 治理、受限多领域结构化结算、正文搜索、Markdown/TXT 导出、Play 派生窗口/快照优化、[1290](tasks/1290.md) 章级来源新鲜度、[1300](tasks/1300.md) 旧稿导入、[0700](tasks/0700.md) 卷/全书摘要与 [1310](tasks/1310.md) 发行质量门禁。完整 Play mutation/CAS 成本仍线性，进一步优化以实测门槛为准。

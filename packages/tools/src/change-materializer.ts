@@ -375,7 +375,10 @@ class FileChangeMaterializer implements ChangeMaterializer {
       }
       const previous = await this.#store.readDecisionReceipt(actionId);
       if (!previous || previous.decision !== 'accepted') {
-        throw materializerError('PENDING_ACTION_RECEIPT_MISSING', `Accepted action ${actionId} has no receipt.`);
+        throw materializerError(
+          'PENDING_ACTION_RECEIPT_MISSING',
+          `PendingAction ${actionId} is already accepted and canonical files were preserved, but its decision receipt is missing.`,
+        );
       }
       assertReceiptMatchesRecord(previous, record);
       if (previous.git.status === 'committed') {

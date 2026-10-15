@@ -17,6 +17,16 @@ import type {
   PreparedChangePreviewV1,
 } from '@oh-awesome-novel/tools';
 
+// Materializer errors are plain Errors with codes, unlike protocol errors.
+// Do not treat Node errno codes (ENOSPC, EACCES, EIO, ...) as domain failures.
+const RECOVERY_DOMAIN_ERROR_CODES = new Set([
+  'ACCEPTED_TARGET_DRIFT', 'UNRELATED_STAGED_FILES',
+  'CHANGE_JOURNAL_CORRUPT', 'CHANGE_JOURNAL_CONFLICT', 'CHANGE_BACKUP_INVALID',
+  'PENDING_ACTION_CORRUPT', 'PENDING_ACTION_TERMINAL_CONFLICT',
+  'STALE_REPOSITORY_BASELINE', 'STALE_PENDING_ACTION_BASELINE', 'STALE_TRANSACTION_ARTIFACT',
+  'UNSAFE_PATH', 'UNSAFE_INTERNAL_PATH', 'UNSAFE_TARGET_PARENT', 'UNSAFE_CANONICAL_TARGET', 'MISSING_CANONICAL_TARGET',
+]);
+
 /** Stable HTTP error contract for disposable pre-change-engine state. */
 export const PENDING_ACTION_RESET_REQUIRED_CODE =
   UNSUPPORTED_PENDING_ACTION_SCHEMA;
@@ -122,10 +132,34 @@ export function createPendingActionViewHandlers(input: {
   materializer: ChangeMaterializer;
 }): PendingActionViewHandlers {
   async function readSource(id: string): Promise<PendingActionViewSource> {
-    const record = await input.store.readRecord(id);
-    const receipt = record.status === 'pending'
+    let record = await input.store.readRecord(id);
+    let receipt = record.status === 'pending'
       ? undefined
       : await input.store.readDecisionReceipt(id);
+    if (
+      record.status !== 'pending'
+      && receipt === undefined
+      && typeof input.materializer.recover === 'function'
+    ) {
+      try {
+        await input.materializer.recover();
+      } catch (error) {
+        if (
+          error instanceof PendingActionProtocolError
+          || (isRecord(error) && typeof error.code === 'string' && RECOVERY_DOMAIN_ERROR_CODES.has(error.code))
+        ) {
+          throw error;
+        }
+        throw new PendingActionProtocolError(
+          'PENDING_ACTION_RECEIPT_MISSING',
+          `PendingAction ${id} is already ${record.status} and canonical files were preserved, but its decision receipt could not be finalized yet (${error instanceof Error ? error.message : String(error)}). Resolve the storage or Git issue and retry recovery or quick commit.`,
+        );
+      }
+      record = await input.store.readRecord(id);
+      receipt = record.status === 'pending'
+        ? undefined
+        : await input.store.readDecisionReceipt(id);
+    }
     return { record, ...(receipt === undefined ? {} : { receipt }) };
   }
 
@@ -423,11 +457,15 @@ export function toPendingActionViewErrorResponse(
     ? 404
     : code === 'stalePreview'
       || code === 'PENDING_ACTION_ORIGIN_VALIDATOR_REQUIRED'
+      || code === 'ACCEPTED_TARGET_DRIFT'
+      || code === 'UNRELATED_STAGED_FILES'
       || /(?:CONFLICT|STALE|MISMATCH|NOT_ACCEPTED)/u.test(code)
       ? 409
       : code === 'INVALID_PENDING_ACTION_SCHEMA'
         || code === 'PENDING_ACTION_DRAFT_INTEGRITY_ERROR'
         || code === 'PENDING_ACTION_CORRUPT'
+        || code === 'PENDING_ACTION_RECEIPT_MISSING'
+        || code === 'CHANGE_JOURNAL_CORRUPT'
         ? 422
         : 500;
   return {
@@ -444,9 +482,15 @@ function assertRecordReceiptAgreement(
     if (receipt !== undefined) invalidPublicView('Pending PendingAction has a decision receipt.');
     return;
   }
+  if (receipt === undefined) {
+    throw new PendingActionProtocolError(
+      'PENDING_ACTION_RECEIPT_MISSING',
+      `PendingAction ${record.action.id} is already ${record.status} and canonical files were preserved, but its decision receipt is missing. Run recovery or check workspace storage.`,
+    );
+  }
   if (
-    receipt === undefined
-    || receipt.id !== record.decisionReceiptId
+    receipt.id !== record.decisionReceiptId
+    || receipt.actionId !== record.action.id
     || receipt.decision !== record.status
     || receipt.decidedAt !== (record.status === 'accepted'
       ? record.acceptedAt

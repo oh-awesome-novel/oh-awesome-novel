@@ -19,10 +19,10 @@ export function useGitReview(workspacePath: () => string) {
   let detailSequence = 0;
   const dirtyFiles = computed(() => status.value?.files.flatMap((file) => file.originalPath ? [file.originalPath, file.path] : [file.path]) ?? []);
   const previewReady = computed(() => Boolean(preview.value));
-  async function refreshGit() {
+  async function refreshGit(options?: { preserveError?: boolean }) {
     if (loading.value) return;
     const request = ++sequence; const workspace = workspacePath();
-    loading.value = true; error.value = ''; preview.value = undefined; dirtyDiff.value = ''; retryIndex.value = false;
+    loading.value = true; if (options?.preserveError !== true) error.value = ''; preview.value = undefined; dirtyDiff.value = ''; retryIndex.value = false;
     try {
       const next = await api.getGitStatus();
       if (request !== sequence || workspace !== workspacePath()) return;
@@ -72,8 +72,11 @@ export function useGitReview(workspacePath: () => string) {
     try {
       const result = await api.syncGit();
       if (request !== sequence || workspace !== workspacePath()) return;
-      syncStatus.value = result.status === 'synced' ? 'Synced' : `${result.step}: ${result.error.message}`;
-      loading.value = false; await refreshGit();
+      syncStatus.value = result.status === 'synced'
+        ? `Synced${result.remote ? ` (${result.remote})` : ''}`
+        : `${result.step}: ${result.error.message}`;
+      if (result.status === 'failed') error.value = result.error.message;
+      loading.value = false; await refreshGit({ preserveError: result.status === 'failed' });
     } catch (cause) { if (request === sequence && workspace === workspacePath()) { syncStatus.value = ''; error.value = cause instanceof Error ? cause.message : String(cause); } }
     finally { if (request === sequence) loading.value = false; }
   }

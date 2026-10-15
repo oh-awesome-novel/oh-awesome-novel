@@ -1511,6 +1511,20 @@ function pendingActionView(
     : record.status === 'rejected'
       ? record.rejectedAt
       : undefined;
+  if (receipt !== undefined) {
+    if (
+      record.status === 'pending'
+      || receipt.id !== record.decisionReceiptId
+      || receipt.actionId !== record.action.id
+      || receipt.decision !== record.status
+      || receipt.decidedAt !== decidedAt
+    ) {
+      throw new PendingActionProtocolError(
+        'PENDING_ACTION_CORRUPT',
+        `Decision receipt does not match PendingAction ${record.action.id} terminal.`,
+      );
+    }
+  }
   const view: PendingActionView = {
     id: record.action.id,
     title: record.action.title,

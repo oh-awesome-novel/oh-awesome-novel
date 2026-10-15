@@ -9,7 +9,7 @@ const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessag
   <section class="right-tab-panel" aria-label="Git history and sync">
     <div class="panel-heading">
       <h2 class="panel-title">Git</h2>
-      <button class="ghost-button tight-button" type="button" :disabled="loading" @click="refreshGit">Refresh</button>
+      <button class="ghost-button tight-button" type="button" :disabled="loading" @click="() => refreshGit()">Refresh</button>
     </div>
     <p v-if="loading" class="empty-copy">Reading Git status...</p>
     <p v-if="error" class="error-copy">{{ error }}</p>
@@ -23,6 +23,10 @@ const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessag
         <div class="status-block">
           <span>Branch</span>
           <strong>{{ status.branch ?? '-' }}</strong>
+        </div>
+        <div class="status-block">
+          <span>Remote</span>
+          <strong>{{ status.remote ?? '-' }}</strong>
         </div>
         <div class="status-block">
           <span>Status</span>

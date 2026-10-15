@@ -1,8 +1,9 @@
 import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 export { resolveSummarySelection } from '@oh-awesome-novel/core/novel-copilot-contract';
 export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
-import { parseGitDiffPreview, assertReviewedGitCommitInput, parseReviewedGitCommitResult } from './git-preview';
+import { parseGitDiffPreview, assertReviewedGitCommitInput, parseReviewedGitCommitResult, parseGitSyncResult } from './git-preview';
 import type { GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
+export { parseGitSyncResult } from './git-preview';
 export type { GitCommitPreview, GitDiffPreview, ReviewedGitCommitInput } from './git-preview';
 import { assertUsageSessionId, parseAgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
 import type { AgentGovernanceHistory } from '@oh-awesome-novel/core/agent-usage';
@@ -1660,6 +1661,7 @@ export interface GitCommandError {
     | 'identity_missing'
     | 'head_missing'
     | 'remote_missing'
+    | 'dirty_worktree'
     | 'auth_failed'
     | 'conflict'
     | 'invalid_input'
@@ -1684,6 +1686,7 @@ export interface GitWorkspaceStatus {
   version?: string;
   repository: boolean;
   branch?: string;
+  remote?: string;
   head?: string;
   status: 'clean' | 'dirty' | 'unknown';
   dirty: boolean | null;
@@ -1715,9 +1718,26 @@ export type GitCommitResult =
   | { status: 'skipped'; reason: 'auto_commit_disabled'; message: string }
   | { status: 'failed'; message: string; error: GitCommandError };
 
+export type GitSyncStep = 'preflight' | 'fetch' | 'pull' | 'push';
+
 export type GitSyncResult =
-  | { status: 'synced'; fetch: string; pull: string; push: string }
-  | { status: 'failed'; step: 'fetch' | 'pull' | 'push'; error: GitCommandError };
+  | {
+      status: 'synced';
+      remote?: string;
+      branch?: string;
+      head?: string;
+      fetch: string;
+      pull: string;
+      push: string;
+    }
+  | {
+      status: 'failed';
+      step: GitSyncStep;
+      remote?: string;
+      branch?: string;
+      head?: string;
+      error: GitCommandError;
+    };
 
 export interface ProjectHealthIssue {
   id: string;
@@ -2643,10 +2663,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         body: input,
       }));
     },
-    syncGit: () =>
-      requestJson<GitSyncResult>('/api/git/sync', {
+    syncGit: async () => {
+      const response = await fetcher(joinUrl(backendBaseUrl, '/api/git/sync'), {
         method: 'POST',
-      }),
+      });
+      const data = await parseJsonResponse(response);
+      if (response.ok || response.status === 409) {
+        return parseGitSyncResult(data);
+      }
+      throw createOanRequestError(response, data);
+    },
     openExternalEditor: (editor) =>
       requestJson<{ opened: boolean; editor: string; error?: string }>(
         '/api/external-editor/open',

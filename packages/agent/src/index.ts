@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { createContextEvidence, createUsageGovernance } from './usage-governance';
+import { createContextEvidence, createProviderEgressSummary, createUsageGovernance, extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
+export { createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
+export type { RecordSpecializedModelUsageTurnInput } from './usage-governance';
 import { normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
 import type { CopilotRuntimeOptions } from '@oh-awesome-novel/runtime';
 import { assertModelRequestBudget, resolveContextBudget } from './context-budget';
@@ -770,15 +772,16 @@ export const runNovelAgentTurn = async (
     const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
+    const usageSessionId = input.usageSessionId ?? session?.metadata.id;
     const governance = createUsageGovernance({
       provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
       budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
-      sessionId: session?.metadata.id, contextPackage,
+      sessionId: usageSessionId, contextPackage,
       drainReadSources: environment.drainReadSources,
     });
     const runtime = createNovelAgentRuntime({
       ...input,
-      usageSessionId: session?.metadata.id,
+      usageSessionId,
       prepareModelRequest: governance.prepareModelRequest,
       toolResultProvenance: governance.toolResultProvenance,
       tools: environment.tools,
@@ -841,15 +844,16 @@ export async function* streamNovelAgentTurn(
     const resumeNotice = await prepareResumeContext(input, projectedInput, environment, session?.metadata.id);
     const contextPackage = projectedInput.contextPackage
       ?? createBaselineNovelAgentContextPackage(projectedInput);
+    const usageSessionId = input.usageSessionId ?? session?.metadata.id;
     const governance = createUsageGovernance({
       provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
       budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
-      sessionId: session?.metadata.id, contextPackage,
+      sessionId: usageSessionId, contextPackage,
       drainReadSources: environment.drainReadSources,
     });
     const runtime = createNovelAgentRuntime({
       ...input,
-      usageSessionId: session?.metadata.id,
+      usageSessionId,
       prepareModelRequest: governance.prepareModelRequest,
       toolResultProvenance: governance.toolResultProvenance,
       tools: environment.tools,

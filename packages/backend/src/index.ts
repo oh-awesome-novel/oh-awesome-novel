@@ -2490,6 +2490,16 @@ async function handleGitSync(
 ): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   const result = await syncGit(workspaceRoot);
+  if (requireActiveWorkspaceRoot(options, state) !== workspaceRoot) {
+    return jsonResponse(context, 409, {
+      status: 'failed',
+      step: 'preflight',
+      error: {
+        code: 'git_failed',
+        message: 'Workspace changed during Git sync; refresh and try again.',
+      },
+    });
+  }
 
   return jsonResponse(context, result.status === 'synced' ? 200 : 409, result);
 }
@@ -4567,6 +4577,7 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     workspaceRoot: input.workspaceRoot,
     workspace: { workspaceRoot: input.workspaceRoot },
     request: input.request,
+    usageSessionId: `play-${input.session.id}`,
     abortSignal: input.abortSignal,
   })) {
     if (event.type === 'message_delta') {
@@ -4763,6 +4774,7 @@ async function handlePlayWorldRefereeTurn(
         workspaceRoot,
         workspace: { workspaceRoot },
         request,
+        usageSessionId: `play-${session.id}`,
         session: { metadata: { title: `Play ${session.id}` } },
       });
       refereeText = result.assistantMessage?.content?.trim() ?? '';
@@ -6259,6 +6271,9 @@ function hasPendingActionErrorCode(error: unknown): boolean {
       || error.code === 'INVALID_PENDING_ACTION_SCHEMA'
       || error.code === 'STALE_REPOSITORY_BASELINE'
       || error.code === 'STALE_PENDING_ACTION_BASELINE'
+      || error.code === 'ACCEPTED_TARGET_DRIFT'
+      || error.code === 'UNRELATED_STAGED_FILES'
+      || error.code === 'CHANGE_JOURNAL_CORRUPT'
     );
 }
 

@@ -21,6 +21,7 @@ export interface GitCommandError {
     | 'identity_missing'
     | 'head_missing'
     | 'remote_missing'
+    | 'dirty_worktree'
     | 'auth_failed'
     | 'conflict'
     | 'invalid_input'
@@ -45,6 +46,7 @@ export interface GitWorkspaceStatus {
   version?: string;
   repository: boolean;
   branch?: string;
+  remote?: string;
   head?: string;
   status: 'clean' | 'dirty' | 'unknown';
   dirty: boolean | null;
@@ -76,9 +78,26 @@ export type GitCommitResult =
   | { status: 'skipped'; reason: 'auto_commit_disabled'; message: string }
   | { status: 'failed'; message: string; error: GitCommandError };
 
+export type GitSyncStep = 'preflight' | 'fetch' | 'pull' | 'push';
+
 export type GitSyncResult =
-  | { status: 'synced'; fetch: string; pull: string; push: string }
-  | { status: 'failed'; step: 'fetch' | 'pull' | 'push'; error: GitCommandError };
+  | {
+      status: 'synced';
+      remote?: string;
+      branch?: string;
+      head?: string;
+      fetch: string;
+      pull: string;
+      push: string;
+    }
+  | {
+      status: 'failed';
+      step: GitSyncStep;
+      remote?: string;
+      branch?: string;
+      head?: string;
+      error: GitCommandError;
+    };
 
 export interface PendingActionGitBaselineFile {
   path: string;
@@ -182,13 +201,17 @@ export async function readGitStatus(workspaceRoot: string): Promise<GitWorkspace
     runGit(workspaceRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ]);
 
+  const branchName = branch.ok ? branch.stdout.trim() || undefined : undefined;
+  const remote = await resolveWorkspaceGitRemote(workspaceRoot, branchName);
+
   if (!status.ok) {
     return {
       available: true,
       source: 'global',
       version: version.version,
       repository: true,
-      branch: branch.ok ? branch.stdout.trim() || undefined : undefined,
+      branch: branchName,
+      ...(remote ? { remote } : {}),
       head: head.ok ? head.stdout.trim() || undefined : undefined,
       status: 'unknown',
       dirty: null,
@@ -210,7 +233,8 @@ export async function readGitStatus(workspaceRoot: string): Promise<GitWorkspace
     source: 'global',
     version: version.version,
     repository: true,
-    branch: branch.ok ? branch.stdout.trim() || undefined : undefined,
+    branch: branchName,
+    ...(remote ? { remote } : {}),
     head: head.ok ? head.stdout.trim() || undefined : undefined,
     status: dirty ? 'dirty' : 'clean',
     dirty,
@@ -590,25 +614,179 @@ export async function readPendingActionCommitAtHead(input: {
 }
 
 export async function syncGit(workspaceRoot: string): Promise<GitSyncResult> {
-  const fetch = await runGit(workspaceRoot, ['fetch']);
+  const status = await readGitStatus(workspaceRoot);
+  if (!status.available) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      error: status.error ?? {
+        code: 'git_unavailable',
+        message: 'Global git command is not available.',
+      },
+    };
+  }
+  if (!status.repository) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      error: status.error ?? {
+        code: 'not_git_repository',
+        message: 'Workspace is not a Git repository.',
+      },
+    };
+  }
+  if (!status.head) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      ...(status.branch ? { branch: status.branch } : {}),
+      ...(status.remote ? { remote: status.remote } : {}),
+      error: status.error?.code === 'head_missing' ? status.error : missingHeadError(),
+    };
+  }
+  if (!status.branch || !isSafeGitRefName(status.branch)) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      ...(status.branch ? { branch: status.branch } : {}),
+      ...(status.remote ? { remote: status.remote } : {}),
+      head: status.head,
+      error: {
+        code: 'invalid_input',
+        message: 'Cannot sync from a detached or invalid Git branch. Check out a named branch in your external editor first.',
+      },
+    };
+  }
+  if (status.status === 'unknown' || status.dirty === null) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      ...(status.remote ? { remote: status.remote } : {}),
+      branch: status.branch,
+      head: status.head,
+      error: status.error ?? {
+        code: 'git_failed',
+        message: 'Cannot read Git workspace status.',
+      },
+    };
+  }
+  if (status.dirty) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      ...(status.remote ? { remote: status.remote } : {}),
+      branch: status.branch,
+      head: status.head,
+      error: {
+        code: 'dirty_worktree',
+        message: 'Workspace has uncommitted changes. Commit or discard local changes before syncing.',
+      },
+    };
+  }
+  if (!status.remote || !isSafeGitRefName(status.remote)) {
+    return {
+      status: 'failed',
+      step: 'preflight',
+      branch: status.branch,
+      head: status.head,
+      error: {
+        code: 'remote_missing',
+        message: 'Git remote is not configured.',
+      },
+    };
+  }
+
+  const remote = status.remote;
+  const branch = status.branch;
+  const upstream = await resolveGitSyncUpstream(workspaceRoot, remote, branch);
+  if (!upstream.ok) {
+    return { status: 'failed', step: 'preflight', remote, branch, head: status.head, error: upstream.error };
+  }
+  const { remoteBranch, hasUpstream } = upstream;
+  let currentHead = status.head;
+  const configuredSsh = await runGit(workspaceRoot, ['config', '--get', '--default', '', 'core.sshCommand']);
+  if (!configuredSsh.ok) {
+    return { status: 'failed', step: 'preflight', remote, branch, head: currentHead, error: configuredSsh.error };
+  }
+  const syncEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+    SSH_ASKPASS_REQUIRE: 'never',
+    // Git owns the precedence and quoting of user-supplied SSH commands.
+    // Only supply a default when neither config nor environment selects one.
+    ...(!process.env.GIT_SSH_COMMAND && !process.env.GIT_SSH && !configuredSsh.stdout.trim()
+      ? { GIT_SSH_COMMAND: 'ssh -oBatchMode=yes' }
+      : {}),
+  };
+  const syncTimeoutMs = 60_000;
+
+  const fetch = await runGit(workspaceRoot, ['fetch', '--', remote], syncEnv, syncTimeoutMs);
   if (!fetch.ok) {
-    return { status: 'failed', step: 'fetch', error: fetch.error };
+    return {
+      status: 'failed',
+      step: 'fetch',
+      remote,
+      branch,
+      head: currentHead,
+      error: fetch.error,
+    };
   }
 
-  const pull = await runGit(workspaceRoot, ['pull', '--ff-only']);
-  if (!pull.ok) {
-    return { status: 'failed', step: 'pull', error: pull.error };
+  let pullStdout = '';
+  const remoteBranchRef = await runGit(
+    workspaceRoot,
+    ['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${remoteBranch}`],
+    syncEnv,
+  );
+  if (hasUpstream || remoteBranchRef.ok) {
+    const pull = await runGit(
+      workspaceRoot,
+      ['pull', '--ff-only', '--', remote, remoteBranch],
+      syncEnv,
+      syncTimeoutMs,
+    );
+    if (!pull.ok) {
+      return {
+        status: 'failed',
+        step: 'pull',
+        remote,
+        branch,
+        head: currentHead,
+        error: pull.error,
+      };
+    }
+    pullStdout = pull.stdout;
+    const headAfterPull = await runGit(workspaceRoot, ['rev-parse', 'HEAD']);
+    if (headAfterPull.ok && headAfterPull.stdout.trim()) {
+      currentHead = headAfterPull.stdout.trim();
+    }
   }
 
-  const push = await runGit(workspaceRoot, ['push']);
+  const push = await runGit(
+    workspaceRoot,
+    ['push', ...(!hasUpstream ? ['-u'] : []), '--', remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`],
+    syncEnv,
+    syncTimeoutMs,
+  );
   if (!push.ok) {
-    return { status: 'failed', step: 'push', error: push.error };
+    return {
+      status: 'failed',
+      step: 'push',
+      remote,
+      branch,
+      head: currentHead,
+      error: push.error,
+    };
   }
 
   return {
     status: 'synced',
+    remote,
+    branch,
+    head: currentHead,
     fetch: fetch.stdout,
-    pull: pull.stdout,
+    pull: pullStdout,
     push: push.stdout,
   };
 }
@@ -699,20 +877,25 @@ async function runGit(
   workspaceRoot: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
+  timeout?: number,
 ): Promise<
   | { ok: true; stdout: string; stderr: string }
-  | { ok: false; error: GitCommandError }
+  | { ok: false; error: GitCommandError; exitCode?: number }
 > {
   try {
     const { stdout, stderr } = await execFileAsync('git', ['--no-optional-locks', '--literal-pathspecs', '-C', workspaceRoot, ...args], {
       maxBuffer: 20 * 1024 * 1024,
       ...(env ? { env } : {}),
+      ...(timeout === undefined ? {} : { timeout }),
     });
     return { ok: true, stdout, stderr };
   } catch (error) {
     return {
       ok: false,
       error: toGitCommandError(error),
+      ...(typeof (error as { code?: unknown })?.code === 'number'
+        ? { exitCode: (error as { code: number }).code }
+        : {}),
     };
   }
 }
@@ -880,16 +1063,38 @@ function toGitCommandError(error: unknown): GitCommandError {
     return { code: 'identity_missing', message: 'Git user identity is not configured. Set user.name and user.email for this repository in your external editor, then create the initial commit if needed.', stderr };
   }
 
-  if (normalized.includes('no configured push destination') || normalized.includes('does not appear to be a git repository')) {
-    return { code: 'remote_missing', message: 'Git remote is not configured.', stderr };
-  }
-
-  if (normalized.includes('authentication failed') || normalized.includes('permission denied')) {
+  if (
+    normalized.includes('authentication failed')
+    || normalized.includes('permission denied')
+    || normalized.includes('could not read username')
+    || normalized.includes('could not read password')
+    || normalized.includes('terminal prompts disabled')
+    || normalized.includes('access denied')
+    || normalized.includes('returned error: 401')
+    || normalized.includes('returned error: 403')
+    || normalized.includes('host key verification failed')
+  ) {
     return { code: 'auth_failed', message: 'Git authentication failed.', stderr };
   }
 
-  if (normalized.includes('would be overwritten') || normalized.includes('conflict')) {
+  if (
+    normalized.includes('would be overwritten')
+    || normalized.includes('conflict')
+    || normalized.includes('not possible to fast-forward')
+    || normalized.includes('diverging branches')
+    || normalized.includes('non-fast-forward')
+    || normalized.includes('fetch first')
+  ) {
     return { code: 'conflict', message: 'Git operation cannot continue because of conflicts.', stderr };
+  }
+
+  if (
+    normalized.includes('no configured push destination')
+    || normalized.includes('does not appear to be a git repository')
+    || normalized.includes('no such remote')
+    || normalized.includes('could not read from remote repository')
+  ) {
+    return { code: 'remote_missing', message: 'Git remote is not configured.', stderr };
   }
 
   if (
@@ -901,6 +1106,65 @@ function toGitCommandError(error: unknown): GitCommandError {
   }
 
   return { code: 'git_failed', message: message || 'Git command failed.', stderr };
+}
+
+async function resolveWorkspaceGitRemote(
+  workspaceRoot: string,
+  branchName?: string,
+): Promise<string | undefined> {
+  const remotesResult = await runGit(workspaceRoot, ['remote']);
+  if (!remotesResult.ok) return undefined;
+  const remotes = remotesResult.stdout
+    .split(/\r?\n/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && isSafeGitRefName(item));
+  if (remotes.length === 0) return undefined;
+
+  if (branchName && isSafeGitRefName(branchName)) {
+    const branchRemote = await runGit(workspaceRoot, ['config', '--get', `branch.${branchName}.remote`]);
+    const configured = branchRemote.ok ? branchRemote.stdout.trim() : '';
+    if (configured) {
+      // An unavailable configured remote must not silently select another one.
+      return remotes.includes(configured) ? configured : undefined;
+    }
+  }
+  if (remotes.includes('origin')) return 'origin';
+  return remotes.length === 1 ? remotes[0] : undefined;
+}
+
+async function resolveGitSyncUpstream(
+  workspaceRoot: string,
+  remote: string,
+  branch: string,
+): Promise<
+  | { ok: true; remoteBranch: string; hasUpstream: boolean }
+  | { ok: false; error: GitCommandError }
+> {
+  const [configuredRemote, merge] = await Promise.all([
+    runGit(workspaceRoot, ['config', '--get', '--default', '', `branch.${branch}.remote`]),
+    runGit(workspaceRoot, ['config', '--null', '--get-all', `branch.${branch}.merge`]),
+  ]);
+  if (!configuredRemote.ok) return configuredRemote;
+  // git config exits 1 for an unset key; other failures are not first-use state.
+  if (!merge.ok && merge.exitCode !== 1) return merge;
+  const refs = merge.ok ? merge.stdout.split('\0').filter(Boolean) : [];
+  if (refs.length === 0) return { ok: true, remoteBranch: branch, hasUpstream: false };
+  const ref = refs[0]!;
+  if (refs.length !== 1 || configuredRemote.stdout.trim() !== remote
+    || !ref.startsWith('refs/heads/') || !(await runGit(workspaceRoot, ['check-ref-format', ref])).ok) {
+    return { ok: false, error: { code: 'invalid_input', message: 'Git upstream must identify one branch on the configured remote. Check the branch tracking configuration in your external editor.' } };
+  }
+  return { ok: true, remoteBranch: ref.slice('refs/heads/'.length), hasUpstream: true };
+}
+
+function isSafeGitRefName(value: string): boolean {
+  return value.length > 0
+    && value.length <= 255
+    && !/^[-.~^:?*[\\\s]/u.test(value)
+    && !/(?:\.\.|@\{|\/\/|[\u0000-\u001f\u007f~^:?*[\\\s])/u.test(value)
+    && !value.endsWith('.')
+    && !value.endsWith('.lock')
+    && !value.endsWith('/');
 }
 
 function readProcessStderr(error: unknown): string | undefined {

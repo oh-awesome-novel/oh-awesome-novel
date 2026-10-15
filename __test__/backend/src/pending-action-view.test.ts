@@ -7,6 +7,7 @@ import {
   createPendingActionViewHandlers,
   parsePendingActionViewDto,
   serializePendingActionView,
+  toPendingActionViewErrorResponse,
 } from '@oh-awesome-novel/backend';
 import type {
   ChangeMaterializer,
@@ -152,6 +153,79 @@ describe('new PendingAction backend public boundary', () => {
       receipt: { actionId: 'action-1', git: { status: 'committed' } },
     });
     expect(materializer.quickCommit).toHaveBeenCalledWith('action-1');
+  });
+
+  it.each([undefined, 'ENOSPC', 'EACCES', 'EIO'])('recovers a missing receipt and reports 422 for a storage failure (%s)', async (code) => {
+    const pendingRecord = createPendingRecord();
+    const acceptedReceipt = createAcceptedReceipt();
+    const acceptedRecord: PendingActionRecord = {
+      action: pendingRecord.action,
+      status: 'accepted',
+      acceptedAt: DECIDED_AT,
+      decisionReceiptId: acceptedReceipt.id,
+    };
+    let receipt: PendingActionDecisionReceipt | undefined;
+    let recoveryBlocked = true;
+    const store = {
+      listRecords: vi.fn(async () => [acceptedRecord]),
+      readRecord: vi.fn(async () => acceptedRecord),
+      readDecisionReceipt: vi.fn(async () => receipt),
+    } as unknown as PendingActionStore;
+    const materializer = {
+      recover: vi.fn(async () => {
+        if (recoveryBlocked) throw Object.assign(new Error('receipt disk busy'), code ? { code } : {});
+        receipt = acceptedReceipt;
+      }),
+      accept: vi.fn(),
+      reject: vi.fn(),
+      quickCommit: vi.fn(),
+    } as unknown as ChangeMaterializer;
+    const handlers = createPendingActionViewHandlers({ store, materializer });
+
+    try {
+      await handlers.read('action-1');
+      throw new Error('Expected missing receipt error.');
+    } catch (error) {
+      const response = toPendingActionViewErrorResponse(error);
+      expect(response.status).toBe(422);
+      expect(response.body).toMatchObject({
+        code: 'PENDING_ACTION_RECEIPT_MISSING',
+        error: expect.stringContaining('canonical files were preserved'),
+      });
+    }
+
+    recoveryBlocked = false;
+    await expect(handlers.read('action-1')).resolves.toMatchObject({
+      pendingAction: {
+        id: 'action-1',
+        status: 'accepted',
+        decidedAt: DECIDED_AT,
+        git: { status: 'committed', commit: 'abc123', branch: 'main' },
+      },
+    });
+    expect(materializer.recover).toHaveBeenCalledTimes(2);
+
+    expect(() => serializePendingActionView({
+      record: acceptedRecord,
+      receipt: { ...acceptedReceipt, id: 'wrong-receipt-id' },
+    })).toThrow('PendingAction terminal and receipt are inconsistent.');
+  });
+
+  it.each([
+    ['ACCEPTED_TARGET_DRIFT', 409],
+    ['UNRELATED_STAGED_FILES', 409],
+    ['CHANGE_JOURNAL_CORRUPT', 422],
+    ['PENDING_ACTION_CORRUPT', 422],
+  ] as const)('preserves the recovery domain error %s', async (code, status) => {
+    const record: PendingActionRecord = {
+      ...createPendingRecord(), status: 'accepted', acceptedAt: DECIDED_AT, decisionReceiptId: 'receipt-1',
+    };
+    const handlers = createPendingActionViewHandlers({
+      store: { readRecord: async () => record, readDecisionReceipt: async () => undefined } as unknown as PendingActionStore,
+      materializer: { recover: async () => { throw Object.assign(new Error('Recovery invariant failed.'), { code }); } } as unknown as ChangeMaterializer,
+    });
+    const error = await handlers.read('action-1').catch(cause => cause);
+    expect(toPendingActionViewErrorResponse(error)).toEqual({ status, body: { code, error: 'Recovery invariant failed.' } });
   });
 });
 

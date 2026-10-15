@@ -1,7 +1,12 @@
-import type { GitCommitResult } from './index';
+import type { GitCommitResult, GitSyncResult } from './index';
 export interface GitCommitPreview { id: string; fingerprint: string; files: string[]; head: string; expiresAt: string }
 export interface GitDiffPreview { diff: string; preview: GitCommitPreview | null }
 export interface ReviewedGitCommitInput { files: string[]; message: string; previewId: string; previewFingerprint: string }
+const GIT_ERROR_CODES = new Set([
+  'git_unavailable', 'not_git_repository', 'identity_missing', 'head_missing', 'remote_missing',
+  'dirty_worktree', 'auth_failed', 'conflict', 'invalid_input', 'stale_preview', 'index_recovery_required', 'git_failed',
+]);
+const GIT_SYNC_STEPS = new Set(['preflight', 'fetch', 'pull', 'push']);
 
 export function parseGitDiffPreview(value: unknown): GitDiffPreview {
   const item = exact(value, ['diff', 'preview']);
@@ -33,6 +38,29 @@ export function parseReviewedGitCommitResult(value: unknown): GitCommitResult {
     if (warning.code !== 'index_recovery_required' || typeof warning.message !== 'string' || !warning.message.trim() || warning.message.length > 4000) invalid();
   }
   return structuredClone(value) as GitCommitResult;
+}
+export function parseGitSyncResult(value: unknown): GitSyncResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
+  const item = value as Record<string, unknown>;
+  for (const optional of ['remote', 'branch', 'head'] as const) {
+    if (item[optional] !== undefined && (typeof item[optional] !== 'string' || !(item[optional] as string).trim() || (item[optional] as string).length > 256)) invalid();
+  }
+  if (item.status === 'synced') {
+    const allowed = new Set(['status', 'remote', 'branch', 'head', 'fetch', 'pull', 'push']);
+    if (['fetch', 'pull', 'push'].some((k) => typeof item[k] !== 'string') || Object.keys(item).some((k) => !allowed.has(k))) invalid();
+    return structuredClone(value) as GitSyncResult;
+  }
+  if (item.status === 'failed') {
+    const allowed = new Set(['status', 'step', 'remote', 'branch', 'head', 'error']);
+    if (typeof item.step !== 'string' || !GIT_SYNC_STEPS.has(item.step) || Object.keys(item).some((k) => !allowed.has(k))
+      || !item.error || typeof item.error !== 'object' || Array.isArray(item.error)) invalid();
+    const error = item.error as Record<string, unknown>;
+    if (typeof error.code !== 'string' || !GIT_ERROR_CODES.has(error.code) || typeof error.message !== 'string' || !error.message.trim()
+      || (error.stderr !== undefined && typeof error.stderr !== 'string')
+      || Object.keys(error).some((k) => k !== 'code' && k !== 'message' && k !== 'stderr')) invalid();
+    return structuredClone(value) as GitSyncResult;
+  }
+  return invalid();
 }
 function paths(value: unknown) {
   if (!Array.isArray(value) || !value.length || value.length > 256 || new Set(value).size !== value.length

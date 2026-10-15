@@ -15,6 +15,7 @@ import type {
 } from '@oh-awesome-novel/core';
 
 import type { ReferenceDeconstructionModelResolver } from './reference-deconstruction.js';
+import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const MAX_REFERENCE_MATERIAL_ADOPTION_INPUT_CHARACTERS = 160_000 as const;
 export const MAX_REFERENCE_MATERIAL_ADOPTION_OUTPUT_TOKENS = 12_288 as const;
@@ -37,6 +38,8 @@ export interface GenerateReferenceMaterialAdoptionInput {
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceMaterialAdoptionGenerationError {
@@ -148,11 +151,13 @@ export async function generateReferenceMaterialAdoption(
       ? aborted(input.abortSignal.reason)
       : failed('provider_error', error, true);
   }
+  const prompt = formatReferenceMaterialAdoptionPrompt(input.context);
+  const sessionId = input.usageSessionId ?? `reference-adopt-${input.context.referenceId}`;
   try {
     const result = await generateText({
       model,
       instructions: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
-      prompt: formatReferenceMaterialAdoptionPrompt(input.context),
+      prompt,
       output: Output.object({
         schema: jsonSchema<Record<string, unknown>>(ADOPTION_OUTPUT_SCHEMA),
       }),
@@ -160,20 +165,71 @@ export async function generateReferenceMaterialAdoption(
       maxOutputTokens: MAX_REFERENCE_MATERIAL_ADOPTION_OUTPUT_TOKENS,
       maxRetries: 0,
     });
-    if (input.abortSignal?.aborted) return aborted(input.abortSignal.reason);
+    if (input.abortSignal?.aborted) {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId,
+        provider: input.providerConfig,
+        systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        sourceId: `reference:${input.context.referenceId}:materialAdoption`,
+        sourceKind: 'referenceMaterialAdoption',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'aborted',
+      });
+      return aborted(input.abortSignal.reason);
+    }
     if (result.finishReason !== 'stop') {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId,
+        provider: input.providerConfig,
+        systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        sourceId: `reference:${input.context.referenceId}:materialAdoption`,
+        sourceKind: 'referenceMaterialAdoption',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'failed',
+      });
       return failed(
         'invalid_output',
         new Error('Reference Material adoption ended without a valid structured result.'),
         false,
       );
     }
+    const plan = createReferenceMaterialAdoptionPlan(input.context, result.output);
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId,
+      provider: input.providerConfig,
+      systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: `reference:${input.context.referenceId}:materialAdoption`,
+      sourceKind: 'referenceMaterialAdoption',
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'completed',
+    });
     return {
       status: 'completed',
-      plan: createReferenceMaterialAdoptionPlan(input.context, result.output),
+      plan,
       finishReason: result.finishReason,
     };
   } catch (error) {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId,
+      provider: input.providerConfig,
+      systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: `reference:${input.context.referenceId}:materialAdoption`,
+      sourceKind: 'referenceMaterialAdoption',
+      rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
+      finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
+      outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',
+    });
     if (input.abortSignal?.aborted) return aborted(input.abortSignal.reason);
     const invalid = NoObjectGeneratedError.isInstance(error)
       || NoOutputGeneratedError.isInstance(error);

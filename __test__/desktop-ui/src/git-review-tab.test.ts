@@ -68,4 +68,31 @@ describe('Git review preview gate', () => {
     expect(wrapper.text()).toContain('new workspace diff'); expect(wrapper.text()).not.toContain('old workspace diff');
     await wrapper.get('.primary-button').trigger('click'); expect(api.quickCommit).toHaveBeenCalledWith(expect.objectContaining({ previewId: 'git_11111111-1111-4111-8111-111111111111' })); wrapper.unmount();
   });
+
+  it('displays configured remote and preserves local commit history when sync fails', async () => {
+    api.getGitStatus.mockResolvedValue({
+      available: true, source: 'global', repository: true, branch: 'main', remote: 'origin',
+      head: 'a'.repeat(40), status: 'clean', dirty: false, files: [],
+    });
+    api.getGitLog.mockResolvedValue({
+      commits: [{ hash: 'a'.repeat(40), shortHash: 'aaaaaaa', subject: 'Local chapter commit', authoredAt: '2026-10-15' }],
+    });
+    api.syncGit.mockResolvedValue({
+      status: 'failed',
+      step: 'push',
+      remote: 'origin',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      error: { code: 'auth_failed', message: 'Git authentication failed.' },
+    });
+    const wrapper = mount(GitReviewTab);
+    await flushPromises();
+    expect(wrapper.text()).toContain('origin');
+    expect(wrapper.text()).toContain('Local chapter commit');
+    await wrapper.get('.secondary-button').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('push: Git authentication failed.');
+    expect(wrapper.text()).toContain('Local chapter commit');
+    wrapper.unmount();
+  });
 });

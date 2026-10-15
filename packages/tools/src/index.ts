@@ -321,6 +321,7 @@ export type {
   GitCommitSummary,
   GitFileStatus,
   GitSyncResult,
+  GitSyncStep,
   GitWorkspaceStatus,
   PendingActionGitBaselineFile,
   PendingActionGitPreflight,

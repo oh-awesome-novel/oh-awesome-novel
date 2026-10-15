@@ -53,6 +53,29 @@ describe('project health', () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('surfaces damaged usage-stats.jsonl telemetry as a read-only info issue without affecting canon health', async () => {
+    const workspaceRoot = await createHealthWorkspace();
+
+    try {
+      const sessionDir = join(workspaceRoot, '.workspace', 'sessions', 'damaged-session');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, 'usage-stats.jsonl'), '{"broken":true');
+
+      const health = await readProjectHealth(workspaceRoot, {
+        generatedAt: '2026-10-15T00:00:00.000Z',
+      });
+      expect(health.latestStateStale).toBe(false);
+      expect(health.issues).toContainEqual(expect.objectContaining({
+        id: 'usage-telemetry-diagnostic:damaged-session',
+        severity: 'info',
+        title: 'Usage telemetry diagnostic',
+        detail: expect.stringContaining('truncated-tail'),
+      }));
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 async function createHealthWorkspace(): Promise<string> {

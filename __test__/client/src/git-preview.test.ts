@@ -27,4 +27,50 @@ describe('reviewed Git client contract', () => {
     const api = createOanClient({ backendBaseUrl: 'http://test', fetch: async () => new Response(JSON.stringify(response)) });
     await expect(api.quickCommit({ files: preview.files, message: 'reviewed', previewId: preview.id, previewFingerprint: preview.fingerprint })).rejects.toThrow(/Invalid reviewed/u);
   });
+
+  it('parses both synced (200) and failed (409) Git sync responses while rejecting malformed sync payloads', async () => {
+    const syncedClient = createOanClient({
+      backendBaseUrl: 'http://test',
+      fetch: async () => new Response(JSON.stringify({
+        status: 'synced',
+        remote: 'origin',
+        branch: 'main',
+        head: 'a'.repeat(40),
+        fetch: '',
+        pull: 'Already up to date.',
+        push: '',
+      }), { status: 200 }),
+    });
+    await expect(syncedClient.syncGit()).resolves.toMatchObject({
+      status: 'synced',
+      remote: 'origin',
+      branch: 'main',
+    });
+
+    const failedClient = createOanClient({
+      backendBaseUrl: 'http://test',
+      fetch: async () => new Response(JSON.stringify({
+        status: 'failed',
+        step: 'preflight',
+        branch: 'main',
+        head: 'a'.repeat(40),
+        error: { code: 'remote_missing', message: 'Git remote is not configured.' },
+      }), { status: 409 }),
+    });
+    await expect(failedClient.syncGit()).resolves.toMatchObject({
+      status: 'failed',
+      step: 'preflight',
+      error: { code: 'remote_missing' },
+    });
+
+    const malformedClient = createOanClient({
+      backendBaseUrl: 'http://test',
+      fetch: async () => new Response(JSON.stringify({
+        status: 'failed',
+        step: 'unknown-step',
+        error: { code: 'remote_missing', message: 'Bad' },
+      }), { status: 409 }),
+    });
+    await expect(malformedClient.syncGit()).rejects.toThrow(/Invalid reviewed/u);
+  });
 });

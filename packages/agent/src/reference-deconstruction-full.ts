@@ -38,6 +38,7 @@ import type {
 import type {
   ReferenceDeconstructionModelResolver,
 } from './reference-deconstruction.js';
+import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const MAX_REFERENCE_CHAPTER_ANALYSIS_INPUT_CHARACTERS =
   MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS;
@@ -155,6 +156,8 @@ export interface GenerateReferenceChapterAnalysisInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceAggregateAnalysisPromptInput {
@@ -170,6 +173,8 @@ export interface GenerateReferenceAggregateAnalysisInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceStyleProfilePromptInput {
@@ -185,6 +190,8 @@ export interface GenerateReferenceStyleProfileInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceDistillationPromptInput {
@@ -200,6 +207,8 @@ export interface GenerateReferenceDistillationInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceFullDeconstructionGenerationError {
@@ -581,6 +590,9 @@ export async function generateReferenceChapterAnalysis(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unitProjection.id}`,
     system: REFERENCE_CHAPTER_ANALYSIS_SYSTEM_PROMPT,
     prompt,
     output,
@@ -631,6 +643,9 @@ export async function generateReferenceAggregateAnalysis(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unitProjection.id}`,
     system: REFERENCE_AGGREGATE_ANALYSIS_SYSTEM_PROMPT,
     prompt,
     output,
@@ -681,6 +696,9 @@ export async function generateReferenceStyleProfile(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unitProjection.id}`,
     system: REFERENCE_STYLE_PROFILE_SYSTEM_PROMPT,
     prompt,
     output,
@@ -726,6 +744,9 @@ export async function generateReferenceDistillation(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unitProjection.id}`,
     system: REFERENCE_DISTILLATION_SYSTEM_PROMPT,
     prompt,
     output,
@@ -1160,6 +1181,9 @@ async function generateReferenceStructuredOutput<OUTPUT, PARTIAL>(input: {
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
+  readonly sourceId?: string;
   readonly system: string;
   readonly prompt: string;
   readonly output: Output.Output<OUTPUT, PARTIAL, never>;
@@ -1195,9 +1219,33 @@ async function generateReferenceStructuredOutput<OUTPUT, PARTIAL>(input: {
     });
 
     if (input.abortSignal?.aborted) {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId,
+        provider: input.providerConfig,
+        systemPrompt: input.system,
+        userPrompt: input.prompt,
+        sourceId: input.sourceId ?? input.stageLabel,
+        sourceKind: 'referenceDeconstruction',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'aborted',
+      });
       return createAbortResult(input.abortSignal.reason);
     }
     if (result.finishReason !== 'stop') {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId,
+        provider: input.providerConfig,
+        systemPrompt: input.system,
+        userPrompt: input.prompt,
+        sourceId: input.sourceId ?? input.stageLabel,
+        sourceKind: 'referenceDeconstruction',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'failed',
+      });
       return createFailureResult(
         'invalid_output',
         new Error(`${input.stageLabel} ended without a valid structured result.`),
@@ -1206,12 +1254,37 @@ async function generateReferenceStructuredOutput<OUTPUT, PARTIAL>(input: {
       );
     }
 
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: input.system,
+      userPrompt: input.prompt,
+      sourceId: input.sourceId ?? input.stageLabel,
+      sourceKind: 'referenceDeconstruction',
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'completed',
+    });
+
     return {
       status: 'completed',
       output: result.output,
       finishReason: result.finishReason,
     };
   } catch (error) {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: input.system,
+      userPrompt: input.prompt,
+      sourceId: input.sourceId ?? input.stageLabel,
+      sourceKind: 'referenceDeconstruction',
+      rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
+      finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
+      outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',
+    });
     if (input.abortSignal?.aborted) {
       return createAbortResult(input.abortSignal.reason);
     }

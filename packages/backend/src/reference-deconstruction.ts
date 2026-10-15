@@ -383,21 +383,51 @@ export function createReferenceDeconstructionBackendController(
   const activeExecutions = new Map<string, ActiveReferenceExecution>();
   const activePreparations = new Map<string, ActiveReferencePreparation>();
   const locks = new Map<string, Promise<void>>();
-  const runQuickPreview = options.runQuickPreview ?? generateReferenceQuickPreview;
-  const runMaterialCoverage =
-    options.runMaterialCoverage ?? generateReferenceMaterialCoverage;
-  const runChapterAnalysis =
-    options.runChapterAnalysis ?? generateReferenceChapterAnalysis;
-  const runAggregateAnalysis =
-    options.runAggregateAnalysis ?? generateReferenceAggregateAnalysis;
-  const runStyleProfile = options.runStyleProfile ?? generateReferenceStyleProfile;
-  const runDistillation = options.runDistillation ?? generateReferenceDistillation;
-  const runMaterialChapter =
-    options.runMaterialChapter ?? generateReferenceMaterialChapter;
-  const runMaterialAggregate =
-    options.runMaterialAggregate ?? generateReferenceMaterialAggregate;
-  const runMaterialProjection =
-    options.runMaterialProjection ?? generateReferenceMaterialProjection;
+  const runQuickPreview = options.runQuickPreview
+    ?? ((input) => generateReferenceQuickPreview({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runMaterialCoverage = options.runMaterialCoverage
+    ?? ((input) => generateReferenceMaterialCoverage({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runChapterAnalysis = options.runChapterAnalysis
+    ?? ((input) => generateReferenceChapterAnalysis({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runAggregateAnalysis = options.runAggregateAnalysis
+    ?? ((input) => generateReferenceAggregateAnalysis({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runStyleProfile = options.runStyleProfile
+    ?? ((input) => generateReferenceStyleProfile({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runDistillation = options.runDistillation
+    ?? ((input) => generateReferenceDistillation({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runMaterialChapter = options.runMaterialChapter
+    ?? ((input) => generateReferenceMaterialChapter({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runMaterialAggregate = options.runMaterialAggregate
+    ?? ((input) => generateReferenceMaterialAggregate({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runMaterialProjection = options.runMaterialProjection
+    ?? ((input) => generateReferenceMaterialProjection({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
 
   async function withReferenceLock<T>(
     workspaceRoot: string,

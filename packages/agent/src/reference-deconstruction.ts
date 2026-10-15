@@ -16,6 +16,7 @@ import type {
   ReferenceQuickPreviewSelection,
 } from '@oh-awesome-novel/core';
 import type { FinishReason, JSONSchema7, LanguageModel } from 'ai';
+import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT = [
   'You are the bounded reference-work analysis module for OAN.',
@@ -43,6 +44,8 @@ export interface GenerateReferenceQuickPreviewInput {
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly selection: ReferenceQuickPreviewSelection;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceQuickPreviewGenerationError {
@@ -302,10 +305,36 @@ export async function generateReferenceQuickPreview(
     });
 
     if (input.abortSignal?.aborted) {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId ?? runId,
+        provider: input.providerConfig,
+        systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        sourceId: `reference:${input.selection.referenceId}:quickPreview`,
+        sourceKind: 'referenceQuickPreview',
+        sourceHash: input.selection.sourceChecksumSha256,
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'aborted',
+      });
       return createAbortResult(input.abortSignal.reason);
     }
 
     if (result.finishReason !== 'stop') {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId ?? runId,
+        provider: input.providerConfig,
+        systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+        userPrompt: prompt,
+        sourceId: `reference:${input.selection.referenceId}:quickPreview`,
+        sourceKind: 'referenceQuickPreview',
+        sourceHash: input.selection.sourceChecksumSha256,
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'failed',
+      });
       return createFailureResult(
         'invalid_output',
         new Error('Reference quick preview ended without a valid structured result.'),
@@ -313,12 +342,39 @@ export async function generateReferenceQuickPreview(
       );
     }
 
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId ?? runId,
+      provider: input.providerConfig,
+      systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: `reference:${input.selection.referenceId}:quickPreview`,
+      sourceKind: 'referenceQuickPreview',
+      sourceHash: input.selection.sourceChecksumSha256,
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'completed',
+    });
+
     return {
       status: 'completed',
       preview: result.output,
       finishReason: result.finishReason,
     };
   } catch (error) {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId ?? runId,
+      provider: input.providerConfig,
+      systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: `reference:${input.selection.referenceId}:quickPreview`,
+      sourceKind: 'referenceQuickPreview',
+      sourceHash: input.selection.sourceChecksumSha256,
+      rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
+      finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
+      outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',
+    });
     if (input.abortSignal?.aborted) {
       return createAbortResult(input.abortSignal.reason);
     }

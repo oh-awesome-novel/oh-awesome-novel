@@ -4,6 +4,8 @@ import { parseDocument } from 'yaml';
 import { evaluateChapterEvidence } from './chapter-evidence-freshness.js';
 import { evaluateAggregateSummaries } from './summary-evidence.js';
 import type { FrozenWorkspaceSnapshot } from './chapter-evidence-freshness.js';
+import { readAgentGovernanceHistory } from './agent-usage-store.js';
+import { assertUsageSessionId } from './agent-usage.js';
 import { readWorkspaceTextFile } from './workspace-text.js';
 
 export type ProjectHealthSeverity = 'info' | 'warning' | 'error';
@@ -90,7 +92,43 @@ export async function readProjectHealth(workspaceRoot: string, options: ReadProj
     }
   }
   for (const root of ['characters', 'chapters', 'summaries', 'state', 'foreshadow', 'timeline']) await visit(root);
-  return evaluateProjectHealth({ files, directories }, { ...options, generatedAt: options.generatedAt ?? new Date().toISOString() });
+  const health = evaluateProjectHealth({ files, directories }, { ...options, generatedAt: options.generatedAt ?? new Date().toISOString() });
+  const usageIssues = await inspectWorkspaceUsageHealthIssues(root);
+  return usageIssues.length ? { ...health, issues: [...health.issues, ...usageIssues] } : health;
+}
+
+async function inspectWorkspaceUsageHealthIssues(workspaceRoot: string): Promise<ProjectHealthIssue[]> {
+  const issues: ProjectHealthIssue[] = [];
+  const dotWorkspace = join(workspaceRoot, '.workspace');
+  const sessionsDir = join(dotWorkspace, 'sessions');
+  try {
+    for (const dir of [dotWorkspace, sessionsDir]) {
+      const info = await lstat(dir);
+      if (info.isSymbolicLink() || !info.isDirectory() || await realpath(dir) !== dir) return [];
+    }
+    const entries = (await readdir(sessionsDir, { withFileTypes: true })).slice(0, 100);
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      try { assertUsageSessionId(entry.name); } catch { continue; }
+      const usagePath = join(sessionsDir, entry.name, 'usage-stats.jsonl');
+      try { await lstat(usagePath); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      }
+      const history = await readAgentGovernanceHistory(workspaceRoot, entry.name, 10);
+      const diagnostics = history.diagnostics.filter((item) => item !== 'missing');
+      if (diagnostics.length > 0) {
+        issues.push({
+          id: `usage-telemetry-diagnostic:${entry.name}`,
+          severity: 'info',
+          title: 'Usage telemetry diagnostic',
+          detail: `Session ${entry.name} usage telemetry reported ${diagnostics.join(', ')}. Canon story files are unaffected.`,
+        });
+      }
+    }
+  } catch {
+    // Disposable telemetry diagnostics must never fail project health reads.
+  }
+  return issues;
 }
 
 /** Bounded model/report text; the UI DTO retains every issue. */

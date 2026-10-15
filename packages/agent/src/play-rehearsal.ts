@@ -2,6 +2,7 @@ import { streamText } from 'ai';
 
 import type { LlmProviderConfig } from '@oh-awesome-novel/core';
 import type { FinishReason, LanguageModel } from 'ai';
+import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT = [
   'You are the bounded character voice module for an OAN Scene Rehearsal.',
@@ -104,6 +105,8 @@ export interface StreamPlayRehearsalActorGenerationInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: PlayRehearsalModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface CompletePlayRehearsalRefereeInput {
@@ -112,6 +115,8 @@ export interface CompletePlayRehearsalRefereeInput {
   readonly prompt: string;
   readonly abortSignal?: AbortSignal;
   readonly maxOutputCharacters?: number;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface PlayRehearsalActorGenerationError {
@@ -361,6 +366,25 @@ export async function* streamPlayRehearsalActorGeneration(
     return;
   }
 
+  const recordActorUsage = async (
+    outcome: 'completed' | 'failed' | 'aborted',
+    rawUsage?: ReturnType<typeof extractAiSdkUsageFields>,
+    finishReason?: string,
+  ) => {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: `rehearsalActor:${input.perception.participantRef}`,
+      sourceKind: 'playRehearsalActor',
+      rawUsage,
+      finishReason,
+      outcome,
+    });
+  };
+
   try {
     const result = streamText({
       model,
@@ -372,6 +396,7 @@ export async function* streamPlayRehearsalActorGeneration(
 
     for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
+        await recordActorUsage('aborted');
         yield createAbortEvent(partialText, input.abortSignal.reason);
         return;
       }
@@ -384,21 +409,26 @@ export async function* streamPlayRehearsalActorGeneration(
         continue;
       }
       if (part.type === 'abort') {
+        await recordActorUsage('aborted');
         yield createAbortEvent(partialText, part.reason);
         return;
       }
       if (part.type === 'error') {
+        await recordActorUsage('failed');
         yield createGenerationErrorEvent(partialText, 'provider_error', part.error);
         return;
       }
       if (part.type === 'finish') {
+        const usage = extractAiSdkUsageFields(part.totalUsage);
         if (part.finishReason === 'error') {
+          await recordActorUsage('failed', usage, part.finishReason);
           yield createGenerationErrorEvent(
             partialText,
             'provider_error',
             new Error('Play rehearsal actor provider finished with an error.'),
           );
         } else {
+          await recordActorUsage('completed', usage, part.finishReason);
           yield {
             type: 'finish',
             text: partialText,
@@ -408,6 +438,7 @@ export async function* streamPlayRehearsalActorGeneration(
         return;
       }
       if (part.type.startsWith('tool-')) {
+        await recordActorUsage('failed');
         yield createGenerationErrorEvent(
           partialText,
           'unexpected_model_output',
@@ -418,13 +449,16 @@ export async function* streamPlayRehearsalActorGeneration(
     }
   } catch (error) {
     if (input.abortSignal?.aborted) {
+      await recordActorUsage('aborted');
       yield createAbortEvent(partialText, input.abortSignal.reason);
     } else {
+      await recordActorUsage('failed');
       yield createGenerationErrorEvent(partialText, 'provider_error', error);
     }
     return;
   }
 
+  await recordActorUsage('failed');
   yield createGenerationErrorEvent(
     partialText,
     'provider_error',
@@ -458,6 +492,25 @@ export async function completePlayRehearsalReferee(
     return createRefereeAbortResult(partialText, input.abortSignal.reason);
   }
 
+  const recordRefereeUsage = async (
+    outcome: 'completed' | 'failed' | 'aborted',
+    rawUsage?: ReturnType<typeof extractAiSdkUsageFields>,
+    finishReason?: string,
+  ) => {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: PLAY_REHEARSAL_REFEREE_SYSTEM_PROMPT,
+      userPrompt: prompt,
+      sourceId: 'rehearsalReferee',
+      sourceKind: 'playRehearsalReferee',
+      rawUsage,
+      finishReason,
+      outcome,
+    });
+  };
+
   try {
     const result = streamText({
       model,
@@ -469,12 +522,14 @@ export async function completePlayRehearsalReferee(
 
     for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
+        await recordRefereeUsage('aborted');
         return createRefereeAbortResult(partialText, input.abortSignal.reason);
       }
       if (part.type === 'text-delta') {
         if (part.text) {
           partialText += part.text;
           if (partialText.length > maxOutputCharacters) {
+            await recordRefereeUsage('failed');
             return createRefereeErrorResult(
               partialText.slice(0, maxOutputCharacters),
               'response_too_large',
@@ -488,9 +543,11 @@ export async function completePlayRehearsalReferee(
         continue;
       }
       if (part.type === 'abort') {
+        await recordRefereeUsage('aborted');
         return createRefereeAbortResult(partialText, part.reason);
       }
       if (part.type === 'error') {
+        await recordRefereeUsage('failed');
         return createRefereeErrorResult(
           partialText,
           'provider_error',
@@ -498,19 +555,24 @@ export async function completePlayRehearsalReferee(
         );
       }
       if (part.type === 'finish') {
-        return part.finishReason === 'error'
-          ? createRefereeErrorResult(
-              partialText,
-              'provider_error',
-              new Error('Play rehearsal referee provider finished with an error.'),
-            )
-          : {
-              status: 'completed',
-              text: partialText,
-              finishReason: part.finishReason,
-            };
+        const usage = extractAiSdkUsageFields(part.totalUsage);
+        if (part.finishReason === 'error') {
+          await recordRefereeUsage('failed', usage, part.finishReason);
+          return createRefereeErrorResult(
+            partialText,
+            'provider_error',
+            new Error('Play rehearsal referee provider finished with an error.'),
+          );
+        }
+        await recordRefereeUsage('completed', usage, part.finishReason);
+        return {
+          status: 'completed',
+          text: partialText,
+          finishReason: part.finishReason,
+        };
       }
       if (part.type.startsWith('tool-')) {
+        await recordRefereeUsage('failed');
         return createRefereeErrorResult(
           partialText,
           'unexpected_model_output',
@@ -520,11 +582,13 @@ export async function completePlayRehearsalReferee(
       }
     }
   } catch (error) {
+    await recordRefereeUsage(input.abortSignal?.aborted ? 'aborted' : 'failed');
     return input.abortSignal?.aborted
       ? createRefereeAbortResult(partialText, input.abortSignal.reason)
       : createRefereeErrorResult(partialText, 'provider_error', error);
   }
 
+  await recordRefereeUsage('failed');
   return createRefereeErrorResult(
     partialText,
     'provider_error',

@@ -7,7 +7,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MockLanguageModelV4 } from 'ai/test';
 import { simulateReadableStream } from 'ai';
-import { runNovelAgentTurn, streamNovelAgentTurn, runtimeEventsToUiMessageStream } from '@oh-awesome-novel/agent';
+import {
+  completePlayRehearsalReferee,
+  generateReferenceQuickPreview,
+  runNovelAgentTurn,
+  streamNovelAgentTurn,
+  streamPlayRehearsalActorGeneration,
+  runtimeEventsToUiMessageStream,
+} from '@oh-awesome-novel/agent';
 import { readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 const roots: string[] = [];
@@ -70,5 +77,128 @@ describe('standard Agent usage governance', () => {
     const events: RuntimeEvent[] = [];
     const result = await runNovelAgentTurn({ workspaceRoot: root, workspace: { workspaceRoot: root }, request: 'hello', providerConfig: provider, resolveModel: () => model(), session: { id: 'usage-failure' }, onEvent: (e) => { events.push(e); } });
     expect(result.stoppedReason).toBe('completed'); expect(events).toContainEqual({ type: 'usage_warning', code: 'persistence-unavailable' });
+  });
+
+  it('records content-free usage and egress across Reference Quick Preview and Play Rehearsal pipelines (G7)', async () => {
+    const root = await workspace();
+    const previewJson = JSON.stringify({
+      sourceOverview: 'Overview',
+      chapterPreviews: [{ chapterId: 'ch-1', summary: 'Summary', evidenceRefs: ['ptr-1'], confidence: 'medium', uncertainty: null }],
+      findings: [{ kind: 'hook', observation: 'Obs', technique: 'Tech', whenUseful: null, avoid: null, confidence: 'medium', evidenceRefs: ['ptr-1'], generalInference: false, uncertainty: null }],
+      borrowablePatterns: [{ title: 'Pattern', technique: 'Tech', whenUseful: null, evidenceRefs: ['ptr-1'], confidence: 'medium' }],
+      doNotCopy: ['No copy'],
+      differentiationRequirements: ['Diff'],
+      differentiationPrompts: ['Prompt'],
+      canonContaminationWarnings: ['Warn'],
+      confidence: 'medium',
+      uncertainties: [],
+    });
+    const previewModel = new MockLanguageModelV4({
+      doGenerate: {
+        content: [{ type: 'text', text: previewJson }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 120, noCache: 100, cacheRead: 20, cacheWrite: 0 },
+          outputTokens: { total: 45, text: 40, reasoning: 5 },
+          raw: { secret: 'PREVIEW_RAW_SECRET' },
+        },
+        warnings: [],
+      },
+    });
+    const previewResult = await generateReferenceQuickPreview({
+      runId: 'ref-run-1',
+      workspaceRoot: root,
+      providerConfig: provider,
+      resolveModel: () => previewModel,
+      selection: {
+        referenceId: 'ref-1',
+        sourceChecksumSha256: 'a'.repeat(64),
+        structureFingerprint: 'b'.repeat(64),
+        maxChapters: 3,
+        maxChars: 10_000,
+        selectedChapterIds: ['ch-1'],
+        omittedChapterIds: [],
+        totalChars: 24,
+        windows: [{
+          pointerId: 'ptr-1',
+          content: 'PRIVATE_REFERENCE_SOURCE',
+          charLength: 24,
+          pointer: {
+            referenceId: 'ref-1',
+            sourceChecksumSha256: 'a'.repeat(64),
+            chapterId: 'ch-1',
+            chunkId: 'chunk-1',
+            lineStart: 1,
+            lineEnd: 1,
+          },
+        }],
+      },
+    });
+    expect(previewResult.status).toBe('completed');
+    const refHistory = await readAgentGovernanceHistory(root, 'ref-run-1');
+    expect(refHistory.diagnostics).toEqual([]);
+    expect(refHistory.records).toEqual([
+      expect.objectContaining({
+        recordType: 'request',
+        egress: { providerId: 'test', providerKind: 'custom', modelId: 'test', endpointOrigin: 'https://example.test', status: 'prepared' },
+      }),
+      expect.objectContaining({
+        recordType: 'step',
+        outcome: 'completed',
+        actualUsage: { availability: 'actual', inputTokens: 120, outputTokens: 45, totalTokens: 165, cacheReadTokens: 20, cacheWriteTokens: 0, reasoningTokens: 5 },
+      }),
+      expect.objectContaining({
+        recordType: 'turn',
+        outcome: 'completed',
+        actualCoverage: 'complete',
+      }),
+    ]);
+
+    const actorEvents = [];
+    for await (const event of streamPlayRehearsalActorGeneration({
+      workspaceRoot: root,
+      usageSessionId: 'play-rehearsal-1',
+      providerConfig: provider,
+      resolveModel: () => model(),
+      sceneContract: {
+        sceneId: 'scene-1',
+        sceneRevision: 0,
+        participantRefs: ['hero'],
+        worldClock: { turn: 0, revision: 0 },
+      },
+      perception: {
+        snapshotId: 'snap-1',
+        participantRef: 'hero',
+        displayName: 'Hero',
+        sceneRevision: 0,
+        visibleFacts: [{ ref: 'fact-1', fact: 'PRIVATE_PLAY_FACT' }],
+        visibleEvents: [],
+        behaviorAnchors: [],
+        observedNarrativeBlockRefs: [],
+      },
+      selectedPriorVisibleBlocks: [],
+    })) {
+      actorEvents.push(event);
+    }
+    expect(actorEvents.at(-1)).toMatchObject({ type: 'finish' });
+
+    const refereeResult = await completePlayRehearsalReferee({
+      workspaceRoot: root,
+      usageSessionId: 'play-rehearsal-1',
+      providerConfig: provider,
+      resolveModel: () => model(),
+      prompt: 'PRIVATE_REFEREE_PROMPT',
+    });
+    expect(refereeResult.status).toBe('completed');
+
+    const playHistory = await readAgentGovernanceHistory(root, 'play-rehearsal-1');
+    expect(playHistory.diagnostics).toEqual([]);
+    expect(playHistory.records.filter((r) => r.recordType === 'turn')).toHaveLength(2);
+    const rawPlayAudit = await readFile(join(root, '.workspace/sessions/play-rehearsal-1/usage-stats.jsonl'), 'utf8');
+    const rawRefAudit = await readFile(join(root, '.workspace/sessions/ref-run-1/usage-stats.jsonl'), 'utf8');
+    for (const secret of ['PRIVATE_REFERENCE_SOURCE', 'PRIVATE_PLAY_FACT', 'PRIVATE_REFEREE_PROMPT', 'API_SECRET', 'QUERY_SECRET', 'PREVIEW_RAW_SECRET']) {
+      expect(rawPlayAudit).not.toContain(secret);
+      expect(rawRefAudit).not.toContain(secret);
+    }
   });
 });

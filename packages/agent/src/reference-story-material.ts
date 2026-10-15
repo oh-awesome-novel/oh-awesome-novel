@@ -39,6 +39,7 @@ import type {
 import type {
   ReferenceDeconstructionModelResolver,
 } from './reference-deconstruction.js';
+import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const MAX_REFERENCE_MATERIAL_COVERAGE_OUTPUT_TOKENS = 2_048 as const;
 export const MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS = 4_096 as const;
@@ -93,6 +94,8 @@ export interface GenerateReferenceMaterialCoverageInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceMaterialChapterPromptInput {
@@ -107,6 +110,8 @@ export interface GenerateReferenceMaterialChapterInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceMaterialReductionPromptInput {
@@ -123,6 +128,8 @@ export interface GenerateReferenceMaterialAggregateInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface GenerateReferenceMaterialProjectionInput
@@ -130,6 +137,8 @@ export interface GenerateReferenceMaterialProjectionInput
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
 }
 
 export interface ReferenceStoryMaterialGenerationError {
@@ -361,6 +370,9 @@ export async function generateReferenceMaterialCoverage(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${input.selection.referenceId}:materialCoverage`,
     system: REFERENCE_MATERIAL_COVERAGE_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialCoveragePrompt(input),
     output,
@@ -401,6 +413,9 @@ export async function generateReferenceMaterialChapter(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_CHAPTER_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialChapterPrompt(input),
     output,
@@ -443,6 +458,9 @@ export async function generateReferenceMaterialAggregate(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_AGGREGATE_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialAggregatePrompt(input),
     output,
@@ -485,6 +503,9 @@ export async function generateReferenceMaterialProjection(
     providerConfig: input.providerConfig,
     resolveModel: input.resolveModel,
     abortSignal: input.abortSignal,
+    workspaceRoot: input.workspaceRoot,
+    usageSessionId: input.usageSessionId ?? normalized.runId,
+    sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_PROJECTION_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialProjectionPrompt(input),
     output,
@@ -657,6 +678,9 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
+  readonly workspaceRoot?: string;
+  readonly usageSessionId?: string;
+  readonly sourceId?: string;
   readonly system: string;
   readonly prompt: string;
   readonly output: Output.Output<OUTPUT, PARTIAL, never>;
@@ -683,8 +707,34 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
       maxOutputTokens: input.maxOutputTokens,
       maxRetries: 0,
     });
-    if (input.abortSignal?.aborted) return abortResult(input.abortSignal.reason);
+    if (input.abortSignal?.aborted) {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId,
+        provider: input.providerConfig,
+        systemPrompt: input.system,
+        userPrompt: input.prompt,
+        sourceId: input.sourceId ?? input.stageLabel,
+        sourceKind: 'referenceStoryMaterial',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'aborted',
+      });
+      return abortResult(input.abortSignal.reason);
+    }
     if (result.finishReason !== 'stop') {
+      await recordSpecializedModelUsageTurn({
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.usageSessionId,
+        provider: input.providerConfig,
+        systemPrompt: input.system,
+        userPrompt: input.prompt,
+        sourceId: input.sourceId ?? input.stageLabel,
+        sourceKind: 'referenceStoryMaterial',
+        rawUsage: extractAiSdkUsageFields(result.usage),
+        finishReason: result.finishReason,
+        outcome: 'failed',
+      });
       return failureResult(
         'invalid_output',
         new Error(`${input.stageLabel} ended without a valid structured result.`),
@@ -692,12 +742,36 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
         input.stageLabel,
       );
     }
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: input.system,
+      userPrompt: input.prompt,
+      sourceId: input.sourceId ?? input.stageLabel,
+      sourceKind: 'referenceStoryMaterial',
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'completed',
+    });
     return {
       status: 'completed',
       output: result.output,
       finishReason: result.finishReason,
     };
   } catch (error) {
+    await recordSpecializedModelUsageTurn({
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.usageSessionId,
+      provider: input.providerConfig,
+      systemPrompt: input.system,
+      userPrompt: input.prompt,
+      sourceId: input.sourceId ?? input.stageLabel,
+      sourceKind: 'referenceStoryMaterial',
+      rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
+      finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
+      outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',
+    });
     if (input.abortSignal?.aborted) return abortResult(input.abortSignal.reason);
     if (
       NoObjectGeneratedError.isInstance(error)

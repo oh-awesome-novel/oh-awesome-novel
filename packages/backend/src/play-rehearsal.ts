@@ -798,6 +798,8 @@ async function performPlayRedirectIntervention(input: {
       ...promptInput,
       providerConfig: runtime.providerConfig,
       resolveModel: runtime.resolveModel,
+      workspaceRoot: input.workspaceRoot,
+      usageSessionId: `play-${input.sessionId}`,
       abortSignal: abortController.signal,
     })) {
       if (event.type === 'text_delta') {
@@ -839,6 +841,8 @@ async function performPlayRedirectIntervention(input: {
       providerConfig: runtime.providerConfig,
       resolveModel: runtime.resolveModel,
       prompt: refereePrompt,
+      workspaceRoot: input.workspaceRoot,
+      usageSessionId: `play-${input.sessionId}`,
       abortSignal: abortController.signal,
     });
     if (result.status === 'provider_error') {
@@ -1059,6 +1063,8 @@ function createStepStreamResponse(input: {
             ...actorPromptInput,
             providerConfig: runtime.providerConfig,
             resolveModel: runtime.resolveModel,
+            workspaceRoot: input.run.workspaceRoot,
+            usageSessionId: `play-${input.run.sessionId}`,
             abortSignal: input.run.abortController.signal,
           })) {
             if (event.type === 'text_delta') {
@@ -1105,6 +1111,8 @@ function createStepStreamResponse(input: {
             providerConfig: runtime.providerConfig,
             resolveModel: runtime.resolveModel,
             prompt: refereePrompt,
+            workspaceRoot: input.run.workspaceRoot,
+            usageSessionId: `play-${input.run.sessionId}`,
             abortSignal: input.run.abortController.signal,
           });
           if (result.status === 'aborted') {

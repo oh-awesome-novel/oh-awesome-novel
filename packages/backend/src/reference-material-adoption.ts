@@ -131,7 +131,11 @@ export class ReferenceMaterialAdoptionRequestError extends Error {
 export function createReferenceMaterialAdoptionController(
   options: CreateReferenceMaterialAdoptionControllerOptions,
 ): ReferenceMaterialAdoptionController {
-  const runAdoption = options.runAdoption ?? generateReferenceMaterialAdoption;
+  const runAdoption = options.runAdoption
+    ?? ((input) => generateReferenceMaterialAdoption({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
   const locks = new Map<string, Promise<void>>();
 
   async function withReferenceLock<T>(referenceId: string, fn: () => Promise<T>): Promise<T> {
