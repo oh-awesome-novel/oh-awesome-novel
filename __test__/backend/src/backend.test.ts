@@ -4861,7 +4861,8 @@ async function createOanWorkspace(): Promise<string> {
   await mkdir(join(root, 'summaries/chapter/0001'), { recursive: true });
   await writeFile(
     join(root, '.oan/config.yaml'),
-    'version: 1\nnovelName: backend-sample\n',
+    // Reference fixtures exercise the technique-only track of the commercial Profile.
+    'version: 1\nnovelName: backend-sample\nwritingProfile:\n  activeProfileId: commercialWriting\n',
     'utf-8',
   );
   await writeFile(
