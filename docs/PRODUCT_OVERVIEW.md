@@ -62,7 +62,7 @@ Copilot 会把 `.oan/workflow.yaml`、constitution、大纲、summary、state、
 - Git：status/log/diff/显式 commit/sync，Accept 后按配置自动提交。
 - 上下文与用量：每轮实际发送的来源、预算、protected overflow 与 provider usage。
 
-写作闭环相关的自动目标路径、章节进度引导、未整理章节提示与派生记录整批接受由 [1330](tasks/1330.md) 与 [1340](tasks/1340.md) 交付；以任务状态为准。
+写作闭环相关的自动目标路径、章节进度引导、未整理章节提示与派生记录整批接受已由 [1330](tasks/1330.md) 与 [1340](tasks/1340.md) 交付。
 
 ## 产品边界
 

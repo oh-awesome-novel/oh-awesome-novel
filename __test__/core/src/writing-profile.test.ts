@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 describe('Writing Profile configuration', () => {
-  it('initializes a workspace with commercialWriting and a custom Profile directory', async () => {
+  it('initializes a workspace with fanfictionWriting and a custom Profile directory', async () => {
     const root = await createRoot();
     await initWorkspace(root);
 
@@ -43,18 +43,18 @@ describe('Writing Profile configuration', () => {
       'utf-8',
     )) as Record<string, unknown>;
 
-    expect(state.activeProfileId).toBe('commercialWriting');
+    expect(state.activeProfileId).toBe('fanfictionWriting');
     expect(state.fallbackUsed).toBe(false);
     expect(state.profiles.map((item) => ({
       id: item.profile.id,
       builtIn: item.builtIn,
     }))).toEqual([
-      { id: 'commercialWriting', builtIn: true },
       { id: 'fanfictionWriting', builtIn: true },
+      { id: 'commercialWriting', builtIn: true },
     ]);
     expect(config).toMatchObject({
       version: 1,
-      writingProfile: { activeProfileId: 'commercialWriting' },
+      writingProfile: { activeProfileId: 'fanfictionWriting' },
     });
     await expect(readdir(join(root, '.oan', 'writing-profiles')))
       .resolves
@@ -109,7 +109,7 @@ describe('Writing Profile configuration', () => {
     const state = await loadWritingProfileState(root);
     const config = await loadWorkspaceConfig(root);
 
-    expect(state.activeProfileId).toBe('commercialWriting');
+    expect(state.activeProfileId).toBe('fanfictionWriting');
     expect(state.fallbackUsed).toBe(true);
     expect(state.configError).toContain('unknown or missing');
     expect(config.git).toEqual({ autoCommitOnAccept: false });
@@ -118,7 +118,7 @@ describe('Writing Profile configuration', () => {
     await writeFile(join(root, '.oan', 'config.yaml'), 'version: 1\n', 'utf-8');
     const missing = await loadWritingProfileState(root);
     expect(missing).toMatchObject({
-      activeProfileId: 'commercialWriting',
+      activeProfileId: 'fanfictionWriting',
       fallbackUsed: true,
     });
     expect(missing.configError).toBeUndefined();
@@ -223,7 +223,7 @@ describe('Writing Profile configuration', () => {
     );
 
     const state = await loadWritingProfileState(root);
-    expect(state.activeProfileId).toBe('commercialWriting');
+    expect(state.activeProfileId).toBe('fanfictionWriting');
     expect(state.configError).toContain('does not exist or is invalid');
     expect(state.profileErrors).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.stringContaining('filename') }),

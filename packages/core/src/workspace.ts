@@ -390,7 +390,7 @@ steps:
 # Edit this file to customise your workspace settings.
 version: 1
 writingProfile:
-  activeProfileId: commercialWriting
+  activeProfileId: fanfictionWriting
 `;
   await writeFile(join(oanDir, 'config.yaml'), defaultConfig, 'utf-8');
 

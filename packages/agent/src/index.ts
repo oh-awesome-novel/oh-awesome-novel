@@ -9,6 +9,13 @@ import { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-con
 import { createChapterSettlementEditEnvironment } from './chapter-settlement';
 import { createSummaryGenerationEditEnvironment } from './summary-generation';
 export { createNovelAgentWorkspaceSnapshotFromProjection } from './workspace-context';
+export {
+  CHARACTER_OBJECT_FILES,
+  WritingCommandTargetError,
+  nextChapterPath,
+  resolveWritingCommandTargets,
+} from './writing-targets';
+export type { WritingCommandTargets } from './writing-targets';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
 import { streamText } from 'ai';
@@ -98,6 +105,12 @@ export interface NovelAgentWorkspaceSnapshot {
   projectionFingerprint?: string;
   constitution?: string;
   workflow?: string;
+  /** `outline/main.md` plus the active volume outline. */
+  outline?: string;
+  /** Ending of the chapter right before the target chapter. */
+  previousChapter?: string;
+  /** Effective exact write targets granted by the host for this turn. */
+  writableTargets?: readonly string[];
   summaries?: readonly string[];
   state?: string;
   timeline?: string;
@@ -574,6 +587,7 @@ export const createSandboxNovelAgentEditEnvironmentFactory = (
     drainReadSources: () => session.drainReadSources(),
     workspace: createNovelAgentWorkspaceSnapshotFromProjection(projectionSnapshot, {
       targetPaths: input.exactWritablePaths,
+      writableTargets: policy.writable.map((rule) => rule.path),
     }),
     skill: createNovelAgentSkillFromProjection(projectionSnapshot),
     writingProfile: createDefaultProjectedWritingProfile(),
@@ -631,7 +645,7 @@ function createDefaultProjectedWritingProfile(): WritingProfile {
     item.id === DEFAULT_WRITING_PROFILE_ID
   ));
   if (!profile) {
-    throw new Error('Built-in commercialWriting Profile is unavailable.');
+    throw new Error('Built-in default Writing Profile is unavailable.');
   }
   return profile;
 }
@@ -1163,6 +1177,12 @@ export const createNovelAgentSystemPrompt = (
     lines.push(`Active skill: ${input.skill.name}`);
   }
 
+  if (input.workspace.writableTargets) {
+    lines.push(input.workspace.writableTargets.length
+      ? `Writable targets granted by the host for this turn: ${input.workspace.writableTargets.join(', ')}. Create or edit only these paths; a missing target is created as a new file.`
+      : 'This turn is read-only: answer, analyse or draft in chat, and do not attempt file edits.');
+  }
+
   return lines.join('\n');
 };
 
@@ -1387,6 +1407,23 @@ export const createBaselineNovelAgentContextPackage = (
     budgetLayer: 'L0',
     semanticBoundary: 'protected',
     path: '.oan/workflow.yaml',
+  });
+  addWorkspaceSource({
+    sourceId: 'outline',
+    content: input.workspace.outline,
+    reason: 'story and active volume outline loaded for planning and continuation',
+    omittedReason: 'no outline files were available in the workspace snapshot',
+    budgetLayer: 'L1',
+    semanticBoundary: 'compressible',
+    path: 'outline',
+  });
+  addWorkspaceSource({
+    sourceId: 'previousChapterText',
+    content: input.workspace.previousChapter,
+    reason: 'ending of the previous chapter loaded as the continuation anchor',
+    omittedReason: 'no previous chapter text precedes the target chapter',
+    budgetLayer: 'L1',
+    semanticBoundary: 'compressible',
   });
   addWorkspaceSource({
     sourceId: 'previousChapterEnding',
@@ -1798,6 +1835,8 @@ const createNovelAgentContext = (
   addSource('constitution', 'Novel Constitution', 'constitution', input.workspace.constitution, 'L0', 'protected');
   addSource('workflow', 'Workflow', 'workflow', input.workspace.workflow, 'L0', 'protected');
   pushContext(context, 'reminder', 'Active fixed fragments', input.writingProfile ? formatWritingProfileReminders(input.writingProfile, capability) : undefined);
+  addSource('selected', 'Outline', 'outline', input.workspace.outline, 'L1', 'compressible');
+  addSource('selected', 'Previous Chapter Ending', 'previousChapterText', input.workspace.previousChapter, 'L1', 'compressible');
   addSource('summary', 'Summary', 'previousChapterEnding', input.workspace.summaries, 'L1', 'compressible');
   addSource('state', 'State', 'latestState', input.workspace.state, 'L1', 'protected');
   if (input.workspace.chapterEvidenceCoverage) context.push({ kind: 'selected', title: 'Chapter Evidence Coverage', content: input.workspace.chapterEvidenceCoverage, provenance: [createContextEvidence({ sourceId: 'chapterEvidenceCoverage', kind: 'selected', budgetLayer: 'L1', semanticBoundary: 'compressible' })] });

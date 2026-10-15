@@ -35,6 +35,7 @@ defineProps<{
   writingProfileState?: WritingProfileState;
   writingProfilesLoading: boolean;
   writingProfilesError: string;
+  pendingBatchStatus?: string;
 }>();
 
 const emit = defineEmits<{
@@ -46,6 +47,8 @@ const emit = defineEmits<{
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   reviewPendingActionId: [pendingActionId: string];
+  acceptDerivedPendingActions: [actions: PendingActionView[]];
+  settleChapter: [path: string];
   refreshWritingProfiles: [];
   writingProfileStateChanged: [state: WritingProfileState];
 }>();
@@ -77,6 +80,8 @@ const emit = defineEmits<{
       :actions="pendingActions"
       :loading="pendingActionsLoading"
       :error="pendingActionsError"
+      :batch-status="pendingBatchStatus"
+      @accept-derived="emit('acceptDerivedPendingActions', $event)"
       @accept="emit('acceptPendingAction', $event)"
       @reject="emit('rejectPendingAction', $event)"
       @quick-commit="emit('quickCommitPendingAction', $event)"
@@ -87,6 +92,7 @@ const emit = defineEmits<{
       v-else-if="activeTab === 'health'"
       :status="workspaceStatus"
       :health="projectHealth"
+      @settle-chapter="emit('settleChapter', $event)"
     />
     <GitReviewTab v-else-if="activeTab === 'git'" :workspace-path="workspacePath" />
     <WritingProfileManagerTab

@@ -34,6 +34,14 @@ describe('chapter evidence freshness from frozen bytes', () => {
     expect(result.summary.context).toBeUndefined(); expect(result.state.context).toBeUndefined();
     expect(evaluateProjectHealth({ files }).latestStateStale).toBe(true);
   });
+  it('lists accepted chapters whose summary is not current as unsettled, in chapter order', () => {
+    const { files } = fixture();
+    expect(evaluateProjectHealth({ files }).unsettledChapters).toEqual([]);
+    const later = [...files, { path: 'chapters/0001/0002.md', content: '第二章' }, { path: 'chapters/0001/0003.md', content: '' }];
+    expect(evaluateProjectHealth({ files: later }).unsettledChapters).toEqual(['chapters/0001/0002.md']);
+    files[0].content = '# 第一章\n改过的正文';
+    expect(evaluateProjectHealth({ files }).unsettledChapters).toEqual(['chapters/0001/0001.md']);
+  });
   it('distinguishes missing and unverified author sources without blocking them', () => {
     const { files } = fixture(); files[2].content = '# 手写摘要\n作者自己的总结。';
     const [manual] = evaluateChapterEvidence({ files: [files[0], files[2]] });

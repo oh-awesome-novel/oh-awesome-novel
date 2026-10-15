@@ -72,6 +72,7 @@ defineProps<{
   writingProfileState?: WritingProfileState;
   writingProfilesLoading: boolean;
   writingProfilesError: string;
+  pendingBatchStatus?: string;
 }>();
 
 const emit = defineEmits<{
@@ -90,6 +91,8 @@ const emit = defineEmits<{
   reviewPendingAction: [action: PendingActionView];
   openPendingActionDiff: [action: PendingActionView];
   reviewPendingActionId: [pendingActionId: string];
+  acceptDerivedPendingActions: [actions: PendingActionView[]];
+  settleChapter: [path: string];
   selectRightTab: [tab: WorkspaceRightTab];
   closeRight: [];
   newConversation: [];
@@ -186,6 +189,8 @@ const emit = defineEmits<{
         :writing-references-error="writingReferencesError"
         :writing-profile-state="writingProfileState"
         :writing-profiles-error="writingProfilesError"
+        :unsettled-chapters="projectHealth?.unsettledChapters"
+        @settle-chapter="emit('settleChapter', $event)"
         @update-chat-input="emit('updateChatInput', $event)"
         @send-chat-input="emit('sendChatInput')"
         @stop-chat="emit('stopChat')"
@@ -219,6 +224,9 @@ const emit = defineEmits<{
       :writing-profile-state="writingProfileState"
       :writing-profiles-loading="writingProfilesLoading"
       :writing-profiles-error="writingProfilesError"
+      :pending-batch-status="pendingBatchStatus"
+      @accept-derived-pending-actions="emit('acceptDerivedPendingActions', $event)"
+      @settle-chapter="emit('settleChapter', $event)"
       @select-tab="emit('selectRightTab', $event)"
       @close="emit('closeRight')"
       @accept-pending-action="emit('acceptPendingAction', $event)"

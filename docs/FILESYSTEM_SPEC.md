@@ -124,10 +124,10 @@ my-novel/
 ```yaml
 version: 1
 writingProfile:
-  activeProfileId: commercialWriting
+  activeProfileId: fanfictionWriting
 ```
 
-缺少 `writingProfile` 时，Host 以只读内置 Profile `commercialWriting`
+缺少 `writingProfile` 时，Host 以只读内置 Profile `fanfictionWriting`（同人二创，2026-10-15 起为默认）
 作为非持久化 fallback。`writingProfile` 子树使用 strict 校验；未知字段、
 非法 id 或指向不存在 / 无效 Profile 时必须产生可定位的 Profile 配置错误，
 但不能使 `git`、`onboarding` 等其它宽松配置 section 失效，也不能阻止

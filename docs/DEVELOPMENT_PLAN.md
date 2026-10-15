@@ -21,8 +21,8 @@ bash-tool + just-bash fixed sandbox
 
 产品重新定位为个人同人/综漫创作工作台（[PROJECT_VISION](PROJECT_VISION.md)、[评估记录](reviews/PRODUCT_DESIGN_REVIEW_2026-10-15.md)）。优先级：
 
-1. **写作核心闭环**：[1330](tasks/1330.md) 自动目标路径（写下一章、生成角色卡、规划）、续写上下文与章节进度引导。
-2. **审批与记忆体验**：[1340](tasks/1340.md) 派生记录整批接受、未整理章节提示、默认同人二创 Profile。
+1. **写作核心闭环（已交付）**：[1330](tasks/1330.md) 自动目标路径（写下一章、生成角色卡、规划）、续写上下文与章节进度引导。
+2. **审批与记忆体验（已交付）**：[1340](tasks/1340.md) 派生记录整批接受、未整理章节提示、默认同人二创 Profile。
 3. **Play 保持高优先级**：[1120](tasks/1120.md) 剩余可靠性，以及作者使用中提出的穿越/导演/世界线体验改进，直接立项推进。
 4. 其余：[0580](tasks/0580.md) 远端同步与更多环境验收、[1230](tasks/1230.md) 独立剩余范围。
 
@@ -200,7 +200,7 @@ M13 done criteria:
 
 ## M14. Core Writing Loop And Proportionate Review
 
-Tasks: [1330](tasks/1330.md)、[1340](tasks/1340.md)。
+Tasks: [1330](tasks/1330.md)、[1340](tasks/1340.md)（均已完成）。
 
 Done criteria:
 

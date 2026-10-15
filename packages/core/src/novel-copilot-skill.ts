@@ -322,7 +322,7 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.generate_character_card',
     label: '生成角色卡',
     slashCommand: '/生成角色卡',
-    prompt: '请先检查已有角色，再根据我的描述在固定内存工作区中生成或更新角色卡。需要保存时先预览虚拟修改，再提出 changes 供我审批。',
+    prompt: '请先检查已有角色，再根据我的描述在固定内存工作区中生成或更新角色卡。新角色请在命令后写角色 ID（如「/生成角色卡 lin-zhao」），系统据此授予 characters/<角色ID>/ 下的标准文件；meta.yaml 的 id 必须与角色 ID 一致。需要保存时先预览虚拟修改，再提出 changes 供我审批。',
   },
   {
     id: 'outline.plan',
@@ -350,7 +350,7 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.write_chapter',
     label: '写下一章',
     slashCommand: '/写下一章',
-    prompt: '请基于本章契约写下一章草稿。先输出短 PRE_WRITE_CHECK，确认契约对齐、上下文范围、当前锚点、待处理 hooks、暂不暴露的信息和风险扫描；然后只在固定内存工作区编辑目标章节，预览并提出 changes。',
+    prompt: '请基于大纲、本章契约和上一章结尾写下一章草稿。目标章节文件由系统确定（见本轮可写目标）。先输出短 PRE_WRITE_CHECK，确认契约对齐、上下文范围、当前锚点、待处理 hooks、暂不暴露的信息和风险扫描；然后只在固定内存工作区创建目标章节，预览并提出 changes。',
   },
   {
     id: 'chapter.settle',

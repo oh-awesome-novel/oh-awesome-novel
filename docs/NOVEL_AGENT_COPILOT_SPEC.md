@@ -157,6 +157,17 @@ Always read:
 - current state through `state.get`
 - timeline through `timeline.list`
 - active foreshadow items through `foreshadow.list`
+- `outline/main.md` and the target volume outline (`outline/volumes/<volume>.md`)
+  when they exist
+- the ending of the previous non-empty chapter before the target chapter,
+  capped at 3,000 characters, as `previousChapterText`
+
+Explicit writing commands (`/写下一章`, `/生成角色卡 <id>`, `/规划大纲`,
+`/规划下一卷`, `/规划下一章`) at the start of a request receive host-derived
+exact targets: the next chapter file, the standard files of the named or
+selected character, or the main and volume outline. The system prompt lists
+the granted targets, or states that the turn is read-only. Keyword-inferred
+requests keep the selected-file target.
 
 Conditionally read:
 

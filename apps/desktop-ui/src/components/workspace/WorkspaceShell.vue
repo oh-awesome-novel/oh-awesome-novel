@@ -8,6 +8,8 @@ import ManuscriptExportDialog from './ManuscriptExportDialog.vue';
 import ManuscriptImportDialog from './ManuscriptImportDialog.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
+import { acceptPendingActionsInOrder } from '@oh-awesome-novel/client';
+
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import type { WorkspaceMode } from '../../composables/useWorkspaceLayoutState';
@@ -288,6 +290,7 @@ watch(() => props.workspace.path, () => {
   projectHealth.value = undefined;
   decisions.value = {};
   decisionErrors.value = {};
+  pendingBatchStatus.value = '';
   void loadTree();
 }, { flush: 'sync' });
 
@@ -382,6 +385,32 @@ async function quickCommitPendingAction(action: PendingActionView) {
       [action.id]: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+const pendingBatchStatus = shallowRef('');
+
+async function acceptDerivedPendingActions(actions: PendingActionView[]) {
+  const ids = actions.map((action) => action.id);
+  pendingBatchStatus.value = '';
+  decisions.value = { ...decisions.value, ...Object.fromEntries(ids.map((id) => [id, 'accepting' as const])) };
+  const result = await acceptPendingActionsInOrder(ids, (id) => api.acceptPendingAction(id));
+  const nextDecisions = { ...decisions.value };
+  for (const id of result.accepted) nextDecisions[id] = 'accepted';
+  for (const id of [...result.notAttempted, ...(result.failed ? [result.failed.id] : [])]) delete nextDecisions[id];
+  decisions.value = nextDecisions;
+  if (result.failed) {
+    decisionErrors.value = { ...decisionErrors.value, [result.failed.id]: result.failed.error };
+  }
+  pendingBatchStatus.value = result.failed
+    ? `已接受 ${result.accepted.length} 项；第 ${result.accepted.length + 1} 项失败后停止，剩余 ${result.notAttempted.length} 项未处理。`
+    : `已接受 ${result.accepted.length} 项派生记录。`;
+  await refreshAfterPendingAction();
+}
+
+async function settleChapter(path: string) {
+  if (props.mode !== 'writing') emit('selectMode', 'writing');
+  await openFile(path);
+  openCopilot('/整理本章');
 }
 
 function reviewPendingAction(action?: PendingActionView) {
@@ -564,6 +593,7 @@ async function refreshPendingActionSurface() {
       :pending-actions-error="pendingActionsError"
       :workspace-status="workspaceStatus"
       :project-health="projectHealth"
+      :pending-batch-status="pendingBatchStatus"
       :conversations="conversations.conversationSummaries.value"
       :chat-status="conversations.activeStatus.value"
       :chat-input="conversations.activeInput.value"
@@ -600,6 +630,8 @@ async function refreshPendingActionSurface() {
       @review-pending-action="reviewPendingAction"
       @open-pending-action-diff="openPendingActionDiff"
       @review-pending-action-id="reviewPendingActionById"
+      @accept-derived-pending-actions="acceptDerivedPendingActions"
+      @settle-chapter="settleChapter"
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
     />
@@ -640,6 +672,7 @@ async function refreshPendingActionSurface() {
           :pending-actions-error="pendingActionsError"
           :workspace-status="workspaceStatus"
           :project-health="projectHealth"
+          :pending-batch-status="pendingBatchStatus"
           :writing-profile-state="writingProfileState"
           :writing-profiles-loading="writingProfilesLoading"
           :writing-profiles-error="writingProfilesError"
@@ -651,6 +684,8 @@ async function refreshPendingActionSurface() {
           @review-pending-action="reviewPendingAction"
           @open-pending-action-diff="openPendingActionDiff"
           @review-pending-action-id="reviewPendingActionById"
+          @accept-derived-pending-actions="acceptDerivedPendingActions"
+          @settle-chapter="settleChapter"
           @refresh-writing-profiles="loadWritingProfiles"
           @writing-profile-state-changed="updateWritingProfileState"
         />

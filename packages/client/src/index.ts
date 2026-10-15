@@ -45,7 +45,9 @@ export {
   INVALID_PENDING_ACTION_VIEW_CODE,
   PENDING_ACTION_RESET_REQUIRED_CODE,
   PendingActionViewParseError,
+  acceptPendingActionsInOrder,
   createPendingActionViewApi,
+  isDerivedRecordPendingAction,
   parsePendingActionDecisionEnvelope,
   parsePendingActionDecisionReceiptV1,
   parsePendingActionQuickCommitEnvelope,
@@ -55,6 +57,7 @@ export {
   parsePendingActionViewV1,
 } from './pending-action-view.js';
 export type {
+  PendingActionBatchResult,
   PendingActionDecisionEnvelopeV1,
   PendingActionDecisionReceiptV1,
   PendingActionQuickCommitEnvelopeV1,
@@ -1733,6 +1736,8 @@ export interface ProjectHealth {
   timelineGapCount: number;
   pendingActionCount: number;
   issues: ProjectHealthIssue[];
+  /** Chapter text paths whose chapter summary is missing, stale or unverified. */
+  unsettledChapters: string[];
 }
 
 export interface WorkspaceDecisionRefresh {
@@ -4474,6 +4479,7 @@ function isProjectHealthEnvelope(value: unknown): value is ProjectHealth {
       'timelineGapCount',
       'pendingActionCount',
       'issues',
+      'unsettledChapters',
     ])
     && isValidPlayTimestamp(value.generatedAt)
     && isUniqueNonEmptyStringArray(value.missingCharacterCards)
@@ -4484,7 +4490,8 @@ function isProjectHealthEnvelope(value: unknown): value is ProjectHealth {
     && isNonNegativeSafeInteger(value.pendingActionCount)
     && Array.isArray(value.issues)
     && value.issues.every(isProjectHealthIssueEnvelope)
-    && new Set(value.issues.map((issue) => issue.id)).size === value.issues.length;
+    && new Set(value.issues.map((issue) => issue.id)).size === value.issues.length
+    && isUniqueNonEmptyStringArray(value.unsettledChapters);
 }
 
 function isProjectHealthIssueEnvelope(value: unknown): value is ProjectHealthIssue {

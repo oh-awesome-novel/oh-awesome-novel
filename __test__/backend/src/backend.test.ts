@@ -107,6 +107,41 @@ describe('novel HTTP backend', () => {
     expect(receivedExactWritablePaths).toEqual(['chapters/0001/0001.md']);
   });
 
+  it('derives the next chapter and named character targets for explicit writing commands', async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await mkdir(join(workspaceRoot, 'chapters/0001'), { recursive: true });
+    await writeFile(join(workspaceRoot, 'chapters/0001/0001.md'), '# 第一章\n');
+    const received: Array<readonly string[] | undefined> = [];
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      runAgent: (input) => {
+        received.push(input.exactWritablePaths);
+        return scriptedRuntimeEvents();
+      },
+    });
+    servers.push(backend);
+    const send = (text: string) => fetch(`${backend.url}/api/agent/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text }] }],
+        editContext: { exactWritablePaths: ['chapters/0001/0001.md'] },
+      }),
+    });
+
+    expect((await send('/写下一章')).status).toBe(200);
+    expect((await send('/生成角色卡 lin-zhao')).status).toBe(200);
+    expect((await send('改写这一章的开头')).status).toBe(200);
+    expect(received[0]).toEqual(['chapters/0001/0002.md']);
+    expect(received[1]?.[0]).toBe('characters/lin-zhao/meta.yaml');
+    expect(received[2]).toEqual(['chapters/0001/0001.md']);
+
+    const invalid = await send('/生成角色卡 -bad');
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ code: 'WRITING_COMMAND_TARGET_INVALID' });
+    expect(received).toHaveLength(3);
+  });
+
   it.each([
     '../outside.md',
     '.workspace/change-engine/action.json',

@@ -4,6 +4,7 @@ import {
   INVALID_PENDING_ACTION_VIEW_CODE,
   PENDING_ACTION_RESET_REQUIRED_CODE,
   PendingActionViewParseError,
+  acceptPendingActionsInOrder,
   createOanClient,
   createPendingActionViewApi,
   parsePendingActionDecisionEnvelope,
@@ -11,6 +12,7 @@ import {
   parsePendingActionQuickCommitEnvelope,
   parsePendingActionView,
   parsePendingActionViewListEnvelope,
+  isDerivedRecordPendingAction,
 } from '@oh-awesome-novel/client';
 
 const CREATED_AT = '2026-08-12T00:00:00.000Z';
@@ -258,6 +260,36 @@ describe('strict PendingActionView client boundary', () => {
       'http://backend.test/api/workspace/pending-actions/action-1/quick-commit',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+});
+
+describe('derived record batch acceptance', () => {
+  const view = (changes: Array<{ operation: string; path: string }>, origin: Record<string, unknown> = { kind: 'chapterSettlement' }) =>
+    ({ ...createPendingView(), changes: changes.map((change) => ({ ...change, newHash: HASH_A, ...(change.operation === 'create' ? {} : { oldHash: HASH_B }) })), origin }) as never;
+
+  it('qualifies only non-deleting summary, state, timeline, foreshadow and growth changes', () => {
+    expect(isDerivedRecordPendingAction(view([
+      { operation: 'update', path: 'summaries/chapter/0001/0001.md' },
+      { operation: 'create', path: 'state/chapters/0001/0001.yaml' },
+      { operation: 'update', path: 'timeline/events.yaml' },
+      { operation: 'update', path: 'foreshadow/active.yaml' },
+      { operation: 'update', path: 'characters/lin-zhao/growth.md' },
+    ]))).toBe(true);
+    expect(isDerivedRecordPendingAction(view([{ operation: 'update', path: 'summaries/chapter/0001/0001.md' }, { operation: 'update', path: 'chapters/0001/0001.md' }]))).toBe(false);
+    expect(isDerivedRecordPendingAction(view([{ operation: 'update', path: 'characters/lin-zhao/meta.yaml' }]))).toBe(false);
+    expect(isDerivedRecordPendingAction(view([{ operation: 'delete', path: 'timeline/events.yaml' }]))).toBe(false);
+    expect(isDerivedRecordPendingAction(view([]))).toBe(false);
+    expect(isDerivedRecordPendingAction(view([{ operation: 'update', path: 'state/characters.yaml' }], { kind: 'playAdoption' }))).toBe(false);
+    expect(isDerivedRecordPendingAction({ ...view([{ operation: 'update', path: 'state/characters.yaml' }]), status: 'accepted' })).toBe(false);
+  });
+
+  it('accepts in order and stops at the first failure', async () => {
+    const accept = vi.fn(async (id: string) => { if (id === 'b') throw new Error('baseline changed'); });
+    await expect(acceptPendingActionsInOrder(['a', 'b', 'c'], accept)).resolves.toEqual({
+      accepted: ['a'], failed: { id: 'b', error: 'baseline changed' }, notAttempted: ['c'],
+    });
+    expect(accept).toHaveBeenCalledTimes(2);
+    await expect(acceptPendingActionsInOrder(['a', 'c'], accept)).resolves.toEqual({ accepted: ['a', 'c'], notAttempted: [] });
   });
 });
 

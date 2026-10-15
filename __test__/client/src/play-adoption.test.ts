@@ -418,6 +418,7 @@ function createPromotionResponse() {
         missingCharacterCards: [],
         chaptersWithoutSummaries: [],
         activeHookCount: 0,
+        unsettledChapters: [],
         latestStateStale: false,
         timelineGapCount: 0,
         pendingActionCount: 1,
