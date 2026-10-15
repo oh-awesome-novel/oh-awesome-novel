@@ -1,31 +1,33 @@
 # oh-awesome-novel
 
-`oh-awesome-novel` 是一个 filesystem-first 的长篇小说 AI Copilot / Novel IDE。
+`oh-awesome-novel`（OAN）是一个个人使用的、filesystem-first 的**同人与综漫故事创作工作台**。
 
-小说正文、角色卡、世界观、状态、时间线、伏笔、摘要与项目规则保存在 Markdown、YAML、对象文件树和 Git 历史中。AI 读取固定快照、在受限内存沙箱中形成候选修改，作者审阅 diff 并明确 Accept 后，系统才把不可变候选事务化写入真实文件。
+- **Play（高优先级）**：在原作或他人作品的世界里，以穿越者或导演身份推演剧情，改写原作走向；不必从零写起。
+- **Writing**：把推演结果整理成章节，或者为新脑洞从零开写，完成“规划 → 写 → 审 → 整理”的闭环。
+
+作品正文、角色卡、世界观、状态、时间线、伏笔、摘要与项目规则保存在 Markdown、YAML、对象文件树和 Git 历史中。AI 读取固定快照、在受限内存沙箱中形成候选修改，作者审阅并明确 Accept 后，系统才把候选事务化写入真实文件。
 
 ## 项目定位
 
-它不是通用 Agent 框架、黑箱自动代笔系统或私有数据库，而是为小说工程准备的本地 IDE：
+项目不以商业化、网络连载或多人协作为目标，也不再定位为 “Novel IDE”。完整定位见 [Project Vision](docs/PROJECT_VISION.md)。
 
 - Markdown / YAML / Object File Tree 是数据库。
 - Git 是历史引擎。
 - AI 是 Copilot，不是数据所有者。
 - Runtime 保持 Aider-style 极简 tool loop。
 - 文件修改统一走 `bash-tool + just-bash + CandidateChangeSet + PendingAction + Git approval`。
-- 任意 canonical 文件在作者 Accept 前必须保持字节不变。
+- 任意 canonical 文件在作者 Accept 前必须保持字节不变；派生记录可整批接受，但仍逐项走同一审批。
 
 ## 核心能力
 
-- Filesystem-first 小说工作区与细粒度对象文件树
-- Novel Constitution、Workflow、Writing Profile 与 Skill 约束
-- Vercel AI SDK Tool Calling 与 Aider-style Runtime
+- Play：Guided Start、Immersive Journey（穿越）、Scene Rehearsal（导演）、世界事件、分支与 checkpoint、Outcome Report 与显式 adoption
+- 参考素材：Tavern 兼容角色卡导入、参考作品深度拆解与故事材料采纳
+- Writing Copilot：规划、写下一章、审稿、去 AI 味、整理本章/本卷/全书
+- Novel Constitution、Workflow、Writing Profile（默认同人二创）与 Skill 约束
 - 固定 `InMemoryFs` 投影、host-selected capability 与最终文档校验
-- create / update / delete `CandidateChangeSet`
 - PendingAction、diff 审阅、Accept / Reject 与崩溃恢复
-- operation-aware `ChangeMaterializer` 与 Git auto-commit / quick commit
+- `ChangeMaterializer` 与 Git auto-commit / quick commit
 - 本地 HTTP backend、Vue workspace 与 Electron 桌面承载
-- Reference Deconstruction、Reference Adoption 与 Play Adoption
 
 ## 架构概览
 
@@ -68,7 +70,7 @@ packages/
   client/          strict frontend/backend client
 
 __test__/          root-level test workspaces
-docs/              architecture, specs, plans, tasks
+docs/              product/engineering specs, tasks, plans, reviews, research
 wiki/              VitePress user guides and screenshots
 examples/          local example workspaces and global config
 reference-only/    research inputs, never product code
@@ -113,6 +115,8 @@ npm run dev --workspace @oh-awesome-novel/desktop-ui
 ## 关键文档
 
 - [Project Vision](docs/PROJECT_VISION.md)
+- [Product Overview](docs/PRODUCT_OVERVIEW.md)
+- [Play Mode Spec](docs/PLAY_MODE_SPEC.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Filesystem Specification](docs/FILESYSTEM_SPEC.md)
 - [Sandbox Change Engine](docs/SANDBOX_CHANGE_ENGINE.md)

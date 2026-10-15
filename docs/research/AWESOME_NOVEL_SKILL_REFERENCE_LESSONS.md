@@ -8,15 +8,15 @@
 >
 > 当前基准：`reference-only/awesome-novel-skill` 已检出 `main@dcd1920`（2026-09-25，`v4.28.0`）。
 >
-> 配套现状分析：`docs/AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md`（先读其中的“v4.28.0 现状增量与修正”）。本轮只做静态阅读，没有运行上游脚本或测试。
+> 配套现状分析：`docs/research/AWESOME_NOVEL_SKILL_REFERENCE_OVERVIEW.md`（先读其中的“v4.28.0 现状增量与修正”）。本轮只做静态阅读，没有运行上游脚本或测试。
 >
-> 约束：本文不会自动修改 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。只有用户明确确认的条目，才能以 `[awesome-novel-skill]` 来源标记合并到 OAN 的正式参考笔记、task 或 plan。
+> 约束：本文不会自动修改 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。只有用户明确确认的条目，才能以 `[awesome-novel-skill]` 来源标记合并到 OAN 的正式参考笔记、task 或 plan。
 >
 > 许可证：上游为 AGPL-3.0，`check-prose.py` 另带第三方 MIT 移植声明。OAN 只吸收公开机制和设计思想，不复制源码、prompt、Agent 定义、知识库文本、词表或 UI 文案。
 
 ## 与既有候选清单的关系
 
-此前没有 awesome-novel-skill 的独立清单。相关候选合并在 `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md` 的“当前仍值得评估的增量”（基准 v4.8.x，跨 awesome-novel-skill / novel-writer-skills / oh-story-claudecode 等项目），以及 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` 的 `[AwesomeNovelSkill-reference]` 条目（基准仍写 v4.12.3）。本文只补 v4.13–v4.28 的增量，并与它们对齐：
+此前没有 awesome-novel-skill 的独立清单。相关候选合并在 `docs/research/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md` 的“当前仍值得评估的增量”（基准 v4.8.x，跨 awesome-novel-skill / novel-writer-skills / oh-story-claudecode 等项目），以及 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` 的 `[AwesomeNovelSkill-reference]` 条目（基准仍写 v4.12.3）。本文只补 v4.13–v4.28 的增量，并与它们对齐：
 
 - 既有第 2 项“写作规则冲突 provenance 与优先级测试”（来源含 prompt conflict table）≈ 本文 A3，合并处理。
 - 既有第 3 项“prose lint 分 blocking 与 advisory”：句长、禁词密度、章尾形式、“AI 味”默认只能是 advisory，可机械证明的格式问题才 blocking；必须作者显式启用、不自动改正文、不以通过外部 AI 检测器为目标。**本文 A1 / A2 须服从这条**：check-prose 类规则默认 advisory。
@@ -89,12 +89,12 @@ awesome-novel-skill 是 prompt 驱动的串行 SOP，不是 OAN 的架构模板�
 ## 与 OAN 现有能力的关系
 
 - OAN 已有 `ObservationLog / SettlementBundle`、PendingAction、ChangeMaterializer、Git diff approval，所以 A1–A4 实际上是在这些边界之内增加 **checker 工具与 finding schema**，工作量远小于重做写作流水线。
-- 参考 `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`、`docs/WEBNOVEL_WRITER_REFERENCE_LESSONS.md` 与 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` 中已有的写作方法论条目，避免重复收录；新增条目应先对照这些文档去重。
+- 参考 `docs/research/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`、`docs/research/WEBNOVEL_WRITER_REFERENCE_LESSONS.md` 与 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` 中已有的写作方法论条目，避免重复收录；新增条目应先对照这些文档去重。
 - Play Mode 方面，本轮没有新增需要吸收的内容；既有“只呈现可观察言行”的结论不变。
 
 ## 建议合并到 OAN 写作参考笔记的最小条目
 
-如果用户后续明确确认，建议只把以下写作相关条目追加到 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，每条标注来源 `[awesome-novel-skill]`：
+如果用户后续明确确认，建议只把以下写作相关条目追加到 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，每条标注来源 `[awesome-novel-skill]`：
 
 - `[awesome-novel-skill]` 字数、段落形态、位置比例等可计算指标必须由代码实测，不让模型估算；检查器只报警，不自行改文。
 - `[awesome-novel-skill]` 写作阶段只注入正向要点和最小禁令；去 AI 味放在草稿之后，先处理结构，再处理句子。

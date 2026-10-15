@@ -525,9 +525,9 @@ Play 结果默认写入 Play session，不改 canonical truth。
 
 ## 文档引用
 
-- SillyTavern 参考分析：`docs/SILLYTAVERN_REFERENCE_OVERVIEW.md`
-- SillyTavern 可吸收点：`docs/SILLYTAVERN_REFERENCE_LESSONS.md`
-- OAN agent 写作指引参考笔记：`docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
+- SillyTavern 参考分析：`docs/research/SILLYTAVERN_REFERENCE_OVERVIEW.md`
+- SillyTavern 可吸收点：`docs/research/SILLYTAVERN_REFERENCE_LESSONS.md`
+- OAN agent 写作指引参考笔记：`docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
 - OAN 文件系统规范：`docs/FILESYSTEM_SPEC.md`
 - SillyTavern Character Design docs: https://docs.sillytavern.app/usage/core-concepts/characterdesign/
 - SillyTavern World Info docs: https://docs.sillytavern.app/usage/core-concepts/worldinfo/

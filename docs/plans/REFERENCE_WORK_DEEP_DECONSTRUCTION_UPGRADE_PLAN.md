@@ -1,5 +1,7 @@
 # OAN 参考作品深度拆解升级计划
 
+> 2026-10-15 注：`v0.2.0` 已于 2026-10-05 公开发布，产品已重新定位为个人同人/综漫创作工作台（见 [PROJECT_VISION](../PROJECT_VISION.md)）。本文中“尚未发布 / 无需兼容 / 早期开发阶段”等说明是计划当时的历史前提，不再是当前事实；兼容与迁移以相关 task 为准。
+
 > 后续契约覆盖：`docs/tasks/1205.md` 已于 2026-07-31 按
 > `WRITING_MODE_COMMERCIAL_AND_FANFICTION_UPGRADE_PLAN.md` 完成 quality gate
 > warning 降级。本文 D0–D5 中“exact-overlap blocking / quality-passed only”
@@ -691,7 +693,7 @@ Reference 文本中出现“忽略规则”“调用工具”“写入文件”�
 
 ### 10.2 Copy-risk gates
 
-当前覆盖规则见 [1205](tasks/1205.md)：内容质量/重合风险降级为可见 warning；结构、来源与路径错误仍阻断。下列 blocking quality 文案是原方案历史，不覆盖现行行为。
+当前覆盖规则见 [1205](../tasks/1205.md)：内容质量/重合风险降级为可见 warning；结构、来源与路径错误仍阻断。下列 blocking quality 文案是原方案历史，不覆盖现行行为。
 
 - Typed schema 不提供直接引语字段。
 - 对 candidate 与 source 做 deterministic long exact-overlap 检测；超过阈值时进入 blocking diagnostic。

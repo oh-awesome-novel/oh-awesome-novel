@@ -2,7 +2,7 @@
 
 ## Summary
 
-`oh-awesome-novel` 是 filesystem-first 的 Novel IDE / AI Copilot。稳定架构是：
+`oh-awesome-novel` 是 filesystem-first 的个人同人/综漫创作工作台（Play + Writing），产品定位见 [PROJECT_VISION.md](PROJECT_VISION.md)。稳定架构是：
 
 ```text
                     oh-awesome-novel

@@ -8,9 +8,9 @@
 >
 > 当前基准：`reference-only/storyforge` 已检出 `main@83ad0231c7ab85f1b9725940861899b07a7d69b1`（2026-10-12），并与 `origin/main` 一致；上一轮基准为 `d78a7371`（2026-08-12），此后 1015 个提交、3165 个文件变化。
 >
-> 配套现状分析：`docs/STORYFORGE_REFERENCE_OVERVIEW.md`（先读其中的“2026-10-12 现状增量与修正”）。本轮只做静态阅读，未重跑上游检查与测试。
+> 配套现状分析：`docs/research/STORYFORGE_REFERENCE_OVERVIEW.md`（先读其中的“2026-10-12 现状增量与修正”）。本轮只做静态阅读，未重跑上游检查与测试。
 >
-> 约束：本文不会自动修改 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。只有用户明确确认的条目，才能以 `[StoryForge]` 来源标记合并到 OAN 的正式参考笔记、task 或 plan。
+> 约束：本文不会自动修改 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。只有用户明确确认的条目，才能以 `[StoryForge]` 来源标记合并到 OAN 的正式参考笔记、task 或 plan。
 
 ## 本轮更新纠正了什么
 
@@ -473,7 +473,7 @@ StoryForge 的 MIT 许可证解决的是许可证授权问题，不会改变 OAN
 
 ## 建议合并到 OAN 写作参考笔记的最小条目
 
-如果用户后续明确确认，建议只把以下稳定、写作相关的条目追加到 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，每条标注来源 `[StoryForge]`：
+如果用户后续明确确认，建议只把以下稳定、写作相关的条目追加到 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，每条标注来源 `[StoryForge]`：
 
 - `[StoryForge]` 每次写作候选应记录实际 included / omitted / compressed 上下文、预算和来源版本，不能只记录理论可读范围。
 - `[StoryForge]` 写章节前应优先读取章节目标、上一章结尾、最新状态、相关角色、世界规则、伏笔、时间线和风格约束，并明确被省略的上下文。

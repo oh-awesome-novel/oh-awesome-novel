@@ -1,5 +1,7 @@
 # Play Mode 世界事件升级计划
 
+> 2026-10-15 注：`v0.2.0` 已于 2026-10-05 公开发布，产品已重新定位为个人同人/综漫创作工作台（见 [PROJECT_VISION](../PROJECT_VISION.md)）。本文中“尚未发布 / 无需兼容 / 早期开发阶段”等说明是计划当时的历史前提，不再是当前事实；兼容与迁移以相关 task 为准。
+
 > 里程碑状态：M1–M5 Completed
 >
 > 文档状态：Needs Review（并行 correctness lane 仍持续复核）
@@ -14,13 +16,13 @@
 >
 > 执行顺序调整：2026-07-15。
 >
-> 当前执行原则：M1–M5 与 F1–F4 已交付。产品已经发布；2026-10-07 按 [1120](tasks/1120.md) 补齐显式 session 升级、receipt 保留、stage 清理、ISO 时间与显式状态引用，按 [1060](tasks/1060.md) 补齐角色卡导入旅程。设备/跨平台验收等剩余边界以 task 为准。
+> 当前执行原则：M1–M5 与 F1–F4 已交付。产品已经发布；2026-10-07 按 [1120](../tasks/1120.md) 补齐显式 session 升级、receipt 保留、stage 清理、ISO 时间与显式状态引用，按 [1060](../tasks/1060.md) 补齐角色卡导入旅程。设备/跨平台验收等剩余边界以 task 为准。
 
 ## 2026-10-07 执行状态
 
-旧 session 已有 Core/Backend/Client/Desktop 显式预览确认；普通 mutation 不再静默升级。旧 mutation/list endpoint 标记弃用，仍有用途的 full detail 保留。`atWorldTime` 使用明确 `format: iso8601` 才启用内置确定性比较；旧无格式 trigger 语义不变。可选 `stateDeltaRefs` 由 Core/Client 校验真实变化叶路径。staged recovery 在同锁内清理遗留 stage，损坏快照保留 backup；30 天 terminal receipt 清理保留未知/未决证据。下文早期“未发布/待实现”段落属于历史计划，最新范围和验证以 [1120](tasks/1120.md) 及 [本轮实施计划](superpowers/plans/2026-10-07-play-reliability-and-tavern-import.md) 为准。
+旧 session 已有 Core/Backend/Client/Desktop 显式预览确认；普通 mutation 不再静默升级。旧 mutation/list endpoint 标记弃用，仍有用途的 full detail 保留。`atWorldTime` 使用明确 `format: iso8601` 才启用内置确定性比较；旧无格式 trigger 语义不变。可选 `stateDeltaRefs` 由 Core/Client 校验真实变化叶路径。staged recovery 在同锁内清理遗留 stage，损坏快照保留 backup；30 天 terminal receipt 清理保留未知/未决证据。下文早期“未发布/待实现”段落属于历史计划，最新范围和验证以 [1120](../tasks/1120.md) 及 [本轮实施计划](../superpowers/plans/2026-10-07-play-reliability-and-tavern-import.md) 为准。
 
-## 历史产品阶段说明（2026-07）
+## 历史产品阶段说明（2026-07，已过时）
 
 OAN 目前仍处于产品早期开发阶段，尚未发布，也没有需要兼容的已发布用户数据。现阶段优先验证 Play Mode 的核心玩法、交互闭环与真实使用价值，以下工作明确暂缓，不作为当前功能里程碑、验收或合并的前置条件：
 
@@ -108,10 +110,10 @@ F1 已因实际并发边界补入 cooperative cross-process session / attempt fi
 OAN 文档：
 
 - `docs/PLAY_MODE_SPEC.md`
-- `docs/SILLYTAVERN_REFERENCE_LESSONS.md`
-- `docs/INKOS_REFERENCE_LESSONS.md`
-- `docs/INKOS_REFERENCE_OVERVIEW.md`
-- `docs/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md`
+- `docs/research/SILLYTAVERN_REFERENCE_LESSONS.md`
+- `docs/research/INKOS_REFERENCE_LESSONS.md`
+- `docs/research/INKOS_REFERENCE_OVERVIEW.md`
+- `docs/research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md`
 - `docs/tasks/1060.md`
 - `docs/tasks/1090.md`
 

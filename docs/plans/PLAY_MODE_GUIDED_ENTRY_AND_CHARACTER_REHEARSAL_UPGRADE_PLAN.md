@@ -1,5 +1,7 @@
 # Play Mode 引导入场与角色推演升级计划
 
+> 2026-10-15 注：`v0.2.0` 已于 2026-10-05 公开发布，产品已重新定位为个人同人/综漫创作工作台（见 [PROJECT_VISION](../PROJECT_VISION.md)）。本文中“尚未发布 / 无需兼容 / 早期开发阶段”等说明是计划当时的历史前提，不再是当前事实；兼容与迁移以相关 task 为准。
+
 > 状态：F1–F4 Completed
 >
 > 文档目标：在现有顶级 Play 工作区与世界事件底座上，补齐“从小说素材进入可玩场景、按角色知识与行为依据进行推演、由作者逐步导演、结束后形成可追溯写作参考”的产品闭环。
@@ -16,7 +18,7 @@
 >
 > 当前执行原则：基础设施已经足够。世界事件 M1 与本计划 F1 已于 2026-07-15 完成，世界事件 M2–M4、本计划 F2 / F3 已于 2026-07-16 完成；世界事件 M5 长篇使用与体验收口和本计划 F4 advanced Director controls 已于 2026-07-20 完成。接下来优先进入真实使用反馈；耐久性、发布迁移和通用 transport 加固只在具体风险触发时成为局部门槛。
 
-## 当前产品阶段说明
+## 产品阶段说明（2026-07，已过时）
 
 OAN 目前仍处于产品早期开发阶段，尚未发布，也没有需要兼容的已发布用户数据。现阶段优先验证 Play Mode 的核心玩法、交互闭环与真实使用价值，以下工作明确暂缓，不作为当前功能里程碑、验收或合并的前置条件：
 
@@ -117,7 +119,7 @@ Slice 1：最小可玩 Scene Rehearsal
 
 ### 2.3 与世界事件升级计划的分工
 
-`docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md` 已经定义世界时间、scheduled event、pressure、agenda、typed delta、回合事务、HUD、checkpoint 和 adoption。本文只在其上增加“如何入场”和“如何逐角色推演”。
+`docs/plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md` 已经定义世界时间、scheduled event、pressure、agenda、typed delta、回合事务、HUD、checkpoint 和 adoption。本文只在其上增加“如何入场”和“如何逐角色推演”。
 
 两者分工如下：
 
@@ -134,7 +136,7 @@ Slice 1：最小可玩 Scene Rehearsal
 
 ### 3.1 awesome-novel-skill 的版本增量
 
-既有 `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md` 可以快速了解 awesome-novel-skill 的总体架构、单 / 多 Agent 演化、写前上下文包、写后证据链和 GPL-3.0 边界，但它的阅读快照是 2026-06-17 的 `d4891c6`。
+既有 `docs/research/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md` 可以快速了解 awesome-novel-skill 的总体架构、单 / 多 Agent 演化、写前上下文包、写后证据链和 GPL-3.0 边界，但它的阅读快照是 2026-06-17 的 `d4891c6`。
 
 本次阅读的参考仓库是：
 
@@ -1371,10 +1373,10 @@ OAN 稳定文档与当前计划：
 - `docs/ARCHITECTURE.md`
 - `docs/DEVELOPMENT_PLAN.md`
 - `docs/PLAY_MODE_SPEC.md`
-- `docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`
-- `docs/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md`
-- `docs/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`
-- `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
+- `docs/plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`
+- `docs/research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md`
+- `docs/research/NOVEL_WRITING_SKILLS_REFERENCE_OVERVIEW.md`
+- `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
 - `docs/NOVEL_AGENT_COPILOT_SPEC.md`
 - `docs/tasks/1060.md`
 - `docs/tasks/1090.md`
@@ -1393,6 +1395,6 @@ OAN 稳定文档与当前计划：
 - `reference-only/awesome-novel-skill/knowledge/format-specs/character-setting-style.md`
 - `reference-only/MuseAI/README.md`
 - `reference-only/MuseAI/PRODUCT.md`
-- MuseAI 穿书、冒险、角色、记忆、session 与对应测试代码，详见 `docs/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md`。
+- MuseAI 穿书、冒险、角色、记忆、session 与对应测试代码，详见 `docs/research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md`。
 
 以上 reference-only 项目仅用于静态研究。后续实现必须保持 OAN 的独立命名、独立 schema、独立 prompt、独立代码和独立测试。

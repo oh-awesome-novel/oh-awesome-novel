@@ -1,11 +1,11 @@
 # OAN Agent Writing Guide Runtime Gap Spec
 
-Status: Historical audit (2026-06-19); current follow-up: [1230](tasks/1230.md).
+Status: Historical audit (2026-06-19); current follow-up: [1230](../tasks/1230.md).
 
 Source:
 
-- `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
-- `docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
+- `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
+- `docs/plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
 - Actual code audit on 2026-06-19
 
 ## Goal

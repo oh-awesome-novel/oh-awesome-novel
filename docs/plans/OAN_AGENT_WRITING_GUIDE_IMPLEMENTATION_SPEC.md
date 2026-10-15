@@ -2,11 +2,11 @@
 
 Status: Draft Spec
 
-Source: `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
+Source: `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
 
 Supplemental runtime gap spec:
 
-- `docs/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md`
+- `docs/plans/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md`
 
 ## Goal
 

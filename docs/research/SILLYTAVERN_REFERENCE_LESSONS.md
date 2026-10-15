@@ -1,7 +1,7 @@
 # SillyTavern 可吸收点候选清单
 
 > 状态：候选参考笔记。  
-> 约束：本文不会自动修改 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。所有“可吸收点”都标记为来自 SillyTavern，等待用户确认后，才能合并进 OAN 的 agent 写作指引参考笔记。  
+> 约束：本文不会自动修改 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。所有“可吸收点”都标记为来自 SillyTavern，等待用户确认后，才能合并进 OAN 的 agent 写作指引参考笔记。  
 > 基准：`reference-only/SillyTavern` 本地当前 HEAD `51ad27fb8`。  
 > 许可证提醒：SillyTavern 使用 AGPL-3.0。OAN 只能吸收产品模式、抽象设计和 workflow 启发，不应复制实现代码、prompt 文本或默认资产。
 
@@ -294,7 +294,7 @@ SillyTavern 的聊天保存是直接写 JSONL。OAN 不能照搬。真实目标�
 
 ## 建议加入 OAN 总参考笔记的候选条目
 
-以下条目如果用户确认，可后续写入 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，并添加来源标签 `[SillyTavern-reference]`。
+以下条目如果用户确认，可后续写入 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`，并添加来源标签 `[SillyTavern-reference]`。
 
 ### A. 新增独立 Play Mode / Roleplay Sandbox
 

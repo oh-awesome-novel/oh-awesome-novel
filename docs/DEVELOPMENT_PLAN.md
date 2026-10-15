@@ -15,15 +15,20 @@ bash-tool + just-bash fixed sandbox
 
 确定性 Reference/Play producer 可直接生成同一种 ChangeSet。项目不实现 feature flag 双写、dual-run、旧记录 migrator 或 runtime fallback engine。
 
-优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database。
+优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database，也不做商业化、连载或协作功能。
 
-## Current Delivery Priority (2026-10-14)
+## Current Delivery Priority (2026-10-15)
 
-按 [1230 修正任务](tasks/1230.md) 的最新记录推进，原评审只作带日期的基线。首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复和已记录的 Play 可靠性修正已交付。
+产品重新定位为个人同人/综漫创作工作台（[PROJECT_VISION](PROJECT_VISION.md)、[评估记录](reviews/PRODUCT_DESIGN_REVIEW_2026-10-15.md)）。优先级：
 
-现已交付标准Agent usage治理、受限多领域结构化结算、正文搜索、Markdown/TXT导出、Play派生窗口/快照优化，以及[1290](tasks/1290.md)章级来源新鲜度与长篇历史加载、[1300](tasks/1300.md)作者Markdown旧稿导入、[0700](tasks/0700.md)卷/全书摘要及评审修正。[1310](tasks/1310.md)承接生产类型/发行质量门禁、Git预览绑定提交与打包写作旅程，其最终验证以任务记录为准。后续按 `0580` 远端同步收尾与更多环境验收、`1120` 剩余 Play 可靠性及 `1230` 独立剩余范围推进。完整Play mutation/CAS成本仍线性，进一步优化以实测门槛为准。
+1. **写作核心闭环**：[1330](tasks/1330.md) 自动目标路径（写下一章、生成角色卡、规划）、续写上下文与章节进度引导。
+2. **审批与记忆体验**：[1340](tasks/1340.md) 派生记录整批接受、未整理章节提示、默认同人二创 Profile。
+3. **Play 保持高优先级**：[1120](tasks/1120.md) 剩余可靠性，以及作者使用中提出的穿越/导演/世界线体验改进，直接立项推进。
+4. 其余：[0580](tasks/0580.md) 远端同步与更多环境验收、[1230](tasks/1230.md) 独立剩余范围。
 
-**Extension 系统开发暂缓。** 不新增动态 Tool 注册、extension host code、更多 Director 控制或 Reference 分析层；保留已经交付的能力。恢复扩展前，先证明已有写作、审批、导出与 Play adoption 的真实创作旅程。
+不做商业写作、连载平台或团队协作相关功能。**Extension 系统开发继续暂缓**：不新增动态 Tool 注册或 extension host code。
+
+此前交付记录：首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复、Play 可靠性修正、usage 治理、受限多领域结构化结算、正文搜索、Markdown/TXT 导出、Play 派生窗口/快照优化、[1290](tasks/1290.md) 章级来源新鲜度、[1300](tasks/1300.md) 旧稿导入、[0700](tasks/0700.md) 卷/全书摘要与 [1310](tasks/1310.md) 发行质量门禁。完整 Play mutation/CAS 成本仍线性，进一步优化以实测门槛为准。
 
 ## Milestone Overview
 
@@ -42,6 +47,7 @@ M10  Workflow And Skills
 M11  Extension System
 M12  Polish, Tests, Import / Export
 M13  Sandbox Change Engine And Unified Producers
+M14  Core Writing Loop And Proportionate Review
 ```
 
 ## M0. Documentation Foundation
@@ -191,6 +197,17 @@ M13 done criteria:
 - public DTO never exposes candidate bytes/internal artifact paths。
 - no compatibility engine or old state reader remains。
 - packaged desktop uses pinned notices/resources and passes smoke。
+
+## M14. Core Writing Loop And Proportionate Review
+
+Tasks: [1330](tasks/1330.md)、[1340](tasks/1340.md)。
+
+Done criteria:
+
+- 空作品通过 `/写下一章` 直接生成并 Accept 第一章；后续写章目标为最新章的下一章。
+- 角色卡与大纲的目标路径由 host 推导，作者无需预先选中文件。
+- 续写默认上下文包含大纲与上一章。
+- 派生记录可整批接受，失败即停；首页显示未整理章节数。
 
 ## MVP Vertical Slice
 
