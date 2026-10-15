@@ -259,6 +259,7 @@ describe('Git status and explicit commit preview', () => {
   });
 
   it('syncs with a bare remote (first push, fast-forward pull, and diverged conflict without losing local commits)', async () => {
+    await windowsLineEndings();
     const remoteRoot = await tempRoot();
     await git(remoteRoot, 'init', '--bare', '-b', 'main');
 
@@ -313,6 +314,7 @@ describe('Git status and explicit commit preview', () => {
   });
 
   it('pulls and pushes the configured upstream when the local branch has a different name', async () => {
+    await windowsLineEndings();
     const remote = await tempRoot();
     await git(remote, 'init', '--bare', '-b', 'main');
     const local = await repository();
@@ -334,6 +336,44 @@ describe('Git status and explicit commit preview', () => {
     expect((await git(remote, 'show', 'main:baseline.md')).trim()).toBe('local update');
     expect((await git(remote, 'branch', '--format=%(refname:short)')).trim()).toBe('main');
     expect((await git(local, 'config', '--get', 'branch.local-novel.merge')).trim()).toBe('refs/heads/main');
+  });
+
+  it('still fast-forwards a checkout that autocrlf already converted to CRLF', async () => {
+    await windowsLineEndings();
+    const remote = await tempRoot();
+    await git(remote, 'init', '--bare', '-b', 'main');
+    const writer = await repository();
+    await git(writer, 'remote', 'add', 'origin', remote);
+    await git(writer, 'push', '-u', 'origin', 'main');
+    const reader = await tempRoot();
+    await git(reader, 'clone', remote, '.');
+    expect(await readFile(join(reader, 'baseline.md'), 'utf8')).toBe('baseline\r\n');
+    await write(writer, 'baseline.md', 'remote update\n');
+    await git(writer, 'commit', '-am', 'remote advance');
+    await git(writer, 'push');
+
+    expect(await readGitStatus(reader)).toMatchObject({ status: 'clean' });
+    expect(await syncGit(reader)).toMatchObject({ status: 'synced' });
+    expect(await readFile(join(reader, 'baseline.md'), 'utf8')).toBe('remote update\r\n');
+    await expect(git(reader, 'config', '--local', '--get', 'core.autocrlf')).rejects.toThrow();
+  });
+
+  it('commits a byte-preserving attributes file and keeps LF and CRLF across an autocrlf clone', async () => {
+    await windowsLineEndings();
+    authorIdentity();
+    const root = await tempRoot();
+    await initWorkspace(root);
+    expect(await initializeWorkspaceRepository(root)).toMatchObject({ repository: true, status: 'clean' });
+    expect((await git(root, 'config', '--local', '--get', 'core.autocrlf')).trim()).toBe('false');
+    expect(await git(root, 'ls-files')).toContain('.gitattributes');
+    await write(root, 'chapters/0001/0001.md', '正文\r\n');
+    await git(root, 'add', '--', 'chapters/0001/0001.md');
+    await git(root, 'commit', '-m', 'chapter');
+
+    const clone = await tempRoot();
+    await git(clone, 'clone', root, '.');
+    expect(await readFile(join(clone, '.gitignore'), 'utf8')).toBe(await readFile(join(root, '.gitignore'), 'utf8'));
+    expect(await readFile(join(clone, 'chapters/0001/0001.md'), 'utf8')).toBe('正文\r\n');
   });
 
   it('fails closed when an existing upstream remote is unavailable instead of pushing to origin', async () => {
@@ -401,6 +441,12 @@ async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), 'oan-git-first-use-'));
   roots.push(root);
   return root;
+}
+
+async function windowsLineEndings() {
+  const config = join(await tempRoot(), 'gitconfig');
+  await writeFile(config, '[core]\n\tautocrlf = true\n[commit]\n\tgpgsign = false\n');
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config);
 }
 
 async function repository() {
