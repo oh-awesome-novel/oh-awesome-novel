@@ -480,7 +480,7 @@ MuseAI 已有 scene state、time、location、active characters、state changes�
 - `insert-beat | change-scene` 与自由 JSON patch 没有为 scheduled event、pressure、agenda、offscreen event、reveal、rumor、cause chain 或 event visibility 提供一等、可验证、可调度和可追踪的结构化表达；模型即使临时写入同类语义，宿主也无法可靠执行。
 - state patch 主要做浅合并，没有 event reducer、inverse、source event id 或 deterministic evaluator。
 
-所以 MuseAI 不能替代 `docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`。它真正补充的是：
+所以 MuseAI 不能替代 `docs/plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`。它真正补充的是：
 
 | OAN 世界事件底座 | MuseAI 可补充的体验 |
 |---|---|
@@ -819,12 +819,12 @@ filesystem-first Play setup
 ### OAN
 
 - `docs/PLAY_MODE_SPEC.md`
-- `docs/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`
+- `docs/plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md`
 - `docs/tasks/1090.md`
 - `docs/tasks/1120.md`
-- `docs/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md`
-- `docs/SILLYTAVERN_REFERENCE_LESSONS.md`
-- `docs/INKOS_REFERENCE_LESSONS.md`
+- `docs/research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md`
+- `docs/research/SILLYTAVERN_REFERENCE_LESSONS.md`
+- `docs/research/INKOS_REFERENCE_LESSONS.md`
 - `packages/core/src/play-session.ts`
 - `packages/backend/src/index.ts`
 - `packages/client/src/index.ts`

@@ -2,24 +2,21 @@
 
 ## User Problems
 
-1. 聊天或角色扮演产品不适合直接管理几十万字、多对象、多章节小说工程。
-2. 长篇创作需要跨文件维护人物、世界、状态、时间线、伏笔、摘要与大纲。
-3. 无节制上下文会导致成本、延迟与一致性问题。
-4. AI 全文重写或直接写盘容易破坏格式、覆盖用户修改并产生不可审阅结果。
-5. 作者需要明确的 diff、Accept / Reject、Git 历史与恢复能力。
+1. 同人/综漫创作通常建立在原作或他人作品之上；从零重写世界和角色成本高，作者更想“穿越”进原作世界直接改写剧情走向。
+2. 聊天或角色扮演产品的推演结果停留在聊天记录里，难以整理成长篇小说，也无法区分“推演过的”与“正式写下的”。
+3. 长篇创作需要跨文件维护人物、世界、状态、时间线、伏笔、摘要与大纲；多作品交叉时更容易混乱。
+4. 无节制上下文会导致成本、延迟与一致性问题。
+5. AI 全文重写或直接写盘容易破坏格式、覆盖作者修改并产生不可审阅结果；但每一次写入都逐项审阅又会造成审批疲劳。
 
-## Primary Users
+## Primary User
 
-### Independent Novel Author
+项目作者本人：个人创作同人与综漫，不以商业出版、网络连载或多人协作为目标。熟悉 Markdown、Git 与本地编辑工具，也会用 Codex、Aider、Claude Code、VS Code 或 Obsidian 直接编辑项目。
 
-- 管理长篇、多卷、多角色项目。
-- 局部续写、润色、结算状态与维护设定。
+- 在 Play 中以穿越者或导演身份推演原作世界，并把有价值的结果带回写作。
+- 有新脑洞时从零开写：规划、续写、审稿、整理状态与设定。
 - 自由选择模型，并始终掌握真实文件和 Git 历史。
 
-### Power User With File Tools
-
-- 用 Codex、Aider、Claude Code、VS Code、Obsidian 或 Git 直接编辑项目。
-- 在不依赖私有数据库的前提下导入、导出与自动化只读分析。
+不为商业写作、连载平台、团队协作或无技术背景的大众作者设计专门功能。
 
 ## Functional Requirements
 
@@ -128,6 +125,28 @@ UI 必须展示 PendingAction title/status、create/update/delete path list、�
 
 作者自有 Markdown 可在当前工作区预览拆章和卷章映射。原文保留、冲突可见、输入/映射变化后重新预览；初版只创建新章节，不隐式覆盖或合并。导入使用独立 deterministic producer 和同一 immutable preview / PendingAction / Accept，不与已有 OAN workspace 打开或外部 Reference 导入混同。当前批次上限为 512 KiB / 64 章。
 
+### F19. Play Priority
+
+Play 与 Writing 是同级顶级模式，Play 保持高优先级：Guided Start、穿越（Immersive Journey）与导演（Scene Rehearsal）视角、世界事件、分支与 checkpoint、Outcome Report、Writing Reference 与 adoption 是核心体验，不是实验功能。Play 结果进入正式内容仍必须经过显式 adoption 与 PendingAction。
+
+### F20. Core Writing Loop Closure
+
+Writing 必须能从空作品开始独立完成“规划 → 写下一章 → 审稿 → 定稿 → 整理本章 → 写下一章”：
+
+- `/写下一章` 由 host 推导下一个章节路径（空作品为 `chapters/0001/0001.md`；否则为最新卷的下一章），授予该精确路径的 create 能力，不依赖作者在文件树中选中文件。
+- `/生成角色卡` 在未选中既有角色时，由作者给出角色 ID，host 授予 `characters/<id>/` 下标准对象文件的精确路径。
+- `/规划大纲`、`/规划下一卷` 与 `/规划下一章` 需要保存时，host 授予 `outline/main.md` 或当前卷 `outline/volumes/<卷>.md`。
+- 写章与规划的默认上下文包含大纲（`outline/main.md` 与当前卷大纲）和上一章正文。
+- 章节正文 Accept 后提示整理本章；首页显示尚未整理（摘要缺失或过期）的章节数。
+
+### F21. Proportionate Review
+
+所有 canonical 写入仍需 Accept，但审阅按风险分级：
+
+- 正文、角色人设与 Constitution：逐项审阅。
+- 摘要、章级状态、时间线与伏笔等派生记录：可在审批列表中整批接受；批次中任一项过期或失败时停止并报告，不跳过、不重试。
+- 整批接受只是对多个 PendingAction 依次执行普通 Accept，不引入新的写入路径。
+
 ## Non-Functional Requirements
 
 ### Security
@@ -159,3 +178,4 @@ proposal、draft、terminal、receipt 与 journal 采用 temp + fsync + atomic r
 - arbitrary host shell、trusted custom shell command、network/package manager
 - database migrations、event sourcing、CQRS 或向量数据库事实源
 - silent writes、自动后台写作、diff-as-authority 或 command replay on Accept
+- 商业写作、连载平台、付费、团队协作或多人实时编辑功能

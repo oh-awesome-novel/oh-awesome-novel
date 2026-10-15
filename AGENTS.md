@@ -4,14 +4,14 @@
 
 ## 项目定位
 
-`oh-awesome-novel` 不是通用 Agent 框架，而是一个 filesystem-first 的长篇小说 AI Copilot / Novel IDE。
+`oh-awesome-novel` 不是通用 Agent 框架，也不再定位为 “Novel IDE”，而是一个 filesystem-first 的个人同人/综漫创作工作台（Play 推演 + Writing 写作双核心），定位见 `docs/PROJECT_VISION.md`。Play 与 Writing 同级，Play 保持高优先级；项目不以商业化、连载或多人协作为目标。
 
 最终方案已经从早期讨论中的 “StoryForge 二开 + Repository Layer” 收敛为：
 
 ```text
 oh-awesome-novel
     =
-Filesystem First Novel IDE
+Filesystem-first Fanfiction Story Workbench
     +
 Aider-style Runtime
     +

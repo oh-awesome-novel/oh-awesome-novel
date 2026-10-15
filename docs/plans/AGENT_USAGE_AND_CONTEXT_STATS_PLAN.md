@@ -1,10 +1,10 @@
 # ContextPackage Evidence And Agent Usage Governance Plan
 
-> Status: G1–G6 implemented and validated; see [1110](tasks/1110.md) for the delivered contract and limits. G7 remains optional follow-up.
+> Status: G1–G6 implemented and validated; see [1110](../tasks/1110.md) for the delivered contract and limits. G7 remains optional follow-up.
 >
-> Related Task: [1110 ContextPackage Evidence And Agent Usage Governance](tasks/1110.md)
+> Related Task: [1110 ContextPackage Evidence And Agent Usage Governance](../tasks/1110.md)
 >
-> Related Completed Tasks: [1010 Context Package And Source Discipline](tasks/1010.md), [1070 Agent Context Trace And Session Artifact Autowiring](tasks/1070.md), [1080 Reference Context Selector And Loading Map](tasks/1080.md)
+> Related Completed Tasks: [1010 Context Package And Source Discipline](../tasks/1010.md), [1070 Agent Context Trace And Session Artifact Autowiring](../tasks/1070.md), [1080 Reference Context Selector And Loading Map](../tasks/1080.md)
 >
 > 本计划扩展原有 “Agent Usage And Context Stats” 范围：除了 estimated / actual token usage，还要让每次 agent run 能说明实际发送了哪些上下文、来源版本是什么、哪些内容被省略或压缩、是否发生 protected overflow，以及内容被发送到哪个 provider。计划仍由 `1110` 承接，不新建重型 observability 子系统。
 
@@ -51,14 +51,14 @@ V1 必须明确区分四层事实：
 
 本计划吸收四份 Lessons 的共同约束，但不复制参考项目实现：
 
-- [INKOS_REFERENCE_LESSONS.md](INKOS_REFERENCE_LESSONS.md)：protected context 不得静默截断；source、revision/hash、选择原因和压缩映射必须可见；派生层必须可重建和可解释。
-- [STORYFORGE_REFERENCE_LESSONS.md](STORYFORGE_REFERENCE_LESSONS.md)：候选卡和 run log 应展示实际 included / omitted / compressed 来源、预算，以及产生 patch 的 ContextPackage 依据。
-- [WEBNOVEL_WRITER_REFERENCE_LESSONS.md](WEBNOVEL_WRITER_REFERENCE_LESSONS.md)：不同写作阶段应使用明确的 reference loading map；长任务需要可信输入签名和作者友好报告。
-- [SILLYTAVERN_REFERENCE_LESSONS.md](SILLYTAVERN_REFERENCE_LESSONS.md)：动态 context activation 必须记录 source id、文件路径、触发原因和预算，不能做无 source log 的隐式 lore 注入。
+- [INKOS_REFERENCE_LESSONS.md](../research/INKOS_REFERENCE_LESSONS.md)：protected context 不得静默截断；source、revision/hash、选择原因和压缩映射必须可见；派生层必须可重建和可解释。
+- [STORYFORGE_REFERENCE_LESSONS.md](../research/STORYFORGE_REFERENCE_LESSONS.md)：候选卡和 run log 应展示实际 included / omitted / compressed 来源、预算，以及产生 patch 的 ContextPackage 依据。
+- [WEBNOVEL_WRITER_REFERENCE_LESSONS.md](../research/WEBNOVEL_WRITER_REFERENCE_LESSONS.md)：不同写作阶段应使用明确的 reference loading map；长任务需要可信输入签名和作者友好报告。
+- [SILLYTAVERN_REFERENCE_LESSONS.md](../research/SILLYTAVERN_REFERENCE_LESSONS.md)：动态 context activation 必须记录 source id、文件路径、触发原因和预算，不能做无 source log 的隐式 lore 注入。
 
 ### 2.3 AI SDK usage 事实
 
-当前本地 `ai@7` package 已提供（2026-10-01 随 [1240](tasks/1240.md) 更新）：
+当前本地 `ai@7` package 已提供（2026-10-01 随 [1240](../tasks/1240.md) 更新）：
 
 - `streamText().usage`：该次 `streamText` 调用所有 SDK steps 的聚合 usage。
 - `(await streamText().finalStep).usage`：最后一个 SDK step 的 usage。
@@ -883,7 +883,7 @@ Context 8.2k estimated · Actual unavailable · 3 steps
 本次计划编写已同步 `1110` 的目标和索引。实施前或同一变更中仍需要保持：
 
 - `docs/tasks/1110.md`：保持 goal、deliverables、done criteria 与实际实施范围一致。
-- `docs/AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md`：本计划状态与实施进度。
+- `docs/plans/AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md`：本计划状态与实施进度。
 - `docs/README.md`：保持计划入口可发现。
 - 如 public RuntimeEvent / artifact schema 最终与本文不同，必须先更新本计划和 task，再实现代码。
 

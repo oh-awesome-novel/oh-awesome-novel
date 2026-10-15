@@ -4,11 +4,11 @@
 > 源码基线：`c0a9386f4dcb9d065cd7d8a3556727f0263116d2`
 > 简短结论见 [简短说明](DESIGN_IMPLEMENTATION_REVIEW_SUMMARY.md)。
 > 本文是评估与后续开发建议，未修改产品合同、原 task 状态或业务实现。
-> 后续实施追踪：[1230 修正任务](tasks/1230.md)。本文保留评估基线，完成状态以该任务及关联 task 的验证记录为准。
+> 后续实施追踪：[1230 修正任务](../tasks/1230.md)。本文保留评估基线，完成状态以该任务及关联 task 的验证记录为准。
 
-> 2026-10-01 续作：标准Agent完整 [usage治理](tasks/1110.md)、[单章结构化结算](tasks/1030.md)、[正文搜索](tasks/0570.md)、[Markdown/TXT导出](tasks/1270.md) 与 [Play底层窗口读取/减少重写](tasks/1260.md) 已落地。广义多领域结算、完整snapshot写入线性成本、旧稿导入/上层摘要等剩余项仍见1230；Extension继续暂缓。以下保留原评审事实，不作为续作后的缺陷清单。
+> 2026-10-01 续作：标准Agent完整 [usage治理](../tasks/1110.md)、[单章结构化结算](../tasks/1030.md)、[正文搜索](../tasks/0570.md)、[Markdown/TXT导出](../tasks/1270.md) 与 [Play底层窗口读取/减少重写](../tasks/1260.md) 已落地。广义多领域结算、完整snapshot写入线性成本、旧稿导入/上层摘要等剩余项仍见1230；Extension继续暂缓。以下保留原评审事实，不作为续作后的缺陷清单。
 
-> 当前实现补记（2026-10-05）：[1030](tasks/1030.md) 已交付受限多领域结算，[1260](tasks/1260.md) 已补读窗口与写入优化，[1290](tasks/1290.md) 已交付章级来源新鲜度与长篇历史加载，[1300](tasks/1300.md) 已交付作者 Markdown 旧稿导入。[1310](tasks/1310.md) 已交付生产严格类型与发行门禁、Git预览绑定提交和macOS打包写作/重启旅程。卷/全局摘要、远端同步/更多环境及Play剩余可靠性继续独立验收；下文是原评审基线，不能作为当前缺陷清单。
+> 当前实现补记（2026-10-05）：[1030](../tasks/1030.md) 已交付受限多领域结算，[1260](../tasks/1260.md) 已补读窗口与写入优化，[1290](../tasks/1290.md) 已交付章级来源新鲜度与长篇历史加载，[1300](../tasks/1300.md) 已交付作者 Markdown 旧稿导入。[1310](../tasks/1310.md) 已交付生产严格类型与发行门禁、Git预览绑定提交和macOS打包写作/重启旅程。卷/全局摘要、远端同步/更多环境及Play剩余可靠性继续独立验收；下文是原评审基线，不能作为当前缺陷清单。
 
 ## 1. 结论与评估方法
 
@@ -34,7 +34,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 | 文件事务与 Git 分离 | durable accepted terminal 是 commit point，Git 有独立 receipt。 | 应真正结束已完成文件事务，避免 Git 重试继续约束作者后续编辑。 |
 | Aider-style Runtime | Runtime 保持模型→工具→结果循环；领域逻辑主要位于外层。 | 上下文治理和 Play 可靠性通过明确的组合边界接入，不引入隐藏 planner 或后台自治写作。 |
 
-对应稳定合同见 [ARCHITECTURE](ARCHITECTURE.md)、[SANDBOX_CHANGE_ENGINE](SANDBOX_CHANGE_ENGINE.md)、[HUMAN_APPROVAL_AND_GIT](HUMAN_APPROVAL_AND_GIT.md)。发现问题的方向是补通这些合同，而不是重新选择整体架构。
+对应稳定合同见 [ARCHITECTURE](../ARCHITECTURE.md)、[SANDBOX_CHANGE_ENGINE](../SANDBOX_CHANGE_ENGINE.md)、[HUMAN_APPROVAL_AND_GIT](../HUMAN_APPROVAL_AND_GIT.md)。发现问题的方向是补通这些合同，而不是重新选择整体架构。
 
 ## 3. 优先修正的实现与设计缺口
 
@@ -50,7 +50,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 真实默认 factory 完成“空目录→创建→首次只读 Copilot→首次候选→Accept”；另覆盖 Git 不可用、unborn HEAD、导入已有 dirty 仓库。运行时不得靠测试专用 repository reader 通过。
 
-证据：[core/workspace.ts](../packages/core/src/workspace.ts) L354–415；[backend/index.ts](../packages/backend/src/index.ts) L1166–1223；[sandbox-edit-session.ts](../packages/tools/src/sandbox-edit-session.ts) L186–199；[agent/index.ts](../packages/agent/src/index.ts) L387–404；[git-integration.ts](../packages/tools/src/git-integration.ts) L166–176。需求 [REQUIREMENTS.md](REQUIREMENTS.md) F1 与 [0580](tasks/0580.md) L69 也需与生产前置条件对齐。
+证据：[core/workspace.ts](../../packages/core/src/workspace.ts) L354–415；[backend/index.ts](../../packages/backend/src/index.ts) L1166–1223；[sandbox-edit-session.ts](../../packages/tools/src/sandbox-edit-session.ts) L186–199；[agent/index.ts](../../packages/agent/src/index.ts) L387–404；[git-integration.ts](../../packages/tools/src/git-integration.ts) L166–176。需求 [REQUIREMENTS.md](../REQUIREMENTS.md) F1 与 [0580](../tasks/0580.md) L69 也需与生产前置条件对齐。
 
 ### A02. Git 未提交的 accepted action 阻断后续审批（P1，已运行确认）
 
@@ -69,7 +69,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 上述链、commit 失败、缺 identity、receipt 写入中断、作者改回/删除目标、外部手动 commit 后，其他无关审批继续工作；不会重复提交、混入作者新修改或回滚 durable accepted 文件。
 
-证据：[change-materializer.ts](../packages/tools/src/change-materializer.ts) L178、L258–259、L272、L615–710、L780–841；[HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md) L108–116、L174–185。
+证据：[change-materializer.ts](../../packages/tools/src/change-materializer.ts) L178、L258–259、L272、L615–710、L780–841；[HUMAN_APPROVAL_AND_GIT.md](../HUMAN_APPROVAL_AND_GIT.md) L108–116、L174–185。
 
 ### A03. Git 路径仍使用展示文本解析（P2，已运行确认）
 
@@ -83,25 +83,25 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 合同支持的中文、空格、引号、前导连字符和 rename 路径完成 status→diff→明确用户 commit，路径逐字节一致，不提交额外文件；对合同不支持的 tab/换行等控制字符路径正确展示并明确、安全拒绝，不能误解析成其他路径。staged/untracked 内容也在提交前可见，错误不伪装成空 diff。
 
-证据：[git-integration.ts](../packages/tools/src/git-integration.ts) L129–150、L203–215、L674–724；[GitReviewTab.vue](../apps/desktop-ui/src/components/workspace/GitReviewTab.vue) L30–88。
+证据：[git-integration.ts](../../packages/tools/src/git-integration.ts) L129–150、L203–215、L674–724；[GitReviewTab.vue](../../apps/desktop-ui/src/components/workspace/GitReviewTab.vue) L30–88。
 
 ### A04. “完整 final validator”尚未等于最终对象树一致性（P1）
 
 **事实。** 各文件族已有 final-content validator，远不止 YAML parse；但 `validateKnownReferences` 在缺少 `knownObjectIds` 时直接返回。生产 policy 接受这个可选字段，普通 Agent 的默认创建路径未建立对象 ID 集合。单文件通过不保证多文件 ChangeSet 的最终树引用正确，也不保证删除不会留下悬空引用。
 
-另外，稳定 [FILESYSTEM_SPEC](FILESYSTEM_SPEC.md) 的 timeline 示例没有 validator 要求的 date/time/order，foreshadow 示例没有显式 status；照示例构造文件会被当前校验拒绝。
+另外，稳定 [FILESYSTEM_SPEC](../FILESYSTEM_SPEC.md) 的 timeline 示例没有 validator 要求的 date/time/order，foreshadow 示例没有显式 status；照示例构造文件会被当前校验拒绝。
 
 **建议。** 分清语法/单文件领域校验、跨文件引用校验和语义质量。对需要引用约束的 family，host 基于固定投影与本次 create/update/delete 的**最终树**建立类型化 ID/path 集合，并在 proposal 与 Accept 保持同一合同。先确定允许哪些引用字段、对象 ID 的 namespace 和删除规则，不把一个混合字符串集合称为完整引用校验。保留已经实现的 validator，修正不实覆盖声明和样例。
 
 **验收。** 同 action 新建被引用对象成功；未知对象、删除仍被引用对象、跨 namespace 错配失败；文档样例经真实 validator 全部通过；缺必需验证上下文的能力关闭写入或明确拒绝。
 
-证据：[workspace-change-policy.ts](../packages/tools/src/workspace-change-policy.ts) L41–52、L159–163；[final-document-validator.ts](../packages/tools/src/final-document-validator.ts) L435–554、L860–894；[agent/index.ts](../packages/agent/src/index.ts) L470–475；[change-materializer.ts](../packages/tools/src/change-materializer.ts) L1116–1120 的 Accept 默认 policy 同样未提供 inventory；[FILESYSTEM_SPEC.md](FILESYSTEM_SPEC.md) L388–423。这里没有否定已有单文件结构校验的价值。
+证据：[workspace-change-policy.ts](../../packages/tools/src/workspace-change-policy.ts) L41–52、L159–163；[final-document-validator.ts](../../packages/tools/src/final-document-validator.ts) L435–554、L860–894；[agent/index.ts](../../packages/agent/src/index.ts) L470–475；[change-materializer.ts](../../packages/tools/src/change-materializer.ts) L1116–1120 的 Accept 默认 policy 同样未提供 inventory；[FILESYSTEM_SPEC.md](../FILESYSTEM_SPEC.md) L388–423。这里没有否定已有单文件结构校验的价值。
 
 ### A05. 上下文选择与预算比 usage 面板更紧迫（P1）
 
 **事实。** `createNovelAgentWorkspaceSnapshotFromProjection` 对 constitution、summary、state、timeline、foreshadow 分别过滤后取前 12 个文件。投影按路径排序；这个选择并不基于当前章节、章节时间或任务相关性。因此长篇的“最近摘要”可能实际是前几章摘要。来源标签不能证明选择正确。
 
-`ContextPackage` 已有 selected/omitted/trace，但 source ref 没有逐文件 hash、实际 payload hash 或 token 占用。`protected` 等标签也不等于已执行预算约束。[1110](tasks/1110.md) 已诚实记录这些差距，方向值得继续。
+`ContextPackage` 已有 selected/omitted/trace，但 source ref 没有逐文件 hash、实际 payload hash 或 token 占用。`protected` 等标签也不等于已执行预算约束。[1110](../tasks/1110.md) 已诚实记录这些差距，方向值得继续。
 
 **建议。** 将 1110 顺序收窄为：目标章节与必需 source 选择→来源/payload 证据→已知预算下的 protected overflow 与明确省略→tool result/历史消息同样计入实际消息预算→provider actual usage→轻量 inspector。预算未知就标 unknown，不伪造 token 精确值或计费信息。对工具读入与后续 step 也记录来源，不能只审计初始 prompt。
 
@@ -111,7 +111,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 超过 12 个摘要时仍选目标附近章节、卷/全局摘要和明确依赖；完整 constitution 不静默遗漏；给定上下文窗口时 provider 前可解释 overflow；tool-loop 消息超预算有可见处理；selected、实际发送、estimated、actual 四者不混用。
 
-证据：[agent/index.ts](../packages/agent/src/index.ts) L337–367、L548–603、L1371–1405；[workspace-projection.ts](../packages/tools/src/workspace-projection.ts) L29–31、L322；[agent-context-package.ts](../packages/core/src/agent-context-package.ts) L29–36、L81–89；[1110](tasks/1110.md) L34–43、L88–99。
+证据：[agent/index.ts](../../packages/agent/src/index.ts) L337–367、L548–603、L1371–1405；[workspace-projection.ts](../../packages/tools/src/workspace-projection.ts) L29–31、L322；[agent-context-package.ts](../../packages/core/src/agent-context-package.ts) L29–36、L81–89；[1110](../tasks/1110.md) L34–43、L88–99。
 
 ### A06. 恢复会话和结构化结算存在接线缺口（P2）
 
@@ -123,7 +123,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 恢复会话时文件改动/删除可见；过时历史不会被当成当前事实。结算报告能引用正文来源，歧义只报告，不从大纲补事实；结构错误、source hash 或证据位置不匹配的 observation/candidate 被拒绝；Accept 前 canonical 不变。程序验证结构和来源对应关系，文学事实解释仍由作者审阅。现有固定投影/baseline 保护依然成立，不把恢复提示缺失说成已绕过写入审批。
 
-证据：[1070](tasks/1070.md) L51–58；[session-artifacts.ts](../packages/core/src/session-artifacts.ts) L290–318；[agent/index.ts](../packages/agent/src/index.ts) L1089–1117；[1030](tasks/1030.md) L12–33、L43–47；[writing-settlement.ts](../packages/core/src/writing-settlement.ts)、[writing-review.ts](../packages/core/src/writing-review.ts)。
+证据：[1070](../tasks/1070.md) L51–58；[session-artifacts.ts](../../packages/core/src/session-artifacts.ts) L290–318；[agent/index.ts](../../packages/agent/src/index.ts) L1089–1117；[1030](../tasks/1030.md) L12–33、L43–47；[writing-settlement.ts](../../packages/core/src/writing-settlement.ts)、[writing-review.ts](../../packages/core/src/writing-review.ts)。
 
 ### A07. Play 下一步应是可靠性收尾（P1，发布前验证）
 
@@ -135,7 +135,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 在 stage、ready、backup rename、session swap、terminal 发布各边界中断/重启，能确定 committed 或未提交；shutdown 等待 commit barrier；不配合 abort 的 provider、慢 reader、断开 SSE、deadline 到期能释放锁和资源；不会产生 transcript-only/state-only 半回合。
 
-证据：[1120](tasks/1120.md) L45–54；[play-session.ts](../packages/core/src/play-session.ts) L687–734；[backend/index.ts](../packages/backend/src/index.ts) L998–1007、L3954–4126、L4408。现有测试证明若干逻辑/进程中断场景，不证明完整断电矩阵。
+证据：[1120](../tasks/1120.md) L45–54；[play-session.ts](../../packages/core/src/play-session.ts) L687–734；[backend/index.ts](../../packages/backend/src/index.ts) L998–1007、L3954–4126、L4408。现有测试证明若干逻辑/进程中断场景，不证明完整断电矩阵。
 
 ### A08. 长会话窗口化还没有解决底层读写成本（P1/P2）
 
@@ -147,7 +147,7 @@ P1 表示主流程、正确性或可靠交付前应处理；P2 表示创作效�
 
 **验收。** 多 session、长 transcript、多个 sibling branch 的列表/选中详情读取成本可解释；增加无关历史不会让每次窗口读取都线性重读全库；新回合写入 bytes/延迟有实测门槛；索引删除可重建，stale cursor 和 hidden projection 仍 fail closed。任何增量写优化仍须证明原子提交/CAS/恢复成立，不能把散文件 append 当事务。先用数据建立规模门槛，本文不虚构性能结果。
 
-证据：[play-session.ts](../packages/core/src/play-session.ts) L653–691、L1029–1062；[backend/index.ts](../packages/backend/src/index.ts) L2707–2725；[1180](tasks/1180.md) L13–23、L35–40。`1120` L49 的“仅显式 Retry 才读完整 ledger”描述也应收窄。
+证据：[play-session.ts](../../packages/core/src/play-session.ts) L653–691、L1029–1062；[backend/index.ts](../../packages/backend/src/index.ts) L2707–2725；[1180](../tasks/1180.md) L13–23、L35–40。`1120` L49 的“仅显式 Retry 才读完整 ledger”描述也应收窄。
 
 ### A09. Health 能提醒缺失，但不能证明摘要/状态仍新鲜（P2）
 
@@ -157,7 +157,7 @@ Agent 另外实现了投影版本 evaluator，pendingActionCount 固定为 0；B
 
 **建议与验收。** 区分“缺失”“来源版本落后”“尚未验证”；以已接受 summary/settlement 的 source hash/覆盖范围建立 freshness。章节变更但摘要仍存在时可见 stale；纯 touch 不声称剧情变化；无关 state 更新不证明目标章节已整理。抽取接收冻结数据的纯 evaluator，host 传允许的 bounded metadata，不能为了 health 让模型读取内部 artifact。保持 soft warning，不将文学一致性启发式升格为硬写入 gate。
 
-证据：[project-health.ts](../packages/core/src/project-health.ts) L51–56、L222–235；[agent/index.ts](../packages/agent/src/index.ts) L625–709；[backend/index.ts](../packages/backend/src/index.ts) L7076–7083；相关任务 [1050](tasks/1050.md)、[1100](tasks/1100.md)。
+证据：[project-health.ts](../../packages/core/src/project-health.ts) L51–56、L222–235；[agent/index.ts](../../packages/agent/src/index.ts) L625–709；[backend/index.ts](../../packages/backend/src/index.ts) L7076–7083；相关任务 [1050](../tasks/1050.md)、[1100](../tasks/1100.md)。
 
 ## 4. 值得继续但应收窄的功能
 
@@ -171,7 +171,7 @@ Agent 另外实现了投影版本 evaluator，pendingActionCount 固定为 0；B
 
 验收覆盖 accept 后刷新、外部编辑/删除/rename、workspace 切换、outline 和允许的隐藏控制文件、symlink/越界排除。第一版可手动刷新，明确索引是否过期；搜索不会自动加入 Agent context。
 
-证据：[0570](tasks/0570.md) L14–35、L71–89；[WorkspaceShell.vue](../apps/desktop-ui/src/components/workspace/WorkspaceShell.vue) L79–89、L225–234；[useWorkspaceSearch.ts](../apps/desktop-ui/src/composables/useWorkspaceSearch.ts) L1–23；[WorkspaceRightPanel.vue](../apps/desktop-ui/src/components/workspace/WorkspaceRightPanel.vue) L60–65。
+证据：[0570](../tasks/0570.md) L14–35、L71–89；[WorkspaceShell.vue](../../apps/desktop-ui/src/components/workspace/WorkspaceShell.vue) L79–89、L225–234；[useWorkspaceSearch.ts](../../apps/desktop-ui/src/composables/useWorkspaceSearch.ts) L1–23；[WorkspaceRightPanel.vue](../../apps/desktop-ui/src/components/workspace/WorkspaceRightPanel.vue) L60–65。
 
 ### B02. `0580` Git：复核已有能力，补正确性（P1/P2）
 
@@ -181,7 +181,7 @@ Backend/Client 有 status、log、show、diff、commit、sync；`GitReviewTab` �
 
 同步保持作者明确触发。task 的自动同步设想，以及稳定 Git 文档“成功后允许可配置 sync”，应与 explicit user sync 合同统一；不要在完成 auto commit 时悄悄增加网络操作。non-Git workspace 能否 Accept 也必须与 repository baseline 统一决策，不能继续同时承诺相反行为。
 
-证据：[backend/index.ts](../packages/backend/src/index.ts) L698–706；[client/index.ts](../packages/client/src/index.ts) L2505–2522；[GitReviewTab.vue](../apps/desktop-ui/src/components/workspace/GitReviewTab.vue)；[WorkspaceRightPanel.vue](../apps/desktop-ui/src/components/workspace/WorkspaceRightPanel.vue) L88；[0580](tasks/0580.md) L69、L222–240、L297–309；[HUMAN_APPROVAL_AND_GIT.md](HUMAN_APPROVAL_AND_GIT.md) L143、L164。
+证据：[backend/index.ts](../../packages/backend/src/index.ts) L698–706；[client/index.ts](../../packages/client/src/index.ts) L2505–2522；[GitReviewTab.vue](../../apps/desktop-ui/src/components/workspace/GitReviewTab.vue)；[WorkspaceRightPanel.vue](../../apps/desktop-ui/src/components/workspace/WorkspaceRightPanel.vue) L88；[0580](../tasks/0580.md) L69、L222–240、L297–309；[HUMAN_APPROVAL_AND_GIT.md](../HUMAN_APPROVAL_AND_GIT.md) L143、L164。
 
 ### B03. `0700`：摘要、旧稿导入、导出分开推进（P2）
 
@@ -194,7 +194,7 @@ task 已承认它是 umbrella，且正确列出卷/全局摘要、旧稿导入�
 
 验收以真实作者工程完成“导入→编辑/结算→审阅→Accept→导出”为准，测试放在根目录相应 workspace。导出新文件也须是明确用户操作；AI 发起的 canonical 修改继续全部经过审批。
 
-依据：[0700](tasks/0700.md) L24–65、L86–97；[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) L130–152。
+依据：[0700](../tasks/0700.md) L24–65、L86–97；[DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) L130–152。
 
 ### B04. Tavern、Director 与 Reference：纠正状态，暂停扩面（P3）
 
@@ -206,7 +206,7 @@ Tavern 的 JSON/PNG 解析、normalization、安全审计和预览 helper 已实
 
 F1–F4/M1–M5 与 Reference D0–D5、素材分析/adoption 已有大量实现，不能继续沿旧升级计划重做。保留现有能力，先用少量真实创作样本检验来源证据、adoption 的可审阅性、改稿时间和最终正文帮助；合同测试能证明数据流程，不能自动证明文学质量、商业效果或粉丝作品体验。更多导演控制、长程自动策划和素材分析层暂缓到已有闭环验证之后。
 
-证据：[1060](tasks/1060.md) L12、L26–29、L49–50；[tavern-card.ts](../packages/core/src/tavern-card.ts) L165–202；[novel-copilot-skill.ts](../packages/core/src/novel-copilot-skill.ts) L314–318；任务 [1130](tasks/1130.md)–[1190](tasks/1190.md)、[1210](tasks/1210.md)、[1220](tasks/1220.md)。
+证据：[1060](../tasks/1060.md) L12、L26–29、L49–50；[tavern-card.ts](../../packages/core/src/tavern-card.ts) L165–202；[novel-copilot-skill.ts](../../packages/core/src/novel-copilot-skill.ts) L314–318；任务 [1130](../tasks/1130.md)–[1190](../tasks/1190.md)、[1210](../tasks/1210.md)、[1220](../tasks/1220.md)。
 
 ## 5. 应修正的文档与边界
 
@@ -232,9 +232,9 @@ F1–F4/M1–M5 与 Reference D0–D5、素材分析/adoption 已有大量实现
 
 `continueFrozen` 保留 Play-local 状态和 activated source metadata，并排除发生 drift 的 canonical source；它没有保存旧 source 原文供继续读取。现有 UI 确认与测试已经说明省略行为，而 `1180` 的“继续当前冻结上下文”容易被理解为精确保留原文。
 
-建议改成“沿用 Play-local 状态并省略漂移来源”，列出 omitted source 与可能影响。如果未来确有精确 replay 需求，再独立设计有大小/保留期限制的 immutable source snapshot；不要因为词语模糊就新增第二套 canonical truth。证据：[play-source-drift.ts](../packages/core/src/play-source-drift.ts) L118–135；[1180](tasks/1180.md) L13、L21、L39。
+建议改成“沿用 Play-local 状态并省略漂移来源”，列出 omitted source 与可能影响。如果未来确有精确 replay 需求，再独立设计有大小/保留期限制的 immutable source snapshot；不要因为词语模糊就新增第二套 canonical truth。证据：[play-source-drift.ts](../../packages/core/src/play-source-drift.ts) L118–135；[1180](../tasks/1180.md) L13、L21、L39。
 
-同样，当前 `atWorldTime` 在未提供 comparator 时不会触发，而 session 调用未传 comparator。不支持的绝对时间 trigger 应明确不可用；若要继续，先选定一种可验证的世界时间合同，别让自然语言“明晨”或任意历法变成永远 pending 的 schedule。证据：[play-event-schedule.ts](../packages/core/src/play-event-schedule.ts) L352；[play-session.ts](../packages/core/src/play-session.ts) L1065–1082。
+同样，当前 `atWorldTime` 在未提供 comparator 时不会触发，而 session 调用未传 comparator。不支持的绝对时间 trigger 应明确不可用；若要继续，先选定一种可验证的世界时间合同，别让自然语言“明晨”或任意历法变成永远 pending 的 schedule。证据：[play-event-schedule.ts](../../packages/core/src/play-event-schedule.ts) L352；[play-session.ts](../../packages/core/src/play-session.ts) L1065–1082。
 
 ### 5.3 多 PendingAction 与严格 baseline 的代价
 

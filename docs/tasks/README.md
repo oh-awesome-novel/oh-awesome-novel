@@ -91,12 +91,17 @@
 
 ## Planned Tasks
 
-当前剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
+- [1330 Core Writing Loop Closure](1330.md)
+- [1340 Proportionate Review And Memory Hygiene](1340.md)
+
+其余剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
 
 
-## Deferred Development (2026-10-01)
+## Priority And Deferred Development (2026-10-15)
 
-Extension manifest、动态 Tool/prompt/workflow registration 与更多 Director/Reference 扩展暂缓。已交付0570搜索、1270正文导出、1290来源新鲜度/长篇上下文、1300作者旧稿导入及1310类型/发行门禁、预览绑定Git提交与打包旅程。2026-10-14由0700补齐卷/全书摘要生成、多层来源覆盖和递归失效传播；后续按作者反馈推进0580远端同步/环境验收和1120剩余可靠性范围。合同/helper 完成不等于生产接线或真实旅程完成。
+2026-10-15 重新定位（见 [PROJECT_VISION](../PROJECT_VISION.md)）：先交付 1330/1340 写作闭环，Play 保持高优先级，新的 Play 体验需求按作者使用反馈直接立项，不再受 2026-10-01 “更多 Director 扩展暂缓”约束。Extension manifest 与动态 Tool/prompt/workflow registration 继续暂缓。
+
+2026-10-01 记录：已交付0570搜索、1270正文导出、1290来源新鲜度/长篇上下文、1300作者旧稿导入及1310类型/发行门禁、预览绑定Git提交与打包旅程。2026-10-14由0700补齐卷/全书摘要生成、多层来源覆盖和递归失效传播；后续按作者反馈推进0580远端同步/环境验收和1120剩余可靠性范围。合同/helper 完成不等于生产接线或真实旅程完成。
 
 ## Package Call Route
 

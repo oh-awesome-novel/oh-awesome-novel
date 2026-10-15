@@ -19,7 +19,7 @@
 - Inspect: `docs/adr/0001-filesystem-first.md`
 - Inspect: implementation files under `packages/`, `apps/`, `__test__/`, and `examples/`
 
-Do not modify `docs/ChatGPT对话.md`; it is historical source material.
+Do not modify `docs/archive/ChatGPT对话.md`; it is historical source material.
 
 ---
 
@@ -27,7 +27,7 @@ Do not modify `docs/ChatGPT对话.md`; it is historical source material.
 
 **Files:**
 
-- Inspect: stable docs excluding `docs/ChatGPT对话.md`
+- Inspect: stable docs excluding `docs/archive/ChatGPT对话.md`
 
 - [ ] **Step 1: Search StoryForge mentions**
 

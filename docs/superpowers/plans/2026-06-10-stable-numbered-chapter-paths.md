@@ -340,7 +340,7 @@ rg -n 'volume-01|volume-02|chapters/[0-9]{3}\.md|summaries/chapter/[0-9]{3}\.md|
 Expected:
 
 ```text
-no matches outside docs/ChatGPT对话.md if that file is included in a broader search
+no matches outside docs/archive/ChatGPT对话.md if that file is included in a broader search
 ```
 
 - [ ] **Step 2: Run affected tests**

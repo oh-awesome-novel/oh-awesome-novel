@@ -1,6 +1,6 @@
 # Agent Writing Guide vNext Spec Implementation Plan
 
-> **For agentic workers:** Execute task-by-task. Keep `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` as source attribution, but implement against `docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`.
+> **For agentic workers:** Execute task-by-task. Keep `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md` as source attribution, but implement against `docs/plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`.
 
 **Goal:** Establish the stable vNext Copilot writing contract before implementing derived artifacts or UI.
 

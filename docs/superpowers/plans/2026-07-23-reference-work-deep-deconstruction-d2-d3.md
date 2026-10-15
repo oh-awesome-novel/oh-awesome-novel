@@ -2,7 +2,7 @@
 
 > Date: 2026-07-23
 > Task: [0900 Project References And Deconstruction](../../tasks/0900.md)
-> Related plan: [Reference Work Deep Deconstruction Upgrade Plan](../../REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)
+> Related plan: [Reference Work Deep Deconstruction Upgrade Plan](../../plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)
 > Status: Completed
 
 ## Delivery Boundary

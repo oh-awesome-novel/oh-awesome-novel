@@ -634,8 +634,8 @@ Dashboard 的 expected version、409 conflict、realpath、symlink 拒绝和同�
 
 - `docs/ARCHITECTURE.md`
 - `docs/AGENT_OPERATING_MANUAL.md`
-- `docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
-- `docs/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md`
+- `docs/plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
+- `docs/plans/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md`
 - `docs/tasks/0900.md`
 - `docs/tasks/1000.md`–`docs/tasks/1100.md`
 - `docs/tasks/1200.md`

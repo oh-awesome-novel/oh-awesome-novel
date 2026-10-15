@@ -38,7 +38,7 @@ Files to inspect and modify only if implementation has drifted:
 - `__test__/agent/src/session-store.test.ts`: verifies agent sessions persist under `.oan/sessions`.
 - `examples/sample-novel/.oan/`: sample workspace runtime/config files.
 
-Do not modify `docs/ChatGPT对话.md` for this item. It is historical source material and may mention old names. Do not copy `.storyforge/` behavior from it into implementation docs or code.
+Do not modify `docs/archive/ChatGPT对话.md` for this item. It is historical source material and may mention old names. Do not copy `.storyforge/` behavior from it into implementation docs or code.
 
 ---
 

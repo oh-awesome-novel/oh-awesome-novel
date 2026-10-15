@@ -380,5 +380,5 @@ novel-bot 与 StoryWriter 的核心理念已经进入 OAN。
 - `reference-only/StoryWriter/auto_restart.sh`
 - `docs/AGENT_OPERATING_MANUAL.md`
 - `docs/FILESYSTEM_SPEC.md`
-- `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
+- `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`
 - `packages/core/src/novel-copilot-skill.ts`

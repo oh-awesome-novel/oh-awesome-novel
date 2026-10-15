@@ -3,7 +3,7 @@
 Status: Draft Spec
 
 Related vNext implementation spec:
-`docs/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
+`docs/plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md`
 
 ## Goal
 

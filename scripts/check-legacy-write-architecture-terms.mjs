@@ -72,7 +72,7 @@ const EXACT_WHOLE_FILE_ALLOWLIST = new Set([
   'docs/adr/0004-sandbox-change-engine.md',
   'docs/superpowers/plans/2026-06-10-align-apply-engine-implementation-order.md',
   'docs/superpowers/plans/2026-08-12-migrate-semantic-patch-to-sandbox-change-engine.md',
-  'docs/ChatGPT对话.md',
+  'docs/archive/ChatGPT对话.md',
 ]);
 
 // These dated implementation plans describe already-completed slices. They are
@@ -123,7 +123,7 @@ const requiredAssertions = [
     message: 'Task 0800 must record delivered implementation or evidence-based review status.',
   },
   {
-    file: 'docs/ChatGPT对话.md',
+    file: 'docs/archive/ChatGPT对话.md',
     pattern: /^> Status: Historical raw conversation transcript; not a current OAN contract\.$/mu,
     message: 'The raw conversation transcript must remain explicitly historical.',
   },

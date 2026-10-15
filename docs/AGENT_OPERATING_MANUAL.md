@@ -4,7 +4,7 @@
 
 ## Project Identity
 
-`oh-awesome-novel` 是 filesystem-first 的长篇小说 AI Copilot / Novel IDE，不是通用 Agent framework、coding-agent 平台、多 Agent 编排系统或隐藏自治写作系统。
+`oh-awesome-novel` 是 filesystem-first 的个人同人/综漫创作工作台（Play 推演 + Writing 写作双核心），定位见 `docs/PROJECT_VISION.md`，不是通用 Agent framework、coding-agent 平台、多 Agent 编排系统或隐藏自治写作系统。
 
 ```text
 Markdown / YAML / Object File Tree = database
@@ -43,7 +43,7 @@ Human = final authority
 ## Architecture Formula
 
 ```text
-Filesystem-first Novel IDE
+Filesystem-first Fanfiction Story Workbench
   + Aider-style Runtime
   + Vercel AI SDK ToolSet
   + in-memory bash-tool / just-bash editing

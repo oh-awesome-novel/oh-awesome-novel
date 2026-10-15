@@ -1,6 +1,6 @@
 # Webnovel Writer 可吸收点候选清单
 
-> 状态：已合并到 `docs/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。  
+> 状态：已合并到 `docs/research/OAN_AGENT_WRITING_GUIDE_REFERENCE_NOTES.md`。  
 > 用途：本文保留 Webnovel Writer 的详细候选分析与证据来源；主参考笔记只吸收已按 OAN 边界改写后的方向。  
 > 基准：`reference-only/webnovel-writer` 本地当前 HEAD `a7a102a`，插件版本 `6.2.0`。  
 > 许可证提醒：Webnovel Writer 使用 GPL-3.0。OAN 只能吸收产品模式、抽象流程、工程纪律和 schema 思路，不应复制实现代码、prompt 文本、模板或默认资料。
