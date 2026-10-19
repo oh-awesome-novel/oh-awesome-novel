@@ -403,6 +403,14 @@ writingProfile:
     '',
   ].join('\n'), 'utf-8');
 
+  // Novel files are the database. `* -text` keeps committed bytes on checkout,
+  // including an intentional CRLF manuscript. `eol=lf` would rewrite those bytes.
+  await writeFile(join(rootDir, '.gitattributes'), [
+    '# Keep committed novel bytes. Do not convert line endings.',
+    '* -text',
+    '',
+  ].join('\n'), 'utf-8');
+
   if (options?.saveToWorkspaceList) {
     const globalConfigDir = resolveGlobalOanConfigDir(options);
     const list = await loadWorkspaceList(globalConfigDir);
