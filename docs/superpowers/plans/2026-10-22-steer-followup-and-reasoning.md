@@ -8,7 +8,7 @@ Related task: [1350](../../tasks/1350.md)
 
 2026-10-22 评估了把底层切换为 pi agent 的方案，结论是不切换（见 1350 Background）。pi-agent-core 的 `steer()` / `followUp()` 和 pi-ai 的统一 thinking 是两项值得吸收的能力，本计划在现有 AI SDK + Aider-style Runtime 内实现它们。
 
-顺序原则：先做风险最小、只增不改的推理展示（Phase 1），再做 Copilot 的 steer / follow-up（Phase 2），最后做 Play（Phase 3）。每个 Phase 独立可合入、可回退。
+顺序原则：先做风险最小、只增不改的推理展示与日志（Phase 1），再做 Copilot 的 steer / follow-up（Phase 2），最后做 Play（Phase 3）。每个 Phase 独立可合入、可回退。
 
 ## 已核实的事实
 
@@ -40,31 +40,38 @@ Related task: [1350](../../tasks/1350.md)
 - `packages/runtime/src/types.ts`：
   - `RuntimeModelStreamEvent` 增加 `{ type: 'reasoning_delta'; text: string }`。
   - `RuntimeEvent` 增加 `{ type: 'reasoning_delta'; text: string }`。
-  - `RuntimeMessage` 增加 host-only 字段 `reasoning?: string`（与 `provenance` 同样处理：不进入持久化，不计入 provenance）。
+  - `RuntimeMessage` 增加 host-only 字段 `reasoning?: string`（与 `provenance` 一样不发给 provider 的跨轮请求；写入 JSONL 调试日志，见 1.3）。
   - `RuntimeModelResponse.message` 可带 `reasoning`。
-- `packages/runtime/src/runtime.ts` `generateModelResponse`：转发 `reasoning_delta`；带工具调用的 assistant 消息保留 `reasoning`，供本轮后续请求回传；`finish()` 并入 `doneMessages` 前剥离 `reasoning`，跨轮不回传。
+- `packages/runtime/src/runtime.ts` `generateModelResponse`：转发 `reasoning_delta`；assistant 消息（含带工具调用的）保留 `reasoning`，供本轮后续请求回传和日志记录；`RunTurnResult.messages` 保留 `reasoning` 以便宿主写日志，但 `doneMessages` 进入下一轮 context builder 前剥离，跨轮不回传。
 - `packages/agent/src/index.ts` adapter：消费 `reasoning-delta`；`toModelMessage` 在 assistant 消息有 `reasoning` 时生成 reasoning part（交给 SDK 决定是否回传）。
 
 ### 1.3 UI 流与 Copilot 展示
 
 - `packages/agent/src/ui-stream.ts`：`reasoning_delta` 映射为 `reasoning-start` / `reasoning-delta` / `reasoning-end` chunk；出现正文或工具调用时关闭 reasoning part。
-- `apps/desktop-ui/src/components/agent-checkpoint/ChatTranscript.vue`：渲染 `reasoning` part 为"思考过程"折叠块，流式时显示"思考中…"；复制回复、引用到写作等操作只取 `text` part。
-- `packages/agent/src/session-store.ts`：持久化 UIMessage 前过滤 `reasoning` part。重新打开会话后不显示历史思考过程（在 UI 上说明）。
+- `apps/desktop-ui/src/components/agent-checkpoint/ChatTranscript.vue`：渲染 `reasoning` part 为"思考过程"折叠块，**默认折叠**，流式时标题显示"思考中…"；复制回复、引用到写作等操作只取 `text` part。
+- `packages/agent/src/session-store.ts`：已有的 `.oan/sessions/<id>/messages.jsonl` 写入 assistant 消息的 `reasoning` 字段（作为调试日志保留历史思考）。读回历史时：给 UI 的历史消息带上 reasoning part，重新打开会话仍能折叠查看；给模型的历史上下文剥离 `reasoning`。旧会话没有该字段，按无思考处理。`.oan/sessions/` 已在 workspace `.gitignore` 中，不进入 Git。
 - `AgentUsageInspector.vue`：展示 `reasoningTokens`。
 - 设置页：模型条目增加"推理强度"选项，仅当 `reasoning.supported` 时显示。
 
-### 1.4 Play 展示
+### 1.4 Play 消息日志与思考过程
+
+Play 主界面（`PlayTranscript`、rehearsal step）**不展示思考**，保持沉浸。思考和其它调试信息集中到新的 Play 消息日志。
 
 - `play-rehearsal.ts` actor / referee：消费 `reasoning-delta`，以单独事件类型（如 `reasoning_delta`）产出；`partialText`、输出长度上限、settlement 解析只看正文。
-- Backend Play SSE：增加 `reasoning_delta` 事件类型，只转发不落盘；`play-turn-run-receipt`、artifact、evidence、context trace 不接收它。
-- Desktop：`PlayTranscript` / rehearsal step 生成中显示可折叠的思考过程，settle 后清除。
+- 日志存储：新增 `PlayMessageLogStore`，每个 Play 会话一个 `.oan/sessions/.play-logs/<playSessionId>/messages.jsonl`。目录名以 `.` 开头，不会被 agent session 列表当成会话（实现时确认 `listSessions` 跳过不合法 id 的目录，并补测试）；位于 `.oan/sessions/` 下，已被 `.gitignore` 忽略。
+- 日志条目（每行一条，带 `schemaVersion`、`at`、`playSessionId`、`turnId` / `attemptId` / `stepRef`）：`author_action`、`director_intervention`、`steer`、`follow_up_queued` / `follow_up_sent`、`model_request`（角色 actor / referee、participantRef、发给模型的 system 与 prompt）、`model_output`（正文）、`model_reasoning`（思考全文）、`settled`、`cancelled`、`error`、`usage`。
+- 写入时机：Backend 在每次 actor / referee 调用结束（完成、取消或失败）时追加，部分输出也记录；写日志失败只发 `usage_warning` 类提示，不影响 Play turn。
+- 边界：日志只写不读回 Play 状态；`play-turn-run-receipt`、artifact、evidence、context trace、adoption、memory、导出都不读日志；Restore / Retry / 分支切换不改写旧日志行，只追加新事件。
+- Backend：`GET /api/workspace/play-sessions/:id/message-log?cursor=&limit=` 分页读取；遇到损坏行跳过并在响应中计数。
+- Desktop：Play 工作区增加"消息日志"入口（侧栏或 Inspector 标签），按时间线显示全部条目，思考过程默认折叠，支持按条目类型、参与者筛选，长 prompt 默认折叠。
 
 ### 1.5 测试
 
 - `__test__/agent`：mock compatible provider 返回 `reasoning_content` 流 → adapter 产出 `reasoning_delta`；带工具调用的多步请求体中回传 `reasoning_content`，跨轮不回传；未配置推理时请求体与现在一致。
 - `__test__/runtime`：`reasoning_delta` 透传；`doneMessages` 不含 `reasoning`。
-- `__test__/backend`：session 文件、Play 会话文件、receipt、context trace 中不出现思考文本（用唯一标记字符串断言）。
-- `__test__/desktop-ui`：折叠块渲染、复制只取正文、无 reasoning 时 DOM 不变。
+- `__test__/agent`：session store 写入并读回 `reasoning`；给模型的历史不含 `reasoning`；旧 JSONL 行兼容。
+- `__test__/backend`：思考文本（唯一标记字符串）只出现在 `.oan/sessions/` 下的 JSONL 中，不出现在 Play 会话文件、receipt、context trace、导出；Play 消息日志分页、损坏行跳过、写日志失败不影响 turn；`.play-logs` 不出现在 agent session 列表。
+- `__test__/desktop-ui`：Copilot 折叠块默认折叠、复制只取正文、无 reasoning 时 DOM 不变；Play 主界面不渲染思考；消息日志界面渲染与筛选。
 
 ## Phase 2：Copilot steer / follow-up
 
@@ -90,17 +97,19 @@ Related task: [1350](../../tasks/1350.md)
 
 - `packages/client`：`steerAgentTurn(sessionId, turnId, content)`。
 - `useAgentCheckpointChat.ts`：
-  - 运行中输入框保持可用；两种发送："插话"（steer）与"排队"（follow-up）。
+  - 运行中输入框保持可用；**Enter 默认排队**（follow-up），另有"插话"按钮（快捷键 `Cmd/Ctrl+Enter`）直接 steer。
   - follow-up 队列保存在会话 composable 内存中，可编辑、删除、调整顺序；`message_finish` 且 `stoppedReason === 'completed'` 时发送队首。
   - 本轮 `error` / `aborted` / `max_tool_loops`，或本轮产生了待审批 PendingAction 时，队列暂停，显示"继续发送"。
-  - steer 被 409 拒绝时自动转入 follow-up 队列队首并提示。
+  - 队列中每条消息提供"转为插话"：本轮仍在运行时调用 steer 端点并从队列移除；若被 409 拒绝（本轮已在收尾或已结束），消息留在队列原位并提示。
+  - 直接插话被 409 拒绝时自动转入 follow-up 队列队首并提示。
 - `ChatTranscript.vue`：steer 消息显示"插话"标记；队列显示在输入框上方。
+- steer 与 follow-up 消息照常写入 `messages.jsonl`，带 `delivery: 'steer' | 'follow_up'` 标记。
 
 ### 2.4 测试
 
 - Runtime：工具批次间注入；最终回答后注入并继续；工具执行中到达的 steer 在工具结束后生效；`finish()` 后 drain 不再调用；steer 不改变 active tools。
 - Backend：steer 端点 200 / 409 / 400；turn 异常和 abort 后注册表清空；steer 携带额外字段被拒绝。
-- Desktop UI：队列在完成后发出、在 PendingAction 待审批时暂停、409 回落为排队。
+- Desktop UI：运行中 Enter 入队；队列在完成后发出、在 PendingAction 待审批时暂停；排队消息转插话成功与 409 保留原位；直接插话 409 回落为排队。
 
 ## Phase 3：Play steer / follow-up
 
@@ -108,7 +117,8 @@ Related task: [1350](../../tasks/1350.md)
 
 - Steer：前端在 turn 运行中提交补充文本 → 调用已有 cancel → 等待 cancel 确认（锁释放）→ 以"原行动 + 补充"重发同一 `baseRevision` 的 turn。无需新 Backend 端点和 schema 字段；必须保证 cancel 后不残留 artifact 或 receipt（补回归）。
 - Follow-up：前端队列；settle 成功后用新 `session.revision` 作为 `baseRevision` 提交队首。revision 冲突、settle 失败、source drift 待决策时暂停队列。
-- `PlayComposer.vue`：busy 时输入框可用，提交按钮变为"插话"/"排队"两种，保留停止按钮。
+- `PlayComposer.vue`：busy 时输入框可用，Enter 默认排队，另有"插话"按钮；排队中的行动可转为插话（触发上面的 cancel + 重发）；保留停止按钮。
+- 插话、排队、取消、重发都追加到 Play 消息日志。
 
 ### 3.2 Rehearsal
 
@@ -118,12 +128,13 @@ Related task: [1350](../../tasks/1350.md)
 ### 3.3 测试
 
 - Backend：cancel 后重发不产生孤立 artifact；follow-up revision 冲突返回 409 且不改会话。
-- Desktop UI：PlayComposer 运行中两种发送；队列暂停条件；rehearsal steer 走 `redirectStep`。
+- Desktop UI：PlayComposer 运行中 Enter 入队、插话按钮、排队转插话；队列暂停条件；rehearsal steer 走 `redirectStep`。
 
 ## 文档同步
 
-- `docs/AGENT_RUNTIME_AND_TOOLS.md`：Runtime 轮询点、reasoning 事件与剥离规则。
-- `docs/PLAY_MODE_SPEC.md`：Play steer = cancel + 重发；思考内容不落盘。
+- `docs/AGENT_RUNTIME_AND_TOOLS.md`：Runtime 轮询点、reasoning 事件、跨轮剥离与 JSONL 记录规则。
+- `docs/PLAY_MODE_SPEC.md`：Play steer = cancel + 重发；Play 主界面不展示思考；Play 消息日志的位置、条目类型和"只写不读回"边界。
+- `docs/FILESYSTEM_SPEC.md`：登记 `.oan/sessions/.play-logs/`。
 - `wiki/` 用户文档：插话与排队的用法、推理强度设置。
 - 完成后更新 1350 Implementation Notes / Verification，并在 `docs/tasks/README.md` 调整状态。
 
@@ -133,10 +144,12 @@ Related task: [1350](../../tasks/1350.md)
 - 部分 provider 在工具调用多步中强制要求回传 `reasoning_content`，漏传会 400。缓解：Phase 1.2 的本轮回传与 mock 回归。
 - Steer 让单轮更长，可能更容易触发预算 overflow。缓解：overflow 时提示作者把 steer 改为 follow-up。
 - Play cancel 与重发之间的竞态。缓解：前端等锁释放（cancel 响应）后再重发，Backend 锁语义不变。
+- JSONL 日志随长 Play 会话持续增长（prompt 与思考都可能很长）。缓解：首版只做分页读取；如体积成为问题，再加按会话的清理入口或大小上限，不影响任何功能。
+- 日志里有完整 prompt 和思考，属于本地调试数据；在 wiki 中说明位置，提醒分享工作区时可删除 `.oan/sessions/`。
 
-## 待作者确认
+## 作者决定（2026-10-22）
 
-1. 运行中按 Enter 默认是"排队"还是"插话"？建议默认排队，`Cmd/Ctrl+Enter` 插话。
-2. 思考过程默认折叠还是展开？建议折叠。
-3. Play 中是否默认显示思考过程？建议默认关闭，可在 Play 设置中打开，以免影响沉浸感。
-4. 是否需要在会话重新打开后仍能看到历史思考过程？建议不保留（只在内存中），与"不落盘"约束一致。
+1. 运行中 Enter 默认排队；排队的消息可以转成插话。
+2. 思考过程默认折叠。
+3. Play 主界面不展示思考；新增专门查看 Play 全部消息的日志式界面，在其中展示思考。
+4. 保留历史思考过程：对话消息与思考过程通过 JSONL 保存。对纯 OAN 用户意义不大，主要方便作者调试。
