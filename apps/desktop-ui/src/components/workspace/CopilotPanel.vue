@@ -16,6 +16,8 @@ import type {
   WritingProfileState,
 } from '../../composables/useWorkspaceApi';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
+import type { AgentFollowUpControls } from '../../composables/useAgentFollowUpQueue';
+import FollowUpQueue from '../agent-checkpoint/FollowUpQueue.vue';
 
 const props = defineProps<{
   workspaceKey?: string;
@@ -26,6 +28,7 @@ const props = defineProps<{
   chatInput: string;
   chatMessages: UIMessage[];
   chatPendingActions: PendingActionView[];
+  followUpControls?: AgentFollowUpControls;
   pendingActions: PendingActionView[];
   pendingActionsLoading: boolean;
   pendingActionsError: string;
@@ -61,6 +64,7 @@ const inputModel = computed({
   set: (value: string) => emit('updateChatInput', value),
 });
 const messages = computed(() => props.chatMessages);
+const chatRunning = computed(() => props.chatStatus === 'submitted' || props.chatStatus === 'streaming');
 const { items: timelineItems } = useAgentTimeline(messages);
 
 type PendingDecision = 'accepting' | 'rejecting' | 'accepted' | 'rejected';
@@ -256,13 +260,20 @@ function mergePendingActions(
         @refresh="emit('refreshWritingReferences')"
         @toggle="emit('toggleWritingReference', $event)"
       />
+      <FollowUpQueue
+        v-if="followUpControls"
+        :controls="followUpControls"
+        :running="chatRunning"
+      />
       <ChatComposer
         v-model="inputModel"
-        :disabled="chatStatus !== 'ready'"
+        :disabled="chatStatus !== 'ready' && !(chatRunning && followUpControls)"
+        :running="chatRunning && Boolean(followUpControls)"
         :quick-commands="availableQuickCommands"
         :quick-commands-disabled="!providerConfigured"
         @configure-model="emit('configureProvider')"
         @submit="emit('sendChatInput')"
+        @steer="followUpControls?.steerInput()"
       />
     </template>
   </section>

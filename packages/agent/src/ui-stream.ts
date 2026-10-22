@@ -146,6 +146,18 @@ export function runtimeEventsToUiMessageStream(
           continue;
         }
 
+        if (event.type === 'steering_applied') {
+          endReasoningPart();
+          endTextPart();
+          writer.write({ type: 'data-steering', data: { id: event.message.id, content: event.message.content, status: 'applied' } });
+          continue;
+        }
+
+        if (event.type === 'steering_rejected') {
+          writer.write({ type: 'data-steering', data: { id: event.message.id, content: event.message.content, status: 'rejected' } });
+          continue;
+        }
+
         if (event.type === 'pending_action') {
           writer.write({
             type: 'data-pending-action',

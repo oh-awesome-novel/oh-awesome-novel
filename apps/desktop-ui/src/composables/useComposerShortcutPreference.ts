@@ -73,6 +73,12 @@ export function shouldSubmitWithShortcut(event: KeyboardEvent, value: ComposerSu
   return event.ctrlKey;
 }
 
+/** Alt+Enter steers a running turn; it never collides with a send shortcut. */
+export function isSteerShortcut(event: KeyboardEvent): boolean {
+  return event.key === 'Enter' && !event.isComposing && event.altKey
+    && !event.metaKey && !event.ctrlKey && !event.shiftKey;
+}
+
 function defaultShortcut(): ComposerSubmitShortcut {
   return isMacPlatform() ? 'meta-enter' : 'ctrl-enter';
 }

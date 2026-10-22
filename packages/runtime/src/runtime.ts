@@ -16,6 +16,7 @@ import type {
   RuntimeModelAdapter,
   RuntimeModelResponse,
   RuntimeSessionState,
+  RuntimeSteeringSource,
   RuntimeToolCall,
   RuntimeToolLogEntry,
   RuntimeToolResult,
@@ -31,6 +32,7 @@ export class RuntimeSession {
   private usageSteps: ModelStepUsageRecord[] = [];
   private turnId = '';
   private usageFinished = false;
+  private steering?: RuntimeSteeringSource;
   private readonly state: RuntimeSessionState = {
     doneMessages: [],
     curMessages: [],
@@ -61,6 +63,7 @@ export class RuntimeSession {
   }
 
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
+    this.steering = input.steering;
     this.usageRequests = [];
     this.usageSteps = [];
     this.turnId = `turn_${randomUUID()}`;
@@ -146,6 +149,7 @@ export class RuntimeSession {
           if (input.abortSignal?.aborted) {
             return await this.finish('aborted', assistantMessage, input.abortSignal);
           }
+          await this.applySteering(input.steering);
           continue;
         }
 
@@ -153,6 +157,9 @@ export class RuntimeSession {
           assistantMessage = auditedMessage;
           this.state.curMessages.push(auditedMessage);
         }
+
+        // A steer that arrived during the answer gets a follow-up model step.
+        if (await this.applySteering(input.steering)) continue;
 
         return await this.finish('completed', assistantMessage, input.abortSignal);
       }
@@ -162,6 +169,7 @@ export class RuntimeSession {
       if (input.abortSignal?.aborted || isAbortError(error)) {
         return await this.finish('aborted', assistantMessage, input.abortSignal);
       }
+      await this.closeSteering();
       await this.finishUsage('failed');
       await this.failTurn(error, input.abortSignal);
       throw error;
@@ -190,6 +198,27 @@ export class RuntimeSession {
   }
 
   private liveStreamQueue?: RuntimeEventQueue;
+
+  /** Appends queued author steers as user messages; returns whether any applied. */
+  private async applySteering(steering: RuntimeSteeringSource | undefined): Promise<boolean> {
+    const messages = steering?.drain() ?? [];
+    for (const message of messages) {
+      this.state.curMessages.push({ role: 'user', content: message.content, delivery: 'steer' });
+      await this.emit({ type: 'steering_applied', message });
+    }
+    return messages.length > 0;
+  }
+
+  private async closeSteering(): Promise<void> {
+    const steering = this.steering;
+    this.steering = undefined;
+    if (!steering) return;
+    // Close first so nothing new is accepted, then hand back what never ran.
+    steering.close();
+    for (const message of steering.drain()) {
+      await this.emit({ type: 'steering_rejected', message });
+    }
+  }
 
   private async generateModelResponse(
     request: Parameters<RuntimeModelAdapter['generate']>[0],
@@ -334,6 +363,7 @@ export class RuntimeSession {
     assistantMessage: RuntimeMessage | undefined,
     abortSignal?: AbortSignal,
   ): Promise<RunTurnResult> {
+    await this.closeSteering();
     const finalizedActions = await this.options.turnFinalizer?.finalizeTurn({
       stoppedReason,
       pendingActions: [...this.state.pendingActions],

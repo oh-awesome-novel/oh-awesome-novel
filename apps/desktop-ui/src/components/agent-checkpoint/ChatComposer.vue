@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { ArrowUp, ChevronDown, Plus, Sparkles } from '@lucide/vue';
 import {
+  isSteerShortcut,
   shouldSubmitWithShortcut,
   useComposerShortcutPreference,
 } from '../../composables/useComposerShortcutPreference';
@@ -17,15 +18,19 @@ const model = defineModel<string>({ required: true });
 
 const props = withDefaults(defineProps<{
   disabled: boolean;
+  /** A turn is running: the send shortcut queues, Alt+Enter or 插话 steers. */
+  running?: boolean;
   quickCommands?: ChatQuickCommand[];
   quickCommandsDisabled?: boolean;
 }>(), {
+  running: false,
   quickCommands: () => [],
   quickCommandsDisabled: false,
 });
 
 const emit = defineEmits<{
   submit: [];
+  steer: [];
   configureModel: [];
 }>();
 
@@ -54,7 +59,17 @@ function useQuickCommand(command: ChatQuickCommand) {
   model.value = command.prompt;
 }
 
+function steer() {
+  if (!canSubmit.value || !props.running) return;
+  emit('steer');
+}
+
 function handleKeydown(event: KeyboardEvent) {
+  if (props.running && isSteerShortcut(event)) {
+    event.preventDefault();
+    steer();
+    return;
+  }
   if (!shouldSubmitWithShortcut(event, shortcut.value)) {
     return;
   }
@@ -91,7 +106,7 @@ function handleKeydown(event: KeyboardEvent) {
         class="composer-input"
         rows="4"
         :disabled="disabled"
-        placeholder="Ask the checkpoint agent..."
+        :placeholder="running ? `生成中：${shortcutLabel} 排队到本轮之后，Alt + Enter 插话` : 'Ask the checkpoint agent...'"
         @keydown="handleKeydown"
       />
 
@@ -119,34 +134,46 @@ function handleKeydown(event: KeyboardEvent) {
           </button>
         </div>
 
-        <div class="composer-send-wrap">
-          <div class="composer-send-popover" role="menu" aria-label="发送方式">
-            <div class="composer-send-popover-heading">
-              <strong>{{ shortcutLabel }}</strong>
-              <span>发送方式</span>
+        <div class="composer-submit-cluster">
+          <button
+            v-if="running"
+            class="composer-steer-button"
+            type="button"
+            :disabled="!canSubmit"
+            title="插话：本轮下一步就看到这条消息 (Alt + Enter)"
+            @click="steer"
+          >
+            插话
+          </button>
+          <div class="composer-send-wrap">
+            <div class="composer-send-popover" role="menu" aria-label="发送方式">
+              <div class="composer-send-popover-heading">
+                <strong>{{ shortcutLabel }}</strong>
+                <span>发送方式</span>
+              </div>
+              <button
+                v-for="option in shortcutOptions"
+                :key="option.value"
+                class="composer-send-shortcut-option"
+                :class="{ 'composer-send-shortcut-option-active': shortcut === option.value }"
+                type="button"
+                role="menuitemradio"
+                :aria-checked="shortcut === option.value"
+                @click="setShortcut(option.value)"
+              >
+                {{ option.label }}
+              </button>
             </div>
             <button
-              v-for="option in shortcutOptions"
-              :key="option.value"
-              class="composer-send-shortcut-option"
-              :class="{ 'composer-send-shortcut-option-active': shortcut === option.value }"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="shortcut === option.value"
-              @click="setShortcut(option.value)"
+              class="composer-send-button"
+              type="submit"
+              :disabled="!canSubmit"
+              :aria-label="running ? 'Queue message' : 'Send message'"
+              :title="running ? `排队到本轮之后 (${shortcutLabel})` : `Send message (${shortcutLabel})`"
             >
-              {{ option.label }}
+              <ArrowUp :size="19" aria-hidden="true" />
             </button>
           </div>
-          <button
-            class="composer-send-button"
-            type="submit"
-            :disabled="!canSubmit"
-            aria-label="Send message"
-            :title="`Send message (${shortcutLabel})`"
-          >
-            <ArrowUp :size="19" aria-hidden="true" />
-          </button>
         </div>
       </div>
     </div>

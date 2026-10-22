@@ -23,6 +23,8 @@ export type {
   RuntimeRole,
   RuntimeSessionState,
   RuntimeSkill,
+  RuntimeSteeringMessage,
+  RuntimeSteeringSource,
   RuntimeToolCall,
   RuntimeToolCallAudit,
   RuntimeToolLogEntry,

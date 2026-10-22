@@ -7,6 +7,7 @@ import WorkspaceOnboardingGuide from './WorkspaceOnboardingGuide.vue';
 import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
 import type { PendingActionView } from '../../composables/useAgentCheckpointChat';
 import type { AgentConversationSummary } from '../../composables/useAgentConversationSessions';
+import type { AgentFollowUpControls } from '../../composables/useAgentFollowUpQueue';
 import type { WorkspaceRightTab } from '../../composables/useWorkspaceLayoutState';
 import type {
   ChapterIndex,
@@ -65,6 +66,7 @@ defineProps<{
   chatInput: string;
   chatMessages: UIMessage[];
   chatPendingActions: PendingActionView[];
+  followUpControls?: AgentFollowUpControls;
   writingReferenceAttachments: PlayWritingReferenceAttachment[];
   selectedWritingReferenceAttachmentIds: string[];
   writingReferencesLoading: boolean;
@@ -176,6 +178,7 @@ const emit = defineEmits<{
         :provider-configured="providerConfigured"
         :queued-prompt="queuedPrompt"
         :chat-status="chatStatus"
+        :follow-up-controls="followUpControls"
         :chat-input="chatInput"
         :chat-messages="chatMessages"
         :chat-pending-actions="chatPendingActions"
