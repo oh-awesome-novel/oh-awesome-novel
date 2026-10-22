@@ -43,5 +43,8 @@
   "devDependencies": {
     "nx": "^24.0.0",
     "vitepress": "2.0.0-alpha.20"
+  },
+  "overrides": {
+    "@electron/node-gyp": "10.2.0-electron.1"
   }
 }
