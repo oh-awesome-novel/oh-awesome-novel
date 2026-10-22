@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   startNovelHttpBackend,
@@ -10,6 +10,24 @@ import {
   type NovelBackendPlayTurnInput,
 } from '@oh-awesome-novel/backend';
 import { withPlaySessionFileTransaction } from '@oh-awesome-novel/core';
+
+// Reports each Play session transaction the backend opens, so a test can wait
+// for a specific lock step instead of inferring it from lock files on disk.
+const transactionProbe = vi.hoisted(() => ({
+  onOpen: undefined as ((sessionId: string) => void) | undefined,
+}));
+vi.mock('@oh-awesome-novel/core', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@oh-awesome-novel/core')>();
+  return {
+    ...original,
+    withPlaySessionFileTransaction: (
+      ...args: Parameters<typeof original.withPlaySessionFileTransaction>
+    ) => {
+      transactionProbe.onOpen?.(args[1]);
+      return original.withPlaySessionFileTransaction(...args);
+    },
+  };
+});
 
 const workspaces: string[] = [];
 const backends: NovelBackendHandle[] = [];
@@ -274,6 +292,17 @@ describe('Play M5 HTTP contracts', () => {
       workspaceRoot,
       'zz-fork',
       async () => {
+        // The fork locks aa-source before zz-fork, and other aa-source lock
+        // holders (such as the migration preview every POST runs first) only
+        // hold it briefly. Opening the zz-fork transaction is the first point
+        // at which the fork is known to hold the source lock.
+        const forkHoldsSourceLock = new Promise<void>((resolveOpen) => {
+          transactionProbe.onOpen = (sessionId) => {
+            if (sessionId !== 'zz-fork') return;
+            transactionProbe.onOpen = undefined;
+            resolveOpen();
+          };
+        });
         forkRequest = requestJson<ForkResponse>(
           `${forkBackend.url}/api/workspace/play-sessions/aa-source/source-drift/decisions`,
           {
@@ -285,7 +314,15 @@ describe('Play M5 HTTP contracts', () => {
             },
           },
         );
-        await waitForPath(join(
+        await Promise.race([
+          forkHoldsSourceLock,
+          forkRequest.then(({ response }) => {
+            throw new Error(
+              `Fork finished with ${response.status} before locking its target.`,
+            );
+          }),
+        ]);
+        await access(join(
           workspaceRoot,
           '.workspace/play-sessions/.write-locks/aa-source.lock/owner.json',
         ));
@@ -423,17 +460,4 @@ async function requestJson<T>(
         }),
   });
   return { response, body: await response.json() as T };
-}
-
-async function waitForPath(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    try {
-      await access(path);
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 2));
-  }
-  throw new Error(`Timed out waiting for path: ${path}`);
 }
