@@ -1,6 +1,7 @@
+export { generateForgeText } from './forge-generation.js';
 import { createHash } from 'node:crypto';
 import { createContextEvidence, createProviderEgressSummary, createUsageGovernance, extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
-export { createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
+export { createContextEvidence, createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
 export type { RecordSpecializedModelUsageTurnInput } from './usage-governance';
 import { normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
 import type { CopilotRuntimeOptions } from '@oh-awesome-novel/runtime';
@@ -141,6 +142,8 @@ export interface NovelAgentWorkspaceContextFile {
 }
 
 export interface NovelAgentMessageInput {
+  /** Trusted host-owned immutable system prefix for read-only specialized sessions. */
+  frozenSystemPrompt?: string;
   request: string;
   workspace: NovelAgentWorkspaceSnapshot;
   capability?: NovelCopilotCapabilityId;
@@ -1193,6 +1196,7 @@ function sanitizeRuntimeEventForPublic(event: RuntimeEvent): RuntimeEvent {
 export const createNovelAgentSystemPrompt = (
   input: NovelAgentMessageInput,
 ): string => {
+  if (input.frozenSystemPrompt && input.capability === 'novel.play_scene') return input.frozenSystemPrompt;
   const lines = [
     'You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.',
     'Use tools only inside the fixed in-memory /workspace projection.',
@@ -1225,6 +1229,8 @@ export const assembleNovelAgentMessages = (
   input: NovelAgentMessageInput,
 ): NovelAgentMessageAssembly => {
   const context = createNovelAgentContext(input);
+  const frozen = Boolean(input.frozenSystemPrompt && input.capability === 'novel.play_scene');
+  const turnContext = frozen ? context.map(item => `# ${item.title ?? item.kind}\n${item.content}`).join('\n\n') : '';
   const messages: RuntimeMessage[] = [
     {
       role: 'system',
@@ -1233,14 +1239,14 @@ export const assembleNovelAgentMessages = (
     ...(input.priorMessages ?? []),
     {
       role: 'user',
-      content: input.request,
+      content: turnContext ? `${turnContext}\n\n${input.request}` : input.request,
     },
   ];
 
   return {
     messages,
-    context,
-    skill: input.skill,
+    context: frozen ? [] : context,
+    skill: frozen ? undefined : input.skill,
   };
 };
 
@@ -2197,3 +2203,5 @@ function uniqueStrings(values: string[]): string[] {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+export { generateNovelLintReview } from './novel-lint';

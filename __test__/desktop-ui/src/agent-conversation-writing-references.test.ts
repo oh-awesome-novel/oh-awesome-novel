@@ -55,6 +55,34 @@ describe('agent conversation Play Writing References', () => {
     });
   });
 
+  it('sends canonical Forge sources once and restores selection on failure', async () => {
+    const conversations = useAgentConversationSessions();
+    conversations.selectCanonicalWritingSources(['characters/lead/profile.md']);
+    conversations.activeInput.value = '写开场';
+    const chat = chatHarness.instances[0]!;
+    chat.sendMessage.mockRejectedValueOnce(new Error('offline'));
+    await expect(conversations.sendCurrentInput()).rejects.toThrow('offline');
+    expect(conversations.canonicalWritingSourcePaths.value).toEqual(['characters/lead/profile.md']);
+    chat.sendMessage.mockResolvedValueOnce(undefined);
+    await conversations.sendCurrentInput();
+    expect(chat.sendMessage).toHaveBeenLastCalledWith({ text: '写开场' }, expect.objectContaining({ body: expect.objectContaining({ canonicalWritingSourcePaths: ['characters/lead/profile.md'], editContext: { exactWritablePaths: [] } }) }));
+    expect(conversations.canonicalWritingSourcePaths.value).toEqual([]);
+    conversations.dispose();
+  });
+
+  it('freezes canonical references into queued follow-ups', async () => {
+    const conversations = useAgentConversationSessions();
+    const chat = chatHarness.instances[0]!;
+    chat.status.value = 'streaming';
+    conversations.selectCanonicalWritingSources(['characters/lead/profile.md']);
+    conversations.activeInput.value = '带设定的下一轮';
+    await conversations.sendCurrentInput();
+    expect(conversations.activeFollowUps.value[0]).toMatchObject({ canonicalWritingSourcePaths: ['characters/lead/profile.md'] });
+    conversations.selectCanonicalWritingSources(['world/rules.md']);
+    expect(conversations.activeFollowUps.value[0]?.canonicalWritingSourcePaths).toEqual(['characters/lead/profile.md']);
+    conversations.dispose();
+  });
+
   it('sends selected attachments once, preserves them on failure, and clears on success', async () => {
     const conversations = useAgentConversationSessions();
     await conversations.refreshWritingReferences();

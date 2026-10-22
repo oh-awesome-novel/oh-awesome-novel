@@ -393,7 +393,7 @@ export const NOVEL_COPILOT_QUICK_COMMANDS: NovelCopilotQuickCommand[] = [
     capabilityId: 'novel.de_ai',
     label: '去AI味',
     slashCommand: '/去AI味',
-    prompt: '请在不改变剧情事实的前提下去除 AI 味。只有我要求替换正文时，才在固定内存工作区编辑目标章节，预览并提出 changes。',
+    prompt: '请在不改变剧情事实的前提下去除 AI 味。先用 novel.lintScan 扫描目标文件，逐项说明命中。只有我要求替换正文时，使用 novel.deAi 根据 host 提供的 sourceHash、hitId、anchorId 与原文引文做单段微创替换，再预览并提出 changes；不得整段重写或删除伏笔。',
   },
 ];
 

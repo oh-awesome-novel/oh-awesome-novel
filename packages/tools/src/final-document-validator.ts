@@ -7,6 +7,7 @@ import {
   assertReferenceDeconstructionManifest,
   assertReferenceProgress,
   parseSummaryDocument,
+  normalizeRosterCharacter,
 } from '@oh-awesome-novel/core';
 
 import {
@@ -381,7 +382,10 @@ function validateCharacterObject(path: string, content: string): void {
   }
 
   const data = parseYamlRecord(path, content);
-  if (relativeStem === 'meta') {
+  if (relativeStem === 'roster-profile') {
+    const roster = normalizeRosterCharacter(data);
+    if (roster.id !== characterId) throw new Error(`Roster identity must match character directory: ${path}.`);
+  } else if (relativeStem === 'meta') {
     const allowed = new Set([
       'id',
       'name',

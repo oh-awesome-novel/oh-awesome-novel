@@ -1188,3 +1188,24 @@ export * from './manuscript-import';
 export { normalizePlayIsoWorldTime, comparePlayIsoWorldTime, normalizePlayStateDeltaRefs, assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
 
 export { TAVERN_PLAY_IMPORT_METADATA_KEY, prepareTavernCardPlaySession, resolveTavernPlaySourceContent, isTavernInteractionSourcePath, formatTavernLorebookContext } from './tavern-play.js';
+
+export * from './play-turn-prompt.js';
+export * from './play-compaction.js';
+
+export * from './novel-lint.js';
+
+export * from './character-roster.js';
+export * from './text-speaker-parser.js';
+export * from './scene-frame-protocol.js';
+
+export { attachPlayCharacterRoster } from './character-roster-store.js';
+
+export * from './forge-types';
+
+export * from './forge-discuss';
+
+export * from './forge-plan';
+
+export * from './forge-writer';
+
+export * from './forge-draft';

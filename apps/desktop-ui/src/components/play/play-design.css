@@ -164,7 +164,7 @@
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   background: var(--play-canvas);
 }
 
@@ -1541,3 +1541,20 @@
     transition-duration: 0.01ms;
   }
 }
+
+#play-workspace .play-stage-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--play-line);
+}
+#play-workspace .play-stage-actions > button {
+  padding: 6px 10px;
+  color: var(--play-ink);
+  background: var(--play-surface);
+  border: 1px solid var(--play-line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+#play-workspace .play-stage-actions > button:disabled { opacity: .5; cursor: default; }

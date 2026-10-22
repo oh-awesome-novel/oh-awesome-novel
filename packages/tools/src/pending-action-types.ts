@@ -72,6 +72,8 @@ export type PendingActionSource =
     };
 
 export type PendingActionOrigin =
+  | { readonly kind: 'forge'; readonly draftId: string; readonly revision: number; readonly previewId: string }
+  | { readonly kind: 'novelLint'; readonly targetPath: string; readonly sourceHash: string }
   | {
       readonly kind: 'summaryGeneration';
       readonly targetPath: string;
@@ -310,6 +312,20 @@ export function parsePendingAction(
     }
     assertTavernImportTargets(origin, allowedTargets, changes);
   }
+  const forgeProducer = source.kind === 'deterministic-builder' && source.producer === 'setting-forge';
+  if ((forgeProducer || origin?.kind === 'forge') && (!forgeProducer || origin?.kind !== 'forge'
+    || origin.previewId !== id || source.capability !== 'novel.multi-file-edit'
+    || changes.some((change) => change.operation === 'delete'))) {
+    invalidSchema('Forge requires its matching preview identity and create/update targets.');
+  }
+  const lintProducer = source.kind === 'deterministic-builder' && source.producer === 'novel-lint';
+  if ((lintProducer || origin?.kind === 'novelLint') && (!lintProducer || origin?.kind !== 'novelLint'
+    || !['chapter.edit', 'character.edit', 'world.edit'].includes(source.capability)
+    || allowedTargets.length !== 1 || allowedTargets[0] !== origin.targetPath || changes.length !== 1
+    || changes[0]!.path !== origin.targetPath || changes[0]!.operation !== 'update'
+    || changes[0]!.baseline?.sha256 !== origin.sourceHash)) {
+    invalidSchema('Novel LINT requires its exact source hash and a single update target.');
+  }
   const settlementProducer = source.kind === 'deterministic-builder' && source.producer === 'chapter-settlement';
   if ((settlementProducer || origin?.kind === 'chapterSettlement')
     && (!settlementProducer || origin?.kind !== 'chapterSettlement' || source.capability !== 'novel.multi-file-edit')) {
@@ -368,6 +384,8 @@ export function parsePreparedChangePreview(
     if (origin.previewId !== id || value.capability !== 'character.edit') invalidSchema('Tavern preview identity or capability mismatch.');
     assertTavernImportTargets(origin, allowedTargets, changes);
   }
+  if (origin.kind === 'forge' && (origin.previewId !== id || value.capability !== 'novel.multi-file-edit'
+    || changes.some((change) => change.operation === 'delete'))) invalidSchema('Forge preview identity or capability mismatch.');
   assertCanonicalIsoTimestamp(value.createdAt, 'Prepared preview createdAt');
   return deepFreeze(structuredClone(value)) as unknown as PreparedChangePreviewV1;
 }
@@ -480,7 +498,16 @@ function assertTavernImportTargets(
 
 export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
   if (!isRecord(value)) invalidSchema('PendingAction origin must be an object.');
-  if (value.kind === 'summaryGeneration') {
+  if (value.kind === 'forge') {
+    assertExactFields(value, ['kind', 'draftId', 'revision', 'previewId']);
+    assertOpaquePendingActionId(value.draftId, 'Forge draft id');
+    assertOpaquePendingActionId(value.previewId, 'Forge preview id');
+    assertNonNegativeInteger(value.revision, 'Forge draft revision');
+  } else if (value.kind === 'novelLint') {
+    assertExactFields(value, ['kind', 'targetPath', 'sourceHash']);
+    assertCanonicalTargetPath(value.targetPath);
+    assertSha256(value.sourceHash, 'LINT source hash');
+  } else if (value.kind === 'summaryGeneration') {
     assertExactFields(value, ['kind', 'targetPath', 'sourceFingerprint']);
     if (typeof value.targetPath !== 'string' || !/^(?:summaries\/global\.md|summaries\/volume\/(?!0000)\d{4}\.md)$/u.test(value.targetPath)) invalidSchema('Invalid aggregate summary target.');
     assertSha256(value.sourceFingerprint, 'Summary source fingerprint');

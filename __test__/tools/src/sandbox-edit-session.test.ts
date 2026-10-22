@@ -19,6 +19,21 @@ afterEach(async () => {
 });
 
 describe('SandboxEditSession', () => {
+  it('uses host-scanned exact LINT spans in the fixed projection and warns on generated characters', async () => {
+    const path='chapters/0001/0001.md', source='# Chapter\n\n仿佛。\n\n仿佛。\n';
+    const workspaceRoot=await tempWorkspace({[path]:source});
+    const session=await createSandboxEditSession({workspaceRoot,policy:createWorkspaceChangePolicy({capability:'chapter.edit',exactWritablePaths:[path]}),repositoryReader:fakeRepository});
+    try {
+      const scan=await executeTool(session.tools,'novel.lintScan',{path}); const hit=scan.hits[1];
+      const replacements=[{hitId:hit.hitId,anchorId:hit.anchorId,original:hit.original,suggestion:'确实'}];
+      await executeTool(session.tools,'novel.deAi',{path,sourceHash:scan.sourceHash,replacements});
+      await expect(executeTool(session.tools,'novel.deAi',{path,sourceHash:scan.sourceHash,replacements})).rejects.toThrow('STALE');
+      expect((await session.preview()).lintWarnings).toEqual([expect.objectContaining({path,original:'仿佛'})]);
+      expect((await executeTool(session.tools,'readFile',{path})).content).toBe('# Chapter\n\n仿佛。\n\n确实。\n');
+      expect(await readFile(join(workspaceRoot,path),'utf8')).toBe(source);
+    } finally {await session.dispose();}
+  });
+
   it.each([0o600, 0o666])('preserves projected permissions after a shell redirect (%s)', async (mode) => {
     const path = 'summaries/global.md';
     const workspaceRoot = await tempWorkspace({ [path]: '# Global\n\nbefore\n' });

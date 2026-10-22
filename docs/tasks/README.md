@@ -88,6 +88,8 @@
 
 ## Needs Review Tasks
 
+- [1360 Guided Forge, Play Presentation And Novel LINT](1360.md)
+
 - [0580 Git History And Sync Page](0580.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
 - [1230 Review-driven Reliability Corrections](1230.md)

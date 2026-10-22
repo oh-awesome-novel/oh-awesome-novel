@@ -1,3 +1,11 @@
+import { parseNovelLintScan, parseNovelLintReview } from './novel-lint';
+import type { NovelLintScan, LintReplacement } from '@oh-awesome-novel/core';
+import type { PlayCompactionPreview } from '@oh-awesome-novel/core';
+export type { PlayCompactionData, PlayCompactionPreview } from '@oh-awesome-novel/core';
+import { normalizeStageSnapshot, type StageSnapshot } from '@oh-awesome-novel/core/text-speaker-parser';
+import { createForgeClientMethods } from './forge.js';
+import type { ForgeClientMethods } from './forge.js';
+export * from './forge.js';
 import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 export { resolveSummarySelection } from '@oh-awesome-novel/core/novel-copilot-contract';
 export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
@@ -1137,6 +1145,7 @@ export interface PlayLaunchSessionMetadata {
 }
 
 export interface PlayTranscriptTurn {
+  stageSnapshot?: StageSnapshot;
   id?: string;
   speaker: string;
   content: string;
@@ -1841,7 +1850,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends PlayRehearsalClientMethods {
+export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -1895,6 +1904,9 @@ export interface OanClient extends PlayRehearsalClientMethods {
   searchWorkspace(query: string): Promise<WorkspaceSearchResponse>;
   exportManuscript(format: 'md' | 'txt'): Promise<ManuscriptExport>;
   previewManuscriptImport(input: ManuscriptImportInput): Promise<ManuscriptImportPreviewResult>;
+  scanNovelLint(input: {path:string;expectedWorkspaceRoot:string}, options?: {signal?:AbortSignal}): Promise<NovelLintScan>;
+  reviewNovelLint(input: {path:string;expectedWorkspaceRoot:string;sourceHash:string}, options?: {signal?:AbortSignal}): Promise<{sourceHash:string;replacements:LintReplacement[]}>;
+  proposeNovelLint(input: {path:string;expectedWorkspaceRoot:string;sourceHash:string;replacements:LintReplacement[]}, options?: {signal?:AbortSignal}): Promise<PendingActionViewEnvelopeV1>;
   previewTavernImport(input: TavernImportInput): Promise<{ preview: TavernImportPreview }>;
   proposeTavernImport(previewId: string, input: TavernImportConfirmation): Promise<PendingActionViewEnvelopeV1>;
   createTavernPlaySession(previewId: string, input: TavernImportConfirmation): Promise<{ session: PlaySession }>;
@@ -2015,6 +2027,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   ): Promise<{ session: PlaySession; files: string[] }>;
   listPlaySessions(): Promise<{ sessions: PlaySession[] }>;
   listPlaySessionSummaries(): Promise<{ summaries: PlaySessionSummary[] }>;
+  compactPlaySession(id: string, baseRevision: number): Promise<{ preview: PlayCompactionPreview }>;
+  continueCompactedPlaySession(id: string, baseRevision: number): Promise<{ session: PlaySession }>;
   createPlaySession(input: {
     id?: string;
     title: string;
@@ -2269,6 +2283,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
 
   return {
     ...playRehearsalClient,
+    ...createForgeClientMethods(requestJson),
     backendBaseUrl,
     listAgentUsageSessions: async () => {
       const value = await requestJson<unknown>('/api/workspace/agent-sessions');
@@ -2403,6 +2418,15 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       if (response.format !== format) throw new Error('Mismatched manuscript export format.');
       return response;
     }),
+    scanNovelLint: async (input, options = {}) => parseNovelLintScan(await requestJson<unknown>('/api/workspace/novel-lint/scan', {method:'POST',body:input,signal:options.signal})),
+    reviewNovelLint: async (input, options = {}) => {
+      const result=parseNovelLintReview(await requestJson<unknown>('/api/workspace/novel-lint/review', {method:'POST',body:input,signal:options.signal}));
+      if(result.sourceHash!==input.sourceHash) throw new Error('Mismatched LINT source.'); return result;
+    },
+    proposeNovelLint: async (input, options = {}) => {
+      const result=parsePendingActionViewEnvelope(await requestJson<unknown>('/api/workspace/novel-lint/propose', {method:'POST',body:input,signal:options.signal}));
+      if(result.pendingAction.origin?.kind!=='novelLint'||result.pendingAction.origin.targetPath!==input.path||result.pendingAction.origin.sourceHash!==input.sourceHash) throw new Error('Mismatched LINT proposal.'); return result;
+    },
     previewTavernImport: async (input) => {
       assertTavernImportInput(input);
       const result = parseTavernImportPreview(await requestJson<unknown>('/api/workspace/tavern-imports/preview', { method: 'POST', body: input }));
@@ -2788,6 +2812,14 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     listPlaySessionSummaries: () =>
       requestJson<unknown>('/api/workspace/play-session-summaries')
         .then(parsePlaySessionSummaryListResponse),
+    compactPlaySession: (id, baseRevision) => requestJson<{ preview: PlayCompactionPreview }>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/compact`,
+      { method: 'POST', body: { baseRevision } },
+    ),
+    continueCompactedPlaySession: (id, baseRevision) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/compact/continue`,
+      { method: 'POST', body: { baseRevision } },
+    ).then(value => { if (!isRecord(value) || !isRecord(value.session) || typeof value.session.id !== 'string') throw new Error('Invalid continuation response.'); return parsePlaySessionResponse(value, value.session.id); }),
     createPlaySession: (input) => {
       const normalized = normalizePlaySessionCreateRequest(input);
       return requestJson<unknown>('/api/workspace/play-sessions', {
@@ -6660,11 +6692,14 @@ function isPlayBranchBaseSnapshotEnvelope(
     && isUniqueNonEmptyStringArray(value.suggestedActions);
 }
 
+function isValidStageSnapshot(value: unknown): boolean { try { normalizeStageSnapshot(value); return true; } catch { return false; } }
+
 function isPlayTranscriptTurn(value: unknown): value is PlayTranscriptTurn {
   return isRecord(value)
     && (value.id === undefined || isNonEmptyString(value.id))
     && isNonEmptyString(value.speaker)
     && typeof value.content === 'string'
+    && (value.stageSnapshot === undefined || isValidStageSnapshot(value.stageSnapshot))
     && isNonEmptyString(value.createdAt)
     && (value.actionKind === undefined
       || value.actionKind === 'say'
@@ -6833,7 +6868,7 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
 function isPlayTurnArtifactMessage(value: unknown): value is PlayTranscriptTurn & { id: string } {
   return isPlayTranscriptTurn(value)
     && isRecord(value)
-    && hasOnlyKnownFields(value, ['id', 'speaker', 'content', 'createdAt', 'actionKind'])
+    && hasOnlyKnownFields(value, ['id', 'speaker', 'content', 'createdAt', 'actionKind', 'stageSnapshot'])
     && isSafePlayFactId(value.id)
     && isNonEmptyString(value.content);
 }
@@ -8256,3 +8291,5 @@ function isComposerSubmitShortcutPreference(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+export { parseNovelLintScan, parseNovelLintReview } from './novel-lint';

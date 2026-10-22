@@ -52,6 +52,9 @@ export function useAgentConversationSessions(options: {
   const writingReferencesLoading = shallowRef(false);
   const writingReferencesError = shallowRef('');
   const selectedWritingReferenceAttachmentIds = shallowRef<string[]>([]);
+  const canonicalWritingSourcePaths = shallowRef<string[]>([]);
+  function selectCanonicalWritingSources(paths: string[]) { canonicalWritingSourcePaths.value = [...new Set(paths)].slice(0, 16); }
+  function removeCanonicalWritingSource(path: string) { canonicalWritingSourcePaths.value = canonicalWritingSourcePaths.value.filter(item => item !== path); }
 
   function dispose() {
     for (const session of sessions.value) session.dispose();
@@ -171,6 +174,7 @@ export function useAgentConversationSessions(options: {
       return;
     }
 
+    const canonicalPaths = [...canonicalWritingSourcePaths.value];
     const writingReferenceAttachmentIds = [
       ...selectedWritingReferenceAttachmentIds.value,
     ];
@@ -178,18 +182,19 @@ export function useAgentConversationSessions(options: {
     if (activeSessionId.value === session.id) clearSelectedWritingReferences();
     if (isBusy(session)) {
       session.followUps.notice.value = '';
-      session.followUps.enqueue(text, writingReferenceAttachmentIds);
+      session.followUps.enqueue(text, writingReferenceAttachmentIds, false, canonicalPaths);
       return;
     }
     // A fresh author send means the author has seen why the queue paused.
     session.followUps.pausedReason.value = undefined;
     try {
-      await runTurn(session, text, writingReferenceAttachmentIds);
+      await runTurn(session, text, writingReferenceAttachmentIds, canonicalPaths);
     } catch (caught) {
       // Give the author their draft and selection back to retry.
       if (!session.input.value) session.input.value = text;
-      if (activeSessionId.value === session.id && !selectedWritingReferenceAttachmentIds.value.length) {
+      if (activeSessionId.value === session.id && !selectedWritingReferenceAttachmentIds.value.length && !canonicalWritingSourcePaths.value.length) {
         selectedWritingReferenceAttachmentIds.value = writingReferenceAttachmentIds;
+        canonicalWritingSourcePaths.value = canonicalPaths;
       }
       throw caught;
     }
@@ -200,7 +205,7 @@ export function useAgentConversationSessions(options: {
     const session = activeSession.value;
     const text = session.input.value.trim();
     if (!text) return;
-    if (!isBusy(session)) {
+    if (!isBusy(session) || canonicalWritingSourcePaths.value.length) {
       await sendCurrentInput();
       return;
     }
@@ -216,6 +221,7 @@ export function useAgentConversationSessions(options: {
     const session = activeSession.value;
     const item = session.followUps.items.value.find((candidate) => candidate.id === id);
     if (!item) return;
+    if (item.canonicalWritingSourcePaths?.length) { session.followUps.notice.value = '带设定来源的消息需作为完整下一轮发送，已保留在排队中。'; return; }
     if (!isBusy(session) || !(await trySteer(session, item.text))) {
       session.followUps.notice.value = '本轮已结束或正在收尾，这条消息保留在排队中。';
       return;
@@ -262,6 +268,7 @@ export function useAgentConversationSessions(options: {
     session: AgentConversationSession,
     text: string,
     writingReferenceAttachmentIds: string[],
+    canonicalPaths: string[] = [],
   ) {
     const turnId = createAgentTurnId();
     session.turnId.value = turnId;
@@ -274,6 +281,7 @@ export function useAgentConversationSessions(options: {
             sessionId: session.id,
             turnId,
             writingReferenceAttachmentIds,
+            ...(canonicalPaths.length ? { canonicalWritingSourcePaths: canonicalPaths } : {}),
             editContext: {
               exactWritablePaths: options.getExactWritablePaths?.() ?? [],
             },
@@ -308,10 +316,10 @@ export function useAgentConversationSessions(options: {
     const next = session.followUps.shift();
     if (!next) return;
     try {
-      await runTurn(session, next.text, next.writingReferenceAttachmentIds);
+      await runTurn(session, next.text, next.writingReferenceAttachmentIds, next.canonicalWritingSourcePaths);
     } catch (caught) {
       // A failed follow-up stays first in line; the author decides when to retry.
-      session.followUps.enqueue(next.text, next.writingReferenceAttachmentIds, true);
+      session.followUps.enqueue(next.text, next.writingReferenceAttachmentIds, true, next.canonicalWritingSourcePaths);
       session.followUps.pausedReason.value = 'failed';
       session.followUps.notice.value = `排队消息发送失败：${toErrorMessage(caught)}`;
     }
@@ -332,6 +340,9 @@ export function useAgentConversationSessions(options: {
     activeFollowUpNotice,
     activeFollowUpsPaused,
     conversationSummaries,
+    canonicalWritingSourcePaths,
+    selectCanonicalWritingSources,
+    removeCanonicalWritingSource,
     writingReferenceAttachments,
     writingReferencesLoading,
     writingReferencesError,
@@ -353,6 +364,7 @@ export function useAgentConversationSessions(options: {
 
   function clearSelectedWritingReferences() {
     selectedWritingReferenceAttachmentIds.value = [];
+    canonicalWritingSourcePaths.value = [];
   }
 }
 

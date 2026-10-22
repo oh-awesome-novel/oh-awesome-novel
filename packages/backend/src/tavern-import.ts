@@ -1,3 +1,4 @@
+import { freezePlayPermanentContext } from './play-frozen-context.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
@@ -112,6 +113,7 @@ export function createTavernImportHandlers(input: {
         release = input.reserve(root, preview.session.id);
         if (!release) throw new ImportError(409, 'play_session_busy', 'This card is already being imported.');
         if (!preview.committed) {
+          await freezePlayPermanentContext(root, preview.session);
           await writePlaySessionFiles(root, preview.session, { expectedAbsent: true });
           preview.committed = true;
         }

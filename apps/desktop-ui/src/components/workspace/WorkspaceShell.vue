@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from 'vue';
 
+import ForgeWizardModal from '../forge/ForgeWizardModal.vue';
 import PlayWorkspace from '../play/PlayWorkspace.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import WorkspaceSearchDialog from './WorkspaceSearchDialog.vue';
@@ -52,6 +53,8 @@ const api = useWorkspaceApi();
 const searchOpen = shallowRef(false);
 const exportOpen = shallowRef(false);
 const manuscriptImportOpen = shallowRef(false);
+const forgeOpen = shallowRef(false);
+const forgeSessionId = shallowRef('');
 const searchRefreshVersion = shallowRef(0);
 const activeFileLine = shallowRef<number>();
 let fileRequest = 0;
@@ -450,6 +453,12 @@ function openPendingActionDiff(action: PendingActionView) {
   layout.openRightPanel('diff');
 }
 
+function openForgeSession(sessionId: string) {
+  forgeSessionId.value = sessionId;
+  forgeOpen.value = false;
+  emit('selectMode', 'play');
+}
+
 function reviewManuscriptImport(pendingActionId: string) {
   manuscriptImportOpen.value = false;
   void reviewPendingActionById(pendingActionId);
@@ -542,6 +551,13 @@ async function refreshPendingActionSurface() {
   ]);
 }
 
+watch(() => props.workspace.path, () => conversations.selectCanonicalWritingSources([]));
+
+function activateForgeWritingSources(paths: string[]) {
+  conversations.selectCanonicalWritingSources(paths);
+  forgeOpen.value = false;
+  emit('selectMode', 'writing');
+}
 </script>
 
 <template>
@@ -563,6 +579,7 @@ async function refreshPendingActionSurface() {
       @open-search="searchOpen = true"
       @open-export="exportOpen = true"
       @open-manuscript-import="manuscriptImportOpen = true"
+      @open-forge="forgeOpen = true"
       @open-pending="openPendingActions"
       @open-right-tab="layout.openRightPanel"
       @open-external-editor="openExternalEditor"
@@ -572,6 +589,10 @@ async function refreshPendingActionSurface() {
       @leave-workspace="emit('leaveWorkspace')"
     />
 
+    <section v-if="conversations.canonicalWritingSourcePaths.value.length" aria-label="本轮设定参考" class="forge-writing-sources">
+      <strong>下一轮 Copilot 引用的设定</strong>
+      <span v-for="path in conversations.canonicalWritingSourcePaths.value" :key="path">{{ path }} <button type="button" :aria-label="`移除参考 ${path}`" @click="conversations.removeCanonicalWritingSource(path)">移除</button></span>
+    </section>
     <WorkspaceWorkbench
       v-show="mode === 'writing'"
       id="writing-workspace"
@@ -652,6 +673,7 @@ async function refreshPendingActionSurface() {
 
     <div v-show="mode === 'play'" class="workspace-play-workbench">
       <PlayWorkspace
+        :requested-session-id="forgeSessionId"
         :workspace="workspace"
         :provider-configured="providerConfigured"
         :files="tree"
@@ -706,6 +728,11 @@ async function refreshPendingActionSurface() {
       </div>
     </div>
 
+    <ForgeWizardModal v-if="forgeOpen" :workspace-root="workspace.path" :provider-configured="providerConfigured"
+      @close="forgeOpen = false" @configure-provider="emit('configureProvider')"
+      @pending-action-created="refreshPendingActionSurface"
+      @review-pending-action="forgeOpen = false; reviewPendingActionById($event)"
+      @play-session-created="openForgeSession" @writing-references-updated="activateForgeWritingSources" />
     <WorkspaceSearchDialog v-if="searchOpen" :workspace-path="workspace.path" :refresh-version="searchRefreshVersion" @close="searchOpen = false" @open-file="openSearchResult" />
     <ManuscriptExportDialog v-if="exportOpen" :workspace-path="workspace.path" @close="exportOpen = false" />
     <ManuscriptImportDialog v-if="manuscriptImportOpen" :workspace-path="workspace.path" @close="manuscriptImportOpen = false" @proposed="reviewManuscriptImport" />

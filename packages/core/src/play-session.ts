@@ -1,3 +1,6 @@
+import { normalizeRosterCharacter } from './character-roster.js';
+import { createStageSnapshot } from './text-speaker-parser.js';
+import { buildPlayFrozenSystemPrompt, isPlayCompactionActive } from './play-turn-prompt.js';
 import { assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
@@ -422,7 +425,7 @@ export const createPlaySessionDraft = (
       scheduledEvents: scheduledEvents.map(clonePlayScheduledEvent),
       suggestedActions: [],
     },
-    metadataExtensions: {},
+    metadataExtensions: { frozenSystemPrompt: buildPlayFrozenSystemPrompt(input) },
     playLocalState,
     playLocalStateVisibility,
     worldClock,
@@ -1317,6 +1320,10 @@ export const formatPlayWorldRefereePrompt = (
   const facts = materializePlayTurnFacts(session);
   const selectedEvents = session.events.filter((event) =>
     facts.selectedEventIds.has(event.id));
+  const compactionRevision = session.metadataExtensions.playCompactionStartRevision;
+  const promptTranscript = isPlayCompactionActive(session) && typeof compactionRevision === 'number'
+    ? facts.turnArtifacts.filter(artifact => session.selectedTurnIds.includes(artifact.id) && artifact.revision > compactionRevision).flatMap(artifact => artifact.messages)
+    : facts.transcript;
   const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
   const scheduleEvaluation = evaluatePlaySessionDueEvents(session);
   const momentum = readPlayWorldMomentum(facts.selectedPlayLocalState);
@@ -1354,8 +1361,8 @@ export const formatPlayWorldRefereePrompt = (
     formatPromptJson(facts.selectedPlayLocalState),
     '',
     'Recent committed transcript:',
-    ...(facts.transcript.length
-      ? facts.transcript.slice(-20).map((turn) =>
+    ...(promptTranscript.length
+      ? promptTranscript.slice(-20).map((turn) =>
           `- [${turn.id ?? turn.createdAt}] ${turn.speaker}${turn.actionKind ? `/${turn.actionKind}` : ''}: ${turn.content}`,
         )
       : ['- none']),
@@ -1685,6 +1692,7 @@ export const settlePlayWorldRefereeSettlement = (
       id: refereeTurnId,
       speaker: 'world-referee',
       content: narrative,
+      stageSnapshot: createStageSnapshot(typeof playLocalState.currentScene === 'string' && playLocalStateVisibility.currentScene !== 'playerUnknown' ? playLocalState.currentScene : input.session.sceneStart, narrative, stageRoster(input.session), stagePortraits(input.session), stageBackgrounds(input.session)),
       createdAt,
     },
   ];
@@ -1743,6 +1751,21 @@ export const settlePlayWorldRefereeSettlement = (
   };
 };
 
+function stageBackgrounds(session: PlaySession): Record<string, string> {
+  const value = session.metadataExtensions.sceneBackgrounds;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {};
+}
+
+function stagePortraits(session: PlaySession): Record<string, string> {
+  const value = session.metadataExtensions.characterPortraits;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {};
+}
+
+function stageRoster(session: PlaySession) {
+  const value = session.metadataExtensions.characterRoster;
+  return Array.isArray(value) ? value.map(normalizeRosterCharacter) : session.characters.map(name => ({ id: name, name, aliases: [] }));
+}
+
 export const addPlayTranscriptTurn = (
   session: PlaySession,
   turn: PlayTranscriptTurn,
@@ -1766,6 +1789,7 @@ export const addPlayTranscriptTurn = (
     ...(parentTurnId ? { parentTurnId } : {}),
     messages: [{
       ...turn,
+      ...(turn.speaker !== 'user' ? { stageSnapshot: createStageSnapshot(session.sceneStart, turn.content, stageRoster(session), stagePortraits(session), stageBackgrounds(session)) } : {}),
       id: turn.id ?? `${artifactId}-message-1`,
     }],
     worldClock: { ...next.worldClock },

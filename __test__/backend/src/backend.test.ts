@@ -2799,7 +2799,8 @@ describe('novel HTTP backend', () => {
       .filter((event) => event.type === 'play.narrative.delta')
       .map((event) => event.delta)
       .join('')).toBe('远处的铁门开始落锁。\n');
-    expect(body).not.toContain('oan-play-settlement');
+    // Persisted session metadata now includes the frozen output protocol. The narrative stream must never expose its fence.
+    expect(events.filter((event) => event.type === 'play.narrative.delta').map((event) => event.delta).join('')).not.toContain('oan-play-settlement');
     expect(providerTimeAdvance).toEqual({ amount: 10, unit: 'minute' });
 
     await expect(fetchJson(

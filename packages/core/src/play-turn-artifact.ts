@@ -1,3 +1,4 @@
+import { normalizeStageSnapshot } from './text-speaker-parser.js';
 import type {
   PlayActionKind,
   PlayEventVisibility,
@@ -493,6 +494,7 @@ const normalizeTranscriptTurn = (
       'content',
       'createdAt',
       'actionKind',
+      'stageSnapshot',
     ]);
   }
 
@@ -512,11 +514,13 @@ const normalizeTranscriptTurn = (
     content: normalizeRequiredString(value.content, 'content'),
     createdAt: normalizeRequiredString(value.createdAt, 'createdAt'),
     ...(actionKind ? { actionKind } : {}),
+    ...(value.stageSnapshot === undefined ? {} : { stageSnapshot: normalizeStageSnapshot(value.stageSnapshot) }),
   };
 };
 
 const cloneTranscriptTurn = (turn: PlayTranscriptTurn): PlayTranscriptTurn => ({
   ...turn,
+  ...(turn.stageSnapshot ? { stageSnapshot: normalizeStageSnapshot(turn.stageSnapshot) } : {}),
 });
 
 const normalizeActionKind = (value: unknown): PlayActionKind => {
