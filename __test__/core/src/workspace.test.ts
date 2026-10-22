@@ -119,6 +119,9 @@ describe('initWorkspace', () => {
     );
     expect(configContent).toContain('version: 1');
     expect(configContent).toContain('activeProfileId: fanfictionWriting');
+
+    const attributes = await readFile(join(tempDir, '.gitattributes'), 'utf-8');
+    expect(attributes).toContain('* -text');
   });
 
   it('throws when initialising a non-empty directory', async () => {
