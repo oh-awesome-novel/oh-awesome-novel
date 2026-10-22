@@ -73,6 +73,7 @@ export type {
 } from './pending-action-view.js';
 
 import {
+  OanRequestError,
   createOanRequestError,
   createPlayRehearsalClientMethods,
   isPlayRehearsalSessionEnvelope,
@@ -342,6 +343,10 @@ export interface ProviderConfigInput {
   default?: boolean;
   apiKeyEnv?: string;
 }
+
+export type AgentSteerResult =
+  | { status: 'accepted'; id: string }
+  | { status: 'too_late' };
 
 /** One line of the Play debug message log. Debug data only; never Play state. */
 export interface PlayMessageLogEntry {
@@ -1839,6 +1844,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
   getAgentChatApi(): string;
+  /** Adds author text to a running Copilot turn; `too_late` means queue it instead. */
+  steerAgentTurn(sessionId: string, turnId: string, content: string): Promise<AgentSteerResult>;
   createAgentChatTransport(editContext?: AgentChatEditContext): ChatTransport<UIMessage>;
   getAppVersion(): Promise<string | undefined>;
   getSystemThemePreference(): ThemeMode;
@@ -2276,6 +2283,23 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       return value;
     },
     getAgentChatApi: () => joinUrl(backendBaseUrl, '/api/agent/chat'),
+    steerAgentTurn: async (sessionId, turnId, content) => {
+      try {
+        const value = await requestJson<unknown>(
+          `/api/agent/chat/${encodeURIComponent(sessionId)}/steer`,
+          { method: 'POST', body: { turnId, content } },
+        );
+        if (!isRecord(value) || value.status !== 'accepted' || typeof value.id !== 'string') {
+          throw new Error('Steer returned an invalid payload.');
+        }
+        return { status: 'accepted', id: value.id };
+      } catch (error) {
+        if (error instanceof OanRequestError && error.status === 409 && error.code === 'STEER_TOO_LATE') {
+          return { status: 'too_late' };
+        }
+        throw error;
+      }
+    },
     createAgentChatTransport: (editContext) => {
       const normalizedEditContext = normalizeAgentChatEditContext(editContext);
       return new DefaultChatTransport<UIMessage>({

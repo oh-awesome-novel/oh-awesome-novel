@@ -16,6 +16,12 @@ export type AgentTimelineItem =
     }
   | {
       id: string;
+      type: 'steer-message';
+      text: string;
+      status: 'applied' | 'rejected';
+    }
+  | {
+      id: string;
       type: 'tool-activity';
       label: string;
       detail: string;
@@ -59,6 +65,18 @@ export function useAgentTimeline(messages: ComputedRef<UIMessage[]>) {
       }
 
       for (const [index, part] of message.parts.entries()) {
+        if (part.type === 'data-steering') {
+          const data = part.data as { content?: unknown; status?: unknown };
+          if (typeof data.content === 'string') {
+            entries.push({
+              id: `${message.id}:steer:${index}`,
+              type: 'steer-message',
+              text: data.content,
+              status: data.status === 'rejected' ? 'rejected' : 'applied',
+            });
+          }
+          continue;
+        }
         if (!part.type.startsWith('tool-') && part.type !== 'data-tool-log') {
           continue;
         }

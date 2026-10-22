@@ -11,6 +11,7 @@ import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
 import { acceptPendingActionsInOrder } from '@oh-awesome-novel/client';
 
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
+import type { AgentFollowUpControls } from '../../composables/useAgentFollowUpQueue';
 import { useWorkspaceLayoutState } from '../../composables/useWorkspaceLayoutState';
 import type { WorkspaceMode } from '../../composables/useWorkspaceLayoutState';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
@@ -78,6 +79,18 @@ const activeFilePath = shallowRef('');
 const conversations = useAgentConversationSessions({
   getExactWritablePaths: () => activeFilePath.value ? [activeFilePath.value] : [],
 });
+const followUpControls = computed<AgentFollowUpControls>(() => ({
+  items: conversations.activeFollowUps.value,
+  notice: conversations.activeFollowUpNotice.value,
+  paused: conversations.activeFollowUpsPaused.value,
+  steerInput: () => { void conversations.steerCurrentInput(); },
+  steer: (id) => { void conversations.steerQueuedFollowUp(id); },
+  edit: conversations.editQueuedFollowUp,
+  remove: conversations.removeQueuedFollowUp,
+  move: conversations.moveQueuedFollowUp,
+  resume: () => { void conversations.resumeFollowUps(); },
+}));
+
 const fileContent = shallowRef('');
 const fileLoading = shallowRef(false);
 const fileError = shallowRef('');
@@ -599,6 +612,7 @@ async function refreshPendingActionSurface() {
       :chat-input="conversations.activeInput.value"
       :chat-messages="conversations.activeMessages.value"
       :chat-pending-actions="conversations.activePendingActions.value"
+      :follow-up-controls="followUpControls"
       :writing-reference-attachments="conversations.writingReferenceAttachments.value"
       :selected-writing-reference-attachment-ids="conversations.selectedWritingReferenceAttachmentIds.value"
       :writing-references-loading="conversations.writingReferencesLoading.value"

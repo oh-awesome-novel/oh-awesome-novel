@@ -25,7 +25,7 @@ vi.mock('../../../apps/desktop-ui/src/composables/useAgentConversationSessions',
     useAgentConversationSessions: () => ({
       activeConversationId: shallowRef('chat-1'),
       activeInput: shallowRef(''), activeMessages: shallowRef([]),
-      activePendingActions: shallowRef([]), activeStatus: shallowRef('ready'),
+      activePendingActions: shallowRef([]), activeFollowUps: shallowRef([]), activeFollowUpNotice: shallowRef(''), activeFollowUpsPaused: shallowRef(false), activeStatus: shallowRef('ready'),
       conversationSummaries: shallowRef([]), writingReferenceAttachments: shallowRef([]),
       writingReferencesLoading: shallowRef(false), writingReferencesError: shallowRef(''),
       selectedWritingReferenceAttachmentIds: shallowRef([]),

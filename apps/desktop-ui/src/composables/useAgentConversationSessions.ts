@@ -7,6 +7,13 @@ import {
   collectPendingActions,
   type PendingActionView,
 } from './useAgentCheckpointChat';
+import {
+  FOLLOW_UP_PAUSE_LABELS,
+  createAgentTurnId,
+  createFollowUpQueue,
+  evaluateAgentTurnOutcome,
+  type FollowUpQueue,
+} from './useAgentFollowUpQueue';
 import type { PlayWritingReferenceAttachment } from './useWorkspaceApi';
 
 export const MAX_WRITING_REFERENCE_ATTACHMENTS_PER_REQUEST = 8;
@@ -18,6 +25,10 @@ interface AgentConversationSession {
   updatedAt: ShallowRef<string>;
   input: ShallowRef<string>;
   chat: UseChatHelpers<UIMessage>;
+  followUps: FollowUpQueue;
+  /** Set while a turn streams; the backend accepts steers for this id only. */
+  turnId: ShallowRef<string | undefined>;
+  stopRequested: boolean;
   dispose(): void;
 }
 
@@ -59,6 +70,14 @@ export function useAgentConversationSessions(options: {
   });
   const activeMessages = computed(() => activeChat.value.messages.value);
   const activeStatus = computed<ChatStatus>(() => activeChat.value.status.value);
+  const activeFollowUps = computed(() => activeSession.value.followUps.items.value);
+  const activeFollowUpNotice = computed(() => {
+    const queue = activeSession.value.followUps;
+    return queue.notice.value
+      || (queue.pausedReason.value && queue.items.value.length ? FOLLOW_UP_PAUSE_LABELS[queue.pausedReason.value] : '');
+  });
+  const activeFollowUpsPaused = computed(() =>
+    Boolean(activeSession.value.followUps.pausedReason.value) && activeSession.value.followUps.items.value.length > 0);
   const activePendingActions = computed<PendingActionView[]>(() =>
     collectPendingActions(activeMessages.value),
   );
@@ -140,6 +159,10 @@ export function useAgentConversationSessions(options: {
         : [...selectedWritingReferenceAttachmentIds.value, id];
   }
 
+  /**
+   * Sends the input, or queues it as a follow-up while a turn is running
+   * (the composer's send shortcut queues by default during a run).
+   */
   async function sendCurrentInput() {
     const session = activeSession.value;
     const text = session.input.value.trim();
@@ -151,28 +174,151 @@ export function useAgentConversationSessions(options: {
     const writingReferenceAttachmentIds = [
       ...selectedWritingReferenceAttachmentIds.value,
     ];
-    await session.chat.sendMessage(
-      { text },
-      {
-        body: {
-          sessionId: session.id,
-          writingReferenceAttachmentIds,
-          editContext: {
-            exactWritablePaths: options.getExactWritablePaths?.() ?? [],
+    session.input.value = '';
+    if (activeSessionId.value === session.id) clearSelectedWritingReferences();
+    if (isBusy(session)) {
+      session.followUps.notice.value = '';
+      session.followUps.enqueue(text, writingReferenceAttachmentIds);
+      return;
+    }
+    // A fresh author send means the author has seen why the queue paused.
+    session.followUps.pausedReason.value = undefined;
+    try {
+      await runTurn(session, text, writingReferenceAttachmentIds);
+    } catch (caught) {
+      // Give the author their draft and selection back to retry.
+      if (!session.input.value) session.input.value = text;
+      if (activeSessionId.value === session.id && !selectedWritingReferenceAttachmentIds.value.length) {
+        selectedWritingReferenceAttachmentIds.value = writingReferenceAttachmentIds;
+      }
+      throw caught;
+    }
+  }
+
+  /** Adds the input to the running turn; falls back to the front of the queue when too late. */
+  async function steerCurrentInput() {
+    const session = activeSession.value;
+    const text = session.input.value.trim();
+    if (!text) return;
+    if (!isBusy(session)) {
+      await sendCurrentInput();
+      return;
+    }
+    session.input.value = '';
+    const accepted = await trySteer(session, text);
+    if (!accepted) {
+      session.followUps.enqueue(text, [], true);
+      session.followUps.notice.value = '本轮已在收尾，插话已改为排队，会在本轮结束后发送。';
+    }
+  }
+
+  async function steerQueuedFollowUp(id: string) {
+    const session = activeSession.value;
+    const item = session.followUps.items.value.find((candidate) => candidate.id === id);
+    if (!item) return;
+    if (!isBusy(session) || !(await trySteer(session, item.text))) {
+      session.followUps.notice.value = '本轮已结束或正在收尾，这条消息保留在排队中。';
+      return;
+    }
+    session.followUps.remove(id);
+  }
+
+  function editQueuedFollowUp(id: string, text: string) {
+    activeSession.value.followUps.edit(id, text);
+  }
+
+  function removeQueuedFollowUp(id: string) {
+    activeSession.value.followUps.remove(id);
+  }
+
+  function moveQueuedFollowUp(id: string, offset: -1 | 1) {
+    activeSession.value.followUps.move(id, offset);
+  }
+
+  async function resumeFollowUps() {
+    const session = activeSession.value;
+    session.followUps.pausedReason.value = undefined;
+    session.followUps.notice.value = '';
+    if (!isBusy(session)) await drainFollowUps(session);
+  }
+
+  async function trySteer(session: AgentConversationSession, text: string): Promise<boolean> {
+    const turnId = session.turnId.value;
+    if (!turnId) return false;
+    try {
+      const result = await oanClient.steerAgentTurn(session.id, turnId, text);
+      if (result.status === 'accepted') {
+        session.followUps.notice.value = '';
+        return true;
+      }
+      return false;
+    } catch (caught) {
+      session.followUps.notice.value = `插话发送失败：${toErrorMessage(caught)}`;
+      return false;
+    }
+  }
+
+  async function runTurn(
+    session: AgentConversationSession,
+    text: string,
+    writingReferenceAttachmentIds: string[],
+  ) {
+    const turnId = createAgentTurnId();
+    session.turnId.value = turnId;
+    session.stopRequested = false;
+    try {
+      await session.chat.sendMessage(
+        { text },
+        {
+          body: {
+            sessionId: session.id,
+            turnId,
+            writingReferenceAttachmentIds,
+            editContext: {
+              exactWritablePaths: options.getExactWritablePaths?.() ?? [],
+            },
           },
         },
-      },
+      );
+    } finally {
+      if (session.turnId.value === turnId) session.turnId.value = undefined;
+    }
+    const outcome = evaluateAgentTurnOutcome(
+      session.chat.messages.value,
+      session.chat.status.value,
+      session.stopRequested,
     );
+    for (const steer of [...outcome.rejectedSteers].reverse()) session.followUps.enqueue(steer, [], true);
+    if (outcome.rejectedSteers.length) {
+      session.followUps.notice.value = '有插话在本轮结束前没来得及送达，已放到排队最前面。';
+    }
+    if (outcome.pause) {
+      session.followUps.pausedReason.value = outcome.pause;
+    }
     if (session.chat.status.value === 'error') {
       throw session.chat.error.value ?? new Error('The conversation request failed.');
     }
-    session.input.value = '';
-    if (activeSessionId.value === session.id) clearSelectedWritingReferences();
     updateTitleFromPrompt(session, text);
     touchConversation(session);
+    if (!outcome.pause) await drainFollowUps(session);
+  }
+
+  async function drainFollowUps(session: AgentConversationSession) {
+    if (session.followUps.pausedReason.value) return;
+    const next = session.followUps.shift();
+    if (!next) return;
+    try {
+      await runTurn(session, next.text, next.writingReferenceAttachmentIds);
+    } catch (caught) {
+      // A failed follow-up stays first in line; the author decides when to retry.
+      session.followUps.enqueue(next.text, next.writingReferenceAttachmentIds, true);
+      session.followUps.pausedReason.value = 'failed';
+      session.followUps.notice.value = `排队消息发送失败：${toErrorMessage(caught)}`;
+    }
   }
 
   function stop() {
+    activeSession.value.stopRequested = true;
     void activeChat.value.stop();
   }
 
@@ -182,6 +328,9 @@ export function useAgentConversationSessions(options: {
     activeMessages,
     activePendingActions,
     activeStatus,
+    activeFollowUps,
+    activeFollowUpNotice,
+    activeFollowUpsPaused,
     conversationSummaries,
     writingReferenceAttachments,
     writingReferencesLoading,
@@ -192,6 +341,12 @@ export function useAgentConversationSessions(options: {
     refreshWritingReferences,
     selectConversation,
     sendCurrentInput,
+    steerCurrentInput,
+    steerQueuedFollowUp,
+    editQueuedFollowUp,
+    removeQueuedFollowUp,
+    moveQueuedFollowUp,
+    resumeFollowUps,
     stop,
     toggleWritingReferenceAttachment,
   };
@@ -218,6 +373,9 @@ function createConversationSession(): AgentConversationSession {
     updatedAt: shallowRef(now),
     input: shallowRef(''),
     chat,
+    followUps: createFollowUpQueue(),
+    turnId: shallowRef<string | undefined>(),
+    stopRequested: false,
     dispose() {
       void chat.stop();
       scope.stop();
@@ -227,6 +385,11 @@ function createConversationSession(): AgentConversationSession {
 
 function createConversationId(): string {
   return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isBusy(session: AgentConversationSession): boolean {
+  const status = session.chat.status.value;
+  return status === 'submitted' || status === 'streaming';
 }
 
 function touchConversation(session: AgentConversationSession) {
