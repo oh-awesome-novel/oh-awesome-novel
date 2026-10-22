@@ -93,7 +93,7 @@
 
 ## Planned Tasks
 
-当前没有 Planned task。
+- [1350 Steer, Follow-up And Model Reasoning Visibility](1350.md)
 
 其余剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
 
