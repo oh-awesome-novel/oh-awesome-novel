@@ -40,12 +40,12 @@ export function useForge(options: {
     const current = epoch;
     await run(async () => { const result = await api.createForgeDraft({ idea, expectedWorkspaceRoot: options.workspaceRoot.value }); if (current === epoch) { draft.value = result.draft; accepted.value = false; pendingStatus.value = ''; drafts.value = [result.draft, ...drafts.value]; } });
   }
-  async function mutate(action: 'discuss' | 'update' | 'plan' | 'write' | 'propose', extra: { message?: string; brief?: ForgeBrief; plan?: Record<string, unknown> } = {}) {
+  async function mutate(action: 'discuss' | 'update' | 'plan' | 'write' | 'propose', extra: { selection?: {questionId: string; optionIndices: number[]}; message?: string; brief?: ForgeBrief; plan?: Record<string, unknown> } = {}) {
     const selected = draft.value; if (!selected) return;
     const current = epoch;
     const input = { expectedRevision: selected.revision, expectedWorkspaceRoot: options.workspaceRoot.value };
     await run(async () => {
-      const result = action === 'discuss' ? await api.discussForgeDraft(selected.id, { ...input, message: extra.message ?? '' })
+      const result = action === 'discuss' ? await api.discussForgeDraft(selected.id, { ...input, message: extra.message ?? '', ...(extra.selection ? {selection: extra.selection} : {}) })
         : action === 'update' ? await api.updateForgeDraft(selected.id, { ...input, ...(extra.plan ? { plan: extra.plan } : {}), ...(extra.brief ? { edits: extra.brief.items.filter(item => { const before = selected.brief.items.find(candidate => candidate.key === item.key); return !before || before.value !== item.value || before.locked !== item.locked; }).map(({ key, value, label, locked }) => ({ key, value, label, ...(locked !== undefined ? { locked } : {}) })) } : {}) })
         : action === 'plan' ? await api.planForgeDraft(selected.id, input)
         : action === 'write' ? await api.writeForgeDraft(selected.id, input)

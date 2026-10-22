@@ -14,7 +14,7 @@ export interface ForgeClientMethods {
   listForgeDrafts(): Promise<{ drafts: ForgeDraft[] }>;
   readForgeDraft(id: string): Promise<{ draft: ForgeDraft }>;
   createForgeDraft(input: { idea: string; expectedWorkspaceRoot: string }): Promise<{ draft: ForgeDraft }>;
-  discussForgeDraft(id: string, input: ForgeMutation & { message: string }): Promise<{ draft: ForgeDraft }>;
+  discussForgeDraft(id: string, input: ForgeMutation & { message: string; selection?: {questionId: string; optionIndices: number[]} }): Promise<{ draft: ForgeDraft }>;
   updateForgeDraft(id: string, input: ForgeMutation & { edits?: Array<{ key: string; value: string; label?: string; locked?: boolean }>; plan?: Record<string, unknown> }): Promise<{ draft: ForgeDraft }>;
   planForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft }>;
   writeForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft }>;

@@ -80,6 +80,7 @@ watch(
 );
 const activeFilePath = shallowRef('');
 const conversations = useAgentConversationSessions({
+  getWorkspacePath: () => props.workspace.path,
   getExactWritablePaths: () => activeFilePath.value ? [activeFilePath.value] : [],
 });
 const followUpControls = computed<AgentFollowUpControls>(() => ({
@@ -551,7 +552,7 @@ async function refreshPendingActionSurface() {
   ]);
 }
 
-watch(() => props.workspace.path, () => conversations.selectCanonicalWritingSources([]));
+watch(() => props.workspace.path, () => { void conversations.refreshCanonicalWritingSources(true); });
 
 function activateForgeWritingSources(paths: string[]) {
   conversations.selectCanonicalWritingSources(paths);

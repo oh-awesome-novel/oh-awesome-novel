@@ -1,3 +1,5 @@
+import { saveCanonicalWritingSources } from './canonical-writing-selection.js';
+import { selectCanonicalWritingSourcePaths } from './canonical-writing-context.js';
 import { freezePlayPermanentContext } from './play-frozen-context.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -56,7 +58,10 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
             if (!file || createHash('sha256').update(file.content).digest('hex') !== change.draft.sha256) throw new Error('Accepted Forge files changed; review the current setting before starting.');
           }
           workspace(root, body);
-          if (body.mode === 'writing') return context.json({ draft, sourcePaths });
+          if (body.mode === 'writing') {
+            const selectedPaths = await saveCanonicalWritingSources(root, selectCanonicalWritingSourcePaths(sourcePaths));
+            return context.json({ draft, sourcePaths: selectedPaths });
+          }
           if (body.mode !== 'play') throw new Error('Unknown Forge handoff.');
           const sessionId = `play_${draft.id.slice(6)}`;
           let session = createPlaySessionDraft({ id: sessionId, title: draft.plan.title,
@@ -90,7 +95,19 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
         }
         if (name === 'discuss') {
           const message = text(body.message, 12000);
-          const result = parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(draft.brief)}\n作者最初想法：${draft.idea}\n作者本轮回答：${message}`,signal,root), draft.brief);
+          const authorStatements = [message];
+          if (body.selection !== undefined) {
+            const selection = body.selection as {questionId?: unknown; optionIndices?: unknown};
+            if (!selection || typeof selection !== 'object' || Array.isArray(selection)) throw new Error('Invalid Forge selection.');
+            const question = draft.questions.find(question => question.id === selection.questionId);
+            const indices = selection.optionIndices;
+            if (!question || !Array.isArray(indices) || indices.length < 1 || indices.length > question.options.length
+              || new Set(indices).size !== indices.length || (question.kind !== 'multi' && indices.length !== 1)
+              || indices.some(index => !Number.isInteger(index) || index < 0 || index >= question.options.length)) throw new Error('Invalid Forge selection.');
+            // Resolve labels and samples from the current host-owned draft; request text cannot forge them.
+            authorStatements.push(...indices.flatMap(index => { const option = question.options[index]!; return [option.label, option.sample, ...(option.detail ? [option.detail] : [])]; }));
+          }
+          const result = parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(draft.brief)}\n作者最初想法：${draft.idea}\n作者本轮回答：${message}\n作者已确认的完整原文表达（草图引用时保留完整原句，不截取否定句）：${JSON.stringify(authorStatements)}`,signal,root), draft.brief, authorStatements);
           draft = {...draft,...result, stage:'discuss'}; delete draft.plan; delete draft.chunks;
         } else if (name === 'edit') {
           if (body.edits !== undefined) {
@@ -154,9 +171,9 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
       try {
         const root=options.getWorkspaceRoot(); const body=await request(context); workspace(root,body);
         const idea=text(body.idea,12000); const id=`forge_${randomUUID()}`;
-        const brief=createEmptyForgeBrief();
+        const brief=applyForgeBriefEdits(createEmptyForgeBrief(),[{key:'play',label:'作者最初想法',value:idea}]);
         const draft:ForgeDraft={schemaVersion:1,id,revision:0,idea,stage:'discuss',brief,questions:[],reply:'说说你想创造的角色与舞台。'};
-        const result=parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(brief)}\n作者想法：${idea}`,context.req.raw.signal,root),brief);
+        const result=parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(brief)}\n作者想法：${idea}`,context.req.raw.signal,root),brief,[idea]);
         Object.assign(draft,result); workspace(root,body); await saveForgeDraft(root,draft); return context.json({draft},201);
       } catch(e) {return failure(context,e);}
     },

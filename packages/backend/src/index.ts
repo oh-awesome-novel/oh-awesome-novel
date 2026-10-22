@@ -1,3 +1,6 @@
+import { playContextHistory } from './play-context-history.js';
+import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
+export { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 import { askInPlayContext } from './play-context-question.js';
 export { askInPlayContext } from './play-context-question.js';
 import { freezePlayPermanentContext } from './play-frozen-context.js';
@@ -687,6 +690,21 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.delete('/api/provider-config/:id', (context) =>
     handleDeleteProviderConfig(options, state, context.req.param('id') ?? '', context));
   app.get('/api/workspace', (context) => handleGetActiveWorkspace(options, state, context));
+  app.get('/api/workspace/writing-sources', async (context) => {
+    try {
+      const root = requireActiveWorkspaceRoot(options, state);
+      if (context.req.query('workspacePath') !== root) return jsonResponse(context, 409, { error: 'Writing reference workspace changed.' });
+      return jsonResponse(context, 200, { sourcePaths: await readCanonicalWritingSources(root) });
+    } catch (error) { return jsonResponse(context, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  });
+  app.put('/api/workspace/writing-sources', async (context) => {
+    try {
+      const root = requireActiveWorkspaceRoot(options, state);
+      const body = await readJsonBody(context);
+      if (body.workspacePath !== root) return jsonResponse(context, 409, { error: 'Writing reference workspace changed.' });
+      return jsonResponse(context, 200, { sourcePaths: await saveCanonicalWritingSources(root, body.sourcePaths) });
+    } catch (error) { return jsonResponse(context, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  });
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/search', async (context) => {
@@ -1820,7 +1838,7 @@ async function handleCheckProviderConfig(
     return jsonResponse(context, 400, { error: 'API key is required.' });
   }
 
-  const result = await checkOpenAiCompatibleProvider({ baseUrl, apiKey, model });
+  const result = await checkProviderConnection({ kind, baseUrl, apiKey, model });
   return jsonResponse(context, 200, result);
 }
 
@@ -7125,6 +7143,7 @@ function isSupportedProviderKind(value: string): value is LlmProviderKind {
   return [
     'openai',
     'openai-compatible',
+    'anthropic',
     'deepseek',
     'opencode-go',
     'xiaomi-mimo',
@@ -7146,6 +7165,7 @@ function isComposerSubmitShortcutPreference(
 function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
   const presets: Partial<Record<LlmProviderKind, string>> = {
     openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
     deepseek: 'https://api.deepseek.com',
     'opencode-go': 'https://api.opencodego.com/v1',
     'xiaomi-mimo': 'https://api.mimo.mi.com/v1',
@@ -7209,7 +7229,9 @@ async function fetchProviderModelList(input: {
 
   const modelsUrl = new URL('models', ensureTrailingSlash(input.baseUrl)).toString();
   const modelsResponse = await fetch(modelsUrl, {
-    headers: createProviderAuthHeaders(input.apiKey),
+    headers: input.kind === 'anthropic'
+      ? { 'x-api-key': input.apiKey ?? '', 'anthropic-version': '2023-06-01' }
+      : createProviderAuthHeaders(input.apiKey),
   });
   const data = await modelsResponse.json() as unknown;
 
@@ -7280,6 +7302,8 @@ function extractOpenAiCompatibleModels(data: unknown): LlmProviderModel[] {
 
       if (typeof item.name === 'string') {
         model.displayName = item.name;
+      } else if (typeof item.display_name === 'string') {
+        model.displayName = item.display_name;
       }
 
       if (typeof item.context_length === 'number') {
@@ -7344,7 +7368,8 @@ function readProviderErrorMessage(data: unknown): string | undefined {
   return undefined;
 }
 
-async function checkOpenAiCompatibleProvider(input: {
+async function checkProviderConnection(input: {
+  kind: LlmProviderKind;
   baseUrl: string;
   apiKey?: string;
   model: string;
@@ -7360,24 +7385,21 @@ async function checkOpenAiCompatibleProvider(input: {
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
   try {
-    const chatUrl = new URL('chat/completions', ensureTrailingSlash(input.baseUrl)).toString();
+    const chatUrl = new URL(input.kind === 'anthropic' ? 'messages' : 'chat/completions', ensureTrailingSlash(input.baseUrl)).toString();
     const providerResponse = await fetch(chatUrl, {
       method: 'POST',
       headers: {
-        ...createProviderAuthHeaders(input.apiKey),
+        ...(input.kind === 'anthropic'
+          ? { 'x-api-key': input.apiKey ?? '', 'anthropic-version': '2023-06-01' }
+          : createProviderAuthHeaders(input.apiKey)),
         'content-type': 'application/json',
       },
       body: JSON.stringify({
         model: input.model,
+        ...(input.kind === 'anthropic' ? { system: 'You are a connectivity check. Reply with OK only.' } : {}),
         messages: [
-          {
-            role: 'system',
-            content: 'You are a connectivity check. Reply with OK only.',
-          },
-          {
-            role: 'user',
-            content: 'Reply OK.',
-          },
+          ...(input.kind === 'anthropic' ? [] : [{ role: 'system', content: 'You are a connectivity check. Reply with OK only.' }]),
+          { role: 'user', content: 'Reply OK.' },
         ],
         max_tokens: 4,
         temperature: 0,
@@ -9017,7 +9039,7 @@ async function handlePlayCompaction(options: NovelBackendOptions, state: Backend
       await ensureProviderConfigLoaded(options, state);
       const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
       if (!providerConfig) throw new Error('Configure a provider before generating an archive.');
-      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, request: question.request, usageSessionId: `play-${session.id}`, abortSignal: context.req.raw.signal });
+      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, priorMessages: question.priorMessages, request: question.request, usageSessionId: `play-${session.id}`, abortSignal: context.req.raw.signal });
       return result.assistantMessage?.content ?? '';
     });
     const instruction = buildPlayCompactionPrompt(session);
@@ -9043,7 +9065,7 @@ async function freezePlayInitialContext(workspaceRoot: string, session: PlaySess
   await freezePlayPermanentContext(workspaceRoot, session, context.content);
 }
 
-function playContinuationMessages(session: PlaySession): Array<{ role: 'user'; content: string }> {
+function playContinuationMessages(session: PlaySession): Array<{ role: 'user' | 'assistant'; content: string }> {
   const content = session.metadataExtensions.playContinuation;
-  return isPlayCompactionActive(session) && typeof content === 'string' ? [{ role: 'user', content }] : [];
+  return [...(isPlayCompactionActive(session) && typeof content === 'string' ? [{ role: 'user' as const, content }] : []), ...playContextHistory(session)];
 }

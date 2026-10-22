@@ -2086,6 +2086,8 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
   createPlayWritingReferenceAttachment(
     input: CreatePlayWritingReferenceAttachmentInput,
   ): Promise<{ attachment: PlayWritingReferenceAttachment; files: string[] }>;
+  readCanonicalWritingSources(workspacePath: string): Promise<{ sourcePaths: string[] }>;
+  saveCanonicalWritingSources(workspacePath: string, sourcePaths: string[]): Promise<{ sourcePaths: string[] }>;
   listPlayWritingReferenceAttachments(): Promise<{
     attachments: PlayWritingReferenceAttachment[];
   }>;
@@ -2236,7 +2238,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   const requestJson = <T>(
     path: string,
     requestOptions: {
-      method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+      method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
       body?: unknown;
       signal?: AbortSignal;
     } = {},
@@ -2935,6 +2937,8 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         body,
       }).then(parsePlayWritingReferenceCreateResponse);
     },
+    readCanonicalWritingSources: (workspacePath) => requestJson<unknown>(`/api/workspace/writing-sources?workspacePath=${encodeURIComponent(workspacePath)}`).then(parseCanonicalWritingSelection),
+    saveCanonicalWritingSources: (workspacePath, sourcePaths) => requestJson<unknown>('/api/workspace/writing-sources', { method: 'PUT', body: { workspacePath, sourcePaths } }).then(parseCanonicalWritingSelection),
     listPlayWritingReferenceAttachments: () =>
       requestJson<unknown>('/api/workspace/writing-references')
         .then(parsePlayWritingReferenceListResponse),
@@ -8193,7 +8197,7 @@ async function requestJsonWith<T>(
   backendBaseUrl: string,
   path: string,
   options: {
-    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     body?: unknown;
     signal?: AbortSignal;
   },
@@ -8293,3 +8297,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export { parseNovelLintScan, parseNovelLintReview } from './novel-lint';
+
+function parseCanonicalWritingSelection(value: unknown): { sourcePaths: string[] } {
+  if (!isRecord(value) || !Array.isArray(value.sourcePaths) || value.sourcePaths.length > 16 || new Set(value.sourcePaths).size !== value.sourcePaths.length || !value.sourcePaths.every(path => typeof path === 'string' && /^(?:characters\/[a-zA-Z0-9_-]+\/(?:profile\.md|roster-profile\.yaml)|world\/(?:rules\.md|places\/[a-zA-Z0-9_-]+\.md))$/.test(path))) throw new Error('Invalid canonical Writing selection response.');
+  return { sourcePaths: [...value.sourcePaths] };
+}

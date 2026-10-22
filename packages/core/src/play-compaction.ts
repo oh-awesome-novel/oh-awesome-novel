@@ -40,10 +40,40 @@ export function parsePlayCompaction(response: string): PlayCompactionData {
 export function playCompactionSource(session: PlaySession): string {
   return JSON.stringify({ ids: session.selectedTurnIds, state: session.playLocalState, events: session.events.filter(e => session.turnArtifacts.filter(t => session.selectedTurnIds.includes(t.id)).some(t => t.eventIds.includes(e.id))), messages: session.transcript });
 }
+/** Current claims are field-bound to the selected state, never validated by old prose. */
+function currentCompactionEvidence(session: PlaySession) {
+  const state = session.playLocalState;
+  const scene = record(state.currentScene) ? state.currentScene : {};
+  const nonempty = (value: unknown): string[] => typeof value === 'string' && value.trim() ? [value] : [];
+  const names = (value: unknown): string[] => Array.isArray(value) && value.every(v => typeof v === 'string') ? value : [];
+  const place = [...nonempty(scene.timeAndPlace), ...nonempty(state.timeAndPlace), ...nonempty(state.currentScene), ...nonempty(scene.location), ...nonempty(state.location)];
+  const characters: Record<string, { identity: string[]; relationshipChange: string[]; currentSituation: string[] }> = Object.create(null);
+  const characterStates = record(state.characters) ? state.characters : {};
+  for (const [name, value] of Object.entries(characterStates)) {
+    if (!record(value)) continue;
+    characters[name] = {
+      identity: nonempty(value.identity),
+      relationshipChange: nonempty(value.relationshipChange),
+      // A serialized per-character ledger preserves quantitative conditions without asking the model to paraphrase them.
+      currentSituation: [...nonempty(value.currentSituation), JSON.stringify(value)],
+    };
+  }
+  return { characters,
+    currentScene: {
+      timeAndPlace: place,
+      presentCharacters: names(scene.presentCharacters ?? state.presentCharacters),
+      atmosphere: [...nonempty(scene.atmosphere), ...nonempty(state.atmosphere)],
+      immediateCrisis: [...nonempty(scene.immediateCrisis), ...nonempty(state.immediateCrisis)],
+    },
+    unresolvedThreads: names(state.unresolvedThreads),
+  };
+}
 export function buildPlayCompactionPrompt(session: PlaySession): string {
   return ['暂停推演，生成五维剧情存档，不续写。输出 <剧情存档>JSON</剧情存档>。',
     'JSON: {version:1, turnsCovered:number, characters:[{name,identity,relationshipChange,currentSituation}], chronicle:string[], unresolvedThreads:string[], currentScene:{timeAndPlace,presentCharacters:string[],atmosphere,immediateCrisis}, voiceAndStyle:{pov,rhythm,tonePoints:string[]}, resourceState:object}.',
-    '人物的 name/identity/relationshipChange/currentSituation 与 currentScene 的 timeAndPlace/presentCharacters/immediateCrisis 必须逐字引用历史或初始设定；没有依据填 未记录。chronicle 与 unresolvedThreads 每项必须是历史中逐字存在的引文，不得补写事实。resourceState 必须逐项完整保留给定状态，包括不可逆伤势、已消耗资源与未兑现约定。所有角色与场景描述只依据历史。',
+    'name 可引用历史或初始设定。人物 identity/relationshipChange/currentSituation 和 currentScene 各字段只能从下方对应角色、对应字段的当前证据白名单逐字选择；没有值填 未记录，presentCharacters 无记录填空数组；白名单已有证据不得用 未记录 省略，所有当前角色与未结线索必须保留。不得把历史的健康、资源存量、关系或旧危机当成当前事实，即使它们是逐字引文。currentSituation 可以使用白名单中的完整角色状态 JSON 字符串。',
+    'chronicle 每项必须逐字引用历史，允许记载已经改变的过去事实。unresolvedThreads 只能选择当前状态未结线索白名单中且历史存在逐字引文的条目；缺少字面历史依据必须报错修正，不得补写或静默省略。不得把已经解决的旧承诺列为未结线索。resourceState 必须逐项完整保留当前状态，包括不可逆伤势、已消耗资源与未兑现约定。',
+    `当前字段证据白名单: ${JSON.stringify(currentCompactionEvidence(session))}`,
     `turnsCovered 必须为 ${session.selectedTurnIds.length}.`,
     `resourceState: ${JSON.stringify(session.playLocalState)}`,
     `选中分支历史: ${playCompactionSource(session)}`].join('\n');
@@ -55,10 +85,26 @@ export function auditPlayCompaction(session: PlaySession, data: PlayCompactionDa
   // Canonical JSON comparison makes object key order irrelevant while retaining exact values.
   const stable = (v: unknown): string => JSON.stringify(v, (_k, value) => record(value) ? Object.fromEntries(Object.entries(value).sort(([a],[b]) => a.localeCompare(b))) : value);
   if (stable(data.resourceState) !== stable(session.playLocalState)) errors.push('Resource/state ledger changed or omitted facts.');
-  for (const quote of [...data.chronicle, ...data.unresolvedThreads]) if (!history.includes(quote)) errors.push(`Unverified historical quote: ${quote}`);
+  for (const quote of data.chronicle) if (!history.includes(quote)) errors.push(`Unverified historical quote: ${quote}`);
   const factualSource = [history, session.sceneStart, session.userPersona ?? '', getPlayFrozenSystemPrompt(session)].join('\n');
-  const facts = [...data.characters.flatMap(c => [c.name, c.identity, c.relationshipChange, c.currentSituation]), data.currentScene.timeAndPlace, ...data.currentScene.presentCharacters, data.currentScene.immediateCrisis];
-  for (const fact of facts) if (fact !== '未记录' && !factualSource.includes(fact)) errors.push(`Unverified character/scene fact: ${fact}`);
+  const current = currentCompactionEvidence(session);
+  const verifyCurrent = (field: string, value: string, allowed: readonly string[]) => {
+    if ((value === '未记录' && allowed.length > 0) || (value !== '未记录' && !allowed.includes(value))) errors.push(`Unverified current fact (${field}): ${value}`);
+  };
+  for (const name of Object.keys(current.characters)) if (!data.characters.some(character => character.name === name)) errors.push(`Missing current character ledger: ${name}`);
+  for (const character of data.characters) {
+    if (character.name !== '未记录' && !factualSource.includes(character.name) && !Object.hasOwn(current.characters, character.name)) errors.push(`Unverified character name: ${character.name}`);
+    const evidence = Object.hasOwn(current.characters, character.name) ? current.characters[character.name] : undefined;
+    for (const field of ['identity', 'relationshipChange', 'currentSituation'] as const) verifyCurrent(`characters.${character.name}.${field}`, character[field], evidence?.[field] ?? []);
+  }
+  for (const field of ['timeAndPlace', 'atmosphere', 'immediateCrisis'] as const) verifyCurrent(`currentScene.${field}`, data.currentScene[field], current.currentScene[field]);
+  for (const name of data.currentScene.presentCharacters) verifyCurrent('currentScene.presentCharacters', name, current.currentScene.presentCharacters);
+  for (const thread of data.unresolvedThreads) {
+    if (!current.unresolvedThreads.includes(thread)) errors.push(`Unverified current unresolved thread: ${thread}`);
+    if (!history.includes(thread)) errors.push(`Unverified historical unresolved thread: ${thread}`);
+  }
+  for (const name of current.currentScene.presentCharacters) if (!data.currentScene.presentCharacters.includes(name)) errors.push(`Missing current present character: ${name}`);
+  for (const thread of current.unresolvedThreads) if (!data.unresolvedThreads.includes(thread)) errors.push(`Missing current unresolved thread: ${thread}`);
   return errors;
 }
 export function createPlayCompactionPreview(session: PlaySession, response: string): PlayCompactionPreview {

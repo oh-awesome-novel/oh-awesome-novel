@@ -20,6 +20,7 @@ export {
 } from './writing-targets';
 export type { WritingCommandTargets } from './writing-targets';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { resolveProviderReasoningEffort } from './provider-reasoning.js';
@@ -216,6 +217,14 @@ export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
     const apiKey = resolveProviderApiKey(providerConfig);
     const name = providerConfig.kind === 'custom' ? providerConfig.id : providerConfig.kind;
 
+    if (providerConfig.kind === 'anthropic') {
+      return createAnthropic({
+        ...(baseURL ? { baseURL } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
+      })(providerConfig.model);
+    }
+
     // OpenAI-compatible endpoints stream thinking as `reasoning_content`, which
     // only the compatible provider parses and replays within a tool loop.
     if (providerConfig.kind !== 'openai' && baseURL) {
@@ -406,12 +415,21 @@ async function* streamAiSdkModelResponse(
   const model = await input.resolveModel(input.providerConfig);
   const instructions = toModelSystemPrompt(request.messages);
   const reasoningEffort = resolveProviderReasoningEffort(input.providerConfig);
+  const messages = request.messages.filter(message => message.role !== 'system').map(toModelMessage);
+  // Cache metadata belongs to the provider bridge, never the domain-neutral Runtime.
+  // The newest user tail remains uncached; only the system and last committed reply
+  // form explicit breakpoints. SDK translates these to Anthropic content blocks.
+  const cache = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
+  if (input.providerConfig.kind === 'anthropic') {
+    const stableReply = messages.findLastIndex(message => message.role === 'assistant');
+    if (stableReply >= 0) messages[stableReply] = { ...messages[stableReply], providerOptions: cache };
+  }
   const result = streamText({
     model,
-    ...(instructions ? { instructions } : {}),
-    messages: request.messages
-      .filter((message) => message.role !== 'system')
-      .map(toModelMessage),
+    ...(instructions ? { instructions: input.providerConfig.kind === 'anthropic'
+      ? { role: 'system' as const, content: instructions, providerOptions: cache }
+      : instructions } : {}),
+    messages,
     tools: toModelVisibleToolSet(request.tools),
     abortSignal: request.abortSignal,
     maxRetries: 0,

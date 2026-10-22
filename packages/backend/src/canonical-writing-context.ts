@@ -2,11 +2,18 @@ import { createHash } from 'node:crypto';
 import { createWorkspaceProjection } from '@oh-awesome-novel/tools';
 import { createContextEvidence } from '@oh-awesome-novel/agent';
 import type { RuntimeContextItem } from '@oh-awesome-novel/runtime';
+const CANONICAL_WRITING_SOURCE = /^(?:characters\/[a-zA-Z0-9_-]+\/(?:profile\.md|roster-profile\.yaml)|world\/(?:rules\.md|places\/[a-zA-Z0-9_-]+\.md))$/;
+/** Host-selected handoff uses the same allowlist and budget as chat ingestion. */
+export function selectCanonicalWritingSourcePaths(paths: readonly string[]): string[] {
+  const priority = (path: string) => path === 'world/rules.md' ? 0 : path.endsWith('/profile.md') ? 1 : path.startsWith('world/places/') ? 2 : 3;
+  return [...new Set(paths)].filter(path => CANONICAL_WRITING_SOURCE.test(path))
+    .sort((left, right) => priority(left) - priority(right) || left.localeCompare(right)).slice(0, 16);
+}
 export interface CanonicalWritingContext { items: RuntimeContextItem[]; assertFresh(): Promise<void> }
 export async function loadCanonicalWritingContext(workspaceRoot: string, value: unknown): Promise<CanonicalWritingContext> {
   const paths = value ?? [];
   if (!Array.isArray(paths) || paths.length > 16 || new Set(paths).size !== paths.length
-    || !paths.every(path => typeof path === 'string' && /^(?:characters\/[a-zA-Z0-9_-]+\/(?:profile\.md|roster-profile\.yaml)|world\/(?:rules\.md|places\/[a-zA-Z0-9_-]+\.md))$/.test(path))) {
+    || !paths.every(path => typeof path === 'string' && CANONICAL_WRITING_SOURCE.test(path))) {
     throw new Error('canonicalWritingSourcePaths must contain at most 16 unique canonical character or world paths.');
   }
   if (!paths.length) return { items: [], async assertFresh() {} };

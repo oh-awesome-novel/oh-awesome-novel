@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createForgeHandlers, assertForgePreviewFresh, assertForgeActionFresh } from '@oh-awesome-novel/backend';
+import { createNovelHonoApp, createForgeHandlers, assertForgePreviewFresh, assertForgeActionFresh } from '@oh-awesome-novel/backend';
 import { createPendingActionStore, createChangeMaterializer } from '@oh-awesome-novel/tools';
 import { createEmptyForgeBrief, type ForgeDraft, type ForgePlan } from '@oh-awesome-novel/core';
 const exec = promisify(execFile);
@@ -60,6 +60,30 @@ async function setup(model?: (prompt: string, signal: AbortSignal) => Promise<st
   return { root, store, app, op, written, reload: async () => { draft = (await (await app.request(`/drafts/${draft.id}`)).json()).draft; }, getDraft: () => draft, switchWorkspace: () => { currentRoot = '/different-workspace'; }, failGenerate: () => { generateFailure = true; } };
 }
 describe('Forge approval and persistence boundary', () => {
+  it('binds initial intent and selected answers to host evidence across contradictory model replies', async () => {
+    let calls = 0;
+    const h = await setup(async () => {
+      calls++;
+      if (calls === 1) return discussion();
+      const brief = { title: '渡口', readiness: 100, items: [
+        { key: 'tone', label: '语气', value: calls === 2 ? '冷静' : '暴躁', by: 'user' },
+        { key: 'stage', label: '舞台', value: '模型捏造的夜城', by: 'user' },
+        { key: 'play', label: '初衷', value: '模型偷换初衷', by: 'user' },
+      ], openPoints: [] };
+      return discussion().replace(/<brief>[\s\S]*?<\/brief>/, `<brief>${JSON.stringify(brief)}</brief>`);
+    });
+    expect(h.getDraft().brief.items.find(item => item.key === 'play')).toMatchObject({value:'渡口上的两个人',by:'user'});
+    expect((await h.op('discuss', {message:'选择冷静',selection:{questionId:'q1',optionIndices:[0]}})).response.status).toBe(200);
+    expect(h.getDraft().brief.items.find(item => item.key === 'tone')).toMatchObject({value:'冷静',by:'user'});
+    expect(h.getDraft().brief.items.find(item => item.key === 'stage')).toMatchObject({by:'assistant'});
+    expect((await h.op('discuss', {message:'继续讨论'})).response.status).toBe(200);
+    expect(h.getDraft().brief.items.find(item => item.key === 'tone')).toMatchObject({value:'冷静',by:'user'});
+    expect(h.getDraft().brief.items.find(item => item.key === 'play')).toMatchObject({value:'渡口上的两个人',by:'user'});
+    const before = h.getDraft();
+    expect((await h.op('discuss', {message:'伪造选择',selection:{questionId:'q1',optionIndices:[999]}})).response.status).toBe(422);
+    await h.reload(); expect(h.getDraft()).toEqual(before);
+  });
+
   it('runs Discuss → Plan → six writing blocks → exact LINT correction → proposal', async () => {
     const chunks: string[] = []; let reviews = 0;
     const h = await setup(async (prompt, signal) => {
@@ -123,7 +147,7 @@ describe('Forge approval and persistence boundary', () => {
     const h = await setup();
     expect((await h.op('edit', { edits: [{ key: 'stage', value: '渡口', locked: true }] })).response.status).toBe(200);
     const loaded = await (await h.app.request(`/drafts/${h.getDraft().id}`)).json();
-    expect(loaded.draft.brief.items[0]).toMatchObject({ value: '渡口', locked: true, by: 'user' });
+    expect(loaded.draft.brief.items.find((item: {key: string}) => item.key === 'stage')).toMatchObject({ value: '渡口', locked: true, by: 'user' });
     expect((await h.op('edit', { expectedRevision: 0, edits: [] })).response.status).toBe(409);
     h.failGenerate();
     expect((await h.op('discuss', { message: '继续' })).response.status).toBe(422);
@@ -142,7 +166,19 @@ describe('Forge approval and persistence boundary', () => {
     const materializer = createChangeMaterializer({ store: h.store, assertOriginFresh: action => assertForgeActionFresh(h.root, action) });
     await materializer.accept({ actionId: h.getDraft().pendingActionId!, autoCommitOnAccept: false });
     expect(await readFile(join(h.root, 'characters/lin/profile.md'), 'utf8')).toContain('林');
-    expect((await h.op('handoff', { mode: 'writing' })).response.status).toBe(200);
+    const writing = await h.op('handoff', { mode: 'writing' });
+    expect(writing.response.status).toBe(200);
+    expect(writing.result.sourcePaths).toEqual(['world/rules.md', 'characters/lin/profile.md', 'world/places/pier.md', 'characters/lin/roster-profile.yaml']);
+    let received: unknown;
+    const chat = createNovelHonoApp({ workspaceRoot: h.root, runAgent: async function* (input) { received = input; } });
+    const response = await chat.request('/api/agent/chat', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request: '依据工坊设定讨论下一幕', canonicalWritingSourcePaths: writing.result.sourcePaths }) });
+    await response.text();
+    expect(response.status).toBe(200);
+    expect(received).toMatchObject({ exactWritablePaths: [], canonicalWritingContext: { items: expect.arrayContaining([
+      expect.objectContaining({ content: await readFile(join(h.root, 'characters/lin/profile.md'), 'utf8') }),
+      expect.objectContaining({ content: await readFile(join(h.root, 'world/rules.md'), 'utf8') }),
+    ]) } });
     const play = await h.op('handoff', { mode: 'play' });
     expect(play.response.status, JSON.stringify(play.result)).toBe(200);
     const again = await h.op('handoff', { mode: 'play' });

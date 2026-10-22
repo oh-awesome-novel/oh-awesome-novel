@@ -9,6 +9,14 @@ beforeEach(() => { vi.resetAllMocks(); api.listForgeDrafts.mockResolvedValue({ d
 async function loaded() { const wrapper = mount(ForgeWizardModal, { props: { workspaceRoot: '/novel', providerConfigured: true } }); await flushPromises(); await wrapper.get('#forge-drafts').setValue('forge-one'); await flushPromises(); return wrapper; }
 function button(wrapper: ReturnType<typeof mount>, text: string) { const found = wrapper.findAll('button').find(candidate => candidate.text() === text); if (!found) throw new Error(`Missing ${text}`); return found; }
 describe('guided Forge wizard', () => {
+  it('sends the selected question and option identity for host verification', async () => {
+    const wrapper = await loaded(); api.discussForgeDraft.mockResolvedValue({draft:draft()});
+    await wrapper.get('.option').trigger('click'); await flushPromises();
+    expect(api.discussForgeDraft).toHaveBeenCalledWith('forge-one', expect.objectContaining({
+      selection:{questionId:'q1',optionIndices:[0]}, expectedRevision:2,
+    })); wrapper.unmount();
+  });
+
   it('restores drafts and sends author edits and locks with the displayed revision', async () => {
     const wrapper = await loaded(); expect(wrapper.text()).toContain('跟紧我。');
     await button(wrapper, '锁定此项').trigger('click'); await flushPromises();

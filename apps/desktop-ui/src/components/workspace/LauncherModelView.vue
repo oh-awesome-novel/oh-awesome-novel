@@ -81,6 +81,7 @@ const providerPresets: ProviderPreset[] = [
     baseUrl: 'http://127.0.0.1:11434/v1',
     local: true,
   },
+  { kind: 'anthropic', label: 'Anthropic', defaultId: 'anthropic', defaultModel: '', baseUrl: 'https://api.anthropic.com/v1' },
   {
     kind: 'custom',
     label: '自定义 OpenAI-compatible',

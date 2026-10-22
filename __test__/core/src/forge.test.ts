@@ -20,6 +20,37 @@ describe('guided Forge contracts', () => {
     }
     expect(brief.readiness).toBe(40);
   });
+  it('attributes only complete host-evidenced statements and preserves prior author facts', () => {
+    const previous = applyForgeBriefEdits(createEmptyForgeBrief(), [{ key: 'stage', value: '不是夜城，而是渡口', locked: false }]);
+    const parsed = parseForgeDiscussResponse(response({ title: '渡口', readiness: 100, items: [
+      { key: 'stage', label: '舞台', value: '夜城', by: 'user' },
+      { key: 'lead', label: '角色', value: '我等你。', by: 'assistant' },
+      { key: 'bond', label: '关系', value: '朋友', by: 'user' },
+      { key: 'tone', label: '语调', value: '冷漠', by: 'user' },
+    ], openPoints: [] }), previous, ['我等你。', '不是朋友', '并不冷漠']);
+    expect(parsed.brief.items.find(i => i.key === 'stage')).toMatchObject({ value: '不是夜城，而是渡口', by: 'user', locked: false });
+    expect(parsed.brief.items.find(i => i.key === 'lead')).toMatchObject({ value: '我等你。', by: 'user' });
+    expect(parsed.brief.items.find(i => i.key === 'bond')?.by).toBe('assistant');
+    expect(parsed.brief.items.find(i => i.key === 'tone')?.by).toBe('assistant');
+    const omitted = parseForgeDiscussResponse(response(createEmptyForgeBrief()), parsed.brief);
+    expect(omitted.brief.items.find(i => i.key === 'lead')?.by).toBe('user');
+    const edited = applyForgeBriefEdits(parsed.brief, [{ key: 'stage', value: '改在桥头' }]);
+    expect(edited.items.find(i => i.key === 'stage')?.value).toBe('改在桥头');
+  });
+  it('accepts a new complete author answer for unlocked facts while locks still win', () => {
+    const previous = applyForgeBriefEdits(createEmptyForgeBrief(), [
+      {key:'tone',value:'冷静',locked:false}, {key:'stage',value:'渡口',locked:true},
+    ]);
+    const reply = response({title:'渡口',readiness:100,items:[
+      {key:'tone',label:'语气',value:'热情',by:'assistant'},
+      {key:'stage',label:'舞台',value:'桥头',by:'assistant'},
+    ],openPoints:[]});
+    const inferred = parseForgeDiscussResponse(reply,previous);
+    expect(inferred.brief.items.find(item=>item.key==='tone')?.value).toBe('冷静');
+    const confirmed = parseForgeDiscussResponse(reply,previous,['热情','桥头']);
+    expect(confirmed.brief.items.find(item=>item.key==='tone')).toMatchObject({value:'热情',by:'user',locked:false});
+    expect(confirmed.brief.items.find(item=>item.key==='stage')).toMatchObject({value:'渡口',by:'user',locked:true});
+  });
   it('rejects duplicate XML blocks, missing samples and invalid readiness', () => {
     const text = response(createEmptyForgeBrief());
     expect(() => parseForgeDiscussResponse(text + '<reply>x</reply>')).toThrow();

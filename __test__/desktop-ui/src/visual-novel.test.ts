@@ -27,6 +27,32 @@ describe('visual novel stage', () => {
     expect(wrapper.find('.vn-background').exists()).toBe(false);
     wrapper.unmount();
   });
+  it('retains frozen cast positions and portraits and resolves aliases during streaming', async () => {
+    const image = 'data:image/png;base64,aGVsbG8=';
+    const cast = [{ characterId: 'nian', position: 'left' as const, portraitDataUrl: image }];
+    const roster = [{ id: 'nian', name: '念念', aliases: ['小念'] }];
+    const frozen = { ...turn, stageSnapshot: { ...turn.stageSnapshot, activeCharacters: cast } };
+    const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [frozen], choices: [], disabled: true, roster, portraits: { nian: 'data:image/png;base64,bmV3' } } });
+    await wrapper.setProps({ draft: '小念说：“回' });
+    expect(wrapper.find('.vn-cast .left.speaking').exists()).toBe(true);
+    expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    await wrapper.setProps({ draft: '小念说：“回来。”' });
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
+    expect(frozen.stageSnapshot.activeCharacters).toEqual(cast);
+    await wrapper.setProps({ sessionId: 'b', turns: [], roster: [], portraits: {}, draft: '另一个场景。' });
+    expect(wrapper.find('.vn-cast img').exists()).toBe(false);
+    wrapper.unmount();
+  });
+  it('uses the session roster and portrait for the first streamed turn before a snapshot exists', () => {
+    const image = 'data:image/png;base64,aGVsbG8=';
+    const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [], choices: [], disabled: true, draft: '小念说：“回来。”', roster: [{ id: 'nian', name: '念念', aliases: ['小念'] }], portraits: { nian: image } } });
+    expect(wrapper.find('.vn-cast .speaking').exists()).toBe(true);
+    expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    wrapper.unmount();
+  });
   it('retains already revealed streaming prefix while appending text', async () => {
     vi.useFakeTimers();
     const wrapper = mount(VisualNovelTextBox, { props: { beat: { text: '风', speaker: '', isDialogue: false } } });

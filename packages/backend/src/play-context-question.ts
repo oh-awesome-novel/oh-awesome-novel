@@ -1,8 +1,10 @@
+import { playContextHistory } from './play-context-history.js';
 import { getPlayFrozenSystemPrompt } from '@oh-awesome-novel/core';
 import type { PlaySession } from '@oh-awesome-novel/core';
 export interface PlayContextQuestion {
   frozenSystemPrompt: string;
   request: string;
+  priorMessages: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 /** A read-only throwaway question scoped to an exact selected-branch turn. */
 export async function askInPlayContext(
@@ -17,5 +19,5 @@ export async function askInPlayContext(
   const ids = new Set(session.selectedTurnIds.slice(0, index + 1));
   const history = session.turnArtifacts.filter(turn => ids.has(turn.id))
     .flatMap(turn => turn.messages.map(message => `【${message.speaker}】${message.content}`)).join('\n');
-  return generate({ frozenSystemPrompt: getPlayFrozenSystemPrompt(session), request: `<历史记录>\n${history}\n</历史记录>\n<暂停推演：只读辅助请求>\n${instruction}\n</暂停推演：只读辅助请求>` });
+  return generate({ priorMessages: playContextHistory(session, turnId), frozenSystemPrompt: getPlayFrozenSystemPrompt(session), request: `<历史记录>\n${history}\n</历史记录>\n<暂停推演：只读辅助请求>\n${instruction}\n</暂停推演：只读辅助请求>` });
 }

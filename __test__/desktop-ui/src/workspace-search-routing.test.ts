@@ -35,6 +35,7 @@ vi.mock(
         conversationSummaries: shallowRef([]),
         canonicalWritingSourcePaths: shallowRef([]),
         selectCanonicalWritingSources: vi.fn(),
+        refreshCanonicalWritingSources: vi.fn().mockResolvedValue(undefined),
         removeCanonicalWritingSource: vi.fn(),
         writingReferenceAttachments: shallowRef([]),
         writingReferencesLoading: shallowRef(false),

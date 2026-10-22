@@ -49,8 +49,10 @@ export function parseForgeBrief(value: unknown): ForgeBrief {
   if (typeof data.readiness !== 'number' || !Number.isFinite(data.readiness) || data.readiness < 0 || data.readiness > 100) throw new Error('Invalid readiness.');
   return { title: forgeString(data.title, 200), readiness: data.readiness, items, openPoints: forgeStrings(data.openPoints, 0, 20) };
 }
-export function parseForgeDiscussResponse(text: string, previous?: ForgeBrief): ForgeDiscussResult {
+export function parseForgeDiscussResponse(text: string, previous?: ForgeBrief, authorStatements: readonly string[] = []): ForgeDiscussResult {
   if (text.length > 200_000) throw new Error('Forge response is too large.');
+  if (authorStatements.length > 100 || authorStatements.some(value => typeof value !== 'string' || value.length > 20_000)) throw new Error('Invalid host author statements.');
+  const authorEvidence = new Set(authorStatements.map(value => value.trim()).filter(Boolean));
   const questions: ForgeQuestion[] = forgeArray(parseForgeJson(block(text, 'questions')), 2, 3).map(raw => {
     const q = forgeRecord(raw);
     if (!['single', 'multi', 'taste'].includes(String(q.kind))) throw new Error('Invalid question kind.');
@@ -64,11 +66,13 @@ export function parseForgeDiscussResponse(text: string, previous?: ForgeBrief): 
   });
   if (new Set(questions.map(q => q.id)).size !== questions.length) throw new Error('Duplicate question id.');
   const brief = parseForgeBrief(parseForgeJson(block(text, 'brief')));
-  // Attribution and locks are host-owned. Even an unchanged model item cannot acquire a user label.
+  // Attribution and locks are host-owned; model labels never establish authorship.
   brief.items = brief.items.map(item => {
     const old = previous?.items.find(p => p.key === item.key);
-    if (old?.locked || (old?.by === 'user' && old.value === item.value)) return { ...old };
-    return { ...item, by: 'assistant', locked: false };
+    if (old?.locked || (old?.by === 'user' && !authorEvidence.has(item.value))) return { ...old };
+    // Only exact, complete statements supplied by the host establish attribution.
+    // Substrings would allow a model to omit negation or add unsupported facts.
+    return { ...item, by: authorEvidence.has(item.value) ? 'user' : 'assistant', locked: false };
   });
   for (const old of previous?.items ?? []) if (!brief.items.some(i => i.key === old.key)) brief.items.push({ ...old });
   // Readiness reflects filled sketch slots; a model cannot unlock progression by claiming 100%.

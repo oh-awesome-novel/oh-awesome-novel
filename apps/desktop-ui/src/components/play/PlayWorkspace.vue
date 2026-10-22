@@ -345,7 +345,7 @@ function acceptGuidedSession(session: PlaySession): void {
         class="play-rehearsal-stage"
       >
         <button type="button" @click="visualNovelOpen = !visualNovelOpen">{{ visualNovelOpen ? '隐藏演出回放' : '视觉小说回放' }}</button>
-        <VisualNovelStage v-if="visualNovelOpen" :session-id="selectedSession.id" :scene="selectedSession.sceneStart" :turns="selectedSession.transcript" :choices="[]" :disabled="true" @close="visualNovelOpen = false" />
+        <VisualNovelStage v-if="visualNovelOpen" :session-id="selectedSession.id" :roster="selectedSession.metadataExtensions.characterRoster" :portraits="selectedSession.metadataExtensions.characterPortraits" :scene="selectedSession.sceneStart" :turns="selectedSession.transcript" :choices="[]" :disabled="true" @close="visualNovelOpen = false" />
         <PlayRehearsalWorkspace
           :scene="rehearsalScene"
           :clock="rehearsalClock"
@@ -427,6 +427,8 @@ function acceptGuidedSession(session: PlaySession): void {
         </div>
         <VisualNovelStage v-if="visualNovelOpen"
           :session-id="selectedSession.id"
+          :roster="selectedSession.metadataExtensions.characterRoster"
+          :portraits="selectedSession.metadataExtensions.characterPortraits"
           :scene="selectedSession.sceneStart"
           :turns="displaySession?.transcript ?? selectedSession.transcript"
           :choices="suggestedActions.map(action => action.userText)"

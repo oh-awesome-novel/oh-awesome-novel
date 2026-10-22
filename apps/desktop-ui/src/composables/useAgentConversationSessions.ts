@@ -44,6 +44,7 @@ export interface AgentConversationSummary {
 
 export function useAgentConversationSessions(options: {
   getExactWritablePaths?: () => string[];
+  getWorkspacePath?: () => string;
 } = {}) {
   const initialSession = createConversationSession();
   const sessions = shallowRef<AgentConversationSession[]>([initialSession]);
@@ -53,8 +54,44 @@ export function useAgentConversationSessions(options: {
   const writingReferencesError = shallowRef('');
   const selectedWritingReferenceAttachmentIds = shallowRef<string[]>([]);
   const canonicalWritingSourcePaths = shallowRef<string[]>([]);
-  function selectCanonicalWritingSources(paths: string[]) { canonicalWritingSourcePaths.value = [...new Set(paths)].slice(0, 16); }
-  function removeCanonicalWritingSource(path: string) { canonicalWritingSourcePaths.value = canonicalWritingSourcePaths.value.filter(item => item !== path); }
+  let canonicalGeneration = 0;
+  let persistence = Promise.resolve();
+  function selectCanonicalWritingSources(paths: string[]) {
+    const previous = canonicalWritingSourcePaths.value;
+    const selected = [...new Set(paths)].slice(0, 16);
+    canonicalWritingSourcePaths.value = selected;
+    const workspacePath = options.getWorkspacePath?.();
+    const generation = ++canonicalGeneration;
+    if (!workspacePath) return Promise.resolve();
+    persistence = persistence.then(async () => {
+      // Never apply a delayed project-A change to the newly active project B.
+      if (options.getWorkspacePath?.() !== workspacePath) return;
+      try { await oanClient.saveCanonicalWritingSources(workspacePath, selected); }
+      catch (caught) {
+        if (generation === canonicalGeneration && options.getWorkspacePath?.() === workspacePath) {
+          canonicalWritingSourcePaths.value = previous;
+          writingReferencesError.value = toErrorMessage(caught);
+        }
+      }
+    });
+    return persistence;
+  }
+  function removeCanonicalWritingSource(path: string) {
+    return selectCanonicalWritingSources(canonicalWritingSourcePaths.value.filter(item => item !== path));
+  }
+  async function refreshCanonicalWritingSources(reset = false) {
+    const workspacePath = options.getWorkspacePath?.();
+    if (!workspacePath) return;
+    const generation = ++canonicalGeneration;
+    if (reset) canonicalWritingSourcePaths.value = [];
+    await persistence;
+    try {
+      const result = await oanClient.readCanonicalWritingSources(workspacePath);
+      if (generation === canonicalGeneration && options.getWorkspacePath?.() === workspacePath) canonicalWritingSourcePaths.value = result.sourcePaths;
+    } catch (caught) {
+      if (generation === canonicalGeneration && options.getWorkspacePath?.() === workspacePath) writingReferencesError.value = toErrorMessage(caught);
+    }
+  }
 
   function dispose() {
     for (const session of sessions.value) session.dispose();
@@ -122,6 +159,7 @@ export function useAgentConversationSessions(options: {
   async function refreshWritingReferences() {
     writingReferencesLoading.value = true;
     writingReferencesError.value = '';
+    await refreshCanonicalWritingSources();
 
     try {
       const result = await oanClient.listPlayWritingReferenceAttachments();
@@ -174,6 +212,7 @@ export function useAgentConversationSessions(options: {
       return;
     }
 
+    await persistence;
     const canonicalPaths = [...canonicalWritingSourcePaths.value];
     const writingReferenceAttachmentIds = [
       ...selectedWritingReferenceAttachmentIds.value,
@@ -192,9 +231,8 @@ export function useAgentConversationSessions(options: {
     } catch (caught) {
       // Give the author their draft and selection back to retry.
       if (!session.input.value) session.input.value = text;
-      if (activeSessionId.value === session.id && !selectedWritingReferenceAttachmentIds.value.length && !canonicalWritingSourcePaths.value.length) {
+      if (activeSessionId.value === session.id && !selectedWritingReferenceAttachmentIds.value.length) {
         selectedWritingReferenceAttachmentIds.value = writingReferenceAttachmentIds;
-        canonicalWritingSourcePaths.value = canonicalPaths;
       }
       throw caught;
     }
@@ -350,6 +388,7 @@ export function useAgentConversationSessions(options: {
     createConversation,
     dispose,
     refreshWritingReferences,
+    refreshCanonicalWritingSources,
     selectConversation,
     sendCurrentInput,
     steerCurrentInput,
@@ -364,7 +403,6 @@ export function useAgentConversationSessions(options: {
 
   function clearSelectedWritingReferences() {
     selectedWritingReferenceAttachmentIds.value = [];
-    canonicalWritingSourcePaths.value = [];
   }
 }
 

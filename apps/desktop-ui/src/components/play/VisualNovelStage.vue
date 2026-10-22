@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { createStageSnapshot, type StageSnapshot } from '@oh-awesome-novel/core/text-speaker-parser';
+import { createStageSnapshot, type StageSnapshot, type SpeakerIdentity } from '@oh-awesome-novel/core/text-speaker-parser';
 import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import VisualNovelTextBox from './VisualNovelTextBox.vue';
 import VisualNovelChoiceOverlay from './VisualNovelChoiceOverlay.vue';
-const props = defineProps<{ sessionId: string; scene: string; turns: PlayTranscriptTurn[]; choices: string[]; draft?: string; disabled: boolean; hasMoreBefore?: boolean; loadingEarlier?: boolean }>();
+const props = defineProps<{ sessionId: string; scene: string; turns: PlayTranscriptTurn[]; choices: string[]; draft?: string; disabled: boolean; hasMoreBefore?: boolean; loadingEarlier?: boolean; roster?: unknown; portraits?: unknown }>();
 const emit = defineEmits<{ choose: [text: string]; close: []; loadEarlier: [] }>();
 const stage = ref<HTMLElement>();
 onMounted(() => stage.value?.focus());
@@ -14,12 +14,33 @@ const historicalId = ref<string>();
 const textbox = ref<InstanceType<typeof VisualNovelTextBox>>();
 const narratives = computed(() => props.turns.filter(turn => turn.speaker !== 'user'));
 const selected = computed(() => historicalId.value ? narratives.value.find(turn => turn.id === historicalId.value) : narratives.value.at(-1));
+const roster = computed<SpeakerIdentity[]>(() => {
+  if (!Array.isArray(props.roster)) return [];
+  return props.roster.filter((item): item is SpeakerIdentity => Boolean(item)
+    && typeof item.id === 'string' && typeof item.name === 'string'
+    && Array.isArray(item.aliases) && item.aliases.every((alias: unknown) => typeof alias === 'string'));
+});
+const portraits = computed<Record<string, string>>(() => {
+  if (!props.portraits || typeof props.portraits !== 'object' || Array.isArray(props.portraits)) return {};
+  return Object.fromEntries(Object.entries(props.portraits).filter((entry): entry is [string, string] =>
+    typeof entry[1] === 'string' && entry[1].length <= 350000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(entry[1])));
+});
 const snapshot = computed<StageSnapshot>(() => {
   if (!historicalId.value && props.draft) {
     const committed = selected.value?.stageSnapshot;
-    return { ...createStageSnapshot(committed?.sceneId ?? props.scene, props.draft), ...(committed?.backgroundDataUrl ? { backgroundDataUrl: committed.backgroundDataUrl } : {}) };
+    const identities = committed
+      ? committed.activeCharacters.map(character => roster.value.find(item => item.id === character.characterId)
+        ?? { id: character.characterId, name: character.characterId, aliases: [] })
+      : roster.value;
+    const draft = createStageSnapshot(committed?.sceneId ?? props.scene, props.draft, identities, portraits.value);
+    return {
+      ...draft,
+      // The draft changes prose only; committed cast positions, portraits and scenery stay frozen.
+      ...(committed ? { activeCharacters: committed.activeCharacters.map(character => ({ ...character })) } : {}),
+      ...(committed?.backgroundDataUrl ? { backgroundDataUrl: committed.backgroundDataUrl } : {}),
+    };
   }
-  return selected.value?.stageSnapshot ?? createStageSnapshot(props.scene, selected.value?.content ?? props.scene);
+  return selected.value?.stageSnapshot ?? createStageSnapshot(props.scene, selected.value?.content ?? props.scene, roster.value, portraits.value);
 });
 const beat = computed(() => snapshot.value.beats[beatIndex.value]);
 const isLast = computed(() => beatIndex.value >= snapshot.value.beats.length - 1);

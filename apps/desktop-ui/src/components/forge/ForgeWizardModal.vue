@@ -28,7 +28,7 @@ function select(event: Event) { const id = (event.target as HTMLSelectElement).v
     <p v-if="!providerConfigured">请先配置模型以开始共创。<button type="button" @click="emit('configureProvider')">配置模型</button></p>
     <form class="idea-form" @submit.prevent="create(idea)"><label for="forge-idea">一个角色、一处舞台，或一个模糊的想法</label><textarea id="forge-idea" v-model="idea" rows="2" :disabled="busy" /><button type="submit" :disabled="busy || !providerConfigured || !idea.trim()">开始新草稿</button></form>
     <template v-if="draft">
-      <div class="forge-columns"><ForgeDiscussPanel :questions="draft.questions" :reply="draft.reply" :busy="busy || !providerConfigured" @answer="mutate('discuss', { message: $event })" /><ForgeBriefPanel :brief="draft.brief" :busy="busy" @save="mutate('update', { brief: $event })" /></div>
+      <div class="forge-columns"><ForgeDiscussPanel :questions="draft.questions" :reply="draft.reply" :busy="busy || !providerConfigured" @answer="mutate('discuss', $event)" /><ForgeBriefPanel :brief="draft.brief" :busy="busy" @save="mutate('update', { brief: $event })" /></div>
       <button type="button" :disabled="busy || !providerConfigured" @click="mutate('plan')">{{ draft.plan ? '重新生成方案' : '生成方案' }}</button>
       <ForgePlanPanel v-if="draft.plan" :plan="draft.plan" :busy="busy" @save="mutate('update', { plan: $event })" @dirty="planDirty = $event" />
       <button v-if="draft.plan" type="button" :disabled="busy || !providerConfigured || planDirty" @click="mutate('write')">核准方案并分块撰写</button>
