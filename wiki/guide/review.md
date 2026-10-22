@@ -4,6 +4,8 @@ AI 对小说文件的修改会先形成 PendingAction（待审批修改）。你
 
 聊天回复、拆书预览或 Play 结果中的文字，不等于已保存的小说内容。
 
+[设定共创工坊](forge.md) 与 [套话质检](writing.md#套话质检与微创去-ai-味) 也使用同一审批面板。LINT 可在生成待审批项前选择建议；进入 Approval 后，Accept 仍接受该项的整组文件差异，不是逐行接受。
+
 ## 找到待审批项
 
 点击顶部 `Pending actions`，打开右侧 `Approval`。Copilot 对话中的 `Review` 或 `Open review` 也可以进入审阅。右栏收起时，中央会显示紧凑的审批入口。

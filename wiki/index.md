@@ -19,6 +19,8 @@ oh-awesome-novel 是一个在本地进行同人与综漫创作的工作台。你
 | 把自己的 Markdown 旧稿拆章导入小说工程 | [导入自己的旧稿](./guide/manuscript-import.md) |
 | 查找正文中的线索，或下载整部小说正文 | [搜索与导出正文](./guide/search-and-export.md) |
 | 给 AI 提供参考作品或故事素材 | [参考资料](./guide/references.md) |
+| 从想法共创角色与舞台，审查后开演或入书 | [设定共创工坊](./guide/forge.md) |
+| 扫描套话并逐项选择局部修改建议 | [套话质检](./guide/writing.md#套话质检与微创去-ai-味) |
 | 先演一段情节，再决定是否用于正文 | [剧情排演](./guide/play.md) |
 | 查看修改历史、提交或同步项目 | [Git 历史与同步](./guide/git.md) |
 | 检查 AI 使用了哪些来源、估算与实际用量 | [上下文与用量](./guide/usage.md) |
