@@ -11,6 +11,7 @@ import type {
   PlayRelativeTimeAdvance,
   PlaySession,
   PlayTurnCancelResult,
+  PlayTurnDelivery,
   PlayTurnStreamEvent,
   PlayTurnStreamOptions,
 } from './useWorkspaceApi';
@@ -51,6 +52,7 @@ export interface PlayTurnStreamClient {
       actionKind?: PlayActionKind;
       timeAdvance?: PlayRelativeTimeAdvance;
       baseRevision?: number;
+      delivery?: PlayTurnDelivery;
     },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
@@ -81,6 +83,7 @@ export interface PlayTurnSubmitInput {
   userText: string;
   actionKind: PlayActionKind;
   timeAdvance?: PlayRelativeTimeAdvance;
+  delivery?: PlayTurnDelivery;
 }
 
 export interface PlayTurnRetryInput extends PlayTurnSubmitInput {
@@ -132,6 +135,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
           actionKind: input.actionKind,
           ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
           baseRevision: input.baseRevision,
+          ...(input.delivery ? { delivery: input.delivery } : {}),
         },
         streamOptions,
       ),

@@ -168,6 +168,15 @@ PendingAction source 只记录 command log hash/count，不记录 preview。
 - 模型配置 `LlmProviderModel.reasoningEffort`（`none` 到 `max`）存在时作为 AI SDK `reasoning` 选项传给 `streamText`；未配置时请求不带该选项。非 OpenAI 官方且配置了 `baseUrl` 的 provider 通过 `@ai-sdk/openai-compatible` 解析，以便读取并回传 `reasoning_content`。
 - UI stream adapter 把 `reasoning_delta` 转成 `reasoning-start/delta/end` chunk；Copilot 在回答前以默认折叠的“思考过程”展示，复制按钮只复制正文。
 
+### Steer And Follow-up
+
+- `RunTurnInput.steering` 是宿主拥有的 `RuntimeSteeringSource`（`drain()` / `close()`）。Runtime 在两处轮询：每个工具批次执行完、下一次模型请求之前；以及模型给出无工具回答之后——此时若有插话，回答与插话都进入 `curMessages`，循环继续。工具执行中到达的插话等工具结束后生效；`maxToolLoops`、顺序执行、active tools、capability、`exactWritablePaths` 与预算检查都不因插话改变。
+- 每条插话以 `role: 'user'`、host-only `delivery: 'steer'` 进入本轮消息（provider 请求不含该标记，`messages.jsonl` 保留），并发出 `steering_applied`。
+- 进入 `finish()` 或失败路径时先 `close()`，再把关闭前已被接受却未送达模型的插话以 `steering_rejected` 交还；finalizer 只在关闭之后运行，一轮仍只有一个 finalizer 批次。
+- Backend：`/api/agent/chat` 的请求可带 renderer 生成的 `turnId`（必须同时有 `sessionId`），宿主为该 turn 打开插话队列；流结束（含异常与 abort）即注销。`POST /api/agent/chat/:sessionId/steer` 只接受 `{ turnId, content }`（1–20000 字符），未知字段 400；turn 不存在或已收尾返回 409 `STEER_TOO_LATE`。没有 runtime loop 的路径结束时同样把未消费的插话以 `steering_rejected` 交还。
+- UI stream 用 `data-steering`（`status: applied | rejected`）在助手消息中按时间位置标出插话。
+- Follow-up 完全在 renderer：每个对话一个内存队列，运行中按发送快捷键入队；本轮 `stoppedReason === 'completed'` 且没有新的 PendingAction 时依次发出（每条都是新 turn、自己的 finalizer 批次）；失败、停止、未正常完成或产生待审批修改时暂停，作者点“继续发送”后恢复；被交还的插话放回队首。队列不跨应用重启保留。
+
 ## Context Builder
 
 `1290` 将当前全局状态与章级结算历史分层。host health 与 Agent 对同类冻结输入采用共同的 source-hash freshness evaluator，模型上下文中的健康提示/覆盖说明有界。选中章的当前证据可派生为明确标注的 payload，其余历史仍由固定投影 read tools 提供；完整显式选择保持保护。摘要的当前证据、过期来源和作者未验证参考必须明确区分，不把旧快照当作当前事实。详见 [1290](tasks/1290.md)。

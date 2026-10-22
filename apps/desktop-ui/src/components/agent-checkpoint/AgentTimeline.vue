@@ -54,6 +54,12 @@ async function copyText(text: string) {
             <p class="conversation-reasoning-text">{{ item.text }}</p>
           </details>
         </template>
+        <template v-else-if="item.type === 'steer-message'">
+          <div class="conversation-message conversation-message-user conversation-steer">
+            <span class="conversation-steer-tag">{{ item.status === 'applied' ? '插话' : '插话未送达，已转入排队' }}</span>
+            <p class="message-text">{{ item.text }}</p>
+          </div>
+        </template>
         <template v-else-if="item.type === 'status'">
           <p class="timeline-status conversation-status">{{ item.text }}</p>
         </template>

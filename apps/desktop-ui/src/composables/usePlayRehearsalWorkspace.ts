@@ -18,6 +18,7 @@ import {
   projectPlayRehearsalSteps,
   projectPlayRehearsalVisibleEvents,
 } from './playRehearsalPresentation';
+import type { PlayActorStepOutcome } from './usePlayActorStepStream';
 import { usePlayDirectorInterventions } from './usePlayDirectorInterventions';
 import { usePlayRehearsalAttempt } from './usePlayRehearsalAttempt';
 import type { PlayRehearsalAttemptClient } from './usePlayRehearsalAttempt';
@@ -52,6 +53,7 @@ export function usePlayRehearsalWorkspace(
   options: UsePlayRehearsalWorkspaceOptions,
 ) {
   const reconciling = shallowRef(false);
+  const steerPending = shallowRef<string>();
   const selectedSession = computed(() => {
     const session = options.selectedSession.value;
     return isPlayRehearsalSession(session) ? session : undefined;
@@ -249,12 +251,43 @@ export function usePlayRehearsalWorkspace(
 
   async function generateStep(): Promise<void> {
     if (!options.providerConfigured.value) return;
-    await rehearsal.generateNextStep();
+    await applySteer(await rehearsal.generateNextStep());
   }
 
   async function retryStep(stepRef: string): Promise<void> {
     if (!options.providerConfigured.value) return;
-    await rehearsal.retryStep(stepRef);
+    await applySteer(await rehearsal.retryStep(stepRef), stepRef);
+  }
+
+  /**
+   * A Director steer during actor generation becomes a `redirectStep` on
+   * that step, so it passes the same constraint checks as a manual redirect.
+   * A Retry already has its step and stops at once; a new step has nothing
+   * to redirect until its draft exists, so it finishes first.
+   */
+  async function steerStep(text: string): Promise<void> {
+    const intent = text.trim();
+    const run = rehearsal.stepRun.value;
+    if (!intent || !run || !rehearsal.canStopStep.value) return;
+    steerPending.value = steerPending.value ? `${steerPending.value}\n${intent}` : intent;
+    if (run.mode === 'retry' && run.sourceStepRef) await rehearsal.stopStep();
+  }
+
+  async function applySteer(outcome: PlayActorStepOutcome, retrySourceRef?: string): Promise<void> {
+    const directorIntent = steerPending.value;
+    if (!directorIntent) return;
+    steerPending.value = undefined;
+    const stepRef = outcome === 'prepared'
+      ? rehearsal.currentStep.value?.id
+      : outcome === 'aborted' ? retrySourceRef : undefined;
+    if (!stepRef) return;
+    await director.intervene({
+      kind: 'redirectStep',
+      stepRef,
+      directorIntent,
+      authorConstraintRefs: [],
+      delivery: 'steer',
+    });
   }
 
   async function acceptStep(stepRef: string): Promise<void> {
@@ -296,6 +329,8 @@ export function usePlayRehearsalWorkspace(
   }
 
   return {
+    steerPending: readonly(steerPending),
+    steerStep,
     selectedSession,
     scene,
     clock,

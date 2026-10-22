@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue';
+import { computed, shallowRef, useId } from 'vue';
 
 import type {
   PlayRehearsalNarrativeBlockKind,
@@ -9,15 +9,27 @@ import type {
   PlayRehearsalStepView,
 } from './types';
 
-const { steps, run, canStop } = defineProps<{
+const { steps, run, canStop, steerPending } = defineProps<{
   steps: readonly Readonly<PlayRehearsalStepView>[];
   run?: Readonly<PlayRehearsalStepRunView>;
   canStop: boolean;
+  /** Director intent waiting to redirect the step being generated. */
+  steerPending?: string;
 }>();
 
 const emit = defineEmits<{
   stopStep: [];
+  steerStep: [intent: string];
 }>();
+
+const steerText = shallowRef('');
+
+function steer(): void {
+  const intent = steerText.value.trim();
+  if (!intent || !canStop) return;
+  emit('steerStep', intent);
+  steerText.value = '';
+}
 
 const headingId = `${useId()}-rehearsal-narrative-heading`;
 const busyPhases: ReadonlySet<PlayRehearsalStepRunPhase> = new Set([
@@ -115,6 +127,24 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
         {{ run.phase === 'stopping' ? 'Stopping step…' : 'Stop step' }}
       </button>
     </footer>
+    <form
+      v-if="run && isBusy && canStop"
+      class="play-rehearsal-steer"
+      aria-label="Director 插话"
+      @submit.prevent="steer"
+    >
+      <label class="visually-hidden" for="play-rehearsal-steer-input">Director 插话</label>
+      <input
+        id="play-rehearsal-steer-input"
+        v-model="steerText"
+        type="text"
+        placeholder="插话：让这一步改朝某个方向…"
+      >
+      <button type="submit" :disabled="!steerText.trim()">插话</button>
+    </form>
+    <p v-if="steerPending" class="play-rehearsal-steer-pending" role="status">
+      插话已记下，本步生成结束后按“{{ steerPending }}”重写这一步。
+    </p>
   </section>
 </template>
 
@@ -123,7 +153,7 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   border: 1px solid var(--play-line, var(--editor-hairline));
   background: var(--play-canvas, var(--editor-canvas));
   color: var(--play-body, var(--editor-body));
@@ -282,5 +312,24 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
   border: 1px solid var(--play-line-strong, var(--editor-hairline-strong));
   background: var(--play-canvas, var(--editor-canvas));
   color: var(--play-ink, var(--editor-ink));
+}
+.play-rehearsal-steer {
+  display: flex;
+  gap: 6px;
+  padding: 6px 13px;
+}
+
+.play-rehearsal-steer input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+}
+
+.play-rehearsal-steer-pending {
+  margin: 0;
+  padding: 0 13px 8px;
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 11px;
 }
 </style>

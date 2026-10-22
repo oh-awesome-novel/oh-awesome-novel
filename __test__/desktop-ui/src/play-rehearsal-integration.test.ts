@@ -31,6 +31,7 @@ const api = vi.hoisted(() => ({
   streamNextPlayActorStep: vi.fn(),
   cancelPlayActorStep: vi.fn(),
   acceptPlayRehearsalStep: vi.fn(),
+  intervenePlayTurnAttempt: vi.fn(),
   finishPlayRehearsalAttempt: vi.fn(),
   cancelPlayRehearsalAttempt: vi.fn(),
   getPlayOutcomeReport: vi.fn(),
@@ -414,6 +415,99 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-result').exists()).toBe(false);
     });
+    wrapper.unmount();
+  });
+
+  it('turns a Director steer during generation into a redirect of the prepared step', async () => {
+    const session = createRehearsalSession();
+    const streamGate = deferred<void>();
+    const deltaVisible = deferred<void>();
+    api.listPlaySessions.mockResolvedValue({ sessions: [session] });
+    api.createPlayRehearsalAttempt.mockResolvedValue({
+      attempt: createRunningAttempt(),
+    });
+    api.streamNextPlayActorStep.mockImplementation(
+      async function* (
+        _sessionId: string,
+        _attemptId: string,
+        input: PlayRehearsalStepStreamInput,
+        options?: PlayRehearsalStepStreamOptions,
+      ): AsyncIterable<PlayRehearsalStepStreamEvent> {
+        const receipt = createMutationReceipt(input.idempotencyKey, 1, 'step-1');
+        const prepared = createDraftAttempt(receipt);
+        options?.onStepRunId?.('step-run-1');
+        yield stepEvent('step-run-1', 1, {
+          type: 'play.actor.step.started',
+          baseAttemptRevision: 0,
+          participantRef: 'participant-mara',
+          mode: 'next',
+        });
+        yield stepEvent('step-run-1', 2, {
+          type: 'play.actor.step.delta',
+          delta: 'Mara reaches for the sealed letter.',
+          provisional: true,
+        });
+        deltaVisible.resolve();
+        await streamGate.promise;
+        yield stepEvent('step-run-1', 3, {
+          type: 'play.actor.step.prepared',
+          attempt: prepared,
+          step: prepared.steps[0]!,
+          receipt,
+        });
+      },
+    );
+    api.intervenePlayTurnAttempt.mockImplementation(
+      async (_sessionId: string, _attemptId: string, input: { idempotencyKey: string }) => {
+        const receipt = createMutationReceipt(input.idempotencyKey, 2, 'step-1');
+        const draft = createDraftAttempt(createMutationReceipt('step-key-recorded', 1, 'step-1'));
+        return {
+          attempt: {
+            ...draft,
+            attemptRevision: 2,
+            interventions: [{ id: 'intervention-1', kind: 'redirectStep', supersededStepRefs: [] }],
+            mutationReceipts: [...draft.mutationReceipts!, receipt],
+          },
+          receipt,
+          replayed: false,
+        };
+      },
+    );
+
+    const wrapper = mountWorkspace();
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(api.getActivePlayRehearsalAttempt).toHaveBeenCalledWith('play-rehearsal-1');
+    });
+    await button(wrapper, 'Begin rehearsal attempt').trigger('click');
+    await vi.waitFor(() => expect(api.createPlayRehearsalAttempt).toHaveBeenCalled());
+    await button(wrapper, 'Generate current actor step').trigger('click');
+    await deltaVisible.promise;
+    await flushPromises();
+
+    await wrapper.get('#play-rehearsal-steer-input').setValue('Let her hesitate first');
+    await wrapper.get('.play-rehearsal-steer').trigger('submit');
+    await flushPromises();
+    expect(wrapper.get('.play-rehearsal-steer-pending').text()).toContain('Let her hesitate first');
+    expect(api.cancelPlayActorStep).not.toHaveBeenCalled();
+    expect(api.intervenePlayTurnAttempt).not.toHaveBeenCalled();
+
+    streamGate.resolve();
+    await vi.waitFor(() => expect(api.intervenePlayTurnAttempt).toHaveBeenCalledOnce());
+    expect(api.intervenePlayTurnAttempt).toHaveBeenCalledWith(
+      'play-rehearsal-1',
+      'attempt-1',
+      expect.objectContaining({
+        kind: 'redirectStep',
+        stepRef: 'step-1',
+        directorIntent: 'Let her hesitate first',
+        authorConstraintRefs: [],
+        delivery: 'steer',
+        expectedAttemptRevision: 1,
+      }),
+    );
+    await flushPromises();
+    expect(wrapper.find('.play-rehearsal-steer-pending').exists()).toBe(false);
     wrapper.unmount();
   });
 

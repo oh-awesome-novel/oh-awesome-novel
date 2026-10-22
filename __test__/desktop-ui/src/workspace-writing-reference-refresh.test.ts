@@ -28,7 +28,7 @@ vi.mock(
         activeConversationId: shallowRef('chat-1'),
         activeInput: shallowRef(''),
         activeMessages: shallowRef([]),
-        activePendingActions: shallowRef([]),
+        activePendingActions: shallowRef([]), activeFollowUps: shallowRef([]), activeFollowUpNotice: shallowRef(''), activeFollowUpsPaused: shallowRef(false),
         activeStatus: shallowRef('ready'),
         conversationSummaries: shallowRef([]),
         writingReferenceAttachments: shallowRef([]),

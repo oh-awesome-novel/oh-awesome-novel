@@ -15,6 +15,8 @@ export interface RuntimeMessage {
    * it never seeds a later turn.
    */
   reasoning?: string;
+  /** Host-only marker for an author message injected mid-turn. */
+  delivery?: 'steer';
   /** Host-only metadata, stripped before the provider request. */
   provenance?: UsageSourceEvidence[];
 }
@@ -175,6 +177,9 @@ export type RuntimeEvent =
   | { type: 'message_start'; messages: RuntimeMessage[] }
   | { type: 'message_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
+  | { type: 'steering_applied'; message: RuntimeSteeringMessage }
+  /** Accepted too late to reach the model; the host re-queues it as a follow-up. */
+  | { type: 'steering_rejected'; message: RuntimeSteeringMessage }
   | { type: 'tool_call_start'; toolCall: RuntimeToolCallAudit }
   | {
       type: 'tool_call_finish';
@@ -198,12 +203,28 @@ export interface CopilotRuntimeOptions {
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
 }
 
+export interface RuntimeSteeringMessage {
+  id: string;
+  content: string;
+}
+
+/**
+ * Host-owned queue of author messages added while a turn runs. The runtime
+ * drains it between tool batches and after a tool-free answer, and closes it
+ * once the turn starts finalizing so later steers can be refused.
+ */
+export interface RuntimeSteeringSource {
+  drain(): RuntimeSteeringMessage[];
+  close(): void;
+}
+
 export interface RunTurnInput {
   message?: string;
   messages?: RuntimeMessage[];
   context?: RuntimeContextItem[];
   skill?: RuntimeSkill;
   abortSignal?: AbortSignal;
+  steering?: RuntimeSteeringSource;
 }
 
 export interface RunTurnResult {

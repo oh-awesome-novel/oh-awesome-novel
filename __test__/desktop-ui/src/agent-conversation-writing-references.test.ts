@@ -76,6 +76,7 @@ describe('agent conversation Play Writing References', () => {
       {
         body: {
           sessionId: expect.any(String),
+          turnId: expect.stringMatching(/^turn-/),
           writingReferenceAttachmentIds: ['attachment-1', 'attachment-2'],
           editContext: { exactWritablePaths: [] },
         },
@@ -96,6 +97,7 @@ describe('agent conversation Play Writing References', () => {
       {
         body: {
           sessionId: expect.any(String),
+          turnId: expect.stringMatching(/^turn-/),
           writingReferenceAttachmentIds: [],
           editContext: { exactWritablePaths: [] },
         },
@@ -118,6 +120,7 @@ describe('agent conversation Play Writing References', () => {
       {
         body: {
           sessionId: expect.any(String),
+          turnId: expect.stringMatching(/^turn-/),
           writingReferenceAttachmentIds: [],
           editContext: { exactWritablePaths: ['chapters/0001.md'] },
         },

@@ -197,7 +197,8 @@ import type {
   ReferenceMaterialAdoptionGenerationResult,
   ReferenceStyleProfileOutput,
 } from '@oh-awesome-novel/agent';
-import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
+import type { RuntimeEvent, RuntimeSteeringSource } from '@oh-awesome-novel/runtime';
+import { AgentSteeringRegistry, MAX_AGENT_STEER_CHARACTERS, isAgentTurnId } from './agent-steering.js';
 import {
   fingerprintPlayTurnArtifact,
   prunePlayTurnRunReceipts,
@@ -365,6 +366,8 @@ export interface NovelBackendAgentInput {
   /** Trusted renderer-selected canonical targets; never inferred from prompt text. */
   exactWritablePaths: readonly string[];
   playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
+  /** Mid-turn author steers for this request, when the renderer sent a turn id. */
+  steering?: RuntimeSteeringSource;
 }
 
 export interface NovelBackendPlayTurnInput {
@@ -398,6 +401,7 @@ interface BackendState {
   referenceDeconstruction?: ReferenceDeconstructionBackendController;
   referenceMaterialAdoption?: ReferenceMaterialAdoptionController;
   pendingActionServices: Map<string, Promise<PendingActionServices>>;
+  agentSteering: AgentSteeringRegistry;
 }
 
 interface PendingActionServices {
@@ -476,6 +480,7 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     playTurnRuns: new Map<string, PlayTurnRunRecord>(),
     playTurnReceiptCleanupCursors: new Map<string, string>(),
     pendingActionServices: new Map<string, Promise<PendingActionServices>>(),
+    agentSteering: new AgentSteeringRegistry(),
   };
   const app = new Hono();
   const playMigration = createPlaySessionMigrationHandlers({
@@ -1109,6 +1114,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     return jsonResponse(context, 200, await readAgentGovernanceHistory(workspaceRoot, id, limit));
   });
   app.post('/api/agent/chat', (context) => handleAgentChat(options, state, context));
+  app.post('/api/agent/chat/:sessionId/steer', (context) =>
+    handleSteerAgentTurn(options, state, context.req.param('sessionId') ?? '', context));
   app.notFound((context) => jsonResponse(context, 404, { error: 'Not found.' }));
 
   playShutdownByApp.set(app, async () => {
@@ -1181,6 +1188,9 @@ async function handleAgentChat(
   if (body.sessionId !== undefined) {
     try { assertUsageSessionId(body.sessionId); if (body.sessionId.includes('.')) throw new Error('Unsupported chat session id.'); } catch { return jsonResponse(context, 400, { error: 'Invalid agent session id.' }); }
   }
+  if (body.turnId !== undefined && (!isAgentTurnId(body.turnId) || typeof body.sessionId !== 'string')) {
+    return jsonResponse(context, 400, { error: 'Invalid agent turn id.' });
+  }
   const requestText = getLastUserText(messages) ?? getOptionalString(body, 'request') ?? '';
   const attachmentIds = readPlayWritingReferenceAttachmentIds(body);
   let exactWritablePaths = readAgentExactWritablePaths(body);
@@ -1243,16 +1253,28 @@ async function handleAgentChat(
     });
   }
 
-  const runtimeEvents = await createRuntimeEventStream(options, state, {
-    request: requestText,
-    workspaceRoot,
-    ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
-    abortSignal: context.req.raw.signal,
-    messages,
-    exactWritablePaths,
-    ...(playWritingReferences.length ? { playWritingReferences } : {}),
-  });
-  const stream = runtimeEventsToUiMessageStream(runtimeEvents);
+  const steering = typeof body.sessionId === 'string' && isAgentTurnId(body.turnId)
+    ? state.agentSteering.open(workspaceRoot, body.sessionId, body.turnId)
+    : undefined;
+  let runtimeEvents: AsyncIterable<RuntimeEvent>;
+  try {
+    runtimeEvents = await createRuntimeEventStream(options, state, {
+      request: requestText,
+      workspaceRoot,
+      ...(typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {}),
+      abortSignal: context.req.raw.signal,
+      messages,
+      exactWritablePaths,
+      ...(playWritingReferences.length ? { playWritingReferences } : {}),
+      ...(steering ? { steering } : {}),
+    });
+  } catch (error) {
+    steering?.dispose();
+    throw error;
+  }
+  const stream = runtimeEventsToUiMessageStream(
+    steering ? releaseSteeringAfter(runtimeEvents, steering) : runtimeEvents,
+  );
 
   return createUIMessageStreamResponse({
     stream,
@@ -1262,6 +1284,58 @@ async function handleAgentChat(
       'X-Accel-Buffering': 'no',
     },
   });
+}
+
+// The registry entry must not outlive the stream, even if the turn never reached the runtime.
+async function* releaseSteeringAfter(
+  events: AsyncIterable<RuntimeEvent>,
+  steering: RuntimeSteeringSource & { dispose(): void },
+): AsyncIterable<RuntimeEvent> {
+  try {
+    yield* events;
+    // Paths without a runtime loop never drain; hand those steers back too.
+    steering.close();
+    for (const message of steering.drain()) yield { type: 'steering_rejected', message };
+  } finally {
+    steering.dispose();
+  }
+}
+
+async function handleSteerAgentTurn(
+  options: NovelBackendOptions,
+  state: BackendState,
+  sessionId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const body = await readJsonBody(context);
+  try {
+    assertUsageSessionId(sessionId);
+    if (sessionId.includes('.')) throw new Error('Unsupported chat session id.');
+  } catch {
+    return jsonResponse(context, 400, { error: 'Invalid agent session id.' });
+  }
+  // A steer is plain author text: it cannot carry targets, capabilities or attachments.
+  if (Object.keys(body).some((key) => key !== 'turnId' && key !== 'content')) {
+    return jsonResponse(context, 400, { error: 'A steer only accepts turnId and content.' });
+  }
+  if (!isAgentTurnId(body.turnId)) {
+    return jsonResponse(context, 400, { error: 'Invalid agent turn id.' });
+  }
+  const content = typeof body.content === 'string' ? body.content.trim() : '';
+  if (!content || content.length > MAX_AGENT_STEER_CHARACTERS) {
+    return jsonResponse(context, 400, {
+      error: `A steer must be 1-${MAX_AGENT_STEER_CHARACTERS} characters.`,
+    });
+  }
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const result = state.agentSteering.steer(workspaceRoot, sessionId, body.turnId, content);
+  if (result.status === 'too_late') {
+    return jsonResponse(context, 409, {
+      code: 'STEER_TOO_LATE',
+      error: 'This turn is no longer accepting steers; queue the message as a follow-up.',
+    });
+  }
+  return jsonResponse(context, 200, { status: 'accepted', id: result.message.id });
 }
 
 async function handleListWorkspaces(
@@ -3926,7 +4000,7 @@ async function handlePlayWorldRefereeTurnStream(
   if (!parsedRequest.ok) {
     return jsonResponse(context, 400, { error: parsedRequest.error });
   }
-  const { userText, actionKind, baseRevision, timeAdvance } = parsedRequest.value;
+  const { userText, actionKind, baseRevision, timeAdvance, delivery } = parsedRequest.value;
   const rehearsalConflict = await playRehearsalAttemptConflictResponse(
     state,
     workspaceRoot,
@@ -3983,6 +4057,7 @@ async function handlePlayWorldRefereeTurnStream(
     userText,
     actionKind,
     ...(timeAdvance ? { timeAdvance } : {}),
+    ...(delivery ? { delivery } : {}),
     expectedArtifactId: createPlayTurnArtifactId(
       session.revision + 1,
       session.turnArtifacts.map((artifact) => artifact.id),
@@ -4126,6 +4201,8 @@ interface PlayWorldRefereeTurnStreamExecution {
   userText: string;
   actionKind: PlayActionKind;
   timeAdvance?: PlayRelativeTimeAdvance;
+  /** How the author sent this action; only recorded in the debug message log. */
+  delivery?: PlayTurnDelivery;
   expectedArtifactId: string;
   retry?: {
     sourceArtifactId: string;
@@ -4313,7 +4390,12 @@ async function createPlayWorldRefereeTurnStreamResponse(
             {
               kind: 'author_action',
               text: userText,
-              data: { actionKind, ...(timeAdvance ? { timeAdvance } : {}), ...(execution.retry ? { retry: execution.retry } : {}) },
+              data: {
+                actionKind,
+                ...(timeAdvance ? { timeAdvance } : {}),
+                ...(execution.retry ? { retry: execution.retry } : {}),
+                ...(execution.delivery ? { delivery: execution.delivery } : {}),
+              },
             },
             { kind: 'model_request', role: 'world_referee', text: request },
           ]);
@@ -6664,6 +6746,7 @@ async function createRuntimeEventStream(
       tools: options.tools,
       externalContext,
       abortSignal: input.abortSignal,
+      ...(input.steering ? { steering: input.steering } : {}),
       session: { ...(input.sessionId ? { id: input.sessionId } : {}), metadata: { title: input.request } },
     });
   }
@@ -7599,11 +7682,15 @@ function tryBeginWorkspaceTransition(state: BackendState): boolean {
   return true;
 }
 
+/** A steer resends a cancelled turn with added text; a follow-up was queued while a turn ran. */
+type PlayTurnDelivery = 'steer' | 'follow_up';
+
 interface ParsedPlayWorldRefereeTurnRequest {
   userText: string;
   actionKind: PlayActionKind;
   baseRevision?: number;
   timeAdvance?: PlayRelativeTimeAdvance;
+  delivery?: PlayTurnDelivery;
 }
 
 type PlayWorldRefereeTurnRequestResult =
@@ -7618,6 +7705,7 @@ function readPlayWorldRefereeTurnRequest(
     'actionKind',
     'baseRevision',
     'timeAdvance',
+    'delivery',
   ]);
   if (Object.keys(value).some((field) => !knownFields.has(field))) {
     return { ok: false, error: 'Play turn request contains unknown fields.' };
@@ -7649,6 +7737,10 @@ function readPlayWorldRefereeTurnRequest(
       };
     }
   }
+  const delivery = value.delivery;
+  if (delivery !== undefined && delivery !== 'steer' && delivery !== 'follow_up') {
+    return { ok: false, error: 'Invalid Play turn delivery.' };
+  }
   const resolvedActionKind = actionKind ?? 'do';
   if (timeAdvance && resolvedActionKind !== 'wait') {
     return {
@@ -7666,6 +7758,7 @@ function readPlayWorldRefereeTurnRequest(
         ? { baseRevision: revisionCheck.value }
         : {}),
       ...(timeAdvance ? { timeAdvance } : {}),
+      ...(delivery ? { delivery } : {}),
     },
   };
 }

@@ -391,6 +391,10 @@
     @apply opacity-100;
   }
 
+  .conversation-steer-tag {
+    @apply mb-1 block text-[11px] font-bold text-cyan-700 dark:text-cyan-300;
+  }
+
   .conversation-reasoning {
     @apply w-full max-w-[620px] min-w-0 text-xs text-slate-500 dark:text-neutral-400;
   }
@@ -574,6 +578,14 @@
 
   .composer-send-button:disabled {
     pointer-events: none;
+  }
+
+  .composer-submit-cluster {
+    @apply flex shrink-0 items-center gap-1.5;
+  }
+
+  .composer-steer-button {
+    @apply min-h-8 rounded-full border border-cyan-700/30 bg-cyan-50 px-3 text-xs font-bold text-cyan-800 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-cyan-300/30 dark:bg-cyan-950/50 dark:text-cyan-200;
   }
 
   .composer-send-wrap {

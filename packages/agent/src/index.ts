@@ -90,6 +90,7 @@ import type {
   RuntimeModelResponse,
   RuntimeModelStreamEvent,
   RuntimeSkill,
+  RuntimeSteeringSource,
   RuntimeToolCall,
   RuntimeTurnFinalizer,
 } from '@oh-awesome-novel/runtime';
@@ -152,6 +153,8 @@ export interface NovelAgentMessageInput {
   selectedContext?: RuntimeContextItem[];
   playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
   priorMessages?: RuntimeMessage[];
+  /** Host queue of mid-turn author steers; never changes capability or targets. */
+  steering?: RuntimeSteeringSource;
 }
 
 export interface NovelAgentMessageAssembly {
@@ -1251,6 +1254,7 @@ export const createRuntimeTurnInput = (
     context: assembly.context,
     skill: assembly.skill,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    ...(input.steering ? { steering: input.steering } : {}),
   };
 };
 

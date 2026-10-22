@@ -366,6 +366,8 @@ export type PlayDirectorInterventionInput = PlayAttemptMutationInput & (
       stepRef: string;
       directorIntent: string;
       authorConstraintRefs: string[];
+      /** Sent while the actor step was generating; recorded in the Play message log. */
+      delivery?: 'steer';
     }
   | {
       kind: 'insertActor';

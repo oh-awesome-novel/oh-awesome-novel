@@ -11,7 +11,15 @@ import { usePlaySessionHistoryWindow } from './usePlaySessionHistoryWindow';
 import { usePlaySessionMigration } from './usePlaySessionMigration';
 import { usePlayObservation } from './usePlayObservation';
 import { usePlayRehearsalWorkspace } from './usePlayRehearsalWorkspace';
-import { usePlayTurnStream } from './usePlayTurnStream';
+import {
+  combinePlaySteerText,
+  createPlayFollowUpQueue,
+  playFollowUpPauseForOutcome,
+  playSourceDriftNeedsDecision,
+  type PlayFollowUpControls,
+  type PlayQueuedAction,
+} from './usePlayFollowUpQueue';
+import { usePlayTurnStream, type PlayTurnSubmitOutcome } from './usePlayTurnStream';
 import {
   buildPlayEventCardViews,
   PLAY_KNOWLEDGE_STATE_KEY,
@@ -30,6 +38,7 @@ import type {
   PlaySession,
   PlaySessionSelectedDetail,
   PlaySessionSummary,
+  PlayTurnDelivery,
 } from './useWorkspaceApi';
 
 const PLAY_WORLD_MOMENTUM_STATE_KEY = 'worldMomentum';
@@ -118,13 +127,19 @@ export function usePlayWorkspace(
   } = usePlayTurnStream({
     client: api,
     onCommitted(session) {
+      // The composer was cleared when the action was sent, so the author may
+      // already be typing the next action; leave that text alone.
       replaceSession(session);
       clearRetryProjection();
-      userText.value = '';
       resetTimeAdvance();
       error.value = '';
     },
   });
+  const followUps = createPlayFollowUpQueue(selectedSessionId);
+  // Steer text waiting for the server to confirm the running turn was cancelled.
+  let pendingSteer: { sessionId: string; text: string } | undefined;
+  let detailRefresh: Promise<void> = Promise.resolve();
+  let draining = false;
 
   const selectedSession = computed(() => historyWindow.detail.value
     ? materializeBoundedPlaySession(historyWindow.detail.value)
@@ -172,6 +187,21 @@ export function usePlayWorkspace(
   const turnTruthIndeterminate = computed(() =>
     provisionalTurn.value?.phase === 'indeterminate',
   );
+  // Only an author action that can still be cancelled can be steered; a
+  // Retry or a commit already under way turns a steer into the next action.
+  const canSteer = computed(() =>
+    sending.value && canStop.value && provisionalTurn.value?.intent === 'submit',
+  );
+  const followUpControls = computed<PlayFollowUpControls>(() => ({
+    items: followUps.sessionItems.value,
+    notice: followUps.notice.value,
+    paused: Boolean(followUps.pausedReason.value),
+    steer: (id) => { void steerQueuedAction(id); },
+    edit: followUps.edit,
+    remove: (id) => { followUps.remove(id); },
+    move: followUps.move,
+    resume: () => { void resumeFollowUps(); },
+  }));
   const {
     checkpoints: historyCheckpoints,
     busyArtifactId: historyBusyArtifactId,
@@ -423,24 +453,185 @@ export function usePlayWorkspace(
       migration.preview.value ||
       session.schemaVersion !== 4 ||
       !text ||
-      interactionBlocked.value ||
       (actionKind.value === 'wait' && !requestedTimeAdvance)
     ) {
       return;
     }
 
-    error.value = '';
-
-    const outcome = await submitStreamTurn({
+    const action: Omit<PlayQueuedAction, 'id'> = {
       sessionId: session.id,
       userText: text,
       actionKind: actionKind.value,
-      baseRevision: session.revision,
       ...(requestedTimeAdvance ? { timeAdvance: requestedTimeAdvance } : {}),
-    });
+    };
+    if (sending.value) {
+      // A turn is running: queue this action and send it after that turn settles.
+      followUps.enqueue(action);
+      userText.value = '';
+      resetTimeAdvance();
+      return;
+    }
+    if (interactionBlocked.value) {
+      return;
+    }
 
+    userText.value = '';
+    await runAction(action, session.revision);
+  }
+
+  /** Adds the composer text to the running turn: cancel it, then resend with the addition. */
+  async function steerTurn() {
+    const text = userText.value.trim();
+    if (!text || !sending.value) {
+      return;
+    }
+    userText.value = '';
+    await steerWith(text);
+  }
+
+  async function steerQueuedAction(id: string) {
+    if (!sending.value) {
+      return;
+    }
+    const item = followUps.remove(id);
+    if (item) await steerWith(item.userText);
+  }
+
+  async function steerWith(text: string) {
+    const run = provisionalTurn.value;
+    if (!run) {
+      return;
+    }
+    if (pendingSteer?.sessionId === run.sessionId) {
+      pendingSteer = { ...pendingSteer, text: `${pendingSteer.text}\n${text}` };
+      return;
+    }
+    if (!canSteer.value) {
+      followUps.enqueue({ sessionId: run.sessionId, userText: text, actionKind: steerActionKind(run.actionKind) }, true);
+      followUps.notice.value = '本回合已无法中途补充，插话改为排在最前，提交后先发送。';
+      return;
+    }
+    pendingSteer = { sessionId: run.sessionId, text };
+    await stopTurn();
+  }
+
+  async function runAction(
+    action: Omit<PlayQueuedAction, 'id'>,
+    baseRevision: number,
+    delivery?: PlayTurnDelivery,
+  ): Promise<void> {
+    let current = action;
+    let currentDelivery = delivery;
+    let outcome: PlayTurnSubmitOutcome;
+
+    for (;;) {
+      error.value = '';
+      outcome = await submitStreamTurn({
+        sessionId: current.sessionId,
+        userText: current.userText,
+        actionKind: current.actionKind,
+        baseRevision,
+        ...(current.timeAdvance ? { timeAdvance: current.timeAdvance } : {}),
+        ...(currentDelivery ? { delivery: currentDelivery } : {}),
+      });
+      const steer = takePendingSteer(current.sessionId);
+      if (steer && outcome === 'cancelled') {
+        // Nothing was committed, so the resend keeps the same base revision.
+        current = { ...current, userText: combinePlaySteerText(current.userText, steer) };
+        currentDelivery = 'steer';
+        continue;
+      }
+      if (steer) {
+        // The turn settled before the cancel landed: the steer goes next.
+        followUps.enqueue({
+          sessionId: current.sessionId,
+          userText: steer,
+          actionKind: steerActionKind(current.actionKind),
+        }, true);
+        if (outcome === 'committed') {
+          followUps.notice.value = '插话到达时本回合已提交，已改为下一条行动。';
+        }
+      }
+      break;
+    }
+
+    if (outcome === 'committed') {
+      await drainFollowUps(current.sessionId);
+      return;
+    }
     if (outcome === 'failed' || outcome === 'unknown') {
       error.value = provisionalTurn.value?.error ?? 'Play turn failed before commit.';
+    }
+    keepUnsentAction(current, delivery === 'follow_up');
+    const reason = playFollowUpPauseForOutcome(outcome, provisionalTurn.value?.phase);
+    if (reason && followUps.items.value.some((item) => item.sessionId === current.sessionId)) {
+      followUps.pause(reason);
+    }
+  }
+
+  /** An action that did not commit goes back where the author can see it, never lost. */
+  function keepUnsentAction(action: Omit<PlayQueuedAction, 'id'>, fromQueue: boolean) {
+    if (!fromQueue && !userText.value.trim() && selectedSessionId.value === action.sessionId) {
+      userText.value = action.userText;
+      actionKind.value = action.actionKind;
+      if (action.timeAdvance) timeAdvance.value = { ...action.timeAdvance };
+      return;
+    }
+    followUps.enqueue(action, true);
+  }
+
+  function takePendingSteer(sessionId: string): string | undefined {
+    if (pendingSteer?.sessionId !== sessionId) return undefined;
+    const text = pendingSteer.text;
+    pendingSteer = undefined;
+    return text;
+  }
+
+  async function drainFollowUps(sessionId: string): Promise<void> {
+    if (draining) {
+      return;
+    }
+    draining = true;
+    let next: PlayQueuedAction | undefined;
+    let baseRevision = 0;
+    try {
+      // The committed session is applied by refreshing the bounded detail;
+      // the next action must use that new revision.
+      await detailRefresh;
+      const session = selectedSession.value;
+      if (
+        followUps.pausedReason.value ||
+        !session ||
+        session.id !== sessionId ||
+        session.schemaVersion !== 4 ||
+        migration.preview.value ||
+        !followUps.sessionItems.value.length
+      ) {
+        return;
+      }
+      if (playSourceDriftNeedsDecision(historyWindow.drift.value)) {
+        followUps.pause('source_drift');
+        return;
+      }
+      if (interactionBlocked.value) {
+        followUps.pause('blocked');
+        return;
+      }
+      next = followUps.shift(sessionId);
+      baseRevision = session.revision;
+    } finally {
+      draining = false;
+    }
+    if (next) {
+      await runAction(next, baseRevision, 'follow_up');
+    }
+  }
+
+  async function resumeFollowUps(): Promise<void> {
+    followUps.clearPause();
+    const sessionId = selectedSessionId.value;
+    if (!sending.value && sessionId) {
+      await drainFollowUps(sessionId);
     }
   }
 
@@ -464,6 +655,7 @@ export function usePlayWorkspace(
 
     error.value = '';
     historyRetryingArtifactId.value = artifactId;
+    let retryOutcome: PlayTurnSubmitOutcome = 'failed';
 
     try {
       // Retry is an explicit graph operation, so it lazily requests the legacy
@@ -482,7 +674,7 @@ export function usePlayWorkspace(
         );
       }
       retryProjection.value = { sessionId: session.id, projection };
-      const outcome = await retryStreamTurn({
+      retryOutcome = await retryStreamTurn({
         sessionId: session.id,
         artifactId,
         baseRevision: loaded.session.revision,
@@ -490,13 +682,18 @@ export function usePlayWorkspace(
         actionKind: artifact.input.kind,
       });
 
-      if (outcome === 'failed' || outcome === 'unknown') {
+      if (retryOutcome === 'failed' || retryOutcome === 'unknown') {
         error.value = provisionalTurn.value?.error ?? 'Play Retry failed before commit.';
       }
     } catch (caught) {
       error.value = toErrorMessage(caught);
     } finally {
       clearRetryProjection();
+    }
+    if (retryOutcome === 'committed') {
+      await drainFollowUps(session.id);
+    } else if (followUps.sessionItems.value.length) {
+      followUps.pause(playFollowUpPauseForOutcome(retryOutcome, provisionalTurn.value?.phase) ?? 'failed');
     }
   }
 
@@ -510,7 +707,9 @@ export function usePlayWorkspace(
   function replaceSession(session: PlaySession) {
     const currentRevision = historyWindow.detail.value?.snapshot.revision ?? -1;
     if (session.id === selectedSessionId.value && session.revision >= currentRevision) {
-      void refreshSessionIndexAndDetail(session.id);
+      detailRefresh = refreshSessionIndexAndDetail(session.id).catch((caught) => {
+        error.value = toErrorMessage(caught);
+      });
     }
   }
 
@@ -575,6 +774,8 @@ export function usePlayWorkspace(
     historyNotice,
     historyWindow,
     canStop,
+    canSteer,
+    followUpControls,
     provisionalTurn,
     turnAnnouncement,
     timeAdvance,
@@ -601,6 +802,7 @@ export function usePlayWorkspace(
     restoreCheckpoint,
     selectSession,
     stopTurn,
+    steerTurn,
     submitTurn,
   };
 }
@@ -721,6 +923,11 @@ function relativeTimeAdvanceMinutes(value: PlayRelativeTimeAdvance): number {
   if (value.unit === 'day') return value.amount * 1_440;
   if (value.unit === 'hour') return value.amount * 60;
   return value.amount;
+}
+
+// A steer that becomes its own action must not advance time a second time.
+function steerActionKind(kind: PlayActionKind): PlayActionKind {
+  return kind === 'wait' ? 'do' : kind;
 }
 
 function formatWaitAction(value: PlayRelativeTimeAdvance): string {

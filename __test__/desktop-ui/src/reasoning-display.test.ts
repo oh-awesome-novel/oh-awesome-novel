@@ -55,6 +55,25 @@ describe('Copilot reasoning display', () => {
   });
 });
 
+describe('Copilot steer display', () => {
+  it('shows applied and handed-back steers in order inside the assistant turn', () => {
+    const { items } = useAgentTimeline(computed<UIMessage[]>(() => [{
+      id: 'a', role: 'assistant', parts: [
+        { type: 'text', text: '第一段。' },
+        { type: 'data-steering', data: { id: 's1', content: '换成雨天', status: 'applied' } } as UIMessage['parts'][number],
+        { type: 'data-steering', data: { id: 's2', content: '晚到', status: 'rejected' } } as UIMessage['parts'][number],
+      ],
+    }]));
+    expect(items.value.filter((item) => item.type === 'steer-message')).toEqual([
+      { id: 'a:steer:1', type: 'steer-message', text: '换成雨天', status: 'applied' },
+      { id: 'a:steer:2', type: 'steer-message', text: '晚到', status: 'rejected' },
+    ]);
+    const wrapper = mount(AgentTimeline, { props: { items: items.value } });
+    expect(wrapper.findAll('.conversation-steer-tag').map((tag) => tag.text())).toEqual(['插话', '插话未送达，已转入排队']);
+    wrapper.unmount();
+  });
+});
+
 describe('Play message log view', () => {
   const entry = (kind: string, extra: Partial<PlayMessageLogEntry> = {}): PlayMessageLogEntry => ({
     schemaVersion: 1, at: '2026-10-22T00:00:00.000Z', playSessionId: 'play-1', kind, ...extra,

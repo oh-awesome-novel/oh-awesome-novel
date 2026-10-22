@@ -95,3 +95,62 @@ describe('PlayComposer time advance', () => {
     expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(true);
   });
 });
+
+describe('PlayComposer while a turn runs', () => {
+  function mountRunning(canSteer: boolean) {
+    const submit = vi.fn();
+    const steer = vi.fn();
+    const Host = defineComponent({
+      components: { PlayComposer },
+      setup() {
+        const userText = shallowRef('');
+        const actionKind = shallowRef<'say' | 'look' | 'move' | 'do' | 'wait'>('do');
+        const timeAdvance = shallowRef<PlayRelativeTimeAdvance | undefined>(undefined);
+        return { actionKind, canSteer, steer, submit, timeAdvance, userText };
+      },
+      template: `
+        <PlayComposer
+          v-model:user-text="userText"
+          v-model:action-kind="actionKind"
+          v-model:time-advance="timeAdvance"
+          :disabled="false"
+          :busy="true"
+          :running="true"
+          :can-steer="canSteer"
+          :can-stop="true"
+          phase="streaming"
+          :suggestions="[]"
+          @submit="submit"
+          @steer="steer"
+        />
+      `,
+    });
+    return { wrapper: mount(Host), submit, steer };
+  }
+
+  it('keeps the input usable, queues with the send shortcut and steers with Alt+Enter', async () => {
+    const { wrapper, submit, steer } = mountRunning(true);
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea');
+    expect(textarea.element.disabled).toBe(false);
+    expect(wrapper.find('.play-stop-button').exists()).toBe(true);
+    expect(wrapper.get<HTMLButtonElement>('.play-steer-button').element.disabled).toBe(true);
+
+    await textarea.setValue('Look behind the counter');
+    await textarea.trigger('keydown', { key: 'Enter', ctrlKey: true });
+    expect(submit).toHaveBeenCalledOnce();
+
+    await textarea.trigger('keydown', { key: 'Enter', altKey: true });
+    expect(steer).toHaveBeenCalledOnce();
+    await wrapper.get('.play-steer-button').trigger('click');
+    expect(steer).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables steer when the running turn cannot be cancelled', async () => {
+    const { wrapper, steer } = mountRunning(false);
+    await wrapper.get('textarea').setValue('Hurry');
+    expect(wrapper.get<HTMLButtonElement>('.play-steer-button').element.disabled).toBe(true);
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', altKey: true });
+    expect(steer).not.toHaveBeenCalled();
+    expect(wrapper.get<HTMLButtonElement>('.play-queue-button').element.disabled).toBe(false);
+  });
+});
