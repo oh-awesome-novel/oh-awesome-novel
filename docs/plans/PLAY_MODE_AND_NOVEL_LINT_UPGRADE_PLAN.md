@@ -2,7 +2,7 @@
 
 > 状态：Planned
 >
-> 对标参考：`reference-only/CicaTavern` (v1.8.1) 及分析报告 [`docs/research/CICATAVERN_REFERENCE_ANALYSIS.md`](../research/CICATAVERN_REFERENCE_ANALYSIS.md)
+> 对标参考：`reference-only/CicaTavern` (v1.8.1)、`reference-only/storyforge` (v4.0.2 增量更新) 及分析报告 [`docs/research/CICATAVERN_REFERENCE_ANALYSIS.md`](../research/CICATAVERN_REFERENCE_ANALYSIS.md)
 >
 > 既有底座：
 > - Play 模式已具备独立一级工作区、session schema v4、turns 结构化事实、world clock 与事件调度、单一只读 world referee 及 `PendingAction` 采纳机制（见 `docs/tasks/1120.md`）。
@@ -12,12 +12,13 @@
 > 1. 严格遵守 **Filesystem-first** 原则，所有推演状态、名册扩展、剧情存档均落盘为 Markdown / YAML / Object File Tree，不引入私有数据库。
 > 2. 严格遵循 **Human Approval** 机制，推演产生的新设定、LINT 提出的正文润色修改，必须走 `CandidateChangeSet` + `PendingAction`，经人类 Git Diff 确认后方可合入 canonical 文件。
 > 3. 本期聚焦推演核心体验与反套话文本质检，**明确不接入生图与 TTS 接口调用**，仅在名册与场景协议中建立完备的数据契约与结构化预留。
-> 4. 计划包含五个核心阶段：
+> 4. 融合吸收 `CicaTavern` 的感性交互与前缀缓存，以及 `StoryForge` (v4.0.2) 的单段精准锚定、有限资源对账与分支场景快照隔离。
+> 5. 计划包含五个核心阶段：
 >    - **Phase 1 (P0)**：Play 模式 Prompt Cache 布局重构 (Frozen Prefix & Tail Injection)
->    - **Phase 2 (P0)**：五维剧情存档协议 (Play Compaction)
->    - **Phase 3 (P1)**：独立视觉小说推演视窗 (Visual Novel View)
+>    - **Phase 2 (P0)**：五维剧情存档协议 (Play Compaction & 资源对账)
+>    - **Phase 3 (P1)**：独立视觉小说推演视窗 (Visual Novel View & 场景快照隔离)
 >    - **Phase 4 (P1)**：角色名册与形象/声线一致性体系 (名册与协议层，暂不接入生图/TTS)
->    - **Phase 5 (P0)**：写作与设定反套话质检器 (Novel LINT，结合既有去 AI 味体系)
+>    - **Phase 5 (P0)**：写作与设定反套话质检器 (Novel LINT，单段精准锚定与去 AI 味融合)
 
 ---
 
@@ -214,11 +215,19 @@ export interface PlayCompactionData {
      ```
   3. 后续回合恢复常规推进，上下文重新归零并保持极低消耗。
 
+#### 4. 关键状态与有限资源对账机制 (Resource & Factual Audit)
+吸收 `StoryForge` (v4.0.2) 在事实审校中的关键教训（`fix(longform): use governed JSON factual audit with exact response evidence`）：
+- **痛点**：推演达到 20~30 轮后，模型在总结五维剧情时极易发生“事实幻觉”（例如主角前文断臂、灵药耗尽，总结时由于注意力稀释却把负面状态遗漏，甚至无端写成自愈）；
+- **对账约束**：
+  1. 在提炼剧情存档前，系统从 Play-local 状态与既往结算中提取“当前未闭环的重要事实约束”（关键道具存量、不可逆伤势、重要约定与未决危机）；
+  2. 生成的 `<剧情存档>` 必须通过结构化事实核验：若角色状态与历史对账不符，触发单次定向修正，严禁静默抹除角色的付出代价与受创事实；
+  3. 存档中的“经过”与“未完线索”必须有字面历史依据，杜绝模型自作主张新增未发生事实。
+
 ### 4.3 涉及文件与改动
-- `packages/core/src/play-compaction.ts`：定义 schema、提炼 prompt 与解析逻辑。
+- `packages/core/src/play-compaction.ts`：定义 schema、提炼 prompt、资源对账核验与解析逻辑。
 - `packages/backend/src/routes/play-compaction-routes.ts`：提供 `POST /api/play/sessions/:id/compact` 路由。
-- `apps/desktop-ui/src/components/play/PlayCompactionModal.vue`：UI 上提供“剧情归档”按钮、预览提炼内容与一键开启新阶段。
-- `__test__/core/src/play-compaction.test.ts`：覆盖解析器对合法与容错 XML 标签的测试。
+- `apps/desktop-ui/src/components/play/PlayCompactionModal.vue`：UI 上提供“剧情归档”按钮、预览提炼内容、对账警示与一键开启新阶段。
+- `__test__/core/src/play-compaction.test.ts`：覆盖解析器对合法与容错 XML 标签以及资源对账检查的测试。
 
 ---
 
@@ -254,6 +263,21 @@ OAN 当前的 Play 视窗虽然已经支持回合查看与分支选择，但交�
 - **辅助功能栏**：
   - `Log`：一键调出全历史文本回看抽屉；
   - `View Switch`：一键在“Galgame 沉浸演出模式”与“专业推演工作台模式”之间平滑切换。
+
+#### 3. 分支场景快照冻结与演出隔离机制 (Frozen Scene Stage Snapshot)
+吸收 `StoryForge` (v4.0.2) 在分支回放隔离上的实践（`fix(text-adventure): bind transcript prose to frozen scenes`、`fix(text-adventure): isolate branch playback and generated prose`）：
+- **痛点**：在多分支推演中，作者回退历史（Rewind）或切换到兄弟分支时，前一个分支生成的背景地点与立绘位置容易残留踩踏，造成视觉错位与闪烁；
+- **快照隔离设计**：
+  1. 每个 Play 回合（Turn）持久化时，附带冻结一份不可变的 `StageSnapshot`：
+     ```typescript
+     export interface StageSnapshot {
+       sceneId: string; // 地点背景标识
+       activeCharacters: Array<{ characterId: string; position: 'left' | 'center' | 'right' }>;
+       beats: Array<{ speaker: string; text: string; isDialogue: boolean }>;
+     }
+     ```
+  2. 回溯查看历史回合或 Log 抽屉时，视窗完全按该回合的 `StageSnapshot` 进行只读渲染；
+  3. 新生成的流式数据仅在当前草稿层展示，未提交前不污染既有分支的舞台状态，实现分支演出画面的物理级隔离。
 
 ### 5.3 涉及文件与改动
 - `packages/core/src/text-speaker-parser.ts`：实现中文分句、说话人识别与标签携带算法。
@@ -375,17 +399,26 @@ export const NOVEL_LINT_RULES: LintRule[] = [
 └────────────────────────────────────────────────────────┘
 ```
 
-#### 3. 角色卡与设定导入反套话门禁
+#### 3. 单段精准锚定 (Paragraph Anchor) 与字面引文约束 (Verified Quotes)
+吸收 `StoryForge` (v4.0.2) 在精准审校上的关键突破（`anchor quality review to exact source spans`、`prefer literal single-paragraph review anchors`）：
+- **痛点**：传统 AI 去 AI 味往往因模型自由发挥，产生“替换词匹配错段落”、“顺带把周围作者精心雕琢的好句子全改废了”的恶性扩散；
+- **精准锚定规范**：
+  1. **段落级锚点（`ParagraphAnchor`）**：本地正则 LINT 扫描时，不仅记录全局 offset，同时为每一个自然段生成唯一的 `anchorId`（基于段落内容哈希与段序号）；
+  2. **字面引文强校验（`VerifiedLiteralQuote`）**：审稿请求要求模型返回的命中项必须携带被引用的确切原文片段（严格要求 `< 30` 字且字面完全匹配），模型不能抽象概括；
+  3. **单段作用域锁定（Scope Lock）**：修改建议被硬性限制在所属 `anchorId` 内部，模型不得输出跨段落的修改提议；
+  4. 生成的 `CandidateChangeSet` 保证每个段落的改动互不干扰，作者在 Git Diff 中清晰看到“仅改动了包含套话的微创局部”，极大提高审批信心。
+
+#### 4. 角色卡与设定导入反套话门禁
 在导入外部 SillyTavern 角色卡或通过 Copilot 创建角色档案时，自动运行 LINT 过滤：
 - 提前截获角色档案中的“温柔善良”、“嘴角勾起”等套话；
 - 提示作者进行个性化细化，保证 Canonical 设定库的文字质量。
 
 ### 7.3 涉及文件与改动
-- `packages/core/src/novel-lint.ts`：实现 11 类正则规则库与文本扫描器。
-- `packages/core/src/writing-review.ts`：融合 LINT 结果至 `ReviewFinding` 与 `DE_AI_PROTECTION_RULES`。
-- `packages/agent/src/tools/de-ai-tool.ts`：升级去 AI 味 Copilot 工具，支持微创局部替换提案。
+- `packages/core/src/novel-lint.ts`：实现 11 类正则规则库、段落锚点生成器与字面引文验证器。
+- `packages/core/src/writing-review.ts`：融合 LINT 结果至 `ReviewFinding` 与 `DE_AI_PROTECTION_RULES`，锁定单段修改范围。
+- `packages/agent/src/tools/de-ai-tool.ts`：升级去 AI 味 Copilot 工具，支持单段精准锚定与微创局部替换提案。
 - `apps/desktop-ui/src/components/editor/WritingLintBar.vue`：编辑器底部套话提示条。
-- `__test__/core/src/novel-lint.test.ts`：11 类套话匹配与边界情况的完备单测。
+- `__test__/core/src/novel-lint.test.ts`：11 类套话匹配、段落锚点与边界情况的完备单测。
 
 ---
 
@@ -394,10 +427,10 @@ export const NOVEL_LINT_RULES: LintRule[] = [
 | 阶段 | 优先级 | 核心交付物 | 验收标准 (Done Criteria) |
 |---|---|---|---|
 | **Phase 1** | **P0** | `PlayPromptLayout` (Frozen Prefix) | 1. Session 初始化生成静态前缀并固化在 session 元数据中。<br>2. 连续 5 回合推演，System Prompt 字节完全相同。<br>3. 动态设定与状态仅在尾部 user 消息增量注入。<br>4. 单元测试覆盖前缀不变性验证。 |
-| **Phase 2** | **P0** | `PlayCompaction` (五维剧情存档) | 1. 结构化提取人物、经过、未完线索、场景与文风。<br>2. 归档后开启新会话，首轮成功注入 `<前情提要>` + 2 轮原文。<br>3. 历史 turns 树指针保留，不破坏分支回溯。<br>4. 容错解析 XML 标签单元测试通过。 |
-| **Phase 3** | **P1** | `VisualNovelStage` (独立视觉小说视窗) | 1. 长文本流式切分为 Beats，正确渲染打字机动效。<br>2. 说话人识别准确推断常见引语前后动词与行当称谓，排除 `NOT_NAME`。<br>3. 跨句 Markdown/HTML 标签不崩溃（`carryTags`）。<br>4. 选项在屏幕中央弹出并支持按键 `1~9` 推进。 |
+| **Phase 2** | **P0** | `PlayCompaction` (五维剧情存档与资源对账) | 1. 结构化提取人物、经过、未完线索、场景与文风。<br>2. 归档前核验未决事实与资源对账，杜绝事实幻觉。<br>3. 归档后开启新会话，首轮成功注入 `<前情提要>` + 2 轮原文。<br>4. 容错解析 XML 标签单元测试通过。 |
+| **Phase 3** | **P1** | `VisualNovelStage` (独立视觉小说视窗与快照隔离) | 1. 长文本流式切分为 Beats，正确渲染打字机动效。<br>2. 说话人识别准确推断常见引语前后动词与行当称谓，排除 `NOT_NAME`。<br>3. 舞台状态冻结为 `StageSnapshot`，分支回溯与演出渲染物理隔离。<br>4. 选项在屏幕中央弹出并支持按键 `1~9` 推进。 |
 | **Phase 4** | **P1** | `CharacterRoster` (名册与协议层) | 1. 角色名册 Schema 完整定义（Booru tags、衣着、别名、预留声线）。<br>2. 别名查找与说话人推断平滑打通。<br>3. 结构化场景画面拆解协议解析器就绪。<br>4. 纯数据模型与协议测试通过（无真实外部生图/TTS 调用）。 |
-| **Phase 5** | **P0** | `NovelLintEngine` (反套话质检器) | 1. 11 类反套话正则命中率在测试集上达 100%。<br>2. 严格遵守 `DE_AI_PROTECTION_RULES`，仅针对命中片段给出微创替换。<br>3. 替换建议成功转换为 `CandidateChangeSet` 并支持人类审批落盘。<br>4. 角色卡导入时套话扫描生效。 |
+| **Phase 5** | **P0** | `NovelLintEngine` (单段精准反套话质检器) | 1. 11 类反套话正则命中率在测试集上达 100%。<br>2. 严格遵守单段锚点（`ParagraphAnchor`）与字面引文约束，禁止跨段重写。<br>3. 替换建议成功转换为精准局部 `CandidateChangeSet` 并支持人类审批落盘。<br>4. 角色卡导入时套话扫描生效。 |
 
 ---
 

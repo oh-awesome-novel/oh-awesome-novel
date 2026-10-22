@@ -4,9 +4,9 @@
 >
 > 优先级：P1
 >
-> 对标参考：`reference-only/CicaTavern/server/forge/` 及分析报告 [`docs/research/CICATAVERN_REFERENCE_ANALYSIS.md`](../research/CICATAVERN_REFERENCE_ANALYSIS.md)
+> 对标参考：`reference-only/CicaTavern/server/forge/`、`reference-only/storyforge` (v4.0.2 增量更新与 Q02 技法卡) 及分析报告 [`docs/research/CICATAVERN_REFERENCE_ANALYSIS.md`](../research/CICATAVERN_REFERENCE_ANALYSIS.md)
 >
-> 核心目标：为创作者提供一套告别空白表单与粗糙一次性生成的“引导式设定共创向导（Forge）”。通过“台词样例挑性格、试写片段挑文风、性格调色盘、三面性、二次反刻板解释、诚实归属与项锁定”，帮助作者从模糊想法逐步提炼出立体生动的同人/原创角色档案、世界舞台、场景地点与开场白，并通过 OAN 规范的 `CandidateChangeSet` 经人类确认后落盘入库。
+> 核心目标：为创作者提供一套告别空白表单与粗糙一次性生成的“引导式设定共创向导（Forge）”。通过“台词样例挑性格、试写片段挑文风、性格调色盘、三面性、二次反刻板解释、小说动力学技法卡、诚实归属与项锁定”，帮助作者从模糊想法逐步提炼出立体生动的同人/原创角色档案、世界舞台、场景地点与开场白，并通过 OAN 规范的 `CandidateChangeSet` 经人类确认后落盘入库。
 >
 > 核心约束：
 > 1. **Filesystem-first**：生成的设定必须直接落盘为 OAN 标准对象文件树（`characters/<id>/profile.md`、`world/places/`、`world/rules.md`、`world/timeline/`），不存私有数据库。草稿暂存于 `.workspace/forge/drafts/<draft-id>.yaml`。
@@ -165,6 +165,18 @@ export interface ForgeBrief {
 - **舞台世界**：分为真实背景或架空设定，必须列出与常识不同的规则、核心势力、重要地点场所及影响当前局势的历史往事；
 - **开场白（Greeting）**：必须遵循“头三行见悬念/反常/冲突”、“角色凭动作与台词出场”、“提供给玩家明确的话头与行动切入点”。
 
+#### 5. 注入小说动力学技法卡 (Technique Cards Injection)
+吸收 `StoryForge` (v4.0.2) 在长篇系统文质量攻坚中沉淀的 7 类可执行技法卡（`SYSTEM-FICTION-Q02-TECHNIQUE-CARDS.md`），为角色注入故事展开的内生动力，杜绝“空心纸片人”：
+- **欲望与即时目标（T01）**：
+  - 角色除了性格与身份，当前处境下最想办成的一件具体事情是什么？
+  - 阻力与代价是什么？（拿掉面板或光环后，读者是否依然明白他为何在意？）
+- **主动选择与因果桥梁（T03）**：
+  - 角色面临两难冲突时的决策依据（牺牲什么以换取什么？）；
+  - 杜绝降智与机械降神：事件转折必须由角色的主动行动或关键决定促成，而非剧情平白天降。
+- **能力与资源成长账本（T04）**：
+  - 若角色设定包含金手指、超能力、系统数值或好感度，强制建立“初态、消耗代价、收益结算”边界；
+  - 严禁未来收益提前变现或无代价赊账，从设定源头防范推演与写作中的战力通胀。
+
 ---
 
 ## 5. Phase 3：分块结构化撰写与实时质检器 (Writer & Local Checker)
@@ -270,7 +282,7 @@ export interface ForgeBrief {
 | 任务编号 | 交付模块 | 核心工作内容 | 验收标准 (Done Criteria) |
 |---|---|---|---|
 | **F-1** | `ForgeTypes` & `DiscussEngine` | 1. 定义 `ForgeQuestion`、`ForgeBrief`、`BriefItem` 类型。<br>2. 实现带台词样例（sample）和试写文风（taste）的商讨 System Prompt。<br>3. 实现 XML 结构安全解析与容错 JSON 抽取。 | 1. 模拟 3 轮商讨，返回的每个选项均包含生动台词样例。<br>2. 区分 `by: user` 与 `by: assistant` 标记。<br>3. 单元测试覆盖草图项锁定与就绪度演进。 |
-| **F-2** | `PlanGenerator` & Character Depth | 1. 实现方案大纲生成提示词与归一化逻辑。<br>2. 嵌入性格调色盘（底色/主色/点缀）、三面性与反刻板二次解释。<br>3. 整合世界观与开场白规范。 | 1. 输出完整的 `ForgePlan`，包含三面性纯台词语料（每面 5 句以上）。<br>2. 二次解释明确阐明特质边界。<br>3. 开场白头三行具备反常/悬念。 |
+| **F-2** | `PlanGenerator` & Character Depth | 1. 实现方案大纲生成提示词与归一化逻辑。<br>2. 嵌入性格调色盘（底色/主色/点缀）、三面性与反刻板二次解释。<br>3. 注入小说动力学技法（欲望目标 T01、选择因果 T03、资源成长账本 T04）。<br>4. 整合世界观与开场白规范。 | 1. 输出完整的 `ForgePlan`，包含三面性纯台词语料（每面 5 句以上）。<br>2. 二次解释明确阐明特质边界。<br>3. 欲望目标与选择代价清晰可辨，能力资源具备初态与消耗约束。<br>4. 开场白头三行具备反常/悬念。 |
 | **F-3** | `ChunkedWriter` & Lint Hook | 1. 分块并行撰写世界观、角色档案、三面性、二次解释与开场白。<br>2. 接入 `NovelLintEngine` 实时套话过滤与微创修正。 | 1. 产出条目为规范紧凑的 YAML/Markdown 格式。<br>2. 11 类套话在生成后被自动扫描并修正，无明显陈词滥调。 |
 | **F-4** | `ForgeWizardModal.vue` & ChangeSet | 1. 开发向导模态框（商讨区 + 实时草图看板 + 方案审查看板）。<br>2. 转换为标准 `CandidateChangeSet` 并提请 `PendingAction` 审查。 | 1. 用户完成向导后，可在 Diff 视窗中直观看到将要写入的 canonical 文件。<br>2. 点击 Accept 成功落盘为合法文件并触发 Git 提交。 |
 | **F-5** | Play & Writing Linkage | 1. 落地“一键开演”与“一键入书”动作接口。<br>2. 与现有 Play Session 及 Writing Context 引用打通。 | 1. 点击“一键开演”能够无缝在新创建的 Play Session 中看到该角色与开场白并开始交互。 |
