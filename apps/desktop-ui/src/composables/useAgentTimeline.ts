@@ -10,6 +10,12 @@ export type AgentTimelineItem =
     }
   | {
       id: string;
+      type: 'agent-reasoning';
+      text: string;
+      streaming: boolean;
+    }
+  | {
+      id: string;
       type: 'tool-activity';
       label: string;
       detail: string;
@@ -27,7 +33,21 @@ export function useAgentTimeline(messages: ComputedRef<UIMessage[]>) {
         .map((part) => (part.type === 'text' ? part.text : ''))
         .join('')
         .trim();
+      const reasoningParts = message.role === 'assistant'
+        ? message.parts.filter((part) => part.type === 'reasoning')
+        : [];
+      const reasoning = reasoningParts.map((part) => part.text).join('\n\n').trim();
       const entries: AgentTimelineItem[] = [];
+
+      // Thinking renders before the answer and stays collapsed by default.
+      if (reasoning) {
+        entries.push({
+          id: `${message.id}:reasoning`,
+          type: 'agent-reasoning',
+          text: reasoning,
+          streaming: reasoningParts.some((part) => part.state === 'streaming'),
+        });
+      }
 
       if (text) {
         entries.push({

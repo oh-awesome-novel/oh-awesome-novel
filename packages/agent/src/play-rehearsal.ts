@@ -2,6 +2,7 @@ import { streamText } from 'ai';
 
 import type { LlmProviderConfig } from '@oh-awesome-novel/core';
 import type { FinishReason, LanguageModel } from 'ai';
+import { resolveProviderReasoningEffort } from './provider-reasoning.js';
 import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const PLAY_REHEARSAL_ACTOR_SYSTEM_PROMPT = [
@@ -134,16 +135,20 @@ export type PlayRehearsalActorGenerationEvent =
       readonly type: 'finish';
       readonly text: string;
       readonly finishReason: FinishReason;
+      /** Model thinking, for the debug message log only. */
+      readonly reasoning?: string;
     }
   | {
       readonly type: 'abort';
       readonly partialText: string;
       readonly reason?: string;
+      readonly reasoning?: string;
     }
   | {
       readonly type: 'error';
       readonly partialText: string;
       readonly error: PlayRehearsalActorGenerationError;
+      readonly reasoning?: string;
     };
 
 export interface PlayRehearsalRefereeCompletionError {
@@ -160,16 +165,20 @@ export type PlayRehearsalRefereeCompletionResult =
       readonly status: 'completed';
       readonly text: string;
       readonly finishReason: FinishReason;
+      /** Model thinking, for the debug message log only. */
+      readonly reasoning?: string;
     }
   | {
       readonly status: 'aborted';
       readonly partialText: string;
       readonly reason?: string;
+      readonly reasoning?: string;
     }
   | {
       readonly status: 'provider_error';
       readonly partialText: string;
       readonly error: PlayRehearsalRefereeCompletionError;
+      readonly reasoning?: string;
     };
 
 interface PlayRehearsalActorPromptPayload {
@@ -343,9 +352,10 @@ export async function* streamPlayRehearsalActorGeneration(
 ): AsyncIterable<PlayRehearsalActorGenerationEvent> {
   const prompt = formatPlayRehearsalActorPrompt(input);
   let partialText = '';
+  let reasoning = '';
 
   if (input.abortSignal?.aborted) {
-    yield createAbortEvent(partialText, input.abortSignal.reason);
+    yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
     return;
   }
 
@@ -354,15 +364,15 @@ export async function* streamPlayRehearsalActorGeneration(
     model = await input.resolveModel(input.providerConfig);
   } catch (error) {
     if (input.abortSignal?.aborted) {
-      yield createAbortEvent(partialText, input.abortSignal.reason);
+      yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
     } else {
-      yield createGenerationErrorEvent(partialText, 'provider_error', error);
+      yield withReasoning(createGenerationErrorEvent(partialText, 'provider_error', error), reasoning);
     }
     return;
   }
 
   if (input.abortSignal?.aborted) {
-    yield createAbortEvent(partialText, input.abortSignal.reason);
+    yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
     return;
   }
 
@@ -392,15 +402,20 @@ export async function* streamPlayRehearsalActorGeneration(
       prompt,
       abortSignal: input.abortSignal,
       maxRetries: 0,
+      ...reasoningOption(input.providerConfig),
     });
 
     for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         await recordActorUsage('aborted');
-        yield createAbortEvent(partialText, input.abortSignal.reason);
+        yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
         return;
       }
 
+      if (part.type === 'reasoning-delta') {
+        reasoning += part.text;
+        continue;
+      }
       if (part.type === 'text-delta') {
         if (part.text) {
           partialText += part.text;
@@ -410,60 +425,60 @@ export async function* streamPlayRehearsalActorGeneration(
       }
       if (part.type === 'abort') {
         await recordActorUsage('aborted');
-        yield createAbortEvent(partialText, part.reason);
+        yield withReasoning(createAbortEvent(partialText, part.reason), reasoning);
         return;
       }
       if (part.type === 'error') {
         await recordActorUsage('failed');
-        yield createGenerationErrorEvent(partialText, 'provider_error', part.error);
+        yield withReasoning(createGenerationErrorEvent(partialText, 'provider_error', part.error), reasoning);
         return;
       }
       if (part.type === 'finish') {
         const usage = extractAiSdkUsageFields(part.totalUsage);
         if (part.finishReason === 'error') {
           await recordActorUsage('failed', usage, part.finishReason);
-          yield createGenerationErrorEvent(
+          yield withReasoning(createGenerationErrorEvent(
             partialText,
             'provider_error',
             new Error('Play rehearsal actor provider finished with an error.'),
-          );
+          ), reasoning);
         } else {
           await recordActorUsage('completed', usage, part.finishReason);
-          yield {
+          yield withReasoning({
             type: 'finish',
             text: partialText,
             finishReason: part.finishReason,
-          };
+          }, reasoning);
         }
         return;
       }
       if (part.type.startsWith('tool-')) {
         await recordActorUsage('failed');
-        yield createGenerationErrorEvent(
+        yield withReasoning(createGenerationErrorEvent(
           partialText,
           'unexpected_model_output',
           new Error('Play rehearsal actor generation returned tool output.'),
-        );
+        ), reasoning);
         return;
       }
     }
   } catch (error) {
     if (input.abortSignal?.aborted) {
       await recordActorUsage('aborted');
-      yield createAbortEvent(partialText, input.abortSignal.reason);
+      yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
     } else {
       await recordActorUsage('failed');
-      yield createGenerationErrorEvent(partialText, 'provider_error', error);
+      yield withReasoning(createGenerationErrorEvent(partialText, 'provider_error', error), reasoning);
     }
     return;
   }
 
   await recordActorUsage('failed');
-  yield createGenerationErrorEvent(
+  yield withReasoning(createGenerationErrorEvent(
     partialText,
     'provider_error',
     new Error('Play rehearsal actor stream ended without a terminal result.'),
-  );
+  ), reasoning);
 }
 
 export async function completePlayRehearsalReferee(
@@ -474,9 +489,10 @@ export async function completePlayRehearsalReferee(
     ? MAX_PLAY_REHEARSAL_REFEREE_RESPONSE_CHARACTERS
     : requireRefereeOutputLimit(input.maxOutputCharacters);
   let partialText = '';
+  let reasoning = '';
 
   if (input.abortSignal?.aborted) {
-    return createRefereeAbortResult(partialText, input.abortSignal.reason);
+    return withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning);
   }
 
   let model: LanguageModel;
@@ -484,12 +500,12 @@ export async function completePlayRehearsalReferee(
     model = await input.resolveModel(input.providerConfig);
   } catch (error) {
     return input.abortSignal?.aborted
-      ? createRefereeAbortResult(partialText, input.abortSignal.reason)
-      : createRefereeErrorResult(partialText, 'provider_error', error);
+      ? withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning)
+      : withReasoning(createRefereeErrorResult(partialText, 'provider_error', error), reasoning);
   }
 
   if (input.abortSignal?.aborted) {
-    return createRefereeAbortResult(partialText, input.abortSignal.reason);
+    return withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning);
   }
 
   const recordRefereeUsage = async (
@@ -518,82 +534,96 @@ export async function completePlayRehearsalReferee(
       prompt,
       abortSignal: input.abortSignal,
       maxRetries: 0,
+      ...reasoningOption(input.providerConfig),
     });
 
     for await (const part of result.stream) {
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         await recordRefereeUsage('aborted');
-        return createRefereeAbortResult(partialText, input.abortSignal.reason);
+        return withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning);
+      }
+      if (part.type === 'reasoning-delta') {
+        reasoning += part.text;
+        continue;
       }
       if (part.type === 'text-delta') {
         if (part.text) {
           partialText += part.text;
           if (partialText.length > maxOutputCharacters) {
             await recordRefereeUsage('failed');
-            return createRefereeErrorResult(
+            return withReasoning(createRefereeErrorResult(
               partialText.slice(0, maxOutputCharacters),
               'response_too_large',
               new Error(
                 `Play rehearsal referee response exceeded ${maxOutputCharacters} characters.`,
               ),
               false,
-            );
+            ), reasoning);
           }
         }
         continue;
       }
       if (part.type === 'abort') {
         await recordRefereeUsage('aborted');
-        return createRefereeAbortResult(partialText, part.reason);
+        return withReasoning(createRefereeAbortResult(partialText, part.reason), reasoning);
       }
       if (part.type === 'error') {
         await recordRefereeUsage('failed');
-        return createRefereeErrorResult(
+        return withReasoning(createRefereeErrorResult(
           partialText,
           'provider_error',
           part.error,
-        );
+        ), reasoning);
       }
       if (part.type === 'finish') {
         const usage = extractAiSdkUsageFields(part.totalUsage);
         if (part.finishReason === 'error') {
           await recordRefereeUsage('failed', usage, part.finishReason);
-          return createRefereeErrorResult(
+          return withReasoning(createRefereeErrorResult(
             partialText,
             'provider_error',
             new Error('Play rehearsal referee provider finished with an error.'),
-          );
+          ), reasoning);
         }
         await recordRefereeUsage('completed', usage, part.finishReason);
-        return {
+        return withReasoning({
           status: 'completed',
           text: partialText,
           finishReason: part.finishReason,
-        };
+        }, reasoning);
       }
       if (part.type.startsWith('tool-')) {
         await recordRefereeUsage('failed');
-        return createRefereeErrorResult(
+        return withReasoning(createRefereeErrorResult(
           partialText,
           'unexpected_model_output',
           new Error('Play rehearsal referee returned tool output.'),
           false,
-        );
+        ), reasoning);
       }
     }
   } catch (error) {
     await recordRefereeUsage(input.abortSignal?.aborted ? 'aborted' : 'failed');
     return input.abortSignal?.aborted
-      ? createRefereeAbortResult(partialText, input.abortSignal.reason)
-      : createRefereeErrorResult(partialText, 'provider_error', error);
+      ? withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning)
+      : withReasoning(createRefereeErrorResult(partialText, 'provider_error', error), reasoning);
   }
 
   await recordRefereeUsage('failed');
-  return createRefereeErrorResult(
+  return withReasoning(createRefereeErrorResult(
     partialText,
     'provider_error',
     new Error('Play rehearsal referee stream ended without a terminal result.'),
-  );
+  ), reasoning);
+}
+
+function reasoningOption(providerConfig: LlmProviderConfig) {
+  const effort = resolveProviderReasoningEffort(providerConfig);
+  return effort ? { reasoning: effort } : {};
+}
+
+function withReasoning<T extends object>(value: T, reasoning: string): T {
+  return reasoning ? { ...value, reasoning } : value;
 }
 
 function serializePromptPayload(payload: PlayRehearsalActorPromptPayload): string {

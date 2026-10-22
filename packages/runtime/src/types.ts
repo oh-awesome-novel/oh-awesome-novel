@@ -9,6 +9,12 @@ export interface RuntimeMessage {
   name?: string;
   toolCallId?: string;
   toolCalls?: RuntimeToolCall[];
+  /**
+   * Assistant thinking text. Replayed only within the turn that produced it
+   * (some providers require it between tool steps) and kept in session logs;
+   * it never seeds a later turn.
+   */
+  reasoning?: string;
   /** Host-only metadata, stripped before the provider request. */
   provenance?: UsageSourceEvidence[];
 }
@@ -90,6 +96,10 @@ export type RuntimeModelStreamEvent =
       text: string;
     }
   | {
+      type: 'reasoning_delta';
+      text: string;
+    }
+  | {
       type: 'finish';
       response: RuntimeModelResponse;
     };
@@ -164,6 +174,7 @@ export type RuntimeEvent =
   | { type: 'usage_warning'; code: 'persistence-unavailable' }
   | { type: 'message_start'; messages: RuntimeMessage[] }
   | { type: 'message_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
   | { type: 'tool_call_start'; toolCall: RuntimeToolCallAudit }
   | {
       type: 'tool_call_finish';

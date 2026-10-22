@@ -45,12 +45,16 @@ import type {
 } from '@oh-awesome-novel/core';
 import {
   completePlayRehearsalReferee,
+  formatPlayRehearsalActorPrompt,
   streamPlayRehearsalActorGeneration,
 } from '@oh-awesome-novel/agent';
 import type {
   PlayRehearsalActorPromptInput,
   PlayRehearsalModelResolver,
 } from '@oh-awesome-novel/agent';
+
+import { tryAppendPlayMessageLog } from './play-message-log.js';
+import type { PlayMessageLogEntryInput, PlayMessageLogRole } from './play-message-log.js';
 
 const MAX_ACTOR_NARRATIVE_CHARACTERS = 12_000;
 
@@ -783,35 +787,56 @@ async function performPlayRedirectIntervention(input: {
     },
   };
   const abortController = new AbortController();
-  let actorNarrative = '';
-  if (input.options.streamActor) {
-    for await (const delta of input.options.streamActor({
-      promptInput,
-      abortSignal: abortController.signal,
-    })) {
-      actorNarrative += String(delta ?? '');
-      assertActorNarrativeSize(actorNarrative);
-    }
-  } else {
-    const runtime = await input.options.getModelRuntime();
-    for await (const event of streamPlayRehearsalActorGeneration({
-      ...promptInput,
-      providerConfig: runtime.providerConfig,
-      resolveModel: runtime.resolveModel,
-      workspaceRoot: input.workspaceRoot,
-      usageSessionId: `play-${input.sessionId}`,
-      abortSignal: abortController.signal,
-    })) {
-      if (event.type === 'text_delta') {
-        actorNarrative += event.text;
-        assertActorNarrativeSize(actorNarrative);
-      } else if (event.type === 'error') {
-        throw new PlayRehearsalRequestError(502, event.error.code, event.error.message);
-      } else if (event.type === 'abort') {
-        throw new PlayStepAbortedError(event.reason);
+  const logTarget = {
+    workspaceRoot: input.workspaceRoot,
+    sessionId: input.sessionId,
+    attemptId: input.attemptId,
+    stepRef: input.stepRef,
+    participantRef: target.participantRef,
+    data: { intervention: 'redirectStep' },
+  };
+  let actorNarrative = await loggedRehearsalModelCall({
+    ...logTarget,
+    role: 'rehearsal_actor',
+    prompt: formatActorPromptForLog(promptInput),
+  }, async (log) => {
+    let narrative = '';
+    if (input.options.streamActor) {
+      for await (const delta of input.options.streamActor({
+        promptInput,
+        abortSignal: abortController.signal,
+      })) {
+        narrative += String(delta ?? '');
+        log.output = narrative;
+        assertActorNarrativeSize(narrative);
+      }
+    } else {
+      const runtime = await input.options.getModelRuntime();
+      for await (const event of streamPlayRehearsalActorGeneration({
+        ...promptInput,
+        providerConfig: runtime.providerConfig,
+        resolveModel: runtime.resolveModel,
+        workspaceRoot: input.workspaceRoot,
+        usageSessionId: `play-${input.sessionId}`,
+        abortSignal: abortController.signal,
+      })) {
+        if (event.type === 'text_delta') {
+          narrative += event.text;
+          log.output = narrative;
+          assertActorNarrativeSize(narrative);
+        } else if (event.type === 'error') {
+          log.reasoning = event.reasoning ?? '';
+          throw new PlayRehearsalRequestError(502, event.error.code, event.error.message);
+        } else if (event.type === 'abort') {
+          log.reasoning = event.reasoning ?? '';
+          throw new PlayStepAbortedError(event.reason);
+        } else if (event.type === 'finish') {
+          log.reasoning = event.reasoning ?? '';
+        }
       }
     }
-  }
+    return narrative;
+  });
   actorNarrative = normalizeActorNarrative(actorNarrative);
   const baseRefereePrompt = formatPlayRehearsalStepRefereePrompt({
     session,
@@ -829,13 +854,18 @@ async function performPlayRedirectIntervention(input: {
       targetStepRef: input.stepRef,
     }),
   ].join('\n');
-  let refereeResponse: string;
-  if (input.options.runReferee) {
-    refereeResponse = await input.options.runReferee({
-      prompt: refereePrompt,
-      abortSignal: abortController.signal,
-    });
-  } else {
+  const refereeResponse = await loggedRehearsalModelCall({
+    ...logTarget,
+    role: 'rehearsal_referee',
+    prompt: refereePrompt,
+  }, async (log) => {
+    if (input.options.runReferee) {
+      log.output = await input.options.runReferee({
+        prompt: refereePrompt,
+        abortSignal: abortController.signal,
+      });
+      return log.output;
+    }
     const runtime = await input.options.getModelRuntime();
     const result = await completePlayRehearsalReferee({
       providerConfig: runtime.providerConfig,
@@ -845,12 +875,14 @@ async function performPlayRedirectIntervention(input: {
       usageSessionId: `play-${input.sessionId}`,
       abortSignal: abortController.signal,
     });
+    log.reasoning = result.reasoning ?? '';
+    log.output = result.status === 'completed' ? result.text : result.partialText;
     if (result.status === 'provider_error') {
       throw new PlayRehearsalRequestError(502, result.error.code, result.error.message);
     }
     if (result.status === 'aborted') throw new PlayStepAbortedError(result.reason);
-    refereeResponse = result.text;
-  }
+    return result.text;
+  });
   const settlementContribution = parsePlayWorldRefereeResponse(refereeResponse).settlement;
   assertProvisionalSettlementContribution(session, contextAttempt, settlementContribution);
   const stepId = `step-${randomUUID()}`;
@@ -1040,52 +1072,77 @@ function createStepStreamResponse(input: {
           perception,
           selectedVisibleBlocks,
         );
-        let actorNarrative = '';
-        if (input.options.streamActor) {
-          const iterator = input.options.streamActor({
-            promptInput: actorPromptInput,
-            abortSignal: input.run.abortController.signal,
-          })[Symbol.asyncIterator]();
-          while (true) {
-            const next = await nextIteratorWithAbort(
-              iterator,
-              input.run.abortController.signal,
-            );
-            if (next.done) break;
-            const delta = String(next.value ?? '');
-            actorNarrative += delta;
-            assertActorNarrativeSize(actorNarrative);
-            if (delta) emit({ type: 'play.actor.step.delta', delta, provisional: true });
-          }
-        } else {
-          const runtime = await input.options.getModelRuntime();
-          for await (const event of streamPlayRehearsalActorGeneration({
-            ...actorPromptInput,
-            providerConfig: runtime.providerConfig,
-            resolveModel: runtime.resolveModel,
-            workspaceRoot: input.run.workspaceRoot,
-            usageSessionId: `play-${input.run.sessionId}`,
-            abortSignal: input.run.abortController.signal,
-          })) {
-            if (event.type === 'text_delta') {
-              actorNarrative += event.text;
-              assertActorNarrativeSize(actorNarrative);
-              emit({
-                type: 'play.actor.step.delta',
-                delta: event.text,
-                provisional: true,
-              });
-            } else if (event.type === 'abort') {
-              throw new PlayStepAbortedError(event.reason);
-            } else if (event.type === 'error') {
-              throw new PlayRehearsalRequestError(
-                502,
-                event.error.code,
-                event.error.message,
+        const logTarget = {
+          workspaceRoot: input.run.workspaceRoot,
+          sessionId: input.run.sessionId,
+          attemptId: input.run.attemptId,
+          participantRef: input.participantRef,
+          data: {
+            stepRunId: input.run.stepRunId,
+            ...(input.operation.mode === 'retry'
+              ? { step: 'retry', sourceStepRef: input.operation.sourceStepRef }
+              : { step: 'next' }),
+          },
+        };
+        let actorNarrative = await loggedRehearsalModelCall({
+          ...logTarget,
+          role: 'rehearsal_actor',
+          prompt: formatActorPromptForLog(actorPromptInput),
+        }, async (log) => {
+          let narrative = '';
+          if (input.options.streamActor) {
+            const iterator = input.options.streamActor({
+              promptInput: actorPromptInput,
+              abortSignal: input.run.abortController.signal,
+            })[Symbol.asyncIterator]();
+            while (true) {
+              const next = await nextIteratorWithAbort(
+                iterator,
+                input.run.abortController.signal,
               );
+              if (next.done) break;
+              const delta = String(next.value ?? '');
+              narrative += delta;
+              log.output = narrative;
+              assertActorNarrativeSize(narrative);
+              if (delta) emit({ type: 'play.actor.step.delta', delta, provisional: true });
+            }
+          } else {
+            const runtime = await input.options.getModelRuntime();
+            for await (const event of streamPlayRehearsalActorGeneration({
+              ...actorPromptInput,
+              providerConfig: runtime.providerConfig,
+              resolveModel: runtime.resolveModel,
+              workspaceRoot: input.run.workspaceRoot,
+              usageSessionId: `play-${input.run.sessionId}`,
+              abortSignal: input.run.abortController.signal,
+            })) {
+              if (event.type === 'text_delta') {
+                narrative += event.text;
+                log.output = narrative;
+                assertActorNarrativeSize(narrative);
+                emit({
+                  type: 'play.actor.step.delta',
+                  delta: event.text,
+                  provisional: true,
+                });
+              } else if (event.type === 'abort') {
+                log.reasoning = event.reasoning ?? '';
+                throw new PlayStepAbortedError(event.reason);
+              } else if (event.type === 'error') {
+                log.reasoning = event.reasoning ?? '';
+                throw new PlayRehearsalRequestError(
+                  502,
+                  event.error.code,
+                  event.error.message,
+                );
+              } else if (event.type === 'finish') {
+                log.reasoning = event.reasoning ?? '';
+              }
             }
           }
-        }
+          return narrative;
+        });
         actorNarrative = normalizeActorNarrative(actorNarrative);
         throwIfAborted(input.run.abortController.signal);
 
@@ -1096,16 +1153,21 @@ function createStepStreamResponse(input: {
           perception,
           actorNarrative,
         });
-        let refereeResponse: string;
-        if (input.options.runReferee) {
-          refereeResponse = await racePromiseWithAbort(
-            input.options.runReferee({
-              prompt: refereePrompt,
-              abortSignal: input.run.abortController.signal,
-            }),
-            input.run.abortController.signal,
-          );
-        } else {
+        const refereeResponse = await loggedRehearsalModelCall({
+          ...logTarget,
+          role: 'rehearsal_referee',
+          prompt: refereePrompt,
+        }, async (log) => {
+          if (input.options.runReferee) {
+            log.output = await racePromiseWithAbort(
+              input.options.runReferee({
+                prompt: refereePrompt,
+                abortSignal: input.run.abortController.signal,
+              }),
+              input.run.abortController.signal,
+            );
+            return log.output;
+          }
           const runtime = await input.options.getModelRuntime();
           const result = await completePlayRehearsalReferee({
             providerConfig: runtime.providerConfig,
@@ -1115,6 +1177,8 @@ function createStepStreamResponse(input: {
             usageSessionId: `play-${input.run.sessionId}`,
             abortSignal: input.run.abortController.signal,
           });
+          log.reasoning = result.reasoning ?? '';
+          log.output = result.status === 'completed' ? result.text : result.partialText;
           if (result.status === 'aborted') {
             throw new PlayStepAbortedError(result.reason);
           }
@@ -1125,8 +1189,8 @@ function createStepStreamResponse(input: {
               result.error.message,
             );
           }
-          refereeResponse = result.text;
-        }
+          return result.text;
+        });
         throwIfAborted(input.run.abortController.signal);
         const settlementContribution = parsePlayWorldRefereeResponse(
           refereeResponse,
@@ -2074,6 +2138,64 @@ async function racePromiseWithAbort<T>(promise: Promise<T>, signal: AbortSignal)
       },
     );
   });
+}
+
+interface RehearsalModelCallCapture {
+  output: string;
+  reasoning: string;
+}
+
+/**
+ * Records one rehearsal model call in the Play debug message log, whatever its
+ * outcome. Logging never changes the call's result or error.
+ */
+async function loggedRehearsalModelCall<T>(
+  target: {
+    workspaceRoot: string;
+    sessionId: string;
+    attemptId: string;
+    role: PlayMessageLogRole;
+    prompt: string;
+    stepRef?: string;
+    participantRef?: string;
+    data?: Record<string, unknown>;
+  },
+  call: (capture: RehearsalModelCallCapture) => Promise<T>,
+): Promise<T> {
+  const capture: RehearsalModelCallCapture = { output: '', reasoning: '' };
+  let outcome: 'completed' | 'aborted' | 'failed' = 'failed';
+  try {
+    const value = await call(capture);
+    outcome = 'completed';
+    return value;
+  } catch (error) {
+    if (error instanceof PlayStepAbortedError) outcome = 'aborted';
+    throw error;
+  } finally {
+    const base = {
+      attemptId: target.attemptId,
+      role: target.role,
+      ...(target.stepRef ? { stepRef: target.stepRef } : {}),
+      ...(target.participantRef ? { participantRef: target.participantRef } : {}),
+    };
+    const data = { ...target.data, outcome };
+    const entries: PlayMessageLogEntryInput[] = [
+      { ...base, kind: 'model_request', text: target.prompt, data },
+      ...(capture.reasoning
+        ? [{ ...base, kind: 'model_reasoning' as const, text: capture.reasoning, data }]
+        : []),
+      { ...base, kind: 'model_output', text: capture.output, data },
+    ];
+    await tryAppendPlayMessageLog(target.workspaceRoot, target.sessionId, entries);
+  }
+}
+
+function formatActorPromptForLog(promptInput: PlayRehearsalActorPromptInput): string {
+  try {
+    return formatPlayRehearsalActorPrompt(promptInput);
+  } catch (error) {
+    return `[actor prompt could not be formatted: ${error instanceof Error ? error.message : String(error)}]`;
+  }
 }
 
 class PlayStepAbortedError extends Error {

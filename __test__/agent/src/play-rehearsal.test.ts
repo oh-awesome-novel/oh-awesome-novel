@@ -280,6 +280,48 @@ describe('Play rehearsal single referee completion', () => {
       },
     });
   });
+
+  it('keeps thinking off the actor narrative and returns it only on terminal results', async () => {
+    const thinkingProvider = {
+      ...providerConfig,
+      models: [{ id: 'mock-model', reasoningEffort: 'low' as const }],
+    };
+    streamText.mockReturnValueOnce({
+      stream: toAsyncIterable([
+        { type: 'reasoning-delta', id: 'r-1', text: '她在犹豫。' },
+        { type: 'text-delta', id: 'text-1', text: '她停下脚步。' },
+        { type: 'finish', finishReason: 'stop', rawFinishReason: 'stop', totalUsage: {} },
+      ]),
+    }).mockReturnValueOnce({
+      stream: toAsyncIterable([
+        { type: 'reasoning-delta', id: 'r-2', text: '裁定结果。' },
+        { type: 'text-delta', id: 'referee-1', text: 'Observable.' },
+        { type: 'finish', finishReason: 'stop', rawFinishReason: 'stop', totalUsage: {} },
+      ]),
+    });
+
+    const events = await collectEvents(streamPlayRehearsalActorGeneration({
+      ...createActorPromptInput(),
+      providerConfig: thinkingProvider,
+      resolveModel: () => model,
+    }));
+    expect(events).toEqual([
+      { type: 'text_delta', text: '她停下脚步。' },
+      { type: 'finish', text: '她停下脚步。', finishReason: 'stop', reasoning: '她在犹豫。' },
+    ]);
+    await expect(completePlayRehearsalReferee({
+      providerConfig: thinkingProvider,
+      resolveModel: () => model,
+      prompt: 'REFEREE',
+    })).resolves.toEqual({
+      status: 'completed',
+      text: 'Observable.',
+      finishReason: 'stop',
+      reasoning: '裁定结果。',
+    });
+    expect(streamText.mock.calls[0]?.[0]).toMatchObject({ reasoning: 'low' });
+    expect(streamText.mock.calls[1]?.[0]).toMatchObject({ reasoning: 'low' });
+  });
 });
 
 function createActorPromptInput(): PlayRehearsalActorPromptInput {

@@ -160,6 +160,14 @@ interface RuntimeTurnFinalizer {
 
 PendingAction source 只记录 command log hash/count，不记录 preview。
 
+### Model Reasoning
+
+- `RuntimeModelStreamEvent` / `RuntimeEvent` 的 `reasoning_delta` 携带模型思考文本；assistant `RuntimeMessage.reasoning` 保存同一步的完整思考。
+- 思考只在产生它的 turn 内回传：工具调用步骤的 assistant message 带 `reasoning`，AI SDK adapter 把它转成 `reasoning` part（DeepSeek 等要求在工具循环里回传 `reasoning_content`）。turn 开始时 Runtime 去掉输入历史中的 `reasoning`，turn 结束进入 `doneMessages` 前也会去掉，因此跨轮请求永不包含历史思考。
+- `RunTurnResult.messages` 保留本轮思考，session store 原样写入 `messages.jsonl` 供调试；它不进入 PendingAction、context trace 或 Git。
+- 模型配置 `LlmProviderModel.reasoningEffort`（`none` 到 `max`）存在时作为 AI SDK `reasoning` 选项传给 `streamText`；未配置时请求不带该选项。非 OpenAI 官方且配置了 `baseUrl` 的 provider 通过 `@ai-sdk/openai-compatible` 解析，以便读取并回传 `reasoning_content`。
+- UI stream adapter 把 `reasoning_delta` 转成 `reasoning-start/delta/end` chunk；Copilot 在回答前以默认折叠的“思考过程”展示，复制按钮只复制正文。
+
 ## Context Builder
 
 `1290` 将当前全局状态与章级结算历史分层。host health 与 Agent 对同类冻结输入采用共同的 source-hash freshness evaluator，模型上下文中的健康提示/覆盖说明有界。选中章的当前证据可派生为明确标注的 payload，其余历史仍由固定投影 read tools 提供；完整显式选择保持保护。摘要的当前证据、过期来源和作者未验证参考必须明确区分，不把旧快照当作当前事实。详见 [1290](tasks/1290.md)。

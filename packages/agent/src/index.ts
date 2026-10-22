@@ -20,6 +20,8 @@ export {
 export type { WritingCommandTargets } from './writing-targets';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { resolveProviderReasoningEffort } from './provider-reasoning.js';
 import { streamText } from 'ai';
 import type { JSONValue } from 'ai';
 
@@ -206,8 +208,22 @@ export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
   (providerConfig) => {
     const baseURL = resolveProviderBaseUrl(providerConfig);
     const apiKey = resolveProviderApiKey(providerConfig);
+    const name = providerConfig.kind === 'custom' ? providerConfig.id : providerConfig.kind;
+
+    // OpenAI-compatible endpoints stream thinking as `reasoning_content`, which
+    // only the compatible provider parses and replays within a tool loop.
+    if (providerConfig.kind !== 'openai' && baseURL) {
+      return createOpenAICompatible({
+        name,
+        baseURL,
+        ...(apiKey ? { apiKey } : {}),
+        ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
+        includeUsage: true,
+      }).chatModel(providerConfig.model);
+    }
+
     const provider = createOpenAI({
-      name: providerConfig.kind === 'custom' ? providerConfig.id : providerConfig.kind,
+      name,
       ...(baseURL ? { baseURL } : {}),
       ...(apiKey ? { apiKey } : {}),
       ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
@@ -215,6 +231,8 @@ export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
 
     return provider.chat(providerConfig.model);
   };
+
+export { resolveProviderReasoningEffort } from './provider-reasoning.js';
 
 function resolveProviderBaseUrl(providerConfig: LlmProviderConfig): string | undefined {
   if (providerConfig.baseUrl?.trim()) {
@@ -381,6 +399,7 @@ async function* streamAiSdkModelResponse(
   const { maxOutputTokens } = resolveContextBudget(input.providerConfig, input);
   const model = await input.resolveModel(input.providerConfig);
   const instructions = toModelSystemPrompt(request.messages);
+  const reasoningEffort = resolveProviderReasoningEffort(input.providerConfig);
   const result = streamText({
     model,
     ...(instructions ? { instructions } : {}),
@@ -391,8 +410,10 @@ async function* streamAiSdkModelResponse(
     abortSignal: request.abortSignal,
     maxRetries: 0,
     ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    ...(reasoningEffort ? { reasoning: reasoningEffort } : {}),
   });
   let text = '';
+  let reasoning = '';
   let observedUsage: ReturnType<typeof normalizeSdkUsage> | undefined;
   let observedFinishReason: string | undefined;
   const modelFailure = (error: unknown) => {
@@ -412,6 +433,12 @@ async function* streamAiSdkModelResponse(
     if (part.type === 'finish' && part.finishReason === 'error') {
       throw modelFailure(new Error('Model generation finished with an error.'));
     }
+    if (part.type === 'reasoning-delta') {
+      if (!part.text) continue;
+      reasoning += part.text;
+      yield { type: 'reasoning_delta', text: part.text };
+      continue;
+    }
     if (part.type !== 'text-delta') continue;
     text += part.text;
     yield {
@@ -423,10 +450,11 @@ async function* streamAiSdkModelResponse(
   yield {
     type: 'finish',
     response: {
-      message: text
+      message: text || reasoning
         ? {
             role: 'assistant',
             content: text,
+            ...(reasoning ? { reasoning } : {}),
           }
         : undefined,
       toolCalls: (await result.finalStep).toolCalls.map(toRuntimeToolCall),
@@ -1752,6 +1780,9 @@ const toModelMessage = (message: RuntimeMessage): ModelMessage => {
     return {
       role: 'assistant',
       content: [
+        ...(message.reasoning
+          ? [{ type: 'reasoning' as const, text: message.reasoning }]
+          : []),
         ...(message.content
           ? [{
               type: 'text' as const,

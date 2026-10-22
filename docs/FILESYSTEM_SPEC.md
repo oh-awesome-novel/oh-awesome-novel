@@ -517,6 +517,12 @@ transaction、lock 与 prepared preview。`.oan/sessions/` 保存可丢弃的 ag
 artifact。二者都不能作为 ContextPackage source、sandbox projection target 或 Git history
 替代品。
 
+`.oan/sessions/<session-id>/messages.jsonl` 会保留 assistant 的思考内容（`reasoning`）作为调试
+记录；`.oan/sessions/.play-logs/<play-session-id>/messages.jsonl` 是 Play 只追加的调试消息日志
+（作者行动、模型请求、思考、输出与回合结果）。两者都不是事实源：恢复会话、Play 状态与
+projection 都不从中读取思考内容，删除它们不影响任何功能。`.play-logs` 以 `.` 开头，不会被
+当作 Copilot session id。
+
 开发迁移 reset 只能在验证 realpath、Git tracked files、Git status 和 canonical SHA-256
 manifest 后删除上述两个精确目录；不得删除整个 `.oan/`、`.git/` 或任何 canonical
 object tree。

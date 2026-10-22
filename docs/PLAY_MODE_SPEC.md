@@ -97,6 +97,15 @@ session snapshot 采用 sibling staging directory + ready marker + directory swa
 
 这些文件用于恢复、复核和继续 Play，不进入 `chapters/`、`state/`、`timeline/`、`foreshadow/` 等事实域。
 
+### Play Message Log
+
+每个 Play session 另有一份只追加的调试日志 `.oan/sessions/.play-logs/<session-id>/messages.jsonl`（已被 `.gitignore` 忽略）。world-referee 回合记录 `author_action`、`model_request`（完整 prompt）、`model_reasoning`、`model_output` 与 `turn_committed` / `turn_cancelled` / `turn_failed`；rehearsal 的 actor 与 referee 调用按 `attemptId`、`participantRef`、`stepRef` 记录请求、思考与输出，并在 `data.outcome` 标出 completed / aborted / failed。
+
+- 日志只用于作者调试：不进入 turn artifact、rehearsal evidence、context trace、adoption、导出或 Git；Play 状态与 projection 不读取它；写入失败不影响回合结果。
+- 思考内容不出现在 Play SSE 与 Play 主界面。Desktop 在 inspector 中提供“消息日志”入口，按时间顺序分页列出全部条目，可按类型与角色筛选，思考与请求默认折叠；无法解析的行被跳过并提示数量。
+- `GET /api/workspace/play-sessions/:id/message-log?cursor=&limit=` 按行游标分页（默认 200，最多 1000），活跃回合期间也可读取。
+- world referee 通过 agent turn 运行时固定使用 `novel.play_scene` capability，不再依赖关键词推断（referee prompt 中的 `oan-play-settlement` 曾被误判为“整理本章”写能力）。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：

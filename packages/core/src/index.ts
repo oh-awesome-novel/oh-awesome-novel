@@ -92,11 +92,14 @@ export {
   setDefaultLlmProviderConfig,
   normalizeLlmProviderConfig,
   redactLlmProviderConfig,
+  LLM_REASONING_EFFORTS,
+  isLlmReasoningEffort,
 } from './llm-provider.js';
 
 export type {
   LlmProviderKind,
   LlmProviderModel,
+  LlmReasoningEffort,
   LlmProviderConfig,
   LlmProviderConfigState,
 } from './llm-provider.js';
