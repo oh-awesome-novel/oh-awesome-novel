@@ -4,7 +4,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
   },
-  format: 'cjs',
+  format: 'esm',
   outDir: 'dist',
   dts: true,
   sourcemap: true,
@@ -13,11 +13,8 @@ export default defineConfig({
   deps: {
     neverBundle: [/^@electron-forge\//, /^listr2$/, /^tsdown$/],
   },
-  outputOptions: {
-    exports: 'named',
-  },
   outExtensions: () => ({
-    js: '.cjs',
-    dts: '.d.cts',
+    js: '.js',
+    dts: '.d.ts',
   }),
 });
