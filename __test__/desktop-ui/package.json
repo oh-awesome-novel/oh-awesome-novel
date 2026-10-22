@@ -17,16 +17,16 @@
   "dependencies": {
     "@oh-awesome-novel/backend": "^0.0.1",
     "@oh-awesome-novel/client": "^0.0.1",
-    "vue": "^3.5.34",
-    "vue-router": "^5.1.0"
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.6",
-    "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.10.6",
-    "typescript": "~6.0.2",
-    "vite": "^8.0.12",
-    "vitest": "^4.1.8",
-    "vue-tsc": "^3.2.8"
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "happy-dom": "^21.0.4",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "vue-tsc": "^3.3.13"
   }
 }

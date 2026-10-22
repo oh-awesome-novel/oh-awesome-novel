@@ -18,8 +18,8 @@
     "@oh-awesome-novel/backend": "^0.0.1"
   },
   "devDependencies": {
-    "@types/node": "^24.13.1",
-    "tsdown": "^0.22.2",
-    "typescript": "~6.0.2"
+    "@types/node": "^24.19.2",
+    "tsdown": "^0.23.1",
+    "typescript": "~6.0.3"
   }
 }

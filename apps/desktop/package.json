@@ -25,11 +25,11 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron/fuses": "^1.8.0",
-    "@electron/get": "^5.0.0",
+    "@electron/get": "^5.1.0",
     "@oh-awesome-novel/forge-plugin-tsdown": "^0.0.1",
     "@types/electron-squirrel-startup": "^1.0.2",
     "electron": "40.10.2",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.3"
   },
   "dependencies": {
     "@oh-awesome-novel/backend": "^0.0.1",

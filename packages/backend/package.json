@@ -18,17 +18,17 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.5",
+    "@hono/node-server": "^2.1.5",
     "@oh-awesome-novel/agent": "^0.0.1",
     "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/runtime": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1",
-    "ai": "^7.0.126",
-    "hono": "^4.12.26"
+    "ai": "^7.0.148",
+    "hono": "^4.13.13"
   },
   "devDependencies": {
-    "@types/node": "^24.13.1",
-    "tsdown": "^0.22.2",
-    "typescript": "~6.0.2"
+    "@types/node": "^24.19.2",
+    "tsdown": "^0.23.1",
+    "typescript": "~6.0.3"
   }
 }
