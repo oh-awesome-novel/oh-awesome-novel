@@ -76,6 +76,8 @@ const {
   historyNotice,
   historyWindow,
   canStop,
+  canSteer,
+  followUpControls,
   provisionalTurn,
   turnAnnouncement,
   timeAdvance,
@@ -100,6 +102,7 @@ const {
   restoreCheckpoint,
   selectSession,
   stopTurn,
+  steerTurn,
   submitTurn,
 } = usePlayWorkspace(props.workspace.path, providerConfigured);
 
@@ -145,6 +148,8 @@ const {
   startAttempt: startRehearsalAttempt,
   generateStep: generateRehearsalStep,
   stopStep: stopRehearsalStep,
+  steerStep: steerRehearsalStep,
+  steerPending: rehearsalSteerPending,
   acceptStep: acceptRehearsalStep,
   retryStep: retryRehearsalStep,
   intervene: interveneRehearsal,
@@ -327,6 +332,7 @@ function acceptGuidedSession(session: PlaySession): void {
           :queue="rehearsalQueue"
           :steps="rehearsalSteps"
           :step-run="rehearsalStepRun"
+          :steer-pending="rehearsalSteerPending"
           :perception="rehearsalPerception"
           :visible-events="rehearsalVisibleEvents"
           :result="rehearsalResult"
@@ -346,6 +352,7 @@ function acceptGuidedSession(session: PlaySession): void {
           @start-attempt="startRehearsalAttempt"
           @generate-step="generateRehearsalStep"
           @stop-step="stopRehearsalStep"
+          @steer-step="steerRehearsalStep"
           @accept="acceptRehearsalStep"
           @retry="retryRehearsalStep"
           @intervene="interveneRehearsal"
@@ -424,7 +431,11 @@ function acceptGuidedSession(session: PlaySession): void {
           :phase="provisionalTurn?.phase"
           :can-stop="canStop"
           :suggestions="suggestedActions"
+          :running="sending"
+          :can-steer="canSteer"
+          :follow-ups="followUpControls"
           @stop="stopTurn"
+          @steer="steerTurn"
           @submit="submitTurn"
         />
       </section>

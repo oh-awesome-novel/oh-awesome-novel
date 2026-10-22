@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import PlayFollowUpQueue from './PlayFollowUpQueue.vue';
 import PlayTimeAdvanceControl from './PlayTimeAdvanceControl.vue';
 import type {
   PlayActionKind,
   PlayRelativeTimeAdvance,
 } from '../../composables/useWorkspaceApi';
+import type { PlayFollowUpControls } from '../../composables/usePlayFollowUpQueue';
 import type { PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
 import type { PlayTurnRunPhase } from '../../composables/usePlayTurnStream';
 
@@ -21,10 +23,16 @@ const props = defineProps<{
   phase?: PlayTurnRunPhase;
   canStop: boolean;
   suggestions: PlaySuggestedActionView[];
+  /** A Play turn is running; the input stays usable to queue or steer. */
+  running?: boolean;
+  canSteer?: boolean;
+  followUps?: PlayFollowUpControls;
 }>();
 
 const emit = defineEmits<{
+  /** Sends the action, or queues it while a turn runs. */
   submit: [];
+  steer: [];
   stop: [];
 }>();
 
@@ -35,12 +43,17 @@ const actions: Array<{ id: PlayActionKind; label: string }> = [
   { id: 'do', label: 'Do' },
   { id: 'wait', label: 'Wait' },
 ];
+// While a turn runs only that turn holds the composer; other busy work locks it.
+const inputLocked = computed(() => props.disabled || (props.busy && !props.running));
 const canSubmit = computed(() =>
-  !props.disabled && !props.busy && (
+  !inputLocked.value && (
     actionKind.value === 'wait'
       ? isValidTimeAdvance(timeAdvance.value)
       : userText.value.trim().length > 0
   ),
+);
+const canSendSteer = computed(() =>
+  Boolean(props.running && props.canSteer) && userText.value.trim().length > 0,
 );
 const runStatus = computed(() => {
   switch (props.phase) {
@@ -75,8 +88,14 @@ function submit() {
   }
 }
 
+function steer() {
+  if (canSendSteer.value) {
+    emit('steer');
+  }
+}
+
 function useSuggestion(suggestion: PlaySuggestedActionView) {
-  if (props.disabled || props.busy) {
+  if (inputLocked.value) {
     return;
   }
 
@@ -95,7 +114,15 @@ function selectActionKind(value: PlayActionKind) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter' || event.isComposing || (!event.metaKey && !event.ctrlKey)) {
+  if (event.key !== 'Enter' || event.isComposing) {
+    return;
+  }
+  if (event.altKey && props.running) {
+    event.preventDefault();
+    steer();
+    return;
+  }
+  if (!event.metaKey && !event.ctrlKey) {
     return;
   }
 
@@ -125,7 +152,7 @@ function isValidTimeAdvance(
         v-for="suggestion in suggestions"
         :key="suggestion.id"
         type="button"
-        :disabled="disabled || busy"
+        :disabled="inputLocked"
         @click="useSuggestion(suggestion)"
       >
         {{ suggestion.label }}
@@ -140,7 +167,7 @@ function isValidTimeAdvance(
           type="button"
           :class="{ 'play-action-kind-active': actionKind === action.id }"
           :aria-pressed="actionKind === action.id"
-          :disabled="disabled || busy"
+          :disabled="inputLocked"
           @click="selectActionKind(action.id)"
         >
           <span v-if="action.id === 'wait'" aria-hidden="true">[~]</span>
@@ -151,7 +178,7 @@ function isValidTimeAdvance(
       <PlayTimeAdvanceControl
         v-if="actionKind === 'wait'"
         v-model:time-advance="timeAdvance"
-        :disabled="disabled || busy"
+        :disabled="inputLocked"
       />
 
       <label class="visually-hidden" for="play-action-input">Play action</label>
@@ -160,12 +187,40 @@ function isValidTimeAdvance(
         v-model="userText"
         rows="3"
         :placeholder="placeholder"
-        :disabled="disabled || busy"
+        :disabled="inputLocked"
         @keydown="handleKeydown"
       ></textarea>
 
+      <PlayFollowUpQueue
+        v-if="followUps"
+        :controls="followUps"
+        :can-steer="Boolean(running && canSteer)"
+        :running="Boolean(running)"
+      />
+
       <footer>
         <span>Play-local · {{ runStatus }}</span>
+        <template v-if="running">
+          <button
+            class="play-queue-button"
+            type="submit"
+            :disabled="!canSubmit"
+            title="本回合提交后再发送 (Cmd/Ctrl + Enter)"
+            aria-label="排队 Play 行动"
+          >
+            排队
+          </button>
+          <button
+            class="play-steer-button"
+            type="button"
+            :disabled="!canSendSteer"
+            title="停止本回合未提交的生成，把这句补充进当前行动后重新生成 (Alt + Enter)"
+            aria-label="插话"
+            @click="steer"
+          >
+            插话
+          </button>
+        </template>
         <button
           v-if="busy"
           class="play-stop-button"

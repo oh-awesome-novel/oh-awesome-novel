@@ -106,6 +106,13 @@ session snapshot 采用 sibling staging directory + ready marker + directory swa
 - `GET /api/workspace/play-sessions/:id/message-log?cursor=&limit=` 按行游标分页（默认 200，最多 1000），活跃回合期间也可读取。
 - world referee 通过 agent turn 运行时固定使用 `novel.play_scene` capability，不再依赖关键词推断（referee prompt 中的 `oan-play-settlement` 曾被误判为“整理本章”写能力）。
 
+### Steer And Follow-up
+
+- 已提交的回合不因插话改写。world-referee 回合的插话就是“取消 + 重发”：前端用现有 cancel 端点取消未提交生成，确认 `cancelled` 后以原行动加补充文本、同一 `baseRevision` 重发；取消晚于提交时，插话变成下一条排队行动。不新增 artifact 字段，schema 不变。
+- 排队行动只在内存中，按 session 隔离；回合提交后用新 revision 发送下一条，未提交、revision 冲突、结果未知、来源变化待决定或其他操作占用时暂停，等作者“继续发送”。
+- `POST .../turns/stream` 可带可选 `delivery: 'steer' | 'follow_up'`，只记入消息日志 `author_action.data.delivery`。
+- Rehearsal 中 actor 生成时的插话映射为该 step 的 `redirectStep`（Retry 立即停止后改写原 step；新 step 等 draft 生成后改写），沿用 redirect 的约束校验；可选 `delivery: 'steer'` 只进入消息日志。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：

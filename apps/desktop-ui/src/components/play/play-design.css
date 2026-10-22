@@ -861,6 +861,25 @@
   color: var(--play-danger);
 }
 
+/* Queue and steer sit beside Stop while a turn runs. */
+#play-workspace .play-composer footer > span {
+  margin-right: auto;
+}
+
+#play-workspace .play-composer footer :where(.play-queue-button, .play-steer-button) {
+  border-color: var(--play-line-strong);
+  background: var(--play-canvas);
+  color: var(--play-body);
+}
+
+#play-workspace .play-composer footer :where(.play-queue-button, .play-steer-button):disabled {
+  opacity: .55;
+}
+
+#play-workspace .play-composer .play-follow-up-queue {
+  padding: 6px 12px 0;
+}
+
 #play-workspace :where(.play-session-card, .play-create-trigger):disabled {
   cursor: not-allowed;
   opacity: .55;

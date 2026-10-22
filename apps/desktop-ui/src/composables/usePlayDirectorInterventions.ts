@@ -258,6 +258,7 @@ export function buildInterventionAction(
       stepRef: draft.stepRef,
       directorIntent: draft.directorIntent.trim(),
       authorConstraintRefs: [...new Set(draft.authorConstraintRefs)],
+      ...(draft.delivery ? { delivery: draft.delivery } : {}),
     };
   }
   if (draft.kind === 'insertActor') {

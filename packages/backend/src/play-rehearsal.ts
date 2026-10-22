@@ -384,9 +384,17 @@ export function createPlayRehearsalBackendController(
             'stepRef',
             'directorIntent',
             'authorConstraintRefs',
+            'delivery',
           ],
           'Play redirectStep intervention request',
         );
+        if (body.delivery !== undefined && body.delivery !== 'steer') {
+          throw new PlayRehearsalRequestError(
+            400,
+            'invalid_request',
+            'Play redirectStep delivery is invalid.',
+          );
+        }
         return withAttemptMutation(
           stepRuns,
           workspaceRoot,
@@ -408,6 +416,7 @@ export function createPlayRehearsalBackendController(
               body.authorConstraintRefs,
               'authorConstraintRefs',
             ),
+            ...(body.delivery === 'steer' ? { delivery: 'steer' as const } : {}),
           }),
         );
       }
@@ -676,6 +685,8 @@ async function performPlayRedirectIntervention(input: {
   stepRef: string;
   directorIntent: string;
   authorConstraintRefs: string[];
+  /** Set when the Director sent this redirect while the actor step was generating. */
+  delivery?: 'steer';
 }): Promise<PlayAttemptMutationResult> {
   const requestFingerprint = fingerprintPlayAttemptRequest({
     kind: 'redirectStep',
@@ -793,8 +804,19 @@ async function performPlayRedirectIntervention(input: {
     attemptId: input.attemptId,
     stepRef: input.stepRef,
     participantRef: target.participantRef,
-    data: { intervention: 'redirectStep' },
+    data: {
+      intervention: 'redirectStep',
+      ...(input.delivery ? { delivery: input.delivery } : {}),
+    },
   };
+  await tryAppendPlayMessageLog(input.workspaceRoot, input.sessionId, [{
+    kind: 'author_action',
+    attemptId: input.attemptId,
+    stepRef: input.stepRef,
+    participantRef: target.participantRef,
+    text: input.directorIntent,
+    data: logTarget.data,
+  }]);
   let actorNarrative = await loggedRehearsalModelCall({
     ...logTarget,
     role: 'rehearsal_actor',

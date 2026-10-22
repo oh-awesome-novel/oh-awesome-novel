@@ -537,6 +537,53 @@ describe("Play scene-rehearsal HTTP controller", () => {
     expect(referee).toHaveBeenCalledTimes(2);
   });
 
+  it("logs a Director steer redirect with its delivery and rejects an unknown delivery", async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const baseUrl = await startBackend(workspaceRoot, {
+      streamPlayRehearsalActor: vi.fn(defaultActor),
+      runPlayRehearsalReferee: vi.fn(defaultReferee),
+    });
+    const session = await createSession(baseUrl, "rehearsal-steer-redirect");
+    const attempt = await createAttempt(baseUrl, session.id, 0);
+    const streamed = await streamStep(baseUrl, session.id, attempt.id, {
+      expectedAttemptRevision: 0,
+      idempotencyKey: "steer-first-step",
+      mode: "next",
+    });
+    const draft = findEvent(streamed.events, "play.actor.step.prepared")
+      .step as CharacterStepDraft;
+    const endpoint = `${baseUrl}/api/workspace/play-sessions/${session.id}/attempts/${attempt.id}/interventions`;
+    const body = {
+      expectedAttemptRevision: 1,
+      idempotencyKey: "steer-redirect",
+      kind: "redirectStep",
+      stepRef: draft.id,
+      directorIntent: "Alice hesitates before speaking.",
+      authorConstraintRefs: [],
+    };
+
+    const invalid = await postJson(endpoint, { ...body, delivery: "later" });
+    expect(invalid.response.status).toBe(400);
+
+    const redirected = await postJson<{ attempt: PlayTurnAttempt }>(endpoint, { ...body, delivery: "steer" });
+    expect(redirected.response.status).toBe(200);
+    expect(JSON.stringify(redirected.body.attempt.interventions)).not.toContain("delivery");
+
+    const log = await getJson<{ entries: Array<Record<string, unknown>> }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/message-log`,
+    );
+    const action = log.body.entries.find((entry) => entry.kind === "author_action");
+    expect(action).toMatchObject({
+      attemptId: attempt.id,
+      stepRef: draft.id,
+      text: body.directorIntent,
+      data: { intervention: "redirectStep", delivery: "steer" },
+    });
+    expect(log.body.entries.filter((entry) =>
+      (entry.data as { delivery?: string } | undefined)?.delivery === "steer").length)
+      .toBeGreaterThan(1);
+  });
+
   it("shows a provisional player-visible world notice to the next actor without inventing event ids or leaking hidden effects", async () => {
     const workspaceRoot = await createOanWorkspace();
     const baseInput = createSessionInput("rehearsal-provisional-world-notice");

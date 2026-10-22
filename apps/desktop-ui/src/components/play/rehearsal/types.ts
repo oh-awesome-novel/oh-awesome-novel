@@ -244,6 +244,8 @@ export type PlayDirectorInterventionDraft =
       stepRef: string;
       directorIntent: string;
       authorConstraintRefs: string[];
+      /** Sent while the actor step was generating. */
+      delivery?: 'steer';
     }
   | {
       kind: 'insertActor';

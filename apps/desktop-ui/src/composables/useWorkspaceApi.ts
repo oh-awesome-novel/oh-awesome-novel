@@ -137,6 +137,7 @@ export type {
   PlayTurnCancelResult,
   PlayTurnStreamError,
   PlayTurnStreamEvent,
+  PlayTurnDelivery,
   PlayTurnStreamOptions,
   PlayWorldClock,
   PlayWorldEvent,

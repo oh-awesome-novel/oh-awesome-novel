@@ -50,12 +50,14 @@ const props = defineProps<{
   memoryLoading?: boolean;
   memoryRebuilding?: boolean;
   memoryError?: string;
+  steerPending?: string;
 }>();
 
 const emit = defineEmits<{
   startAttempt: [];
   generateStep: [];
   stopStep: [];
+  steerStep: [intent: string];
   accept: [stepRef: string];
   retry: [stepRef: string];
   intervene: [draft: PlayDirectorInterventionDraft];
@@ -217,7 +219,9 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
           :steps="steps"
           :run="stepRun"
           :can-stop="capabilities.canStopStep"
+          :steer-pending="steerPending"
           @stop-step="emit('stopStep')"
+          @steer-step="emit('steerStep', $event)"
         />
 
         <div

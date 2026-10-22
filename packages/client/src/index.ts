@@ -1686,6 +1686,8 @@ export type PlayTurnCancelResult =
   | { status: 'committed'; committed: true; turnId: string; session: PlaySession }
   | { status: 'failed'; committed: false; turnId: string; error: string };
 
+export type PlayTurnDelivery = 'steer' | 'follow_up';
+
 export interface PlayTurnStreamOptions {
   signal?: AbortSignal;
   onTurnId?(turnId: string): void;
@@ -2105,6 +2107,8 @@ export interface OanClient extends PlayRehearsalClientMethods {
       actionKind?: PlayActionKind;
       baseRevision?: number;
       timeAdvance?: PlayRelativeTimeAdvance;
+      /** Marks a steer resend or a queued follow-up in the Play message log. */
+      delivery?: PlayTurnDelivery;
     },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
@@ -3068,6 +3072,7 @@ async function* streamPlayWorldRefereeTurnWith(
     actionKind?: PlayActionKind;
     baseRevision?: number;
     timeAdvance?: PlayRelativeTimeAdvance;
+    delivery?: PlayTurnDelivery;
   } | { baseRevision: number },
   options: PlayTurnStreamOptions = {},
   retrySourceArtifactId?: string,

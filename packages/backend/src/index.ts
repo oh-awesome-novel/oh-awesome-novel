@@ -4000,7 +4000,7 @@ async function handlePlayWorldRefereeTurnStream(
   if (!parsedRequest.ok) {
     return jsonResponse(context, 400, { error: parsedRequest.error });
   }
-  const { userText, actionKind, baseRevision, timeAdvance } = parsedRequest.value;
+  const { userText, actionKind, baseRevision, timeAdvance, delivery } = parsedRequest.value;
   const rehearsalConflict = await playRehearsalAttemptConflictResponse(
     state,
     workspaceRoot,
@@ -4057,6 +4057,7 @@ async function handlePlayWorldRefereeTurnStream(
     userText,
     actionKind,
     ...(timeAdvance ? { timeAdvance } : {}),
+    ...(delivery ? { delivery } : {}),
     expectedArtifactId: createPlayTurnArtifactId(
       session.revision + 1,
       session.turnArtifacts.map((artifact) => artifact.id),
@@ -4200,6 +4201,8 @@ interface PlayWorldRefereeTurnStreamExecution {
   userText: string;
   actionKind: PlayActionKind;
   timeAdvance?: PlayRelativeTimeAdvance;
+  /** How the author sent this action; only recorded in the debug message log. */
+  delivery?: PlayTurnDelivery;
   expectedArtifactId: string;
   retry?: {
     sourceArtifactId: string;
@@ -4387,7 +4390,12 @@ async function createPlayWorldRefereeTurnStreamResponse(
             {
               kind: 'author_action',
               text: userText,
-              data: { actionKind, ...(timeAdvance ? { timeAdvance } : {}), ...(execution.retry ? { retry: execution.retry } : {}) },
+              data: {
+                actionKind,
+                ...(timeAdvance ? { timeAdvance } : {}),
+                ...(execution.retry ? { retry: execution.retry } : {}),
+                ...(execution.delivery ? { delivery: execution.delivery } : {}),
+              },
             },
             { kind: 'model_request', role: 'world_referee', text: request },
           ]);
@@ -7674,11 +7682,15 @@ function tryBeginWorkspaceTransition(state: BackendState): boolean {
   return true;
 }
 
+/** A steer resends a cancelled turn with added text; a follow-up was queued while a turn ran. */
+type PlayTurnDelivery = 'steer' | 'follow_up';
+
 interface ParsedPlayWorldRefereeTurnRequest {
   userText: string;
   actionKind: PlayActionKind;
   baseRevision?: number;
   timeAdvance?: PlayRelativeTimeAdvance;
+  delivery?: PlayTurnDelivery;
 }
 
 type PlayWorldRefereeTurnRequestResult =
@@ -7693,6 +7705,7 @@ function readPlayWorldRefereeTurnRequest(
     'actionKind',
     'baseRevision',
     'timeAdvance',
+    'delivery',
   ]);
   if (Object.keys(value).some((field) => !knownFields.has(field))) {
     return { ok: false, error: 'Play turn request contains unknown fields.' };
@@ -7724,6 +7737,10 @@ function readPlayWorldRefereeTurnRequest(
       };
     }
   }
+  const delivery = value.delivery;
+  if (delivery !== undefined && delivery !== 'steer' && delivery !== 'follow_up') {
+    return { ok: false, error: 'Invalid Play turn delivery.' };
+  }
   const resolvedActionKind = actionKind ?? 'do';
   if (timeAdvance && resolvedActionKind !== 'wait') {
     return {
@@ -7741,6 +7758,7 @@ function readPlayWorldRefereeTurnRequest(
         ? { baseRevision: revisionCheck.value }
         : {}),
       ...(timeAdvance ? { timeAdvance } : {}),
+      ...(delivery ? { delivery } : {}),
     },
   };
 }

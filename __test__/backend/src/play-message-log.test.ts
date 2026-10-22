@@ -121,6 +121,62 @@ describe('Play message log', () => {
     expect(rest.body).not.toHaveProperty('nextCursor');
   });
 
+  it('records a steer as cancel plus resend and leaves no orphan artifact or running receipt', async () => {
+    let calls = 0;
+    let streaming!: () => void;
+    const firstStreaming = new Promise<void>((resolve) => { streaming = resolve; });
+    const { root, app } = await fixture({
+      streamPlayTurn: async function* (input) {
+        calls += 1;
+        if (calls === 1) {
+          streaming();
+          yield 'Provisional text that must not commit.';
+          await new Promise<void>((resolve) => {
+            input.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return;
+        }
+        yield settlement();
+      },
+    });
+
+    const first = await request(app, `${path}/turns/stream`, { userText: 'Open the door', actionKind: 'do', baseRevision: 0 });
+    await firstStreaming;
+    const firstTurnId = first.headers.get('x-oan-play-turn-id');
+    const cancel = await request(app, `${path}/turns/${firstTurnId}/cancel`);
+    expect(cancel.status).toBe(202);
+    expect(await first.text()).toContain('play.turn.cancelled');
+
+    const resend = await request(app, `${path}/turns/stream`, {
+      userText: 'Open the door\n\n补充：quietly',
+      actionKind: 'do',
+      baseRevision: 0,
+      delivery: 'steer',
+    });
+    expect(await resend.text()).toContain('play.turn.committed');
+
+    const session = await (await app.request(path)).json();
+    expect(session.session.revision).toBe(1);
+    expect(session.session.turnArtifacts).toHaveLength(1);
+    expect(session.session.turnArtifacts[0].input.raw).toContain('补充：quietly');
+    const receiptRoot = join(root, '.workspace/play-turn-runs', sessionId);
+    const receipts = await Promise.all((await readdir(receiptRoot)).map(async (name) =>
+      JSON.parse(await readFile(join(receiptRoot, name), 'utf8')) as { phase: string }));
+    expect(receipts.some((receipt) => receipt.phase === 'running')).toBe(false);
+
+    const { body } = await readLog(app);
+    const actions = body.entries.filter((entry: { kind: string }) => entry.kind === 'author_action');
+    expect(actions.map((entry: { data?: { delivery?: string } }) => entry.data?.delivery)).toEqual([undefined, 'steer']);
+    expect(body.entries.map((entry: { kind: string }) => entry.kind)).toContain('turn_cancelled');
+    expect(body.entries.at(-1).kind).toBe('turn_committed');
+  });
+
+  it('rejects an unknown turn delivery', async () => {
+    const { app } = await fixture({ runPlayTurn: async () => settlement() });
+    const turn = await request(app, `${path}/turns/stream`, { userText: 'Look', actionKind: 'look', baseRevision: 0, delivery: 'later' });
+    expect(turn.status).toBe(400);
+  });
+
   it('returns an empty page before any turn and validates the query', async () => {
     const { app } = await fixture();
     await expect(readLog(app)).resolves.toEqual({ status: 200, body: { entries: [], skippedLines: 0 } });
