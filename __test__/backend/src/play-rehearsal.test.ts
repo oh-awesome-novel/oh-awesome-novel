@@ -219,6 +219,24 @@ describe("Play scene-rehearsal HTTP controller", () => {
       "abortSignal",
       "prompt",
     ]);
+
+    // The debug message log records both model calls of the step.
+    const log = await getJson<{ entries: Array<Record<string, unknown>> }>(
+      `${baseUrl}/api/workspace/play-sessions/${session.id}/message-log`,
+    );
+    expect(log.body.entries.map((entry) => [entry.role, entry.kind])).toEqual([
+      ["rehearsal_actor", "model_request"],
+      ["rehearsal_actor", "model_output"],
+      ["rehearsal_referee", "model_request"],
+      ["rehearsal_referee", "model_output"],
+    ]);
+    expect(log.body.entries[1]).toMatchObject({
+      attemptId: attempt.id,
+      participantRef: "participant-alice",
+      text: "Alice raises the ticket.",
+      data: { outcome: "completed", step: "next", stepRunId: streamed.stepRunId },
+    });
+    expect(log.body.entries[2]!.text).toBe(referee.mock.calls[0]![0].prompt);
   });
 
   it("persists typed revise/grant controls and returns lens-safe rebuildable Scene Memory", async () => {

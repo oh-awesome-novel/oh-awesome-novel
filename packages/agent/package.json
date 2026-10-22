@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.99",
+    "@ai-sdk/openai-compatible": "^3.0.75",
     "@oh-awesome-novel/core": "^0.0.1",
     "@oh-awesome-novel/runtime": "^0.0.1",
     "@oh-awesome-novel/tools": "^0.0.1",

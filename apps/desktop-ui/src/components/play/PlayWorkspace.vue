@@ -13,6 +13,7 @@ import TavernImportPanel from './TavernImportPanel.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
 import PlayContextInspector from './context/PlayContextInspector.vue';
+import PlayMessageLog from './message-log/PlayMessageLog.vue';
 import PlayOutcomePanel from './outcome/PlayOutcomePanel.vue';
 import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
 import PlayRehearsalWorkspace from './rehearsal/PlayRehearsalWorkspace.vue';
@@ -365,6 +366,7 @@ function acceptGuidedSession(session: PlaySession): void {
           @refresh="refreshContext"
           @decide="decideSourceDrift"
         />
+        <PlayMessageLog :session-id="selectedSession.id" />
         <PlayOutcomePanel
           :session="selectedSession"
           :show-spoilers="showSpoilers"
@@ -447,6 +449,7 @@ function acceptGuidedSession(session: PlaySession): void {
           @refresh="refreshContext"
           @decide="decideSourceDrift"
         />
+        <PlayMessageLog :session-id="selectedSession.id" />
         <PlayHistoryControls
           :checkpoints="historyCheckpoints"
           :session-revision="selectedSession.revision"

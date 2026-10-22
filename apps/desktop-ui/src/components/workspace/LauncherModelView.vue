@@ -20,10 +20,25 @@ interface ProviderPreset {
   local?: boolean;
 }
 
+type ReasoningEffortChoice = NonNullable<ProviderModelConfig['reasoningEffort']> | '';
+
 interface ModelDraft {
   id: string;
   displayName: string;
+  reasoningEffort: ReasoningEffortChoice;
 }
+
+// Empty means the request carries no reasoning option, matching older configs.
+const reasoningEffortOptions: Array<{ value: ReasoningEffortChoice; label: string }> = [
+  { value: '', label: '不设置' },
+  { value: 'none', label: '关闭' },
+  { value: 'minimal', label: '极低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '很高' },
+  { value: 'max', label: '最高' },
+];
 
 const emit = defineEmits<{
   saved: [configured: boolean];
@@ -105,6 +120,7 @@ const form = reactive<ProviderConfigInput>({
 const modelDraft = reactive<ModelDraft>({
   id: '',
   displayName: '',
+  reasoningEffort: '',
 });
 
 const currentProvider = computed(() => {
@@ -397,6 +413,7 @@ function saveModelDraft() {
   const nextModel: ProviderModelConfig = {
     id,
     displayName: modelDraft.displayName.trim() || undefined,
+    reasoningEffort: modelDraft.reasoningEffort || undefined,
     default: existingModels.length === 0 || defaultModelId === id,
   };
   const nextModels = editingModelId.value
@@ -419,6 +436,7 @@ function editModelDraft(model: ProviderModelConfig) {
   editingModelId.value = model.id;
   modelDraft.id = model.id;
   modelDraft.displayName = model.displayName ?? '';
+  modelDraft.reasoningEffort = model.reasoningEffort ?? '';
 }
 
 function removeModel(id: string) {
@@ -438,10 +456,15 @@ function setDefaultModel(id: string) {
   resetCheckResult();
 }
 
+function reasoningEffortLabel(effort: ReasoningEffortChoice): string {
+  return reasoningEffortOptions.find((option) => option.value === effort)?.label ?? effort;
+}
+
 function resetModelDraft() {
   editingModelId.value = '';
   modelDraft.id = '';
   modelDraft.displayName = '';
+  modelDraft.reasoningEffort = '';
 }
 
 function mergeFetchedModels(models: ProviderModelSummary[]) {
@@ -728,6 +751,22 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
                   placeholder="可选"
                 >
               </label>
+              <label class="field" for="provider-model-reasoning-select">
+                <span>思考强度</span>
+                <select
+                  id="provider-model-reasoning-select"
+                  v-model="modelDraft.reasoningEffort"
+                  class="text-input"
+                >
+                  <option
+                    v-for="option in reasoningEffortOptions"
+                    :key="option.value || 'unset'"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
               <button
                 class="secondary-button model-draft-button"
                 type="button"
@@ -771,6 +810,7 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
                   <strong>{{ model.displayName || model.id }}</strong>
                   <span>{{ model.id }}</span>
                   <small v-if="model.contextWindow">Context {{ model.contextWindow.toLocaleString() }}</small>
+                  <small v-if="model.reasoningEffort">思考 {{ reasoningEffortLabel(model.reasoningEffort) }}</small>
                 </div>
                 <div class="model-row-actions">
                   <span v-if="model.default" class="status-pill">默认</span>

@@ -17,11 +17,29 @@ export type LlmProviderKind =
   | 'ollama'
   | 'custom';
 
+/** Requested thinking effort. Unset leaves the provider default untouched. */
+export type LlmReasoningEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
+export const LLM_REASONING_EFFORTS: readonly LlmReasoningEffort[] = [
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+];
+
+export const isLlmReasoningEffort = (value: unknown): value is LlmReasoningEffort =>
+  typeof value === 'string' && (LLM_REASONING_EFFORTS as readonly string[]).includes(value);
+
 export interface LlmProviderModel {
   id: string;
   displayName?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: LlmReasoningEffort;
   default?: boolean;
 }
 

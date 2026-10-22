@@ -227,7 +227,8 @@ class FileAgentSessionStore implements AgentSessionStore {
       const entries = await readdir(sessionsRoot, { withFileTypes: true });
       const sessions = await Promise.all(
         entries
-          .filter((entry) => entry.isDirectory())
+          // Sibling debug folders such as `.play-logs` are not Copilot sessions.
+          .filter((entry) => entry.isDirectory() && isSafeSessionId(entry.name))
           .map((entry) => this.readMetadata(entry.name)),
       );
       const latest = sessions.toSorted((a, b) =>
@@ -495,8 +496,12 @@ function boundExistingCommandAudit(
   };
 }
 
+function isSafeSessionId(sessionId: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
+}
+
 function assertSafeSessionId(sessionId: string): void {
-  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+  if (!isSafeSessionId(sessionId)) {
     throw new Error('Session id may only contain letters, numbers, "_" and "-".');
   }
 }

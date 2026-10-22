@@ -343,11 +343,43 @@ export interface ProviderConfigInput {
   apiKeyEnv?: string;
 }
 
+/** One line of the Play debug message log. Debug data only; never Play state. */
+export interface PlayMessageLogEntry {
+  schemaVersion: 1;
+  at: string;
+  playSessionId: string;
+  kind:
+    | 'author_action'
+    | 'model_request'
+    | 'model_reasoning'
+    | 'model_output'
+    | 'turn_committed'
+    | 'turn_cancelled'
+    | 'turn_failed'
+    | (string & {});
+  turnId?: string;
+  attemptId?: string;
+  stepRef?: string;
+  role?: 'world_referee' | 'rehearsal_actor' | 'rehearsal_referee' | (string & {});
+  participantRef?: string;
+  text?: string;
+  data?: Record<string, unknown>;
+  truncated?: true;
+}
+
+export interface PlayMessageLogPage {
+  entries: PlayMessageLogEntry[];
+  nextCursor?: number;
+  skippedLines: number;
+}
+
 export interface ProviderModelConfig {
   id: string;
   displayName?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Thinking effort; omitted means the provider default. */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   default?: boolean;
 }
 
@@ -1998,6 +2030,10 @@ export interface OanClient extends PlayRehearsalClientMethods {
   listPlayContextTraces(id: string, options?: {
     limit?: number;
   }): Promise<{ traces: PlayTurnContextTrace[] }>;
+  getPlayMessageLog(id: string, options?: {
+    cursor?: number;
+    limit?: number;
+  }): Promise<PlayMessageLogPage>;
   getPlaySourceDrift(id: string): Promise<{ status: PlaySourceDriftStatus }>;
   decidePlaySourceDrift(
     id: string,
@@ -2763,6 +2799,20 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       return requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/context-traces?limit=${limit}`,
       ).then((value) => parsePlayContextTraceListResponse(value, sessionId));
+    },
+    getPlayMessageLog: (id, options = {}) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      const cursor = options.cursor ?? 0;
+      const limit = options.limit ?? 200;
+      if (!isNonNegativeSafeInteger(cursor)) {
+        throw new Error('Play message log cursor must be a non-negative integer.');
+      }
+      if (!isPositiveSafeInteger(limit) || limit > 1000) {
+        throw new Error('Play message log limit must be between 1 and 1000.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/message-log?cursor=${cursor}&limit=${limit}`,
+      ).then((value) => parsePlayMessageLogPage(value, sessionId));
     },
     getPlaySourceDrift: (id) => {
       const sessionId = requireSafePlayClientId(id, 'Play session id');
@@ -3720,6 +3770,32 @@ function parsePlayContextTraceListResponse(
     throw new Error('Play context traces returned an invalid payload.');
   }
   return value as unknown as { traces: PlayTurnContextTrace[] };
+}
+
+function parsePlayMessageLogPage(value: unknown, sessionId: string): PlayMessageLogPage {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['entries', 'nextCursor', 'skippedLines']) ||
+    !Array.isArray(value.entries) ||
+    !isNonNegativeSafeInteger(value.skippedLines) ||
+    (value.nextCursor !== undefined && !isNonNegativeSafeInteger(value.nextCursor)) ||
+    !value.entries.every((entry) => isPlayMessageLogEntry(entry, sessionId))
+  ) {
+    throw new Error('Play message log returned an invalid payload.');
+  }
+  return value as unknown as PlayMessageLogPage;
+}
+
+function isPlayMessageLogEntry(value: unknown, sessionId: string): value is PlayMessageLogEntry {
+  if (!isRecord(value)) return false;
+  const optionalStrings = ['turnId', 'attemptId', 'stepRef', 'role', 'participantRef', 'text'] as const;
+  return value.schemaVersion === 1 &&
+    value.playSessionId === sessionId &&
+    typeof value.at === 'string' &&
+    typeof value.kind === 'string' &&
+    optionalStrings.every((key) => value[key] === undefined || typeof value[key] === 'string') &&
+    (value.data === undefined || isRecord(value.data)) &&
+    (value.truncated === undefined || value.truncated === true);
 }
 
 function parsePlaySourceDriftResponse(

@@ -28,13 +28,30 @@ export function runtimeEventsToUiMessageStream(
     onError: () => 'An error occurred.',
     async execute({ writer }) {
       let textPartId: string | undefined;
+      let reasoningPartId: string | undefined;
+      let partSequence = 0;
+
+      const endReasoningPart = () => {
+        if (!reasoningPartId) return;
+        writer.write({ type: 'reasoning-end', id: reasoningPartId });
+        reasoningPartId = undefined;
+      };
+
+      const ensureReasoningPart = () => {
+        if (reasoningPartId) return reasoningPartId;
+        endTextPart();
+        reasoningPartId = `reasoning-${Date.now().toString(36)}-${partSequence += 1}`;
+        writer.write({ type: 'reasoning-start', id: reasoningPartId });
+        return reasoningPartId;
+      };
 
       const ensureTextPart = () => {
         if (textPartId) {
           return textPartId;
         }
 
-        textPartId = `text-${Date.now().toString(36)}`;
+        endReasoningPart();
+        textPartId = `text-${Date.now().toString(36)}-${partSequence += 1}`;
         writer.write({
           type: 'text-start',
           id: textPartId,
@@ -66,6 +83,15 @@ export function runtimeEventsToUiMessageStream(
           writer.write({ type: 'data-usage-warning', data: { code: event.code } });
           continue;
         }
+        if (event.type === 'reasoning_delta') {
+          writer.write({
+            type: 'reasoning-delta',
+            id: ensureReasoningPart(),
+            delta: event.text,
+          });
+          continue;
+        }
+
         if (event.type === 'message_delta') {
           writer.write({
             type: 'text-delta',
@@ -76,6 +102,7 @@ export function runtimeEventsToUiMessageStream(
         }
 
         if (event.type === 'tool_call_start') {
+          endReasoningPart();
           endTextPart();
           const publicToolCall = sanitizeRuntimeToolCall(event.toolCall);
           writer.write({
@@ -128,6 +155,7 @@ export function runtimeEventsToUiMessageStream(
         }
 
         if (event.type === 'message_finish') {
+          endReasoningPart();
           endTextPart();
           writer.write({
             type: 'data-runtime-result',
@@ -138,6 +166,7 @@ export function runtimeEventsToUiMessageStream(
         }
 
         if (event.type === 'error') {
+          endReasoningPart();
           endTextPart();
           writer.write({
             type: 'error',
@@ -146,6 +175,7 @@ export function runtimeEventsToUiMessageStream(
         }
       }
 
+      endReasoningPart();
       endTextPart();
     },
   });

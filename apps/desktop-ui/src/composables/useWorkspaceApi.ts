@@ -55,6 +55,8 @@ export type {
   PlayCheckpointSummary,
   PlayContextSourceTrace,
   PlayContextWindowTrace,
+  PlayMessageLogEntry,
+  PlayMessageLogPage,
   PlayCursorWindow,
   PlayEventDensity,
   PlayEventOrigin,

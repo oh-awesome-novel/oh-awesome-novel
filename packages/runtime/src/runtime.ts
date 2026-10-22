@@ -65,7 +65,8 @@ export class RuntimeSession {
     this.usageSteps = [];
     this.turnId = `turn_${randomUUID()}`;
     this.usageFinished = false;
-    this.state.curMessages = [...(input.messages ?? [])];
+    // Earlier turns' thinking is history, not context for this turn.
+    this.state.curMessages = (input.messages ?? []).map(withoutReasoning);
     this.state.toolLog = [];
     this.state.pendingActions = [];
 
@@ -139,6 +140,7 @@ export class RuntimeSession {
             role: 'assistant',
             content: auditedMessage?.content ?? '',
             toolCalls: response.toolCalls.map(auditRuntimeToolCall),
+            ...(auditedMessage?.reasoning ? { reasoning: auditedMessage.reasoning } : {}),
           });
           await this.executeToolCalls(response, tools, request.messages, input.abortSignal);
           if (input.abortSignal?.aborted) {
@@ -204,6 +206,8 @@ export class RuntimeSession {
           type: 'message_delta',
           text: event.text,
         });
+      } else if (event.type === 'reasoning_delta') {
+        await this.emit({ type: 'reasoning_delta', text: event.text });
       } else {
         response = event.response;
       }
@@ -354,7 +358,7 @@ export class RuntimeSession {
       usage: await this.finishUsage(stoppedReason === 'error' ? 'failed' : stoppedReason),
     };
 
-    this.state.doneMessages.push(...this.state.curMessages);
+    this.state.doneMessages.push(...this.state.curMessages.map(withoutReasoning));
     this.state.curMessages = [];
 
     await this.emit({ type: 'message_finish', result });
@@ -518,6 +522,12 @@ function toToolExecutionMessages(messages: RuntimeMessage[]): ModelMessage[] {
     }
     return { role: message.role, content: message.content };
   }));
+}
+
+function withoutReasoning(message: RuntimeMessage): RuntimeMessage {
+  if (message.reasoning === undefined) return message;
+  const { reasoning: _reasoning, ...rest } = message;
+  return rest;
 }
 
 function extractPendingActions(content: unknown): PendingAction[] {

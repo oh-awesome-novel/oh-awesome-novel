@@ -46,6 +46,14 @@ async function copyText(text: string) {
             <pre v-if="expandedTools[item.id]" class="tool-detail">{{ item.detail }}</pre>
           </div>
         </template>
+        <template v-else-if="item.type === 'agent-reasoning'">
+          <details class="conversation-reasoning">
+            <summary class="conversation-reasoning-summary">
+              {{ item.streaming ? '思考中…' : '思考过程' }}
+            </summary>
+            <p class="conversation-reasoning-text">{{ item.text }}</p>
+          </details>
+        </template>
         <template v-else-if="item.type === 'status'">
           <p class="timeline-status conversation-status">{{ item.text }}</p>
         </template>

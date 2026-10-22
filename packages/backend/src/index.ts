@@ -43,6 +43,7 @@ import {
   createCustomWritingProfile,
   createEmptyLlmProviderConfigState,
   getDefaultLlmProviderConfig,
+  isLlmReasoningEffort,
   getPlaySessionStartMode,
   initWorkspace,
   importReferenceWork,
@@ -205,6 +206,8 @@ import {
   writePlayTurnRunReceipt,
 } from './play-turn-run-receipt.js';
 import type { PlayTurnRunReceipt } from './play-turn-run-receipt.js';
+import { readPlayMessageLog, tryAppendPlayMessageLog } from './play-message-log.js';
+import type { PlayMessageLogEntryInput } from './play-message-log.js';
 import {
   createPendingActionViewHandlers,
   toPendingActionViewErrorResponse,
@@ -946,6 +949,13 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.get('/api/workspace/play-sessions/:id/context-traces', (context) =>
     handleListPlayContextTraces(
+      options,
+      state,
+      context.req.param('id') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/play-sessions/:id/message-log', (context) =>
+    handleReadPlayMessageLog(
       options,
       state,
       context.req.param('id') ?? '',
@@ -2950,6 +2960,44 @@ async function handleListPlayContextTraces(
   }
 }
 
+// Debug-only log; readable while a turn runs so the author can watch it fill.
+async function handleReadPlayMessageLog(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const params = new URL(context.req.url).searchParams;
+  if ([...params.keys()].some((key) => key !== 'cursor' && key !== 'limit')) {
+    return jsonResponse(context, 400, { error: 'Only the cursor and limit query parameters are supported.' });
+  }
+  const readInteger = (key: string, minimum: number, maximum: number): number | undefined | null => {
+    const values = params.getAll(key);
+    if (!values.length) return undefined;
+    const value = Number(values[0]);
+    return values.length === 1 && /^\d+$/u.test(values[0]!) && Number.isSafeInteger(value)
+      && value >= minimum && value <= maximum ? value : null;
+  };
+  const cursor = readInteger('cursor', 0, Number.MAX_SAFE_INTEGER);
+  const limit = readInteger('limit', 1, 1000);
+  if (cursor === null) return jsonResponse(context, 400, { error: 'cursor must be a non-negative integer.' });
+  if (limit === null) return jsonResponse(context, 400, { error: 'limit must be an integer between 1 and 1000.' });
+  try {
+    await readPlaySessionFiles(workspaceRoot, id);
+    return jsonResponse(context, 200, await readPlayMessageLog(workspaceRoot, id, {
+      ...(cursor !== undefined ? { cursor } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    }));
+  } catch (error) {
+    return jsonResponse(
+      context,
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422,
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+  }
+}
+
 async function handleGetPlaySourceDrift(
   options: NovelBackendOptions,
   state: BackendState,
@@ -4144,6 +4192,23 @@ async function createPlayWorldRefereeTurnStreamResponse(
     return jsonResponse(context, 500, { error: 'Play turn recovery metadata could not be saved.' });
   }
 
+  let reasoning = '';
+  let rawOutput = '';
+  let modelResultLogged = false;
+  const logPlayMessages = async (entries: PlayMessageLogEntryInput[]): Promise<void> => {
+    await tryAppendPlayMessageLog(workspaceRoot, id, entries.map((entry) => ({ turnId, ...entry })));
+  };
+  // Thinking and raw output go to the debug log once, whether the turn settles or not.
+  const logModelResult = async (partial: boolean): Promise<void> => {
+    if (modelResultLogged) return;
+    modelResultLogged = true;
+    const data = partial ? { partial: true } : undefined;
+    await logPlayMessages([
+      ...(reasoning ? [{ kind: 'model_reasoning' as const, role: 'world_referee' as const, text: reasoning, ...(data ? { data } : {}) }] : []),
+      ...(rawOutput || !partial ? [{ kind: 'model_output' as const, role: 'world_referee' as const, text: rawOutput, ...(data ? { data } : {}) }] : []),
+    ]);
+  };
+
   const requestSignal = context.req.raw.signal;
   const encoder = new TextEncoder();
   let streamClosed = false;
@@ -4244,6 +4309,15 @@ async function createPlayWorldRefereeTurnStreamResponse(
             `User turn: ${userText}`,
           ].join('\n');
 
+          await logPlayMessages([
+            {
+              kind: 'author_action',
+              text: userText,
+              data: { actionKind, ...(timeAdvance ? { timeAdvance } : {}), ...(execution.retry ? { retry: execution.retry } : {}) },
+            },
+            { kind: 'model_request', role: 'world_referee', text: request },
+          ]);
+
           run.status = 'streaming';
           const refereeText = await rejectPlayTurnGenerationOnAbort(
             streamPlayRefereeText({
@@ -4264,10 +4338,14 @@ async function createPlayWorldRefereeTurnStreamResponse(
                 provisional: true,
                 reason: 'read-tool loop completed',
               }),
+              onReasoningDelta: (delta) => { reasoning += delta; },
+              onRawChunk: (chunk) => { rawOutput += chunk; },
             }),
             run.abortController.signal,
           );
 
+          rawOutput = refereeText;
+          await logModelResult(false);
           assertPlayTurnNotCancelled(run);
           if (!refereeText.trim()) {
             throw new Error('World referee returned no narrative.');
@@ -4337,7 +4415,12 @@ async function createPlayWorldRefereeTurnStreamResponse(
             revision: next.revision,
             session: next,
           });
+          await logPlayMessages([{
+            kind: 'turn_committed',
+            data: { artifactId: next.selectedTurnIds.at(-1), revision: next.revision },
+          }]);
         } catch (error) {
+          await logModelResult(true);
           if (
             run.abortController.signal.aborted &&
             run.status !== 'committing' &&
@@ -4351,6 +4434,10 @@ async function createPlayWorldRefereeTurnStreamResponse(
               revision: authoritativeSession.revision,
               reason: String(run.abortController.signal.reason ?? 'cancelled'),
             });
+            await logPlayMessages([{
+              kind: 'turn_cancelled',
+              data: { reason: String(run.abortController.signal.reason ?? 'cancelled') },
+            }]);
           } else {
             if (run.status === 'committing') {
               const recovered = await readPlaySessionFiles(workspaceRoot, id).catch(() => undefined);
@@ -4360,11 +4447,13 @@ async function createPlayWorldRefereeTurnStreamResponse(
                 run.receipt = { ...run.receipt, phase: 'committed' };
                 await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
                 emit('play.turn.committed', { artifactId: run.receipt.artifactId, revision: recovered.revision, session: recovered });
+                await logPlayMessages([{ kind: 'turn_committed', data: { artifactId: run.receipt.artifactId, revision: recovered.revision } }]);
                 return;
               }
               // Keep the committing receipt: a transport error is not evidence of no commit.
               run.status = 'indeterminate';
               emit('play.turn.failed', { error: { code: 'commit_outcome_unknown', message: 'Play turn outcome is unknown. Reload the session before continuing.', retryable: false } });
+              await logPlayMessages([{ kind: 'turn_failed', data: { code: 'commit_outcome_unknown' } }]);
             } else {
               const failure = classifyPlayTurnStreamFailure(error, run.status);
               run.status = 'failed';
@@ -4372,6 +4461,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
               run.receipt = { ...run.receipt, phase: 'failed', error: failure.message.slice(0, 2000) };
               await writePlayTurnRunReceipt(workspaceRoot, run.receipt).catch(() => undefined);
               emit('play.turn.failed', { error: failure });
+              await logPlayMessages([{ kind: 'turn_failed', text: failure.message, data: { code: failure.code } }]);
             }
           }
         } finally {
@@ -4505,6 +4595,10 @@ interface StreamPlayRefereeTextInput {
   abortSignal: AbortSignal;
   onNarrativeDelta(delta: string): void;
   onNarrativeReset(): void;
+  /** Model thinking; only the debug message log consumes it. */
+  onReasoningDelta?(delta: string): void;
+  /** Unfiltered model text, for the debug message log. */
+  onRawChunk?(chunk: string): void;
 }
 
 async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise<string> {
@@ -4520,6 +4614,7 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
   const filter = createPlayNarrativeStreamFilter();
   let receivedCharacters = 0;
   const emitChunk = (chunk: string): void => {
+    input.onRawChunk?.(chunk);
     receivedCharacters += chunk.length;
     if (receivedCharacters > MAX_PLAY_REFEREE_RESPONSE_CHARACTERS) {
       throw new Error(
@@ -4577,11 +4672,16 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     workspaceRoot: input.workspaceRoot,
     workspace: { workspaceRoot: input.workspaceRoot },
     request: input.request,
+    // The referee prompt mentions `oan-play-settlement`; without an explicit
+    // capability keyword inference would pick a canonical write capability.
+    capability: 'novel.play_scene',
     usageSessionId: `play-${input.session.id}`,
     abortSignal: input.abortSignal,
   })) {
     if (event.type === 'message_delta') {
       emitChunk(event.text);
+    } else if (event.type === 'reasoning_delta') {
+      input.onReasoningDelta?.(event.text);
     } else if (event.type === 'tool_call_start') {
       filter.reset();
       input.onNarrativeReset();
@@ -8516,6 +8616,10 @@ function readProviderModels(value: Record<string, unknown>): LlmProviderModel[] 
 
       if (maxOutputTokens !== undefined) {
         model.maxOutputTokens = maxOutputTokens;
+      }
+
+      if (isLlmReasoningEffort(item.reasoningEffort)) {
+        model.reasoningEffort = item.reasoningEffort;
       }
 
       return model;

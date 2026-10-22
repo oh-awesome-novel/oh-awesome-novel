@@ -32,6 +32,33 @@ afterEach(async () => {
 });
 
 describe('agent session persistence', () => {
+  it('keeps assistant thinking in messages.jsonl and ignores the Play debug log folder on recovery', async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const store = createAgentSessionStore({ workspaceRoot });
+    const session = await store.createSession({ title: 'thinking session' });
+    await mkdir(join(workspaceRoot, '.oan/sessions/.play-logs/play-1'), { recursive: true });
+    await store.recordRuntimeEvent(session.id, {
+      type: 'message_finish',
+      result: {
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi', reasoning: 'greet back' },
+        ],
+        assistantMessage: { role: 'assistant', content: 'hi', reasoning: 'greet back' },
+        toolLog: [],
+        pendingActions: [],
+        stoppedReason: 'completed',
+      },
+    });
+
+    const recovered = await store.recoverLatestSession();
+
+    expect(recovered?.metadata.id).toBe(session.id);
+    expect(recovered?.messages.at(-1)).toEqual({ role: 'assistant', content: 'hi', reasoning: 'greet back' });
+    await expect(readFile(join(workspaceRoot, '.oan/sessions', session.id, 'messages.jsonl'), 'utf-8'))
+      .resolves.toContain('"reasoning":"greet back"');
+  });
+
   it('rejects symlinks at every internal session-directory segment', async () => {
     const workspaceWithLinkedOan = await createTempWorkspace();
     const externalOan = await createTempWorkspace();
