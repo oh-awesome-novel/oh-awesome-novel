@@ -77,6 +77,8 @@ docs/
 - [plans/WRITING_MODE_COMMERCIAL_AND_FANFICTION_UPGRADE_PLAN.md](plans/WRITING_MODE_COMMERCIAL_AND_FANFICTION_UPGRADE_PLAN.md)：Writing Profile 与拆书材料。
 - [plans/AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md](plans/AGENT_USAGE_AND_CONTEXT_STATS_PLAN.md)：上下文证据与用量治理。
 - [plans/WORKSPACE_FRONTEND_LAYOUT_PLAN.md](plans/WORKSPACE_FRONTEND_LAYOUT_PLAN.md)：工作区前端布局。
+- [plans/PLAY_MODE_AND_NOVEL_LINT_UPGRADE_PLAN.md](plans/PLAY_MODE_AND_NOVEL_LINT_UPGRADE_PLAN.md)：Play 模式升级与小说去 AI 味反套话质检计划（Prompt Cache 布局、五维剧情存档、视觉小说视窗、角色名册与 Novel LINT）。
+- [plans/SETTING_WORKSHOP_GUIDED_FORGE_UPGRADE_PLAN.md](plans/SETTING_WORKSHOP_GUIDED_FORGE_UPGRADE_PLAN.md)：设定工坊引导式共创向导（Forge）计划（台词/试写样例引导、性格调色盘、三面性、反刻板解释与 ChangeSet 审批落盘）。
 - [plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md](plans/OAN_AGENT_WRITING_GUIDE_IMPLEMENTATION_SPEC.md) 与 [plans/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md](plans/OAN_AGENT_WRITING_GUIDE_RUNTIME_GAP_SPEC.md)：写作指引 vNext。
 
 ## 设计与实现评估
@@ -85,6 +87,13 @@ docs/
 - [2026-10-01 简短说明](reviews/DESIGN_IMPLEMENTATION_REVIEW_SUMMARY.md) 与 [详细说明](reviews/DESIGN_IMPLEMENTATION_REVIEW_DETAILED.md)：可靠性与实现差距评估。
 
 评估文档是带日期的建议，不替代稳定合同；尚未实施的建议不能视为当前功能或已更新的 task 状态。
+
+## 参考项目研究
+
+- [research/CICATAVERN_REFERENCE_ANALYSIS.md](research/CICATAVERN_REFERENCE_ANALYSIS.md)：CicaTavern 架构深度分析报告与推荐吸收设计（Prompt Cache 冻结前缀、视觉小说模式、五维剧情存档、名册一致性、Forge 引导共创与反套话 LINT）。
+- [research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md](research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md)：OpenTavern 两套参考实现对 Play Mode 的优化分析。
+- [research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md](research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md)：MuseAI 推演与多角色模式分析。
+- [research/SILLYTAVERN_REFERENCE_OVERVIEW.md](research/SILLYTAVERN_REFERENCE_OVERVIEW.md) 与 [SILLYTAVERN_REFERENCE_LESSONS.md](research/SILLYTAVERN_REFERENCE_LESSONS.md)：SillyTavern 角色卡与生态研究。
 
 ## ADR
 
