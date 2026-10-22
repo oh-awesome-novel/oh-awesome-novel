@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { namedHookWithTaskFn, PluginBase } from '@electron-forge/plugin-base';
 
-import type { TsdownPluginBuildConfig, TsdownPluginConfig } from './Config';
+import type { TsdownPluginBuildConfig, TsdownPluginConfig } from './Config.js';
 import type {
   ForgeListrTask,
   ForgeMultiHookMap,
@@ -344,25 +344,12 @@ Instead, it is ${JSON.stringify(packageJson.main)}.`);
   }
 }
 
-const importTsdown = async (): Promise<{ build: TsdownBuild }> => {
-  const importModule = new Function(
-    'specifier',
-    'return import(specifier)',
-  ) as (specifier: string) => Promise<{ build: TsdownBuild }>;
-
-  return importModule('tsdown');
-};
+const importTsdown = async (): Promise<{ build: TsdownBuild }> =>
+  import('tsdown') as Promise<{ build: TsdownBuild }>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const importVite = async (): Promise<ViteModule> => {
-  const importModule = new Function(
-    'specifier',
-    'return import(specifier)',
-  ) as (specifier: string) => Promise<ViteModule>;
-
-  return importModule('vite');
-};
+const importVite = async (): Promise<ViteModule> => import('vite');
 
 export { TsdownPlugin };

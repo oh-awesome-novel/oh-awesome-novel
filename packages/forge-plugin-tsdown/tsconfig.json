@@ -1,11 +1,12 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "target": "ES2021",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2022",
     "outDir": "dist",
     "lib": [
       "dom",
-      "ES2021"
+      "ES2022"
     ],
     "inlineSourceMap": true,
     "rootDir": "src",

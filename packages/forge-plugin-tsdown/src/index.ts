@@ -5,5 +5,5 @@ export type {
   TsdownPluginRendererConfig,
   TsdownPluginTarget,
   TsdownPluginUserConfig,
-} from './Config';
-export { TsdownPlugin, default } from './TsdownPlugin';
+} from './Config.js';
+export { TsdownPlugin, default } from './TsdownPlugin.js';
