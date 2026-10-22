@@ -80,6 +80,8 @@ export const NOVEL_COPILOT_ALLOWED_TOOLS = [
   'writeFile',
   'workspace.previewChanges',
   'workspace.proposeChanges',
+  'novel.lintScan',
+  'novel.deAi',
 ] as const;
 
 export const NOVEL_COPILOT_SANDBOX_CAPABILITIES = [

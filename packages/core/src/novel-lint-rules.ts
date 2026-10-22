@@ -1,6 +1,6 @@
 export interface LintRule { id: string; name: string; category: 'punctuation' | 'cliche' | 'style' | 'meta' | 'translation_ese'; pattern: RegExp; description: string; suggestionHint: string }
 const rule = (id: string, name: string, category: LintRule['category'], pattern: RegExp, suggestionHint: string): LintRule => ({ id, name, category, pattern, description: name, suggestionHint });
-/** Independently implemented from the plan's eleven categories; matches are advice, never automatic deletions. */
+/** Independently implemented from the plan's eleven categories; matches are advice. An approved empty suggestion removes the matched phrase, so it still goes through human review. */
 export const NOVEL_LINT_RULES: readonly LintRule[] = [
   rule('dash', '破折号滥用', 'punctuation', /——/gu, '调整停顿与句式'),
   rule('vague_words', '模糊词', 'style', /似乎|仿佛|宛如|如同/gu, '描述确切动作'),

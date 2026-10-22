@@ -46,4 +46,21 @@ describe('frozen permanent context safety', () => {
       await expect(freezePlayPermanentContext(root, s)).rejects.toThrow('links are forbidden');
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+  it('truncates oversized permanent files to the budget instead of rejecting launch', async () => {
+    const { freezePlayPermanentContext } = await import('@oh-awesome-novel/backend');
+    const { createPlaySessionDraft } = await import('@oh-awesome-novel/core');
+    const root = await mkdtemp(join(tmpdir(), 'oan-prefix-budget-'));
+    try {
+      await mkdir(join(root, 'world')); await mkdir(join(root, 'characters/hero'), { recursive: true });
+      await writeFile(join(root, 'world/rules.md'), `规则${'界'.repeat(200 * 1024)}`);
+      for (const id of ['a', 'b', 'c', 'd']) { await mkdir(join(root, `characters/${id}`), { recursive: true }); await writeFile(join(root, `characters/${id}/profile.md`), id.repeat(60 * 1024)); }
+      const s = { ...createPlaySessionDraft({ id: 'budget', title: 'Budget', sceneStart: 'Gate', characters: ['a', 'b', 'c', 'd'] }), schemaVersion: 4 as const };
+      await freezePlayPermanentContext(root, s, '启用来源');
+      const prompt = String(s.metadataExtensions.frozenSystemPrompt);
+      expect(prompt).toContain('规则界');
+      expect(prompt).toContain('world/rules.md truncated');
+      expect(prompt).not.toContain('\uFFFD');
+      expect(Buffer.byteLength(prompt)).toBeLessThan(260 * 1024);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });

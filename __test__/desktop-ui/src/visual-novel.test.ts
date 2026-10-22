@@ -17,6 +17,16 @@ describe('visual novel stage', () => {
     expect(wrapper.emitted('choose')).toEqual([['走进门']]);
     wrapper.unmount();
   });
+  it('only offers a trailing numbered block as choices', async () => {
+    const content = '1. 第一年，他离开了村子。\n2. 第二年，他回来了。\n雨停。\n1. 走进门\n2. 转身离开';
+    const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [{ ...turn, content }], choices: [], disabled: false } });
+    expect(wrapper.text()).toContain('走进门');
+    expect(wrapper.text()).toContain('转身离开');
+    expect(wrapper.text()).not.toContain('第二年，他回来了。走');
+    await wrapper.trigger('keydown', { key: '1' });
+    expect(wrapper.emitted('choose')).toEqual([['走进门']]);
+    wrapper.unmount();
+  });
   it('renders frozen scene media and clears it on a sibling without a background', async () => {
     const image = 'data:image/png;base64,aGVsbG8=';
     const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: 'current', turns: [{ ...turn, stageSnapshot: { ...turn.stageSnapshot, backgroundDataUrl: image } }], choices: [], disabled: false } });

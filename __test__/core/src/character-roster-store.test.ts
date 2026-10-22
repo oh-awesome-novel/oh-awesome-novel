@@ -55,4 +55,32 @@ describe('filesystem character roster', () => {
     const session = createPlaySessionDraft({ id: 'roster', title: 'roster', sceneStart: '客栈', characters: ['nian'] });
     await expect(attachPlayCharacterRoster(root, session)).rejects.toThrow();
   });
+  it('ignores broken profiles of unused characters but rejects a broken profile the session uses', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'oan-roster-')); roots.push(root);
+    const profile = { id: 'nian', name: '念念', aliases: ['小念'], genderKind: 'girl' as const, isPlayer: false, looks: { fixedBooruTags: '', outfitDescription: '', outfitTags: '' } };
+    await mkdir(join(root, 'characters/nian'), { recursive: true });
+    await mkdir(join(root, 'characters/broken'), { recursive: true });
+    await writeFile(join(root, 'characters/nian/roster-profile.yaml'), serializeRosterProfile(profile));
+    await writeFile(join(root, 'characters/broken/roster-profile.yaml'), 'id: [');
+    const session = createPlaySessionDraft({ id: 'roster', title: 'roster', sceneStart: '客栈', characters: ['小念'] });
+    await attachPlayCharacterRoster(root, session);
+    expect(session.metadataExtensions.characterRoster).toEqual([profile]);
+    const usesBroken = createPlaySessionDraft({ id: 'roster-2', title: 'roster', sceneStart: '客栈', characters: ['broken'] });
+    await expect(attachPlayCharacterRoster(root, usesBroken)).rejects.toThrow();
+  });
+  it('keeps the starting scene background and skips extra or ambiguous scenery instead of failing launch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'oan-scenes-')); roots.push(root);
+    await mkdir(join(root, 'world/places'), { recursive: true });
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP6kAAAAASUVORK5CYII=', 'base64');
+    for (let n = 0; n < 14; n++) await writeFile(join(root, `world/places/a${String(n).padStart(2, '0')}.png`), png);
+    await writeFile(join(root, 'world/places/twin.png'), png);
+    await writeFile(join(root, 'world/places/twin.webp'), png);
+    await writeFile(join(root, 'world/places/zz-start.png'), png);
+    const session = createPlaySessionDraft({ id: 'scenery', title: 'scenery', sceneStart: 'zz-start', characters: [] });
+    await attachPlayCharacterRoster(root, session);
+    const backgrounds = session.metadataExtensions.sceneBackgrounds as Record<string, string>;
+    expect(Object.keys(backgrounds)).toHaveLength(12);
+    expect(backgrounds['zz-start']).toBeDefined();
+    expect(backgrounds.twin).toBeUndefined();
+  });
 });

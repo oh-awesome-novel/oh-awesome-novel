@@ -27,9 +27,9 @@ export function isPlayCompactionActive(session: PlaySession): boolean {
 }
 
 export function formatPlayTurnTail(session: PlaySession, dynamicContext: string, playerInput: string): string {
-  const continuation = session.metadataExtensions.playContinuation;
+  // The archive continuation travels once as a stable prior message (see the backend's playContinuationMessages).
   return [
-    ...(!session.selectedTurnIds.length || (isPlayCompactionActive(session) && session.metadataExtensions.playCompactionStartRevision === session.revision) ? [`<开场>${session.sceneStart}</开场>`, ...(typeof continuation === 'string' ? [continuation] : [])] : []),
+    ...(!session.selectedTurnIds.length || (isPlayCompactionActive(session) && session.metadataExtensions.playCompactionStartRevision === session.revision) ? [`<开场>${session.sceneStart}</开场>`] : []),
     `<世界设定与当前状态>\n${dynamicContext}\n</世界设定与当前状态>`,
     `<玩家输入>${playerInput}</玩家输入>`,
     '<本轮提醒>遵守冻结系统前缀和本轮结算约束。</本轮提醒>',

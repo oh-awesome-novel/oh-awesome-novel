@@ -20,6 +20,10 @@ describe('Play frozen prefix and five-dimension archive', () => {
     expect(() => parsePlayCompaction('{}')).toThrow();
     expect(auditPlayCompaction(s, { ...d, version: 1, resourceState: {} })).toContain('Resource/state ledger changed or omitted facts.');
     expect(() => createPlayCompactionPreview(s, JSON.stringify({ ...d, chronicle: ['He healed.'] }))).toThrow('Unverified');
+    s.transcript.at(-1)!.content += ' 他没有服下毒药。He never betrayed the gate.';
+    expect(auditPlayCompaction(s, { ...d, chronicle: ['服下毒药'] })).toContain('Unverified historical quote: 服下毒药');
+    expect(auditPlayCompaction(s, { ...d, chronicle: ['betrayed the gate.'] })).toContain('Unverified historical quote: betrayed the gate.');
+    expect(auditPlayCompaction(s, { ...d, chronicle: ['他没有服下毒药。'] })).toEqual([]);
     expect(() => createPlayCompactionPreview(s, JSON.stringify({ ...d, characters: [{ name: '未记录', identity: '未记录', relationshipChange: '未记录', currentSituation: 'His arm healed.' }] }))).toThrow('Unverified current fact');
   });
   it('rejects superseded resource, injury, relationship and scene quotes despite an unchanged current ledger', () => {
@@ -66,7 +70,9 @@ describe('Play frozen prefix and five-dimension archive', () => {
     expect(() => createCompactedPlaySession({ ...s, revision: 6 }, preview, 'continued')).toThrow('stale');
     const next = createCompactedPlaySession(s, preview, 'continued');
     expect(getPlayFrozenSystemPrompt(next)).toBe(getPlayFrozenSystemPrompt(s));
-    expect(formatPlayTurnTail(next, '', 'go')).toContain('<前情提要>');
+    // The continuation is sent once as a prior message, never duplicated into the first tail.
+    expect(formatPlayTurnTail(next, '', 'go')).not.toContain('<前情提要>');
+    expect(next.metadataExtensions.playContinuation).toContain('<前情提要>');
     expect(preview.recentText).toContain('At gate 4.'); expect(preview.recentText).not.toContain('At gate 2.');
     expect(formatPlayWorldRefereePrompt(next)).not.toContain('At gate 0.');
     next.playLocalState.injury = 'changed'; expect(s.playLocalState.injury).toBe('lost arm');

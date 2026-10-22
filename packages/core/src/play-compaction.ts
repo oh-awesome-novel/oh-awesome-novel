@@ -78,6 +78,16 @@ export function buildPlayCompactionPrompt(session: PlaySession): string {
     `resourceState: ${JSON.stringify(session.playLocalState)}`,
     `选中分支历史: ${playCompactionSource(session)}`].join('\n');
 }
+const NEGATED_PREFIX = /(?:不|没有?|未曾?|非|无|别|莫|勿|否|\bnot|\bnever|\bno|n't)\s*$/iu;
+/** A quote only counts when some occurrence is not the tail of a negated clause ("他没有服下毒药" cannot vouch for "服下毒药"). */
+function quotedVerbatim(history: string, quote: string): boolean {
+  if (!quote) return false;
+  for (let index = history.indexOf(quote); index >= 0; index = history.indexOf(quote, index + 1)) {
+    const clause = history.slice(Math.max(0, index - 12), index).split(/[。！？!?；;，,、\n“”「」『』"]/u).at(-1) ?? '';
+    if (!NEGATED_PREFIX.test(clause)) return true;
+  }
+  return false;
+}
 export function auditPlayCompaction(session: PlaySession, data: PlayCompactionData): string[] {
   const errors: string[] = [];
   const history = session.transcript.map(t => t.content).join('\n');
@@ -85,7 +95,7 @@ export function auditPlayCompaction(session: PlaySession, data: PlayCompactionDa
   // Canonical JSON comparison makes object key order irrelevant while retaining exact values.
   const stable = (v: unknown): string => JSON.stringify(v, (_k, value) => record(value) ? Object.fromEntries(Object.entries(value).sort(([a],[b]) => a.localeCompare(b))) : value);
   if (stable(data.resourceState) !== stable(session.playLocalState)) errors.push('Resource/state ledger changed or omitted facts.');
-  for (const quote of data.chronicle) if (!history.includes(quote)) errors.push(`Unverified historical quote: ${quote}`);
+  for (const quote of data.chronicle) if (!quotedVerbatim(history, quote)) errors.push(`Unverified historical quote: ${quote}`);
   const factualSource = [history, session.sceneStart, session.userPersona ?? '', getPlayFrozenSystemPrompt(session)].join('\n');
   const current = currentCompactionEvidence(session);
   const verifyCurrent = (field: string, value: string, allowed: readonly string[]) => {
@@ -101,7 +111,7 @@ export function auditPlayCompaction(session: PlaySession, data: PlayCompactionDa
   for (const name of data.currentScene.presentCharacters) verifyCurrent('currentScene.presentCharacters', name, current.currentScene.presentCharacters);
   for (const thread of data.unresolvedThreads) {
     if (!current.unresolvedThreads.includes(thread)) errors.push(`Unverified current unresolved thread: ${thread}`);
-    if (!history.includes(thread)) errors.push(`Unverified historical unresolved thread: ${thread}`);
+    if (!quotedVerbatim(history, thread)) errors.push(`Unverified historical unresolved thread: ${thread}`);
   }
   for (const name of current.currentScene.presentCharacters) if (!data.currentScene.presentCharacters.includes(name)) errors.push(`Missing current present character: ${name}`);
   for (const thread of current.unresolvedThreads) if (!data.unresolvedThreads.includes(thread)) errors.push(`Missing current unresolved thread: ${thread}`);

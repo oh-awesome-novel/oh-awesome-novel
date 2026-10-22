@@ -44,7 +44,15 @@ const snapshot = computed<StageSnapshot>(() => {
 });
 const beat = computed(() => snapshot.value.beats[beatIndex.value]);
 const isLast = computed(() => beatIndex.value >= snapshot.value.beats.length - 1);
-const choices = computed(() => props.choices.length ? props.choices : (selected.value?.content.match(/^[1-9](?:️⃣|[.、)])\s*(.+)$/gm) ?? []).map(line => line.replace(/^[1-9](?:️⃣|[.、)])\s*/, '')));
+const NUMBERED_CHOICE = /^[1-9](?:️⃣|[.、)])\s*/;
+// Only a trailing numbered block is a menu; numbered lines inside the prose body stay narrative.
+function trailingChoices(content = ''): string[] {
+  const lines = content.trimEnd().split(/\r?\n/);
+  const block: string[] = [];
+  for (let index = lines.length - 1; index >= 0 && NUMBERED_CHOICE.test(lines[index]!.trim()); index--) block.unshift(lines[index]!.trim().replace(NUMBERED_CHOICE, ''));
+  return block.filter(Boolean);
+}
+const choices = computed(() => props.choices.length ? props.choices : trailingChoices(selected.value?.content));
 const atmosphere = computed(() => /深夜|夜晚|午夜/.test(snapshot.value.sceneId) ? 'night' : /黄昏|日落|夕阳/.test(snapshot.value.sceneId) ? 'sunset' : 'day');
 watch(() => props.sessionId, () => { historicalId.value = undefined; logOpen.value = false; beatIndex.value = 0; });
 watch(() => Boolean(props.draft), (drafting) => { if (drafting) beatIndex.value = 0; });

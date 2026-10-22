@@ -44,8 +44,39 @@ export function parseTextBeats(text: string, roster: readonly SpeakerIdentity[] 
     return { text: balanced[index]!.trim(), isDialogue, speaker };
   }).filter(beat => Boolean(beat.text));
 }
+const MAX_STAGE_SCENE_LABEL = 120;
+const MAX_STAGE_CHARACTERS = 100;
+const MAX_STAGE_BEATS = 20_000;
+const MAX_STAGE_BEAT_TEXT = 200_000;
+/** Scene prose can be long; the stage header only needs its first line. */
+export function stageSceneLabel(scene: string): string {
+  const line = scene.split(/\r?\n/).map(item => item.trim()).find(Boolean) ?? '';
+  const chars = [...line];
+  return chars.length > MAX_STAGE_SCENE_LABEL ? `${chars.slice(0, MAX_STAGE_SCENE_LABEL - 1).join('')}…` : line;
+}
+function boundStageBeats(beats: TextBeat[]): TextBeat[] {
+  const split = beats.flatMap(beat => {
+    if (beat.text.length <= MAX_STAGE_BEAT_TEXT) return [beat];
+    const pieces: TextBeat[] = [];
+    for (let start = 0; start < beat.text.length; start += MAX_STAGE_BEAT_TEXT) pieces.push({ ...beat, text: beat.text.slice(start, start + MAX_STAGE_BEAT_TEXT) });
+    return pieces;
+  });
+  if (split.length <= MAX_STAGE_BEATS) return split;
+  // Too many short beats: pack neighbours so the snapshot stays readable without losing prose.
+  const group = Math.ceil(split.length / MAX_STAGE_BEATS);
+  const packed: Array<{ beat: TextBeat; count: number }> = [];
+  for (const beat of split) {
+    const last = packed.at(-1);
+    if (last && last.count < group && last.beat.text.length + beat.text.length <= MAX_STAGE_BEAT_TEXT) {
+      last.beat = { speaker: last.beat.speaker === beat.speaker ? beat.speaker : '', text: last.beat.text + beat.text, isDialogue: last.beat.isDialogue || beat.isDialogue };
+      last.count += 1;
+    } else packed.push({ beat, count: 1 });
+  }
+  return packed.map(item => item.beat);
+}
+/** Always returns a snapshot that normalizeStageSnapshot accepts, or throws before the caller commits it. */
 export function createStageSnapshot(sceneId: string, text: string, characters: readonly SpeakerIdentity[] = [], portraits: Record<string, string> = {}, backgrounds: Record<string, string> = {}): StageSnapshot {
-  return { sceneId, ...(Object.hasOwn(backgrounds, sceneId) ? { backgroundDataUrl: backgrounds[sceneId] } : {}), activeCharacters: characters.map((c, i) => ({ characterId: c.id, ...(portraits[c.id] ? { portraitDataUrl: portraits[c.id] } : {}), position: i === 0 ? 'center' : i % 2 ? 'left' : 'right' })), beats: parseTextBeats(text, characters) };
+  return normalizeStageSnapshot({ sceneId: stageSceneLabel(sceneId), ...(Object.hasOwn(backgrounds, sceneId) ? { backgroundDataUrl: backgrounds[sceneId] } : {}), activeCharacters: characters.slice(0, MAX_STAGE_CHARACTERS).map((c, i) => ({ characterId: c.id, ...(portraits[c.id] ? { portraitDataUrl: portraits[c.id] } : {}), position: i === 0 ? 'center' : i % 2 ? 'left' : 'right' })), beats: boundStageBeats(parseTextBeats(text, characters)) });
 }
 export function normalizeStageSnapshot(value: unknown): StageSnapshot {
   if (!value || typeof value !== 'object') throw new Error('Invalid stage snapshot.');

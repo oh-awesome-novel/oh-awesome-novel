@@ -46,6 +46,8 @@ const implementedToolNames = [
   'writeFile',
   'workspace.previewChanges',
   'workspace.proposeChanges',
+  'novel.lintScan',
+  'novel.deAi',
 ];
 
 describe('novel copilot skill contract', () => {
