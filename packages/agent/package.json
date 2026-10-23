@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.85",
     "@ai-sdk/openai": "^4.0.99",
     "@ai-sdk/openai-compatible": "^3.0.75",
     "@oh-awesome-novel/core": "^0.0.1",

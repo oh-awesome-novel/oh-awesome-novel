@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, toRef } from 'vue';
+import { computed, shallowRef, toRef, watch } from 'vue';
 
 import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
@@ -11,6 +11,8 @@ import PlaySessionRail from './PlaySessionRail.vue';
 import PlaySessionMigration from './PlaySessionMigration.vue';
 import TavernImportPanel from './TavernImportPanel.vue';
 import PlayTranscript from './PlayTranscript.vue';
+import VisualNovelStage from './VisualNovelStage.vue';
+import PlayCompactionModal from './PlayCompactionModal.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
 import PlayContextInspector from './context/PlayContextInspector.vue';
 import PlayMessageLog from './message-log/PlayMessageLog.vue';
@@ -32,6 +34,7 @@ import type { PlaySessionCreateRequest } from '../../composables/usePlayWorkspac
 
 const props = withDefaults(defineProps<{
   workspace: WorkspaceSummary;
+  requestedSessionId?: string;
   providerConfigured: boolean;
   files?: FileTreeNode[];
   filesLoading?: boolean;
@@ -51,6 +54,7 @@ const emit = defineEmits<{
 
 const providerConfigured = toRef(props, 'providerConfigured');
 const launchOpen = shallowRef(false);
+const visualNovelOpen = shallowRef(false);
 const importOpen = shallowRef(false);
 const importBusy = shallowRef(false);
 
@@ -105,6 +109,13 @@ const {
   steerTurn,
   submitTurn,
 } = usePlayWorkspace(props.workspace.path, providerConfigured);
+
+watch(() => props.requestedSessionId, async (id) => {
+  if (!id) return;
+  await refreshSessions();
+  selectSession(id);
+  visualNovelOpen.value = true;
+}, { immediate: true });
 
 const {
   transcript: transcriptWindow,
@@ -200,6 +211,14 @@ const adoption = usePlayAdoptionPreview({
 
 function prepareAdoption(seed: PlayAdoptionSeed): void {
   void adoption.open(seed);
+}
+
+function chooseVisualAction(text: string): void {
+  if (interactionBlocked.value || !providerConfigured.value) return;
+  const suggestion = suggestedActions.value.find(action => action.userText === text);
+  actionKind.value = suggestion?.actionKind ?? 'do';
+  userText.value = text;
+  void submitTurn();
 }
 
 function openLaunch(): void {
@@ -325,6 +344,8 @@ function acceptGuidedSession(session: PlaySession): void {
         v-else-if="selectedSession?.schemaVersion === 5"
         class="play-rehearsal-stage"
       >
+        <button type="button" @click="visualNovelOpen = !visualNovelOpen">{{ visualNovelOpen ? '隐藏演出回放' : '视觉小说回放' }}</button>
+        <VisualNovelStage v-if="visualNovelOpen" :session-id="selectedSession.id" :roster="selectedSession.metadataExtensions.characterRoster" :portraits="selectedSession.metadataExtensions.characterPortraits" :scene="selectedSession.sceneStart" :turns="selectedSession.transcript" :choices="[]" :disabled="true" @close="visualNovelOpen = false" />
         <PlayRehearsalWorkspace
           :scene="rehearsalScene"
           :clock="rehearsalClock"
@@ -400,7 +421,26 @@ function acceptGuidedSession(session: PlaySession): void {
       </div>
 
       <section v-else-if="selectedSession" class="play-stage-center" aria-label="Play stage">
-        <PlayTranscript
+        <div class="play-stage-actions">
+        <PlayCompactionModal :session="selectedSession" :disabled="interactionBlocked" @continued="registerCreatedSession" />
+        <button v-if="!visualNovelOpen" type="button" @click="visualNovelOpen = true">视觉小说演出</button>
+        </div>
+        <VisualNovelStage v-if="visualNovelOpen"
+          :session-id="selectedSession.id"
+          :roster="selectedSession.metadataExtensions.characterRoster"
+          :portraits="selectedSession.metadataExtensions.characterPortraits"
+          :scene="selectedSession.sceneStart"
+          :turns="displaySession?.transcript ?? selectedSession.transcript"
+          :choices="suggestedActions.map(action => action.userText)"
+          :draft="provisionalTurn?.provisionalText"
+          :has-more-before="transcriptWindow?.hasMoreBefore"
+          :loading-earlier="loadingEarlierTranscript"
+          @load-earlier="loadEarlierTranscript"
+          :disabled="interactionBlocked || !providerConfigured"
+          @choose="chooseVisualAction"
+          @close="visualNovelOpen = false"
+        />
+        <PlayTranscript v-else
           :title="selectedSession.title"
           :scene-start="selectedSession.sceneStart"
           :turns="displaySession?.transcript ?? selectedSession.transcript"

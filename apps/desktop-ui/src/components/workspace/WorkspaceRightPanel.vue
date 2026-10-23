@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ApprovalTab from './ApprovalTab.vue';
 import DiffReviewTab from './DiffReviewTab.vue';
+import WritingLintBar from '../editor/WritingLintBar.vue';
 import FileViewer from './FileViewer.vue';
 import GitReviewTab from './GitReviewTab.vue';
 import ProjectHealthTab from './ProjectHealthTab.vue';
@@ -62,14 +63,18 @@ const emit = defineEmits<{
       @close="emit('close')"
     />
 
+    <div v-if="activeTab === 'file'" class="file-review-with-lint">
     <FileViewer
-      v-if="activeTab === 'file'"
       :path="activeFilePath"
       :content="fileContent"
       :line="fileLine"
       :loading="fileLoading"
       :error="fileError"
     />
+    <WritingLintBar v-if="/^(chapters|characters|world)\//.test(activeFilePath) && activeFilePath.endsWith('.md')"
+      :key="activeFilePath + fileContent" :path="activeFilePath" :workspace-root="workspacePath ?? ''"
+      :disabled="fileLoading || Boolean(fileError)" @review-pending-action="emit('reviewPendingActionId', $event)" />
+    </div>
     <DiffReviewTab
       v-else-if="activeTab === 'diff'"
       :actions="pendingActions"

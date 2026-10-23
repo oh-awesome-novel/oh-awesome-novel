@@ -14,9 +14,11 @@
 6. 点击模型行左侧的圆点，设定该 Provider 的默认模型。
 7. 按需勾选「保存后设为默认 provider」，点击「保存 Provider」。
 
-界面提供 DeepSeek、OpenAI、OpenCode Go、Xiaomi MiMo、Ollama 和自定义兼容服务预设。预填的模型名称只是表单默认值，请使用你的服务实际支持且有权限访问的模型。
+界面提供 Anthropic、DeepSeek、OpenAI、OpenCode Go、Xiaomi MiMo、Ollama 和自定义兼容服务预设。预填的模型名称只是表单默认值，请使用你的服务实际支持且有权限访问的模型。
 
 [![模型设置页中的 Provider 列表、模型表单和保存入口](/screenshots/model-settings.jpg)](/screenshots/model-settings.jpg)
+
+Anthropic 使用 Messages API，默认 Base URL 为 `https://api.anthropic.com/v1`，填写自己的 API Key 后获取模型或手动输入有权限的 Model ID。不要把 OpenAI-compatible 地址填入 Anthropic 类型。Play 会对冻结系统前缀与最近稳定回复设置显式缓存断点；未验证真实服务的费用或延迟收益。
 
 ## 检测连接和切换默认模型
 

@@ -186,3 +186,14 @@ describe('final document validator', () => {
     })).toMatchObject({ ok: false });
   });
 });
+
+describe('character roster final-content boundary', () => {
+  const profile = { id: 'mara', name: 'Mara', aliases: ['Captain'], genderKind: 'girl', isPlayer: false,
+    looks: { fixedBooruTags: 'silver hair', outfitDescription: 'coat', outfitTags: 'coat' } };
+  it('validates roster schema and binds its identity to the canonical directory', () => {
+    expect(() => validateFinalDocument({path: 'characters/mara/roster-profile.yaml', content: JSON.stringify(profile)})).not.toThrow();
+    expect(() => validateFinalDocument({path: 'characters/other/roster-profile.yaml', content: JSON.stringify(profile)})).toThrow(/identity/u);
+    expect(() => validateFinalDocument({path: 'characters/mara/roster-profile.yaml', content: JSON.stringify({...profile, looks: {}})})).toThrow(/roster/u);
+    expect(() => validateFinalDocument({path: 'characters/mara/roster-profile.yaml', content: JSON.stringify({...profile, looks: {...profile.looks, refImagePath: '../secrets.png'}})})).toThrow(/Unsafe/u);
+  });
+});

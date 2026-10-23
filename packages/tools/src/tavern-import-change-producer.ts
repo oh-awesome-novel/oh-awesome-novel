@@ -1,4 +1,4 @@
-import { auditTavernCardSafety, formatTavernLorebookContext } from '@oh-awesome-novel/core';
+import { auditTavernCardSafety, formatTavernLorebookContext, scanNovelLint } from '@oh-awesome-novel/core';
 import type { NormalizedTavernCard } from '@oh-awesome-novel/core';
 import { isDeepStrictEqual } from 'node:util';
 import { lstat } from 'node:fs/promises';
@@ -59,6 +59,9 @@ export function createTavernImportChangeProposal(input: CreateTavernImportChange
 
   const conflicts: string[] = [];
   const warnings = [...auditTavernCardSafety(card).warnings];
+  for (const [field, text] of Object.entries({ description: card.description, personality: card.personality, scenario: card.scenario, firstMessage: card.firstMessage })) {
+    if (text) for (const hit of scanNovelLint(text).hits.slice(0, 40)) warnings.push(`LINT ${field}:${hit.line} ${hit.name}: “${hit.original}” — ${hit.suggestionHint}`);
+  }
   const base = `characters/${characterId}/`;
   const files: { path: string; content: string }[] = [];
   const add = (name: string, content: string) => files.push({ path: base + name, content });

@@ -1,3 +1,20 @@
+import { playContextHistory } from './play-context-history.js';
+import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
+export { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
+import { askInPlayContext } from './play-context-question.js';
+export { askInPlayContext } from './play-context-question.js';
+import { freezePlayPermanentContext } from './play-frozen-context.js';
+export { freezePlayPermanentContext } from './play-frozen-context.js';
+import { loadCanonicalWritingContext } from './canonical-writing-context.js';
+import type { CanonicalWritingContext } from './canonical-writing-context.js';
+export { loadCanonicalWritingContext } from './canonical-writing-context.js';
+import { createForgeHandlers } from './forge.js';
+export { createForgeHandlers, forgeCanonicalFiles, assertForgePreviewFresh, assertForgeActionFresh } from './forge.js';
+import { assertForgeActionFresh, assertForgePreviewFresh } from './forge';
+import { attachPlayCharacterRoster } from '@oh-awesome-novel/core';
+import { createNovelLintHandlers } from './novel-lint';
+import { generateNovelLintReview } from '@oh-awesome-novel/agent';
+import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, buildPlayCompactionPrompt, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
 import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import { assertManuscriptImportPreview, assertTavernImportPreviewFresh } from '@oh-awesome-novel/tools';
@@ -366,6 +383,7 @@ export interface NovelBackendAgentInput {
   /** Trusted renderer-selected canonical targets; never inferred from prompt text. */
   exactWritablePaths: readonly string[];
   playWritingReferences?: NovelAgentPlayWritingReferenceInput[];
+  canonicalWritingContext?: CanonicalWritingContext;
   /** Mid-turn author steers for this request, when the renderer sent a turn id. */
   steering?: RuntimeSteeringSource;
 }
@@ -492,9 +510,30 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       return () => { state.activePlayTurns.delete(key); };
     },
   });
+  const novelLint = createNovelLintHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getStore: async (root) => (await getPendingActionServices(state, root)).store,
+    async review(source, sourceHash, signal, workspaceRoot, sourcePath) {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('Configure a model before requesting LINT suggestions.');
+      return generateNovelLintReview({ source, sourceHash, workspaceRoot, sourcePath, abortSignal: signal, providerConfig,
+        resolveModel: options.resolveModel ?? createAiSdkProviderResolver() });
+    },
+  });
   const manuscriptImport = createManuscriptImportHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     getStore: async (root) => (await getPendingActionServices(state, root)).store,
+  });
+  const forge = createForgeHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getStore: async root => (await getPendingActionServices(state, root)).store,
+    async getModelRuntime() {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('Forge requires a configured model provider.');
+      return { providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
+    },
   });
   const tavernImport = createTavernImportHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
@@ -651,6 +690,21 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.delete('/api/provider-config/:id', (context) =>
     handleDeleteProviderConfig(options, state, context.req.param('id') ?? '', context));
   app.get('/api/workspace', (context) => handleGetActiveWorkspace(options, state, context));
+  app.get('/api/workspace/writing-sources', async (context) => {
+    try {
+      const root = requireActiveWorkspaceRoot(options, state);
+      if (context.req.query('workspacePath') !== root) return jsonResponse(context, 409, { error: 'Writing reference workspace changed.' });
+      return jsonResponse(context, 200, { sourcePaths: await readCanonicalWritingSources(root) });
+    } catch (error) { return jsonResponse(context, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  });
+  app.put('/api/workspace/writing-sources', async (context) => {
+    try {
+      const root = requireActiveWorkspaceRoot(options, state);
+      const body = await readJsonBody(context);
+      if (body.workspacePath !== root) return jsonResponse(context, 409, { error: 'Writing reference workspace changed.' });
+      return jsonResponse(context, 200, { sourcePaths: await saveCanonicalWritingSources(root, body.sourcePaths) });
+    } catch (error) { return jsonResponse(context, 400, { error: error instanceof Error ? error.message : String(error) }); }
+  });
   app.get('/api/workspace/tree', (context) => handleWorkspaceTree(options, state, context));
   app.get('/api/workspace/file', (context) => handleWorkspaceFile(options, state, context));
   app.get('/api/workspace/search', async (context) => {
@@ -670,6 +724,16 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
   app.post('/api/workspace/manuscript/import/preview', (context) => manuscriptImport.preview(context));
+  app.post('/api/workspace/novel-lint/scan', (c) => novelLint.scan(c));
+  app.post('/api/workspace/novel-lint/review', (c) => novelLint.review(c));
+  app.post('/api/workspace/novel-lint/propose', (c) => novelLint.propose(c));
+  app.get('/api/forge/drafts', context => forge.list(context));
+  app.post('/api/forge/drafts', context => forge.create(context));
+  app.get('/api/forge/drafts/:id', context => forge.get(context,context.req.param('id')));
+  app.patch('/api/forge/drafts/:id', context => forge.operation(context,context.req.param('id'),'edit'));
+  for (const operation of ['discuss','plan','write','propose','handoff']) {
+    app.post(`/api/forge/drafts/:id/${operation}`, context => forge.operation(context,context.req.param('id'),operation));
+  }
   app.post('/api/workspace/tavern-imports/preview', (context) => tavernImport.preview(context));
   app.post('/api/workspace/tavern-imports/:id/propose', (context) => tavernImport.propose(context, context.req.param('id')));
   app.post('/api/workspace/tavern-imports/:id/play-session', (context) => tavernImport.playSession(context, context.req.param('id')));
@@ -846,6 +910,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleListPlaySessionSummaries(options, state, context));
   app.post('/api/workspace/play-sessions', (context) =>
     handleCreatePlaySession(options, state, context));
+  app.post('/api/workspace/play-sessions/:id/compact', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, false));
+  app.post('/api/workspace/play-sessions/:id/compact/continue', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, true));
   app.post('/api/workspace/play-sessions/:id/attempts', (context) =>
     handlePlayRehearsalJsonRequest(context, async () =>
       playRehearsal.createAttempt(
@@ -1229,7 +1295,9 @@ async function handleAgentChat(
 
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
   let playWritingReferences: NovelAgentPlayWritingReferenceInput[];
+  let canonicalWritingContext: CanonicalWritingContext;
   try {
+    canonicalWritingContext = await loadCanonicalWritingContext(workspaceRoot, body.canonicalWritingSourcePaths);
     playWritingReferences = await Promise.all(
       attachmentIds.value.map(async (attachmentId) => {
         const reference = await formatPlayWritingReferenceContext(
@@ -1266,6 +1334,7 @@ async function handleAgentChat(
       messages,
       exactWritablePaths,
       ...(playWritingReferences.length ? { playWritingReferences } : {}),
+      canonicalWritingContext,
       ...(steering ? { steering } : {}),
     });
   } catch (error) {
@@ -1769,7 +1838,7 @@ async function handleCheckProviderConfig(
     return jsonResponse(context, 400, { error: 'API key is required.' });
   }
 
-  const result = await checkOpenAiCompatibleProvider({ baseUrl, apiKey, model });
+  const result = await checkProviderConnection({ kind, baseUrl, apiKey, model });
   return jsonResponse(context, 200, result);
 }
 
@@ -2814,6 +2883,8 @@ async function handleCreatePlaySession(
         }
       }
 
+      await attachPlayCharacterRoster(workspaceRoot, session);
+      await freezePlayInitialContext(workspaceRoot, session);
       const files = await writePlaySessionFiles(workspaceRoot, session, {
         expectedAbsent: true,
       });
@@ -2883,6 +2954,8 @@ async function handleCreatePlaySessionFromLaunchPackage(
       const session = createPlaySessionFromLaunchPackage(launchPackage, {
         id: sessionId,
       });
+      await attachPlayCharacterRoster(workspaceRoot, session);
+      await freezePlayInitialContext(workspaceRoot, session);
       const files = await writePlaySessionFiles(workspaceRoot, session, {
         expectedAbsent: true,
       });
@@ -4407,7 +4480,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
               state,
               workspaceRoot,
               session: turnSession,
-              request,
+              request: formatPlayTurnTail(turnSession, request, userText),
               userText,
               actionKind,
               ...(timeAdvance ? { timeAdvance } : {}),
@@ -4754,6 +4827,8 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     workspaceRoot: input.workspaceRoot,
     workspace: { workspaceRoot: input.workspaceRoot },
     request: input.request,
+    frozenSystemPrompt: getPlayFrozenSystemPrompt(input.session),
+    priorMessages: playContinuationMessages(input.session),
     // The referee prompt mentions `oan-play-settlement`; without an explicit
     // capability keyword inference would pick a canonical write capability.
     capability: 'novel.play_scene',
@@ -4955,7 +5030,10 @@ async function handlePlayWorldRefereeTurn(
         resolveModel: options.resolveModel ?? createAiSdkProviderResolver(),
         workspaceRoot,
         workspace: { workspaceRoot },
-        request,
+        request: formatPlayTurnTail(session, request, userText),
+        frozenSystemPrompt: getPlayFrozenSystemPrompt(session),
+        priorMessages: playContinuationMessages(session),
+        capability: 'novel.play_scene',
         usageSessionId: `play-${session.id}`,
         session: { metadata: { title: `Play ${session.id}` } },
       });
@@ -6355,7 +6433,11 @@ async function assertPendingActionOriginFresh(
 ): Promise<void> {
   const origin = action.origin;
   assertCapabilityOriginBinding(action.source.capability, origin);
-  if (origin === undefined || origin.kind === 'agentTurn') return;
+  if (origin === undefined || origin.kind === 'agentTurn' || origin.kind === 'novelLint') return;
+  if (origin.kind === 'forge') {
+    await assertForgeActionFresh(workspaceRoot, action);
+    return;
+  }
   if (origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
     // ChangeMaterializer always validates this origin and its complete input
     // read set before invoking the host hook. Avoid scanning it twice.
@@ -6390,6 +6472,16 @@ async function assertPreparedPendingActionOriginFresh(
   preview: PreparedChangePreviewV1,
 ): Promise<void> {
   assertCapabilityOriginBinding(preview.capability, origin);
+  if (origin.kind === 'forge') {
+    await assertForgePreviewFresh(workspaceRoot, preview);
+    return;
+  }
+  if (origin.kind === 'novelLint') {
+    if (preview.allowedTargets.length !== 1 || preview.allowedTargets[0] !== origin.targetPath
+      || preview.changes.length !== 1 || preview.changes[0]?.operation !== 'update'
+      || preview.changes[0]?.baseline?.sha256 !== origin.sourceHash) throw stalePendingActionOrigin(new Error('LINT source binding mismatch.'));
+    return;
+  }
   if (origin.kind === 'manuscriptImport') {
     assertManuscriptImportPreview(preview);
     return;
@@ -6733,6 +6825,7 @@ async function createRuntimeEventStream(
       request: input.request,
       capability,
       playWritingReferences: input.playWritingReferences ?? [],
+      canonicalWritingContext: input.canonicalWritingContext,
     });
 
     return streamNovelAgentTurn({
@@ -6763,6 +6856,7 @@ async function createAgentExternalContextSnapshot(input: {
   request: string;
   capability?: NovelCopilotCapabilityId;
   playWritingReferences: NovelAgentPlayWritingReferenceInput[];
+  canonicalWritingContext?: CanonicalWritingContext;
 }): Promise<NovelAgentExternalContext> {
   const writingProfile = (await loadWritingProfileState(input.workspaceRoot)).activeProfile;
   const referenceSelection = hasExplicitReferenceRecallIntent(input.request)
@@ -6796,11 +6890,12 @@ async function createAgentExternalContextSnapshot(input: {
   return {
     writingProfile,
     ...(referenceSelection ? { referenceSelection } : {}),
-    selectedContext,
+    selectedContext: [...selectedContext, ...(input.canonicalWritingContext?.items ?? [])],
     ...(input.playWritingReferences.length > 0
       ? { playWritingReferences: input.playWritingReferences }
       : {}),
     async assertFresh() {
+      await input.canonicalWritingContext?.assertFresh();
       const currentWritingProfile = (await loadWritingProfileState(input.workspaceRoot))
         .activeProfile;
       const currentReferenceSelection = hasExplicitReferenceRecallIntent(input.request)
@@ -7048,6 +7143,7 @@ function isSupportedProviderKind(value: string): value is LlmProviderKind {
   return [
     'openai',
     'openai-compatible',
+    'anthropic',
     'deepseek',
     'opencode-go',
     'xiaomi-mimo',
@@ -7069,6 +7165,7 @@ function isComposerSubmitShortcutPreference(
 function providerDefaultBaseUrl(kind: LlmProviderKind): string | undefined {
   const presets: Partial<Record<LlmProviderKind, string>> = {
     openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
     deepseek: 'https://api.deepseek.com',
     'opencode-go': 'https://api.opencodego.com/v1',
     'xiaomi-mimo': 'https://api.mimo.mi.com/v1',
@@ -7132,7 +7229,9 @@ async function fetchProviderModelList(input: {
 
   const modelsUrl = new URL('models', ensureTrailingSlash(input.baseUrl)).toString();
   const modelsResponse = await fetch(modelsUrl, {
-    headers: createProviderAuthHeaders(input.apiKey),
+    headers: input.kind === 'anthropic'
+      ? { 'x-api-key': input.apiKey ?? '', 'anthropic-version': '2023-06-01' }
+      : createProviderAuthHeaders(input.apiKey),
   });
   const data = await modelsResponse.json() as unknown;
 
@@ -7203,6 +7302,8 @@ function extractOpenAiCompatibleModels(data: unknown): LlmProviderModel[] {
 
       if (typeof item.name === 'string') {
         model.displayName = item.name;
+      } else if (typeof item.display_name === 'string') {
+        model.displayName = item.display_name;
       }
 
       if (typeof item.context_length === 'number') {
@@ -7267,7 +7368,8 @@ function readProviderErrorMessage(data: unknown): string | undefined {
   return undefined;
 }
 
-async function checkOpenAiCompatibleProvider(input: {
+async function checkProviderConnection(input: {
+  kind: LlmProviderKind;
   baseUrl: string;
   apiKey?: string;
   model: string;
@@ -7283,24 +7385,21 @@ async function checkOpenAiCompatibleProvider(input: {
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
   try {
-    const chatUrl = new URL('chat/completions', ensureTrailingSlash(input.baseUrl)).toString();
+    const chatUrl = new URL(input.kind === 'anthropic' ? 'messages' : 'chat/completions', ensureTrailingSlash(input.baseUrl)).toString();
     const providerResponse = await fetch(chatUrl, {
       method: 'POST',
       headers: {
-        ...createProviderAuthHeaders(input.apiKey),
+        ...(input.kind === 'anthropic'
+          ? { 'x-api-key': input.apiKey ?? '', 'anthropic-version': '2023-06-01' }
+          : createProviderAuthHeaders(input.apiKey)),
         'content-type': 'application/json',
       },
       body: JSON.stringify({
         model: input.model,
+        ...(input.kind === 'anthropic' ? { system: 'You are a connectivity check. Reply with OK only.' } : {}),
         messages: [
-          {
-            role: 'system',
-            content: 'You are a connectivity check. Reply with OK only.',
-          },
-          {
-            role: 'user',
-            content: 'Reply OK.',
-          },
+          ...(input.kind === 'anthropic' ? [] : [{ role: 'system', content: 'You are a connectivity check. Reply with OK only.' }]),
+          { role: 'user', content: 'Reply OK.' },
         ],
         max_tokens: 4,
         temperature: 0,
@@ -8906,3 +9005,67 @@ export type {
   StoredReferenceMaterialAdoptionPreview,
 } from './reference-material-adoption-preview.js';
 export { BACKEND_AUTH_TOKEN_HEADER } from './request-guard.js';
+
+/** Read-only model request; continuation writes only Play-local snapshots through the existing staged writer. */
+async function handlePlayCompaction(options: NovelBackendOptions, state: BackendState, id: string, context: NovelBackendContext, continueSession: boolean): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.workspaceTransitionActive || state.activePlayTurns.has(lockKey)) return jsonResponse(context, 409, { error: 'A Play operation is already running.' });
+  state.activePlayTurns.add(lockKey);
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    if (session.schemaVersion !== 4 || !session.selectedTurnIds.length) return jsonResponse(context, 409, { error: 'Archive requires a committed immersive session.' });
+    if (body.baseRevision !== session.revision) return jsonResponse(context, 409, { error: 'Play revision changed; reload and retry.' });
+    if (continueSession) {
+      const stored = session.metadataExtensions.playCompactionPreview;
+      if (!stored || typeof stored !== 'object') return jsonResponse(context, 409, { error: 'Generate and review an archive first.' });
+      return await withPlaySessionFileTransaction(workspaceRoot, id, async transaction => {
+        const current = await transaction.read();
+        if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive continuation cancelled or workspace changed.' });
+        const continuationId = `play-archive-${createHash('sha256').update(JSON.stringify(stored)).digest('hex').slice(0, 24)}`;
+        const next = createCompactedPlaySession(current, stored as import('@oh-awesome-novel/core').PlayCompactionPreview, continuationId);
+        try {
+          const existing = await readPlaySessionFiles(workspaceRoot, continuationId);
+          if (JSON.stringify(existing.metadataExtensions.playCompaction) !== JSON.stringify(stored)) throw new Error('Archive continuation identity conflict.');
+          return jsonResponse(context, 200, { session: existing });
+        } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        await writePlaySessionFiles(workspaceRoot, next, { expectedAbsent: true });
+        return jsonResponse(context, 200, { session: next });
+      });
+    }
+    const ask = async (instruction: string): Promise<string> => askInPlayContext(session, session.selectedTurnIds.at(-1)!, instruction, async question => {
+      if (options.runPlayTurn) return options.runPlayTurn({ workspaceRoot, session, request: question.request, userText: instruction, actionKind: 'do', abortSignal: context.req.raw.signal });
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('Configure a provider before generating an archive.');
+      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, priorMessages: question.priorMessages, request: question.request, usageSessionId: `play-${session.id}`, abortSignal: context.req.raw.signal });
+      return result.assistantMessage?.content ?? '';
+    });
+    const instruction = buildPlayCompactionPrompt(session);
+    let response = await ask(instruction);
+    let preview: ReturnType<typeof createPlayCompactionPreview>;
+    try { preview = createPlayCompactionPreview(session, response); }
+    catch (error) {
+      response = await ask(`${instruction}\n修正一次：${error instanceof Error ? error.message : String(error)}\n上次输出：${response}`);
+      preview = createPlayCompactionPreview(session, response);
+    }
+    if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive request cancelled or workspace changed.' });
+    const next = { ...session, metadataExtensions: { ...session.metadataExtensions, playCompactionPreview: preview } };
+    await writePlaySessionFiles(workspaceRoot, next, { expectedCurrentSession: session });
+    return jsonResponse(context, 200, { preview });
+  } catch (error) {
+    return jsonResponse(context, error instanceof PlaySessionWriteConflictError ? 409 : 422, { error: error instanceof Error ? error.message : String(error) });
+  } finally { state.activePlayTurns.delete(lockKey); }
+}
+
+async function freezePlayInitialContext(workspaceRoot: string, session: PlaySession): Promise<void> {
+  if (session.schemaVersion !== 4) return;
+  const context = await loadPlayActivatedSourceContext(workspaceRoot, session);
+  await freezePlayPermanentContext(workspaceRoot, session, context.content);
+}
+
+function playContinuationMessages(session: PlaySession): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const content = session.metadataExtensions.playContinuation;
+  return [...(isPlayCompactionActive(session) && typeof content === 'string' ? [{ role: 'user' as const, content }] : []), ...playContextHistory(session)];
+}

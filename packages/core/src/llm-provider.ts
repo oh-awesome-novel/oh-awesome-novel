@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 export type LlmProviderKind =
+  | 'anthropic'
   | 'openai'
   | 'openai-compatible'
   | 'deepseek'

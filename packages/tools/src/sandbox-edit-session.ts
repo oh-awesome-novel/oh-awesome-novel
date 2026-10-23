@@ -1,3 +1,4 @@
+import { scanNovelLint, applyNovelLintReplacements } from '@oh-awesome-novel/core';
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 
@@ -130,6 +131,7 @@ export interface CandidateChangePreview {
     changedBytes: number;
   };
   readonly candidateFingerprint?: string;
+  readonly lintWarnings?: ReadonlyArray<{path:string;line:number;name:string;original:string}>;
   readonly diffExcerpt: string;
   readonly totalDiffBytes: number;
   readonly truncated: boolean;
@@ -421,6 +423,11 @@ class FileSandboxEditSession implements SandboxEditSession {
         fileCount: this.#projection.manifest.files.length,
         totalBytes: this.#projection.manifest.totalBytes,
         capability: this.policy.capability,
+      },
+      lintScan: async (path) => scanNovelLint(await this.#policyFs.readFile(this.#resolveSandboxPath(path))),
+      lintApply: async (path, sourceHash, replacements) => {
+        const content = await this.#policyFs.readFile(this.#resolveSandboxPath(path));
+        return this.#writeFile({ path, content: applyNovelLintReplacements(content, sourceHash, replacements) });
       },
       readFile: (input) => this.#readFile(input),
       writeFile: (input) => this.#writeFile(input),
@@ -831,6 +838,8 @@ function renderPreview(
   }), { maxBytes: DEFAULT_MAX_RENDERED_DIFF_BYTES });
   const excerpt = truncateUtf8(diff, maxBytes, '\n[diff excerpt truncated]');
   return {
+    lintWarnings: candidate.changes.flatMap(change => change.operation !== 'delete' && /^(?:characters|chapters|world)\/.*\.md$/u.test(change.path)
+      ? scanNovelLint(change.draft.content).hits.slice(0, 40).map(hit => ({path:change.path,line:hit.line,name:hit.name,original:hit.original})) : []).slice(0, 120),
     changes: candidate.changes.map(publicCandidateChange),
     stats: structuredClone(candidate.stats),
     candidateFingerprint: fingerprintCandidateChanges(candidate.changes),

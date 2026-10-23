@@ -40,6 +40,7 @@ const providerOptions: ProviderOption[] = [
   { kind: 'opencode-go', label: 'OpenCode Go', model: 'opencode-chat', baseUrl: 'https://api.opencodego.com/v1' },
   { kind: 'xiaomi-mimo', label: 'Xiaomi MiMo', model: 'mimo-v2.5', baseUrl: 'https://api.mimo.mi.com/v1' },
   { kind: 'ollama', label: 'Ollama', model: '', baseUrl: 'http://127.0.0.1:11434/v1', local: true },
+  { kind: 'anthropic', label: 'Anthropic', model: '', baseUrl: 'https://api.anthropic.com/v1' },
   { kind: 'custom', label: '自定义 OpenAI-compatible', model: '', baseUrl: '' },
 ];
 

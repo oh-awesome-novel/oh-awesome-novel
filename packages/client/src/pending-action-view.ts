@@ -20,6 +20,8 @@ export class PendingActionViewParseError extends Error {
 }
 
 export type PublicPendingActionOrigin =
+  | { readonly kind: 'forge'; readonly draftId: string; readonly revision: number; readonly previewId: string }
+  | { readonly kind: 'novelLint'; readonly targetPath: string; readonly sourceHash: string }
   | {
       readonly kind: 'summaryGeneration';
       readonly targetPath: string;
@@ -486,6 +488,18 @@ function parsePendingActionViewChange(value: unknown): PendingActionViewChange {
 function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrigin {
   if (!isRecord(value)) invalid('PendingActionView origin must be an object.');
   rejectLegacyOrInternalFields(value);
+  if (value.kind === 'forge') {
+    assertExactFields(value, ['kind', 'draftId', 'revision', 'previewId']);
+    if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0) invalid('Invalid Forge revision.');
+    return deepFreeze({ kind: 'forge', draftId: assertOpaqueId(value.draftId, 'Forge draft id'),
+      previewId: assertOpaqueId(value.previewId, 'Forge preview id'), revision: value.revision as number });
+  }
+  if (value.kind === 'novelLint') {
+    assertExactFields(value, ['kind', 'targetPath', 'sourceHash']);
+    if (typeof value.targetPath !== 'string' || !/^(chapters|characters|world)\/[^\\]+\.md$/u.test(value.targetPath)
+      || value.targetPath.split('/').some((part) => part === '..' || part.startsWith('.'))) invalid('Invalid LINT target.');
+    return deepFreeze({ kind: 'novelLint', targetPath: value.targetPath, sourceHash: assertHash(value.sourceHash, 'LINT source hash') });
+  }
   if (value.kind === 'tavernImport') {
     assertExactFields(value, ['kind', 'previewId', 'sourceHash', 'mappingHash', 'mode', 'characterId', 'baselineFiles']);
     const previewId = assertOpaqueId(value.previewId, 'origin preview id');

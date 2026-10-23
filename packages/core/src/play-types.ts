@@ -1,3 +1,4 @@
+import type { StageSnapshot } from './text-speaker-parser.js';
 import type {
   ContextBudgetLayer,
   SemanticBoundary,
@@ -205,6 +206,7 @@ export interface PlayActivatedSource {
 }
 
 export interface PlayTranscriptTurn {
+  stageSnapshot?: StageSnapshot;
   id?: string;
   speaker: string;
   content: string;

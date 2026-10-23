@@ -29,6 +29,7 @@ export default defineConfig({
           { text: "审阅与接受修改", link: "/guide/review" },
           { text: "搜索与导出正文", link: "/guide/search-and-export" },
           { text: "参考资料", link: "/guide/references" },
+          { text: "设定共创工坊", link: "/guide/forge" },
           { text: "剧情排演", link: "/guide/play" },
           { text: "Git 历史与同步", link: "/guide/git" },
         ],

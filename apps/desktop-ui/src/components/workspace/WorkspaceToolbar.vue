@@ -67,6 +67,7 @@ const emit = defineEmits<{
   openSearch: [];
   openExport: [];
   openManuscriptImport: [];
+  openForge: [];
   openPending: [];
   openRightTab: [tab: WorkspaceRightTab];
   openExternalEditor: [editor: ExternalEditor];
@@ -180,6 +181,9 @@ function chooseEditor(editor: ExternalEditor) {
         </span>
       </button>
 
+      <button type="button" class="toolbar-icon-action" aria-label="设定共创工坊" title="设定共创工坊" @click="emit('openForge')">
+        <Pencil :size="18" aria-hidden="true" />
+      </button>
       <nav v-if="workspaceMode === 'writing'" class="toolbar-nav-group" aria-label="Writing navigation">
         <button
           v-for="item in navigationItems"

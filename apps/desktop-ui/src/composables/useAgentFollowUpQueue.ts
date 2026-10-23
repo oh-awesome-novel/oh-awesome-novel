@@ -5,6 +5,7 @@ export interface QueuedFollowUp {
   id: string;
   text: string;
   writingReferenceAttachmentIds: string[];
+  canonicalWritingSourcePaths?: string[];
 }
 
 export type FollowUpPauseReason = 'failed' | 'stopped' | 'pending_action' | 'incomplete';
@@ -28,8 +29,8 @@ export function createFollowUpQueue() {
   const pausedReason = shallowRef<FollowUpPauseReason | undefined>();
   const notice = shallowRef('');
 
-  function enqueue(text: string, writingReferenceAttachmentIds: string[] = [], atFront = false): QueuedFollowUp {
-    const item = { id: createQueuedId(), text, writingReferenceAttachmentIds };
+  function enqueue(text: string, writingReferenceAttachmentIds: string[] = [], atFront = false, canonicalWritingSourcePaths: string[] = []): QueuedFollowUp {
+    const item = { id: createQueuedId(), text, writingReferenceAttachmentIds, ...(canonicalWritingSourcePaths.length ? { canonicalWritingSourcePaths: [...canonicalWritingSourcePaths] } : {}) };
     items.value = atFront ? [item, ...items.value] : [...items.value, item];
     return item;
   }

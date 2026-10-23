@@ -70,6 +70,8 @@ export interface CreateSandboxToolSetOptions {
   };
   readFile(input: SandboxReadFileInput): Promise<unknown>;
   writeFile(input: SandboxWriteFileInput): Promise<unknown>;
+  lintScan?(path:string): Promise<unknown>;
+  lintApply?(path:string, sourceHash:string, replacements:unknown): Promise<unknown>;
   previewChanges(): Promise<unknown>;
   proposeChanges?: (input: SandboxProposeChangesInput) => Promise<unknown>;
   maxBashOutputChars?: number;
@@ -146,6 +148,17 @@ export async function createSandboxToolSet(
       execute: () => options.previewChanges(),
     }),
   };
+
+  if (options.lintScan) sessionTools['novel.lintScan'] = tool({
+    description: 'Scan a fixed sandbox source for eleven prose cliches. Returns host-owned paragraph anchors, exact hit quotes and source hash.',
+    inputSchema: jsonSchema<{path:string}>({type:'object',additionalProperties:false,required:['path'],properties:{path:{type:'string'}}}),
+    execute: ({path}) => options.lintScan!(path),
+  });
+  if (options.lintApply) sessionTools['novel.deAi'] = tool({
+    description: 'Apply only exact host-scanned LINT replacements inside one paragraph in memory. Preserve all facts and hooks. Human approval is still required via previewChanges/proposeChanges.',
+    inputSchema: jsonSchema<{path:string;sourceHash:string;replacements:unknown}>({type:'object',additionalProperties:false,required:['path','sourceHash','replacements'],properties:{path:{type:'string'},sourceHash:{type:'string'},replacements:{type:'array',maxItems:5000,items:{type:'object',additionalProperties:false,required:['hitId','anchorId','original','suggestion'],properties:{hitId:{type:'string'},anchorId:{type:'string'},original:{type:'string',maxLength:58},suggestion:{type:'string',maxLength:240}}}}}}),
+    execute: ({path,sourceHash,replacements}) => options.lintApply!(path,sourceHash,replacements),
+  });
 
   if (options.proposeChanges) {
     sessionTools['workspace.proposeChanges'] = tool({

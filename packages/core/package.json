@@ -42,6 +42,14 @@
     "./agent-usage": {
       "types": "./dist/agent-usage.d.mts",
       "import": "./dist/agent-usage.mjs"
+    },
+    "./text-speaker-parser": {
+      "types": "./dist/text-speaker-parser.d.mts",
+      "import": "./dist/text-speaker-parser.mjs"
+    },
+    "./novel-lint-rules": {
+      "types": "./dist/novel-lint-rules.d.mts",
+      "import": "./dist/novel-lint-rules.mjs"
     }
   }
 }

@@ -12,6 +12,7 @@ import {
   createNovelAgentTurnEditEnvironment,
   selectNovelAgentSandboxPolicy,
 } from '@oh-awesome-novel/agent';
+import { createRuntime, type RuntimeModelRequest } from '@oh-awesome-novel/runtime';
 import type { ToolSet } from 'ai';
 
 const workspaceRoot = join(process.cwd(), '..', '..', 'examples', 'simple-novel');
@@ -137,6 +138,36 @@ describe('Novel agent tool assembly', () => {
         path: 'chapters/0001/0002.md',
         content: '# Changed\n',
       })).rejects.toThrow(/not writable|read-only|forbidden|denied/iu);
+    } finally {
+      await environment.dispose();
+    }
+  });
+
+  it('keeps scoped LINT tools after Copilot skill filtering', async () => {
+    const sandboxRoot = await mkdtemp(join(tmpdir(), 'oan-tool-registry-'));
+    temporaryWorkspaces.push(sandboxRoot);
+    await cp(workspaceRoot, sandboxRoot, { recursive: true });
+    for (const args of [
+      ['init', '-b', 'main'],
+      ['config', 'user.name', 'OAN Test'],
+      ['config', 'user.email', 'oan@example.test'],
+      ['add', '--', '.'],
+      ['commit', '-m', 'test fixture'],
+    ]) await execFileAsync('git', ['-c', 'maintenance.auto=false', '-c', 'core.fsmonitor=false', '-C', sandboxRoot, ...args]);
+    const environment = await createNovelAgentTurnEditEnvironment({
+      workspaceRoot: sandboxRoot,
+      capability: 'novel.write_chapter',
+      exactWritablePaths: ['chapters/0001/0001.md'],
+    });
+    const requests: RuntimeModelRequest[] = [];
+    const runtime = createRuntime({
+      model: { async generate(request) { requests.push(request); return { message: { role: 'assistant', content: 'Done.' } }; } },
+      tools: environment.tools,
+    });
+
+    try {
+      await runtime.runTurn({ message: '/去AI味', skill: environment.skill });
+      expect(Object.keys(requests[0]!.tools)).toEqual(expect.arrayContaining(['novel.lintScan', 'novel.deAi']));
     } finally {
       await environment.dispose();
     }

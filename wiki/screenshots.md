@@ -99,3 +99,7 @@ VITE_OAN_BACKEND_PROXY_TARGET=http://127.0.0.1:3317 \
 复现时可参考仓库 `__test__/tools/src/chapter-settlement.test.ts` 的公开 API 组合，把 Accept 测试步骤省略；候选标题和说明应明确标记“确定性演示”。通过 UI 的 Approval → Diff 查看结果，确认 Git 仍然 clean，且目标候选尚未落盘。不要把这种演示输入写成模型已成功完成结算。
 
 若要补充模型生成的拆书、完整上下文与 Actual 用量或 Play 回合，应另用有授权的演示模型和示例数据，并按产品的审批流程操作。
+
+## 待补：共创工坊与新 Play/LINT 操作
+
+Forge、剧情归档、视觉小说、本地图片与 LINT 的文字指南已按本次实现更新。现有 Play 截图早于这些入口；尚未加入它们的完整应用演示截图。测试夹具的 Chromium 截图只用于交互检查，不作为真实模型成功或正式入库的截图证据。

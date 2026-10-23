@@ -1,6 +1,7 @@
+export { generateForgeText } from './forge-generation.js';
 import { createHash } from 'node:crypto';
 import { createContextEvidence, createProviderEgressSummary, createUsageGovernance, extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
-export { createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
+export { createContextEvidence, createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
 export type { RecordSpecializedModelUsageTurnInput } from './usage-governance';
 import { normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
 import type { CopilotRuntimeOptions } from '@oh-awesome-novel/runtime';
@@ -19,6 +20,7 @@ export {
 } from './writing-targets';
 export type { WritingCommandTargets } from './writing-targets';
 export { ContextBudgetExceededError, estimateContextTokens, resolveContextBudget } from './context-budget';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { resolveProviderReasoningEffort } from './provider-reasoning.js';
@@ -141,6 +143,8 @@ export interface NovelAgentWorkspaceContextFile {
 }
 
 export interface NovelAgentMessageInput {
+  /** Trusted host-owned immutable system prefix for read-only specialized sessions. */
+  frozenSystemPrompt?: string;
   request: string;
   workspace: NovelAgentWorkspaceSnapshot;
   capability?: NovelCopilotCapabilityId;
@@ -212,6 +216,14 @@ export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
     const baseURL = resolveProviderBaseUrl(providerConfig);
     const apiKey = resolveProviderApiKey(providerConfig);
     const name = providerConfig.kind === 'custom' ? providerConfig.id : providerConfig.kind;
+
+    if (providerConfig.kind === 'anthropic') {
+      return createAnthropic({
+        ...(baseURL ? { baseURL } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(providerConfig.headers ? { headers: providerConfig.headers } : {}),
+      })(providerConfig.model);
+    }
 
     // OpenAI-compatible endpoints stream thinking as `reasoning_content`, which
     // only the compatible provider parses and replays within a tool loop.
@@ -403,12 +415,21 @@ async function* streamAiSdkModelResponse(
   const model = await input.resolveModel(input.providerConfig);
   const instructions = toModelSystemPrompt(request.messages);
   const reasoningEffort = resolveProviderReasoningEffort(input.providerConfig);
+  const messages = request.messages.filter(message => message.role !== 'system').map(toModelMessage);
+  // Cache metadata belongs to the provider bridge, never the domain-neutral Runtime.
+  // The newest user tail remains uncached; only the system and last committed reply
+  // form explicit breakpoints. SDK translates these to Anthropic content blocks.
+  const cache = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
+  if (input.providerConfig.kind === 'anthropic') {
+    const stableReply = messages.findLastIndex(message => message.role === 'assistant');
+    if (stableReply >= 0) messages[stableReply] = { ...messages[stableReply], providerOptions: cache };
+  }
   const result = streamText({
     model,
-    ...(instructions ? { instructions } : {}),
-    messages: request.messages
-      .filter((message) => message.role !== 'system')
-      .map(toModelMessage),
+    ...(instructions ? { instructions: input.providerConfig.kind === 'anthropic'
+      ? { role: 'system' as const, content: instructions, providerOptions: cache }
+      : instructions } : {}),
+    messages,
     tools: toModelVisibleToolSet(request.tools),
     abortSignal: request.abortSignal,
     maxRetries: 0,
@@ -1193,6 +1214,7 @@ function sanitizeRuntimeEventForPublic(event: RuntimeEvent): RuntimeEvent {
 export const createNovelAgentSystemPrompt = (
   input: NovelAgentMessageInput,
 ): string => {
+  if (input.frozenSystemPrompt && input.capability === 'novel.play_scene') return input.frozenSystemPrompt;
   const lines = [
     'You are the oh-awesome-novel Copilot for a filesystem-first novel workspace.',
     'Use tools only inside the fixed in-memory /workspace projection.',
@@ -1225,6 +1247,8 @@ export const assembleNovelAgentMessages = (
   input: NovelAgentMessageInput,
 ): NovelAgentMessageAssembly => {
   const context = createNovelAgentContext(input);
+  const frozen = Boolean(input.frozenSystemPrompt && input.capability === 'novel.play_scene');
+  const turnContext = frozen ? context.map(item => `# ${item.title ?? item.kind}\n${item.content}`).join('\n\n') : '';
   const messages: RuntimeMessage[] = [
     {
       role: 'system',
@@ -1233,14 +1257,14 @@ export const assembleNovelAgentMessages = (
     ...(input.priorMessages ?? []),
     {
       role: 'user',
-      content: input.request,
+      content: turnContext ? `${turnContext}\n\n${input.request}` : input.request,
     },
   ];
 
   return {
     messages,
-    context,
-    skill: input.skill,
+    context: frozen ? [] : context,
+    skill: frozen ? undefined : input.skill,
   };
 };
 
@@ -2197,3 +2221,5 @@ function uniqueStrings(values: string[]): string[] {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+export { generateNovelLintReview } from './novel-lint';
