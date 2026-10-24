@@ -7,6 +7,7 @@ import ReferenceContextSelectionPanel from './reference/ReferenceContextSelectio
 import ReferenceDeconstructionPanel from './reference/ReferenceDeconstructionPanel.vue';
 import ReferenceImportResultCard from './reference/ReferenceImportResultCard.vue';
 import ReferenceMaterialAdoptionPanel from './reference/ReferenceMaterialAdoptionPanel.vue';
+import ReferenceQuestionPanel from './reference/ReferenceQuestionPanel.vue';
 import { useReferenceDeconstruction } from '../../composables/useReferenceDeconstruction';
 import { useReferenceMaterialAdoption } from '../../composables/useReferenceMaterialAdoption';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
@@ -178,6 +179,11 @@ async function createPublishPendingAction(): Promise<void> {
       @retry-failed-unit="deconstruction.retryFailedUnit($event)"
       @publish="createPublishPendingAction"
       @review-pending-action="emit('reviewPendingAction', $event)"
+    />
+
+    <ReferenceQuestionPanel
+      :reference="deconstruction.selectedReference.value"
+      :ask="api.askReferenceQuestion"
     />
 
     <ReferenceMaterialAdoptionPanel

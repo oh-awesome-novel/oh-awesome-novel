@@ -1195,6 +1195,7 @@ export * from './agent-usage';
 export * from './agent-usage-store';
 
 export * from './manuscript-import';
+export * from './reference-question.js';
 
 export { normalizePlayIsoWorldTime, comparePlayIsoWorldTime, normalizePlayStateDeltaRefs, assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
 

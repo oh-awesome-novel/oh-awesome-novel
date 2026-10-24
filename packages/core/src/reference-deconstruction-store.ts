@@ -47,6 +47,7 @@ import type {
   ReferenceDeconstructionManifest,
   ReferenceDeconstructionRunStatus,
   ReferenceDeconstructionStageId,
+  ReferenceEvidencePointerMap,
   ReferencePublishedDeconstructionStatus,
   ReferenceQuickPreview,
   ReferenceQuickPreviewSelection,
@@ -394,6 +395,8 @@ export interface ReferenceFullDeconstructionExecution {
   verifiedStoryMaterialFindings?: ReferenceStoryMaterialFinding[];
   coveredUnitIds?: string[];
   coveredChapterIds?: string[];
+  /** Covered source chunks a technique aggregate may search and cite directly. */
+  explorableSourceWindows?: ReferenceChapterWorkUnitWindow[];
 }
 
 export interface ReferenceFullDeconstructionReservationResult
@@ -3577,6 +3580,7 @@ async function parseStoredFullOutput(
           verifiedFindings,
           coveredUnitIds,
           coveredChapterIds,
+          explorablePointers: coveredChunkPointers(run.full!, coveredUnitIds),
         });
         const source = await readValidationSource(workspaceRoot, run, context);
         const coveredUnitSet = new Set(output.coveredUnitIds);
@@ -3833,14 +3837,48 @@ async function prepareReferenceFullExecution(
       'coveredUnitIds' in output ? output.coveredUnitIds : []));
     const coveredChapterIds = uniqueStrings(techniqueOutputs.flatMap((output) =>
       'coveredChapterIds' in output ? output.coveredChapterIds : []));
+    const explorableSourceWindows = unit.kind === 'aggregate'
+      ? await resolveCoveredChunkWindows(workspaceRoot, run, coveredUnitIds)
+      : undefined;
     return {
       unit,
       verifiedSourceFindings,
       coveredUnitIds,
       coveredChapterIds,
+      ...(explorableSourceWindows?.length ? { explorableSourceWindows } : {}),
     };
   }
   return { unit };
+}
+
+function coveredChunkUnits(
+  full: ReferenceFullDeconstructionState,
+  coveredUnitIds: readonly string[],
+): ReferenceDeconstructionStoredUnit[] {
+  const covered = new Set(coveredUnitIds);
+  return full.units.filter((candidate) =>
+    candidate.kind === 'chapterChunk'
+    && covered.has(candidate.id)
+    && Boolean(candidate.pointerId && candidate.pointer));
+}
+
+function coveredChunkPointers(
+  full: ReferenceFullDeconstructionState,
+  coveredUnitIds: readonly string[],
+): ReferenceEvidencePointerMap {
+  return Object.fromEntries(coveredChunkUnits(full, coveredUnitIds).map((unit) =>
+    [unit.pointerId!, unit.pointer!]));
+}
+
+async function resolveCoveredChunkWindows(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  coveredUnitIds: readonly string[],
+): Promise<ReferenceChapterWorkUnitWindow[]> {
+  const units = coveredChunkUnits(run.full!, coveredUnitIds);
+  if (!units.length) return [];
+  const source = await readReferencePreviewSource(workspaceRoot, run.referenceId);
+  return units.map((unit) => resolveReferenceChapterWorkUnitWindow(source.sourceText, unit));
 }
 
 function selectBoundedVerifiedFindings(

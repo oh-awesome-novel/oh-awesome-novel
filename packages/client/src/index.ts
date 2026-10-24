@@ -19,6 +19,10 @@ export { parseAgentUsageRecord, parseAgentGovernanceHistory } from '@oh-awesome-
 export type { AgentUsageRecord, AgentGovernanceHistory, ModelRequestUsageRecord, ModelStepUsageRecord, TurnUsageSummary, UsageSourceEvidence, NormalizedModelUsage } from '@oh-awesome-novel/core/agent-usage';
 import { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace-text.js';
 import type { WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
+import { assertReferenceQuestionInput, parseReferenceQuestionResult } from './reference-question.js';
+import type { ReferenceQuestionResult } from './reference-question.js';
+export { MAX_REFERENCE_QUESTION_INPUT_CHARS } from './reference-question.js';
+export type { ReferenceQuestionAnswer, ReferenceQuestionFinding, ReferenceQuestionResult } from './reference-question.js';
 export { parseWorkspaceSearchResponse, parseManuscriptExport } from './workspace-text.js';
 export type { WorkspaceSearchResult, WorkspaceSearchResponse, ManuscriptExport } from './workspace-text.js';
 import { assertManuscriptImportInput, assertManuscriptImportProposal, parseManuscriptImportPreviewResult } from './manuscript-import.js';
@@ -1940,6 +1944,12 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
     characterIntent?: string;
     explicitReferenceIds?: string[];
   }): Promise<{ selection: ReferenceContextSelection }>;
+  /** Ask one question; the model explores the reference source freely and cites host pointers. */
+  askReferenceQuestion(
+    referenceId: string,
+    question: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ReferenceQuestionResult>;
   createReferenceDeconstructionRun(
     referenceId: string,
     input: CreateReferenceDeconstructionRunInput,
@@ -2590,6 +2600,14 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/material-adoption-previews/${encodeURIComponent(previewIdValue)}/pending-action`,
         { method: 'POST', body: input },
       ).then(parseReferenceMaterialAdoptionPendingActionResult);
+    },
+    askReferenceQuestion: (referenceIdValue, questionValue, requestOptions = {}) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      const question = assertReferenceQuestionInput(questionValue);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}/questions`,
+        { method: 'POST', body: { question }, signal: requestOptions.signal },
+      ).then(parseReferenceQuestionResult);
     },
     createReferenceDeconstructionRun: (referenceIdValue, input) => {
       const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
