@@ -338,13 +338,10 @@ describe('Reference deconstruction full-analysis runners', () => {
           kind: 'hook',
           evidenceRefs: ['source-window-001'],
         }],
-        rollingContext: {
-          summary: 'The opening objective remains constrained.',
-          evidenceRefs: ['source-window-001'],
-        },
       },
       finishReason: 'stop',
     });
+    expect(completed.status === 'completed' && 'rollingContext' in completed.output).toBe(false);
     expect(doGenerate).toHaveBeenCalledTimes(1);
 
     const invalid = validChapterModelOutput();
@@ -695,8 +692,6 @@ function validChapterModelOutput() {
       generalInference: false,
       uncertainty: null,
     }],
-    rollingSummary: 'The opening objective remains constrained.',
-    rollingEvidenceRefs: ['source-window-001'],
     uncertainties: [],
   };
 }

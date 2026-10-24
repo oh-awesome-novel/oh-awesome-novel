@@ -440,8 +440,6 @@ function createQualityFixture() {
       generalInference: false,
       uncertainty: null,
     }],
-    rollingSummary: 'A bounded question now carries visible pressure and an implied answer.',
-    rollingEvidenceRefs: [sourceWindow.pointerId],
     uncertainties: [],
   }, {
     runId,

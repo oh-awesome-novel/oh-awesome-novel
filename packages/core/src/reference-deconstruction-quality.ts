@@ -801,7 +801,7 @@ function validateChapterCoverage(
     const findings = collectReferenceAnalysisFindings(output);
     const evidenceRefs = [
       ...findings.flatMap((finding) => finding.evidenceRefs),
-      ...output.rollingContext.evidenceRefs,
+      ...(output.rollingContext?.evidenceRefs ?? []),
     ];
     if (evidenceRefs.some((evidenceRef) => evidenceRef !== pointerId)) {
       diagnostics.push(blockingDiagnostic(
@@ -813,7 +813,7 @@ function validateChapterCoverage(
     }
     if (
       !output.unitSummary.evidenceRefs.includes(pointerId)
-      || !output.rollingContext.evidenceRefs.includes(pointerId)
+      || (output.rollingContext && !output.rollingContext.evidenceRefs.includes(pointerId))
       || output.findings.some((finding) =>
         !finding.generalInference && !finding.evidenceRefs.includes(pointerId))
     ) {
@@ -1266,7 +1266,7 @@ function collectOutputCandidates(
       `${output.unitId}-chapter-summary-uncertainty`,
       output.chapterSummary?.uncertainty,
     );
-    append(`${output.unitId}-rolling-summary`, output.rollingContext.summary);
+    append(`${output.unitId}-rolling-summary`, output.rollingContext?.summary);
     collectFindingCandidates(output.unitId, output.findings, append);
   } else if (isAggregateOutput(output)) {
     append(`${output.unitId}-summary`, output.summary);

@@ -35,6 +35,7 @@ import {
   rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
   reserveReferenceQuickPreview,
+  settleReferenceFullDeconstructionReservation,
   resolveReferenceDeconstructionAttemptArtifactPath,
   resolveReferenceDeconstructionRunArtifactPath,
   resumeReferenceDeconstructionRun,
@@ -413,6 +414,7 @@ describe('reference full deconstruction store', () => {
       ...identity(fixture, fixture.run),
       idempotencyKey: 'advance-orphan-input-0001',
       now: '2026-07-23T00:05:00.000Z',
+      maxParallelUnits: 1,
     });
 
     expect(reserved.reservation).toMatchObject({ attemptId, startedAt });
@@ -872,6 +874,154 @@ describe('reference full deconstruction store', () => {
     }));
   });
 
+  it('reserves independent chapter chunks together and settles the round at once', async () => {
+    const fixture = await createApprovedRun();
+    const reserved = await reserveFull(fixture, fixture.run, 'advance-parallel-0001', 4);
+    expect(reserved.executions).toHaveLength(2);
+    expect(reserved.executions!.every((execution) =>
+      execution.unit.kind === 'chapterChunk')).toBe(true);
+    expect(reserved.reservation?.batchUnits).toHaveLength(1);
+    expect(reserved.run.full?.units.filter((unit) => unit.status === 'running')).toHaveLength(2);
+    // The stored reservation must survive a strict re-read.
+    expect((await readReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      fixture.run.runId,
+      { reconcile: false },
+    )).activeReservation).toEqual(reserved.reservation);
+
+    const settled = await settleReferenceFullDeconstructionReservation({
+      ...identity(fixture, reserved.run),
+      reservationId: reserved.reservation!.id,
+      results: reserved.executions!.map((execution) => ({
+        unitId: execution.unit.id,
+        status: 'completed' as const,
+        output: chapterOutput(fixture.run.runId, execution),
+      })),
+    });
+    expect(settled).toMatchObject({ status: 'fullRunning', activeReservation: undefined });
+    expect(settled.full?.units.filter((unit) =>
+      unit.kind === 'chapterChunk' && unit.status === 'completed')).toHaveLength(2);
+
+    const next = await reserveFull(fixture, settled, 'advance-parallel-0002', 4);
+    expect(next.executions?.map((execution) => execution.unit.kind)).toEqual(['aggregate']);
+    expect(next.reservation?.batchUnits).toBeUndefined();
+  });
+
+  it('keeps completed siblings when one parallel unit fails and retry re-queues only the rest', async () => {
+    const fixture = await createApprovedRun();
+    const reserved = await reserveFull(fixture, fixture.run, 'advance-mixed-0001', 4);
+    const [lead, sibling] = reserved.executions!;
+    const failed = await settleReferenceFullDeconstructionReservation({
+      ...identity(fixture, reserved.run),
+      reservationId: reserved.reservation!.id,
+      results: [
+        {
+          unitId: lead!.unit.id,
+          status: 'completed',
+          output: chapterOutput(fixture.run.runId, lead!),
+        },
+        {
+          unitId: sibling!.unit.id,
+          status: 'failed',
+          errorCode: 'provider_error',
+          errorMessage: 'The bounded provider call failed.',
+        },
+      ],
+    });
+    expect(failed).toMatchObject({
+      status: 'failed',
+      activeReservation: undefined,
+      failure: { code: 'provider_error' },
+    });
+    const unitStatus = (run: ReferenceDeconstructionRun, unitId: string) =>
+      run.full?.units.find((unit) => unit.id === unitId)?.status;
+    expect(unitStatus(failed, lead!.unit.id)).toBe('completed');
+    expect(unitStatus(failed, sibling!.unit.id)).toBe('failed');
+
+    const retried = await retryReferenceDeconstructionUnit({
+      ...identity(fixture, failed),
+      idempotencyKey: 'retry-mixed-0001',
+      unitId: sibling!.unit.id,
+    });
+    expect(retried.run.status).toBe('fullRunning');
+    expect(unitStatus(retried.run, lead!.unit.id)).toBe('completed');
+    expect(retried.run.diagnostics.some((diagnostic) => diagnostic.blocking)).toBe(false);
+    const again = await reserveFull(fixture, retried.run, 'advance-mixed-0002', 4);
+    expect(again.executions?.map((execution) => execution.unit.id)).toEqual([sibling!.unit.id]);
+  });
+
+  it('rejects a settlement that does not cover every reserved unit', async () => {
+    const fixture = await createApprovedRun();
+    const reserved = await reserveFull(fixture, fixture.run, 'advance-partial-0001', 4);
+    const lead = reserved.executions![0]!;
+    await expect(settleReferenceFullDeconstructionReservation({
+      ...identity(fixture, reserved.run),
+      reservationId: reserved.reservation!.id,
+      results: [{
+        unitId: lead.unit.id,
+        status: 'completed',
+        output: chapterOutput(fixture.run.runId, lead),
+      }],
+    })).rejects.toThrow();
+    await expect(completeReferenceFullDeconstructionUnit({
+      ...identity(fixture, reserved.run),
+      reservationId: reserved.reservation!.id,
+      output: chapterOutput(fixture.run.runId, lead),
+    })).rejects.toThrow();
+  });
+
+  it('adopts finished receipts of a crashed parallel round and interrupts the rest', async () => {
+    const fixture = await createApprovedRun();
+    const reserved = await reserveFull(fixture, fixture.run, 'advance-crash-0001', 4);
+    const [lead, sibling] = reserved.executions!;
+    const output = chapterOutput(fixture.run.runId, lead!);
+    const attemptPath = (fileName: 'findings.yaml' | 'receipt.yaml') =>
+      resolveReferenceDeconstructionAttemptArtifactPath(
+        fixture.workspaceRoot,
+        fixture.run.runId,
+        lead!.unit.stageId,
+        reserved.reservation!.attemptId,
+        fileName,
+      );
+    await writeFile(await attemptPath('findings.yaml'), stringify(output), 'utf-8');
+    await writeFile(await attemptPath('receipt.yaml'), stringify({
+      version: 2,
+      runId: fixture.run.runId,
+      unitId: reserved.reservation!.unitId,
+      attemptId: reserved.reservation!.attemptId,
+      status: 'completed',
+      inputFingerprint: reserved.reservation!.inputFingerprint,
+      outputHash: createReferenceAnalysisOutputHash(output),
+      completedAt: '2026-07-23T00:00:00.000Z',
+    }), 'utf-8');
+
+    const reconciled = await reconcileReferenceDeconstructionRun(
+      fixture.workspaceRoot,
+      fixture.referenceId,
+      fixture.run.runId,
+      '2026-07-23T00:01:00.000Z',
+    );
+    expect(reconciled).toMatchObject({ status: 'interrupted', activeReservation: undefined });
+    expect(reconciled.full?.units.find((unit) => unit.id === lead!.unit.id)?.status)
+      .toBe('completed');
+    expect(reconciled.full?.units.find((unit) => unit.id === sibling!.unit.id)?.status)
+      .toBe('interrupted');
+    const resumed = await resumeReferenceDeconstructionRun({
+      ...identity(fixture, reconciled),
+      idempotencyKey: 'resume-crash-0001',
+    });
+    expect(resumed.run.full?.units.find((unit) => unit.id === sibling!.unit.id)?.status)
+      .toBe('queued');
+  });
+
+  it('reaches reviewReady through parallel rounds', async () => {
+    const fixture = await createApprovedRun();
+    const run = await reachReviewReady(fixture, 4);
+    expect(run.status).toBe('reviewReady');
+    expect(run.full?.units.every((unit) => unit.status === 'completed')).toBe(true);
+  });
+
   it('persists append-only attempts and reaches reviewReady through bounded units', async () => {
     const fixture = await createApprovedRun();
     let run = fixture.run;
@@ -1109,10 +1259,12 @@ async function reserveFull(
   fixture: { workspaceRoot: string; referenceId: string },
   run: ReferenceDeconstructionRun,
   idempotencyKey: string,
+  maxParallelUnits = 1,
 ) {
   return reserveReferenceFullDeconstructionUnit({
     ...identity(fixture, run),
     idempotencyKey,
+    maxParallelUnits,
   });
 }
 
@@ -1122,6 +1274,7 @@ async function reachReviewReady(
     referenceId: string;
     run: ReferenceDeconstructionRun;
   },
+  maxParallelUnits = 1,
 ): Promise<ReferenceDeconstructionRun> {
   let run = fixture.run;
   let sequence = 1;
@@ -1131,26 +1284,30 @@ async function reachReviewReady(
       fixture,
       run,
       `advance-ready-${String(sequence).padStart(4, '0')}`,
+      maxParallelUnits,
     );
-    const execution = reserved.execution!;
-    const output = execution.unit.kind === 'chapterChunk'
-      ? chapterOutput(run.runId, execution)
-      : execution.unit.kind === 'aggregate'
-        ? aggregateOutput(run.runId, execution)
-        : execution.unit.kind === 'style'
-          ? styleOutput(run.runId, execution)
-          : execution.unit.kind === 'distill'
-            ? distillationOutput(run.runId, execution)
-            : await evaluateReservedReferenceFullDeconstructionQuality(
-                fixture.workspaceRoot,
-                fixture.referenceId,
-                run.runId,
-                reserved.reservation!.id,
-              );
-    run = await completeReferenceFullDeconstructionUnit({
+    const results = await Promise.all(reserved.executions!.map(async (execution) => ({
+      unitId: execution.unit.id,
+      status: 'completed' as const,
+      output: execution.unit.kind === 'chapterChunk'
+        ? chapterOutput(run.runId, execution)
+        : execution.unit.kind === 'aggregate'
+          ? aggregateOutput(run.runId, execution)
+          : execution.unit.kind === 'style'
+            ? styleOutput(run.runId, execution)
+            : execution.unit.kind === 'distill'
+              ? distillationOutput(run.runId, execution)
+              : await evaluateReservedReferenceFullDeconstructionQuality(
+                  fixture.workspaceRoot,
+                  fixture.referenceId,
+                  run.runId,
+                  reserved.reservation!.id,
+                ),
+    })));
+    run = await settleReferenceFullDeconstructionReservation({
       ...identity(fixture, reserved.run),
       reservationId: reserved.reservation!.id,
-      output,
+      results,
     });
     sequence += 1;
   }
@@ -1214,8 +1371,6 @@ function chapterOutput(
       generalInference: false,
       uncertainty: null,
     }],
-    rollingSummary: 'Prior movement established changing pressure and an unresolved reader question.',
-    rollingEvidenceRefs: [pointerId],
     uncertainties: [],
   }, {
     runId,

@@ -929,6 +929,100 @@ describe('reference full deconstruction backend', () => {
     expect(releasedSwitch.status).toBe(200);
   });
 
+  it('runs ready chapter chunks in parallel and sizes them from the model context window', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const globalConfigDir = await createTemporaryRoot();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const windowSizes: number[] = [];
+    let releaseChapters!: () => void;
+    const chapterGate = new Promise<void>((resolve) => {
+      releaseChapters = resolve;
+    });
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      globalConfigDir,
+      providerConfig: {
+        ...providerConfig(),
+        models: [{ id: 'mock-reference-full', contextWindow: 200_000 }],
+      },
+      runReferenceQuickPreview: async (input) => completedPreview(input),
+      runReferenceChapterAnalysis: async (input) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        windowSizes.push(input.sourceWindows[0]!.charLength);
+        await chapterGate;
+        inFlight -= 1;
+        return {
+          status: 'completed',
+          finishReason: 'stop',
+          output: chapterOutput(input.runId, {
+            unit: input.unit,
+            sourceWindows: [...input.sourceWindows],
+          }),
+        };
+      },
+    });
+    servers.push(backend);
+    const longParagraph = '守门人在雨夜里反复权衡原定路线与新的选择。'.repeat(1_000);
+    const imported = await fetchJson<{ reference: { id: string } }>(
+      `${backend.url}/api/workspace/references/import`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Parallel Full Deconstruction',
+          sourceText: [
+            '第一章 开端',
+            longParagraph,
+            '第二章 转折',
+            '他留下一个尚未解释的选择，然后离开。',
+            '第三章 回声',
+            '第二天，城门外出现了新的脚印。',
+          ].join('\n'),
+          rights: 'owned',
+        }),
+      },
+    );
+    const created = await fetchJson<RunEnvelope>(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'quickPreview',
+          baseRunRevision: 0,
+          idempotencyKey: 'create-parallel-run',
+        }),
+      },
+    );
+    const runUrl = referenceRunUrl(backend.url, imported.reference.id, created.run.id);
+    const preview = await postMutation<RunEnvelope>(
+      `${runUrl}/advance`,
+      created.run.runRevision,
+      'advance-parallel-preview',
+    );
+    const approved = await postMutation<RunEnvelope>(
+      `${runUrl}/approve-full`,
+      preview.run.runRevision,
+      'approve-parallel-full',
+    );
+    const advance = postMutation<RunEnvelope>(
+      `${runUrl}/advance`,
+      approved.run.runRevision,
+      'advance-parallel-0001',
+    );
+    await expect.poll(() => inFlight).toBe(3);
+    releaseChapters();
+    const settled = (await advance).run;
+
+    expect(maxInFlight).toBe(3);
+    // A 200k-token window fits the 21k-character chapter in one chunk instead of two.
+    expect(longParagraph.length).toBeGreaterThan(12_000);
+    expect(windowSizes).toHaveLength(3);
+    expect(Math.max(...windowSizes)).toBeGreaterThan(longParagraph.length);
+    expect(settled.status).toBe('fullRunning');
+    expect(settled.full?.progress.completedChapters).toBe(3);
+  });
+
   it('exposes retry, pause, and resume controls for request-driven full execution', async () => {
     const workspaceRoot = await createOanWorkspace();
     let chapterCalls = 0;
@@ -2210,8 +2304,6 @@ function chapterOutput(
       generalInference: false,
       uncertainty: null,
     }],
-    rollingSummary: 'Prior movement established changing pressure and an unresolved reader question.',
-    rollingEvidenceRefs: [sourceWindow.pointerId],
     uncertainties: uncertainty ? [uncertainty] : [],
   }, {
     runId,

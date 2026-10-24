@@ -23,12 +23,10 @@ import {
   beginReferenceDeconstructionPublish,
   cancelReferenceDeconstructionRun,
   completeReferenceDeconstructionPublish,
-  completeReferenceFullDeconstructionUnit,
   completeReferenceQuickPreview,
   createReferenceQuickPreviewSelection,
   createReferenceDeconstructionRun,
   evaluateReservedReferenceFullDeconstructionQuality,
-  failReferenceFullDeconstructionUnit,
   failReferenceQuickPreview,
   interruptReferenceFullDeconstructionUnit,
   interruptReferenceQuickPreview,
@@ -43,6 +41,8 @@ import {
   reconcileReferenceDeconstructionPublish,
   rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
+  resolveReferenceChapterChunkChars,
+  settleReferenceFullDeconstructionReservation,
   reserveReferenceQuickPreview,
   resumeReferenceDeconstructionRun,
   retryReferenceDeconstructionUnit,
@@ -282,7 +282,8 @@ interface PreparedReferenceFullUnit {
   readonly active: ActiveReferenceExecution;
   readonly providerLease: ReferencePreviewProviderLease;
   readonly reservation: ReferenceFullDeconstructionReservation;
-  readonly execution: ReferenceFullDeconstructionExecution;
+  /** One execution per reserved unit; they run in parallel. */
+  readonly executions: readonly ReferenceFullDeconstructionExecution[];
   readonly reserved: ReferenceFullDeconstructionReservationResult;
   readonly unlinkRequestAbort: () => void;
 }
@@ -854,7 +855,7 @@ export function createReferenceDeconstructionBackendController(
             baseRunRevision: input.baseRunRevision,
             idempotencyKey: input.idempotencyKey,
           });
-          if (reserved.replayed || !reserved.reservation || !reserved.execution) {
+          if (reserved.replayed || !reserved.reservation || !reserved.executions?.length) {
             return {
               kind: 'immediate',
               result: projectMutationResult(reserved),
@@ -918,7 +919,7 @@ export function createReferenceDeconstructionBackendController(
             active,
             providerLease,
             reservation: fullReservation,
-            execution: reserved.execution,
+            executions: reserved.executions,
             reserved,
             unlinkRequestAbort,
           } as const;
@@ -988,19 +989,17 @@ export function createReferenceDeconstructionBackendController(
         });
       }
 
-      const generation = await runReferenceFullUnitProvider(
-        options,
-        {
-          runChapterAnalysis,
-          runAggregateAnalysis,
-          runStyleProfile,
-          runDistillation,
-          runMaterialChapter,
-          runMaterialAggregate,
-          runMaterialProjection,
-        },
-        reservation,
-      );
+      const runners = {
+        runChapterAnalysis,
+        runAggregateAnalysis,
+        runStyleProfile,
+        runDistillation,
+        runMaterialChapter,
+        runMaterialAggregate,
+        runMaterialProjection,
+      };
+      const generations = await Promise.all(reservation.executions.map((execution) =>
+        runReferenceFullUnitProvider(options, runners, reservation, execution)));
       return await withReferenceLock(workspaceRoot, referenceId, async () => {
         const current = await readReferenceDeconstructionRun(
           workspaceRoot,
@@ -1009,37 +1008,31 @@ export function createReferenceDeconstructionBackendController(
           { reconcile: false },
         );
         assertActiveExecutionMatches(current, reservation.active);
-        let settled: ReferenceDeconstructionRun;
-        if (generation.status === 'completed') {
-          settled = await completeReferenceFullDeconstructionUnit({
-            workspaceRoot,
-            referenceId,
-            runId,
-            baseRunRevision: reservation.reserved.run.revision,
-            reservationId: reservation.reservation.id,
-            output: generation.output,
-          });
-        } else if (generation.status === 'failed') {
-          settled = await failReferenceFullDeconstructionUnit({
-            workspaceRoot,
-            referenceId,
-            runId,
-            baseRunRevision: reservation.reserved.run.revision,
-            reservationId: reservation.reservation.id,
-            errorCode: generation.error.code,
-            errorMessage: generation.error.code === 'invalid_output'
-              ? 'Reference full-deconstruction output did not pass strict validation.'
-              : 'Reference full-deconstruction provider request failed.',
-          });
-        } else {
-          settled = await interruptReferenceFullDeconstructionUnit({
-            workspaceRoot,
-            referenceId,
-            runId,
-            baseRunRevision: reservation.reserved.run.revision,
-            reservationId: reservation.reservation.id,
-          });
-        }
+        const settled = await settleReferenceFullDeconstructionReservation({
+          workspaceRoot,
+          referenceId,
+          runId,
+          baseRunRevision: reservation.reserved.run.revision,
+          reservationId: reservation.reservation.id,
+          results: reservation.executions.map((execution, index) => {
+            const generation = generations[index]!;
+            const unitId = execution.unit.id;
+            if (generation.status === 'completed') {
+              return { unitId, status: 'completed' as const, output: generation.output };
+            }
+            if (generation.status === 'failed') {
+              return {
+                unitId,
+                status: 'failed' as const,
+                errorCode: generation.error.code,
+                errorMessage: generation.error.code === 'invalid_output'
+                  ? 'Reference full-deconstruction output did not pass strict validation.'
+                  : 'Reference full-deconstruction provider request failed.',
+              };
+            }
+            return { unitId, status: 'interrupted' as const };
+          }),
+        });
         return mutationResultForCommand(settled, input.idempotencyKey, false);
       });
     } finally {
@@ -1055,6 +1048,7 @@ export function createReferenceDeconstructionBackendController(
     input: MutateReferenceDeconstructionRunCommand,
   ): Promise<ReferenceDeconstructionMutationTransportResult> {
     const workspaceRoot = options.getWorkspaceRoot();
+    const maxChunkChars = await resolveFullPlanChunkChars(options);
     return withReferenceLock(workspaceRoot, referenceId, async () => projectMutationResult(
       await approveReferenceFullDeconstruction({
         workspaceRoot,
@@ -1062,6 +1056,7 @@ export function createReferenceDeconstructionBackendController(
         runId,
         baseRunRevision: input.baseRunRevision,
         idempotencyKey: input.idempotencyKey,
+        maxChunkChars,
       }),
     ));
   }
@@ -1787,10 +1782,10 @@ async function runReferenceFullUnitProvider(
     >;
   },
   prepared: PreparedReferenceFullUnit,
+  execution: ReferenceFullDeconstructionExecution,
 ): Promise<ReferenceFullProviderGenerationResult> {
   try {
     assertReferenceWorkspaceUnchanged(options, prepared.active.workspaceRoot);
-    const { execution } = prepared;
     if (execution.unit.kind === 'analysisQuality') {
       const output = await evaluateReservedReferenceFullDeconstructionQuality(
         prepared.active.workspaceRoot,
@@ -1901,6 +1896,19 @@ async function runReferenceFullUnitProvider(
             retryable: true,
           },
         };
+  }
+}
+
+/** Size chapter chunks for the configured model; unknown context windows keep the default. */
+async function resolveFullPlanChunkChars(
+  options: CreateReferenceDeconstructionBackendControllerOptions,
+): Promise<number> {
+  try {
+    const { providerConfig } = await options.getModelRuntime();
+    const model = providerConfig.models?.find((entry) => entry.id === providerConfig.model);
+    return resolveReferenceChapterChunkChars(model?.contextWindow);
+  } catch {
+    return resolveReferenceChapterChunkChars();
   }
 }
 
