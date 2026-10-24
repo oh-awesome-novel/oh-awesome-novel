@@ -197,6 +197,8 @@ export type {
   ReferencePreviewEvidence,
   ReferencePublishedDeconstructionStatus,
   ReferenceQuickPreview,
+  ReferenceQuestionAnswer,
+  ReferenceQuestionResult,
   ReferenceQuickPreviewBorrowablePattern,
   ReferenceQuickPreviewChapter,
   ReferenceQuickPreviewCoverage,

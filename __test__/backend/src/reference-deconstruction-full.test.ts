@@ -929,6 +929,73 @@ describe('reference full deconstruction backend', () => {
     expect(releasedSwitch.status).toBe(200);
   });
 
+  it('answers a free-exploration question over the whole source without writing a run', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    const globalConfigDir = await createTemporaryRoot();
+    const seen: Array<{ question: string; windows: number; first: string }> = [];
+    const backend = await startNovelHttpBackend({
+      workspaceRoot,
+      globalConfigDir,
+      providerConfig: providerConfig(),
+      runReferenceQuestion: async (input) => {
+        seen.push({
+          question: input.question,
+          windows: input.windows.length,
+          first: input.windows[0]!.content,
+        });
+        const pointer = input.windows[1]!;
+        return {
+          status: 'completed',
+          finishReason: 'stop',
+          output: {
+            question: input.question,
+            answer: '第二章用一个未解释的选择制造悬念。',
+            findings: [{ observation: '选择没有被解释。', evidenceRefs: [pointer.pointerId] }],
+            uncertainties: [],
+            evidence: [{
+              pointerId: pointer.pointerId,
+              chapterId: pointer.pointer.chapterId,
+              lineStart: pointer.pointer.lineStart,
+              lineEnd: pointer.pointer.lineEnd,
+            }],
+            copyRisk: false,
+          },
+        };
+      },
+    });
+    servers.push(backend);
+    const imported = await fetchJson<{ reference: { id: string } }>(
+      `${backend.url}/api/workspace/references/import`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Question Reference',
+          sourceText: ['第一章 开端', '雨夜里有人敲门。', '第二章 转折', '他留下一个尚未解释的选择，然后离开。'].join('\n'),
+          rights: 'owned',
+        }),
+      },
+    );
+    const questionUrl = `${backend.url}/api/workspace/references/${imported.reference.id}/questions`;
+    const answered = await fetchJson<{ status: string; answer: { evidence: unknown[] } }>(questionUrl, {
+      method: 'POST',
+      body: JSON.stringify({ question: '  悬念怎么留？ ' }),
+    });
+
+    expect(answered).toMatchObject({ status: 'completed', answer: { evidence: [expect.any(Object)] } });
+    expect(seen).toEqual([{ question: '悬念怎么留？', windows: 2, first: expect.stringContaining('雨夜') }]);
+    const active = await fetchJson<{ run: unknown }>(
+      `${backend.url}/api/workspace/references/${imported.reference.id}/deconstruction-runs/active`,
+    );
+    expect(active.run).toBeNull();
+
+    const invalid = await fetch(questionUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: '', extra: true }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('runs ready chapter chunks in parallel and sizes them from the model context window', async () => {
     const workspaceRoot = await createOanWorkspace();
     const globalConfigDir = await createTemporaryRoot();

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createReferenceDeconstructionWorkPlan,
   createReferenceStructureFingerprint,
+  normalizeReferenceAggregateAnalysisModelOutput,
   DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
   MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
   resolveReferenceChapterChunkChars,
@@ -207,6 +208,52 @@ describe('reference full deconstruction work plan', () => {
     expect(firstAggregate?.predecessorUnitIds).toEqual(chapterUnits
       .filter((unit) => unit.track === 'technique')
       .map((unit) => unit.id));
+  });
+
+  it('accepts direct source citations only from explorable covered pointers', () => {
+    const plan = createPlan(['techniques']);
+    const chunks = plan.units.filter((unit) => unit.kind === 'chapterChunk');
+    const aggregate = plan.units.find((unit) => unit.kind === 'aggregate')!;
+    const pointers = Object.fromEntries(chunks.map((unit) => [unit.pointerId!, unit.pointer!]));
+    const finding = {
+      kind: 'plotline',
+      observation: 'An early choice is answered later.',
+      technique: 'Plant a choice and pay it off chapters later.',
+      whenUseful: null,
+      avoid: null,
+      confidence: 'medium',
+      sourceFindingRefs: [],
+      sourceEvidenceRefs: [chunks[1]!.pointerId!],
+      generalInference: false,
+      uncertainty: null,
+    };
+    const options = {
+      runId: 'run-explore',
+      unit: aggregate,
+      verifiedFindings: {},
+      coveredUnitIds: chunks.map((unit) => unit.id),
+      coveredChapterIds: ['0001', '0002'],
+    };
+    const output = normalizeReferenceAggregateAnalysisModelOutput(
+      { summary: 'Setups pay off.', findings: [finding], uncertainties: [] },
+      { ...options, explorablePointers: pointers },
+    );
+    expect(output.findings[0]).toMatchObject({
+      sourceEvidenceRefs: [chunks[1]!.pointerId],
+      evidenceRefs: [chunks[1]!.pointerId],
+    });
+    expect(() => normalizeReferenceAggregateAnalysisModelOutput(
+      { summary: 'Setups pay off.', findings: [finding], uncertainties: [] },
+      options,
+    )).toThrow();
+    expect(() => normalizeReferenceAggregateAnalysisModelOutput(
+      {
+        summary: 'Setups pay off.',
+        findings: [{ ...finding, sourceEvidenceRefs: ['unknown-pointer'] }],
+        uncertainties: [],
+      },
+      { ...options, explorablePointers: pointers },
+    )).toThrow('unknown evidence ref');
   });
 
   it('sizes chapter chunks from the model context window within hard bounds', () => {

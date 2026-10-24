@@ -410,6 +410,90 @@ describe('Reference deconstruction full-analysis runners', () => {
     });
   });
 
+  it('lets an aggregate search the covered source and cite only pointers it opened', async () => {
+    const window = sourceWindow('守门人改变路线。\n他留下一个尚未解释的选择。');
+    const explored = validAggregateModelOutput();
+    const cited = {
+      ...explored,
+      findings: [{
+        ...explored.findings[0]!,
+        sourceFindingRefs: [],
+        sourceEvidenceRefs: ['source-window-001'],
+      }],
+    };
+    const { model, doGenerate } = createScriptedModel([
+      {
+        content: [{
+          type: 'tool-call' as const,
+          toolCallId: 'call-1',
+          toolName: 'searchReferenceSource',
+          input: JSON.stringify({ query: '选择' }),
+        }],
+        finishReason: 'tool-calls',
+      },
+      { content: [{ type: 'text' as const, text: JSON.stringify(cited) }], finishReason: 'stop' },
+    ]);
+    const completed = await generateReferenceAggregateAnalysis({
+      runId: 'reference-run-aggregate-explore',
+      providerConfig,
+      resolveModel: vi.fn(() => model),
+      unit: aggregateUnit(),
+      verifiedSourceFindings: [verifiedFinding()],
+      coveredUnitIds: ['chapter-unit-001'],
+      coveredChapterIds: ['0001'],
+      explorableSourceWindows: [window],
+    });
+
+    expect(completed).toMatchObject({
+      status: 'completed',
+      output: {
+        findings: [{
+          sourceFindingRefs: [],
+          sourceEvidenceRefs: ['source-window-001'],
+          evidenceRefs: ['source-window-001'],
+        }],
+      },
+    });
+    expect(doGenerate).toHaveBeenCalledTimes(2);
+    const secondCall = JSON.stringify(doGenerate.mock.calls[1]?.[0]);
+    expect(secondCall).toContain('source-window-001');
+    expect(secondCall).toContain('选择');
+    const firstCall = doGenerate.mock.calls[0]?.[0] as { tools?: Array<{ name: string }> };
+    expect(firstCall.tools?.map((item) => item.name).sort()).toEqual([
+      'readReferenceSource',
+      'searchReferenceSource',
+    ]);
+  });
+
+  it('falls back to the findings-only reduction when exploration cites unopened source', async () => {
+    const explored = validAggregateModelOutput();
+    const unopened = {
+      ...explored,
+      findings: [{ ...explored.findings[0]!, sourceEvidenceRefs: ['source-window-001'] }],
+    };
+    const { model, doGenerate } = createScriptedModel([
+      { content: [{ type: 'text' as const, text: JSON.stringify(unopened) }], finishReason: 'stop' },
+      { content: [{ type: 'text' as const, text: JSON.stringify(explored) }], finishReason: 'stop' },
+    ]);
+    const completed = await generateReferenceAggregateAnalysis({
+      runId: 'reference-run-aggregate-fallback',
+      providerConfig,
+      resolveModel: vi.fn(() => model),
+      unit: aggregateUnit(),
+      verifiedSourceFindings: [verifiedFinding()],
+      coveredUnitIds: ['chapter-unit-001'],
+      coveredChapterIds: ['0001'],
+      explorableSourceWindows: [sourceWindow('Bounded current chapter content.')],
+    });
+
+    expect(completed).toMatchObject({ status: 'completed' });
+    expect(completed.status === 'completed'
+      && completed.output.findings[0]?.sourceEvidenceRefs).toBeFalsy();
+    expect(doGenerate).toHaveBeenCalledTimes(2);
+    const fallbackCall = doGenerate.mock.calls[1]?.[0] as { tools?: unknown[] };
+    expect(fallbackCall.tools ?? []).toHaveLength(0);
+  });
+
   it('creates a closed style profile and rejects quotation-shaped output', async () => {
     const { model } = createRawModel(
       JSON.stringify(validStyleProfileModelOutput()),
@@ -797,6 +881,33 @@ function createRawModel(
     },
     warnings: [],
   }));
+  const model = new MockLanguageModelV3({ doGenerate });
+  return { model, doGenerate };
+}
+
+function createScriptedModel(
+  steps: Array<{
+    content: Array<
+      | { type: 'text'; text: string }
+      | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+    >;
+    finishReason: 'stop' | 'tool-calls';
+  }>,
+) {
+  let index = 0;
+  const doGenerate = vi.fn(async (_options: unknown) => {
+    const step = steps[Math.min(index, steps.length - 1)]!;
+    index += 1;
+    return {
+      content: step.content,
+      finishReason: { unified: step.finishReason, raw: step.finishReason },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 20, text: 20, reasoning: undefined },
+      },
+      warnings: [],
+    };
+  });
   const model = new MockLanguageModelV3({ doGenerate });
   return { model, doGenerate };
 }

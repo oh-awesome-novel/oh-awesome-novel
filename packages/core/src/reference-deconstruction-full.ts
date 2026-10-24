@@ -175,6 +175,8 @@ export interface ReferenceDeconstructionFinding {
   confidence: ReferenceDeconstructionConfidence;
   evidenceRefs: string[];
   sourceFindingRefs?: string[];
+  /** Chunk pointers an aggregate cited after reading the source itself. */
+  sourceEvidenceRefs?: string[];
   generalInference: boolean;
   uncertainty?: string;
 }
@@ -333,7 +335,14 @@ export interface NormalizeReferenceAggregateAnalysisOptions {
   verifiedFindings: ReferenceDeconstructionVerifiedFindingMap;
   coveredUnitIds: readonly string[];
   coveredChapterIds: readonly string[];
+  /**
+   * Chunk pointers of the covered source the aggregate may cite directly.
+   * Omitted, findings can only cite predecessor findings.
+   */
+  explorablePointers?: ReferenceEvidencePointerMap;
 }
+
+export const MAX_REFERENCE_AGGREGATE_SOURCE_EVIDENCE_REFS = 8 as const;
 
 export interface NormalizeReferenceStyleProfileOptions {
   runId: string;
@@ -873,6 +882,7 @@ export function normalizeReferenceAggregateAnalysisModelOutput(
     runId,
     options.unit.id,
     'aggregate',
+    options.explorablePointers,
   ));
   return {
     version: REFERENCE_DECONSTRUCTION_SCHEMA_VERSION,
@@ -1150,7 +1160,12 @@ function projectStoredFindingArrayToModel(
       ...(record.avoid === undefined ? {} : { avoid: record.avoid }),
       confidence: record.confidence,
       ...(derived
-        ? { sourceFindingRefs: record.sourceFindingRefs }
+        ? {
+            sourceFindingRefs: record.sourceFindingRefs,
+            ...(record.sourceEvidenceRefs === undefined
+              ? {}
+              : { sourceEvidenceRefs: record.sourceEvidenceRefs }),
+          }
         : { evidenceRefs: record.evidenceRefs }),
       generalInference: record.generalInference,
       ...(record.uncertainty === undefined ? {} : { uncertainty: record.uncertainty }),
@@ -1286,6 +1301,7 @@ function normalizeDerivedFinding(
   runId: string,
   unitId: string,
   label: string,
+  explorablePointers?: ReferenceEvidencePointerMap,
 ): ReferenceDeconstructionFinding {
   const record = requireRecord(value, `${label} findings[${index}]`);
   assertOnlyKnownFields(record, [
@@ -1296,6 +1312,7 @@ function normalizeDerivedFinding(
     'avoid',
     'confidence',
     'sourceFindingRefs',
+    ...(explorablePointers ? ['sourceEvidenceRefs'] : []),
     'generalInference',
     'uncertainty',
   ]);
@@ -1307,12 +1324,21 @@ function normalizeDerivedFinding(
       'General-inference aggregate findings require uncertainty and cannot be high confidence.',
     );
   }
+  const sourceEvidenceRefs = explorablePointers && record.sourceEvidenceRefs !== undefined
+    ? requireEvidenceRefs(record.sourceEvidenceRefs, explorablePointers, {
+        min: 0,
+        max: MAX_REFERENCE_AGGREGATE_SOURCE_EVIDENCE_REFS,
+      })
+    : [];
   const sourceFindingRefs = requireSourceFindingRefs(
     record.sourceFindingRefs,
     verifiedFindings,
-    generalInference,
+    generalInference || sourceEvidenceRefs.length > 0,
   );
-  const evidenceRefs = expandFindingEvidence(sourceFindingRefs, verifiedFindings);
+  const evidenceRefs = [...new Set([
+    ...expandFindingEvidence(sourceFindingRefs, verifiedFindings),
+    ...sourceEvidenceRefs,
+  ])];
   const kind = requireEnum(
     record.kind,
     FINDING_KIND_VALUES.filter((item) => item !== 'chapterSummary'),
@@ -1339,6 +1365,7 @@ function normalizeDerivedFinding(
     confidence,
     evidenceRefs,
     sourceFindingRefs,
+    ...(sourceEvidenceRefs.length ? { sourceEvidenceRefs } : {}),
     generalInference,
     ...(uncertainty ? { uncertainty } : {}),
   };
