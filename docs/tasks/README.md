@@ -90,6 +90,7 @@
 
 - [1360 Guided Forge, Play Presentation And Novel LINT](1360.md)
 - [1370 Parallel Reference Deconstruction](1370.md)
+- [1380 Reference Source Exploration](1380.md)
 
 - [0580 Git History And Sync Page](0580.md)
 - [1120 Play World Events And Turn Settlement](1120.md)

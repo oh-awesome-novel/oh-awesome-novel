@@ -880,11 +880,16 @@ function validateDerivedCoverageAndClosure(
         unit,
       ));
     }
+    const coveredPointerIds = new Set(output.coveredUnitIds.flatMap((unitId) => {
+      const covered = unitsById.get(unitId);
+      return covered?.kind === 'chapterChunk' && covered.pointerId ? [covered.pointerId] : [];
+    }));
     validateFindingClosure(
       unit,
       output.findings,
       collectDirectPredecessorFindings(unit, outputsByUnitId),
       diagnostics,
+      coveredPointerIds,
     );
   }
 
@@ -1053,15 +1058,21 @@ function validateFindingClosure(
   findings: readonly ReferenceDeconstructionFinding[],
   allowedFindings: ReadonlyMap<string, ReferenceDeconstructionFinding>,
   diagnostics: ReferenceDeconstructionDiagnostic[],
+  coveredPointerIds: ReadonlySet<string> = new Set(),
 ): void {
   findings.forEach((finding, index) => {
     const sourceFindingRefs = finding.sourceFindingRefs ?? [];
+    const sourceEvidenceRefs = finding.sourceEvidenceRefs ?? [];
     const missing = sourceFindingRefs.filter((findingId) => !allowedFindings.has(findingId));
-    const expectedEvidence = [...new Set(sourceFindingRefs.flatMap((findingId) =>
-      allowedFindings.get(findingId)?.evidenceRefs ?? []))];
+    const expectedEvidence = [...new Set([
+      ...sourceFindingRefs.flatMap((findingId) =>
+        allowedFindings.get(findingId)?.evidenceRefs ?? []),
+      ...sourceEvidenceRefs,
+    ])];
     if (
       missing.length
-      || (!finding.generalInference && !sourceFindingRefs.length)
+      || sourceEvidenceRefs.some((pointerId) => !coveredPointerIds.has(pointerId))
+      || (!finding.generalInference && !sourceFindingRefs.length && !sourceEvidenceRefs.length)
       || !sameSet(finding.evidenceRefs, expectedEvidence)
     ) {
       diagnostics.push(blockingDiagnostic(

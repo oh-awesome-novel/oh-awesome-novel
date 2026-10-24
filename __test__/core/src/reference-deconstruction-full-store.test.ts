@@ -905,6 +905,9 @@ describe('reference full deconstruction store', () => {
 
     const next = await reserveFull(fixture, settled, 'advance-parallel-0002', 4);
     expect(next.executions?.map((execution) => execution.unit.kind)).toEqual(['aggregate']);
+    expect(next.execution?.explorableSourceWindows?.map((window) => window.pointerId).sort())
+      .toEqual(reserved.executions!.map((execution) =>
+        execution.sourceWindows![0]!.pointerId).sort());
     expect(next.reservation?.batchUnits).toBeUndefined();
   });
 
@@ -1381,6 +1384,8 @@ function chapterOutput(
 
 function aggregateOutput(runId: string, execution: ReferenceFullDeconstructionExecution) {
   const first = execution.verifiedSourceFindings![0]!;
+  // Cite one covered chunk directly, as an exploring aggregate would.
+  const explored = execution.explorableSourceWindows?.at(-1);
   return normalizeReferenceAggregateAnalysisModelOutput({
     summary: 'Across chapters, narrative functions change in a controlled sequence.',
     findings: [{
@@ -1393,7 +1398,20 @@ function aggregateOutput(runId: string, execution: ReferenceFullDeconstructionEx
       sourceFindingRefs: [first.id],
       generalInference: false,
       uncertainty: null,
-    }],
+    }, ...(explored
+      ? [{
+          kind: 'plotline' as const,
+          observation: 'A choice left open early is answered in a later chapter.',
+          technique: 'Plant an unexplained choice and pay it off chapters later.',
+          whenUseful: null,
+          avoid: null,
+          confidence: 'medium' as const,
+          sourceFindingRefs: [],
+          sourceEvidenceRefs: [explored.pointerId],
+          generalInference: false,
+          uncertainty: null,
+        }]
+      : [])],
     uncertainties: [],
   }, {
     runId,
@@ -1401,6 +1419,13 @@ function aggregateOutput(runId: string, execution: ReferenceFullDeconstructionEx
     verifiedFindings: findingMap(execution.verifiedSourceFindings!),
     coveredUnitIds: execution.coveredUnitIds!,
     coveredChapterIds: execution.coveredChapterIds!,
+    ...(explored
+      ? {
+          explorablePointers: Object.fromEntries(execution.explorableSourceWindows!.map(
+            (window) => [window.pointerId, window.pointer],
+          )),
+        }
+      : {}),
   });
 }
 

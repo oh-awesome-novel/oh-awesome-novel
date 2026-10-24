@@ -982,6 +982,8 @@ export {
   MAX_REFERENCE_STYLE_PROFILE_OUTPUT_TOKENS,
   MAX_REFERENCE_DISTILLATION_OUTPUT_TOKENS,
   REFERENCE_AGGREGATE_ANALYSIS_SYSTEM_PROMPT,
+  REFERENCE_AGGREGATE_EXPLORATION_SYSTEM_PROMPT,
+  MAX_REFERENCE_AGGREGATE_EXPLORATION_STEPS,
   REFERENCE_CHAPTER_ANALYSIS_SYSTEM_PROMPT,
   REFERENCE_DISTILLATION_SYSTEM_PROMPT,
   REFERENCE_STYLE_PROFILE_SYSTEM_PROMPT,
@@ -994,6 +996,20 @@ export {
   generateReferenceDistillation,
   generateReferenceStyleProfile,
 } from './reference-deconstruction-full.js';
+export {
+  createReferenceSourceExplorer,
+  MAX_REFERENCE_SOURCE_READ_CHARS,
+  MAX_REFERENCE_SOURCE_SEARCH_RESULTS,
+} from './reference-source-explorer.js';
+export type { ReferenceSourceExplorer } from './reference-source-explorer.js';
+export {
+  MAX_REFERENCE_QUESTION_EXPLORATION_STEPS,
+  MAX_REFERENCE_QUESTION_OUTPUT_TOKENS,
+  REFERENCE_QUESTION_SYSTEM_PROMPT,
+  formatReferenceQuestionPrompt,
+  generateReferenceQuestionAnswer,
+} from './reference-question.js';
+export type { GenerateReferenceQuestionAnswerInput } from './reference-question.js';
 export {
   MAX_REFERENCE_QUICK_PREVIEW_CHAPTERS,
   MAX_REFERENCE_QUICK_PREVIEW_INPUT_CHARACTERS,
