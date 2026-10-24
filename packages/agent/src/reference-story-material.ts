@@ -42,7 +42,7 @@ import type {
 import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 
 export const MAX_REFERENCE_MATERIAL_COVERAGE_OUTPUT_TOKENS = 2_048 as const;
-export const MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS = 4_096 as const;
+export const MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS = 8_192 as const;
 export const MAX_REFERENCE_MATERIAL_AGGREGATE_OUTPUT_TOKENS = 4_096 as const;
 export const MAX_REFERENCE_MATERIAL_PROJECTION_OUTPUT_TOKENS = 6_144 as const;
 export const MAX_REFERENCE_MATERIAL_SOURCE_INPUT_CHARACTERS = 48_000 as const;

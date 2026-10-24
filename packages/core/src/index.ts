@@ -894,7 +894,9 @@ export type {
 } from './reference-deconstruction.js';
 export {
   MAX_REFERENCE_AGGREGATE_FAN_IN,
+  DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
   MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
+  resolveReferenceChapterChunkChars,
   MAX_REFERENCE_DECONSTRUCTION_FINDINGS_PER_UNIT,
   MAX_REFERENCE_DECONSTRUCTION_UNCERTAINTIES,
   MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS,
@@ -1082,6 +1084,9 @@ export {
   assertReferenceSourceManifest,
   cancelReferenceDeconstructionRun,
   completeReferenceFullDeconstructionUnit,
+  listReferenceFullReservationUnits,
+  MAX_REFERENCE_FULL_PARALLEL_UNITS,
+  settleReferenceFullDeconstructionReservation,
   completeReferenceDeconstructionPublish,
   completeReferenceQuickPreview,
   createReferenceDeconstructionRun,
@@ -1112,7 +1117,12 @@ export {
 export type {
   AssertReferenceDeconstructionPublishCurrentInput,
   BeginReferenceDeconstructionPublishInput,
+  ApproveReferenceFullDeconstructionInput,
+  ReserveReferenceFullDeconstructionUnitInput,
   CompleteReferenceFullDeconstructionUnitInput,
+  ReferenceFullDeconstructionReservationUnit,
+  ReferenceFullDeconstructionUnitSettlement,
+  SettleReferenceFullDeconstructionReservationInput,
   CompleteReferenceDeconstructionPublishInput,
   CompleteReferenceQuickPreviewInput,
   CreateReferenceDeconstructionRunInput,

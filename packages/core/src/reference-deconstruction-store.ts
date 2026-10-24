@@ -326,14 +326,39 @@ export interface ReferenceDeconstructionPublicationState {
   preparedAt: string;
 }
 
-export interface ReferenceFullDeconstructionReservation {
-  kind: 'fullUnit';
-  id: string;
-  idempotencyKey: string;
+export interface ReferenceFullDeconstructionReservationUnit {
   unitId: string;
   attemptId: string;
   inputFingerprint: string;
+}
+
+/**
+ * One provider round. The lead unit is stored flat; independent ready units
+ * reserved alongside it run in parallel and are listed in `batchUnits`.
+ */
+export interface ReferenceFullDeconstructionReservation
+  extends ReferenceFullDeconstructionReservationUnit {
+  kind: 'fullUnit';
+  id: string;
+  idempotencyKey: string;
+  batchUnits?: ReferenceFullDeconstructionReservationUnit[];
   startedAt: string;
+}
+
+/** Upper bound on work units one reservation runs in parallel. */
+export const MAX_REFERENCE_FULL_PARALLEL_UNITS = 4 as const;
+
+export function listReferenceFullReservationUnits(
+  reservation: ReferenceFullDeconstructionReservation,
+): ReferenceFullDeconstructionReservationUnit[] {
+  return [
+    {
+      unitId: reservation.unitId,
+      attemptId: reservation.attemptId,
+      inputFingerprint: reservation.inputFingerprint,
+    },
+    ...(reservation.batchUnits ?? []).map((unit) => ({ ...unit })),
+  ];
 }
 
 export type ReferenceDeconstructionReservation =
@@ -374,7 +399,10 @@ export interface ReferenceFullDeconstructionExecution {
 export interface ReferenceFullDeconstructionReservationResult
   extends ReferenceDeconstructionMutationResult {
   reservation?: ReferenceFullDeconstructionReservation;
+  /** Execution of the lead unit; equal to `executions[0]`. */
   execution?: ReferenceFullDeconstructionExecution;
+  /** One execution per reserved unit, lead first. */
+  executions?: ReferenceFullDeconstructionExecution[];
 }
 
 export interface ReferenceDeconstructionRunFailure {
@@ -596,6 +624,34 @@ export interface FailReferenceFullDeconstructionUnitInput {
   errorCode: string;
   errorMessage: string;
   now?: string;
+}
+
+export type ReferenceFullDeconstructionUnitSettlement =
+  | { unitId: string; status: 'completed'; output: ReferenceFullDeconstructionOutput }
+  | { unitId: string; status: 'failed'; errorCode: string; errorMessage: string }
+  | { unitId: string; status: 'interrupted' };
+
+export interface SettleReferenceFullDeconstructionReservationInput {
+  workspaceRoot: string;
+  referenceId: string;
+  runId: string;
+  baseRunRevision: number;
+  reservationId: string;
+  /** Exactly one settlement per reserved unit. */
+  results: ReferenceFullDeconstructionUnitSettlement[];
+  now?: string;
+}
+
+export interface ReserveReferenceFullDeconstructionUnitInput
+  extends MutateReferenceDeconstructionRunInput {
+  /** Units to run in parallel this round; defaults to MAX_REFERENCE_FULL_PARALLEL_UNITS. */
+  maxParallelUnits?: number;
+}
+
+export interface ApproveReferenceFullDeconstructionInput
+  extends MutateReferenceDeconstructionRunInput {
+  /** Chapter chunk size for the frozen work plan; see resolveReferenceChapterChunkChars. */
+  maxChunkChars?: number;
 }
 
 export interface InterruptReferenceFullDeconstructionUnitInput {
@@ -1102,7 +1158,7 @@ export async function interruptReferenceQuickPreview(
 }
 
 export async function approveReferenceFullDeconstruction(
-  input: MutateReferenceDeconstructionRunInput,
+  input: ApproveReferenceFullDeconstructionInput,
 ): Promise<ReferenceDeconstructionMutationResult> {
   return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
     const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
@@ -1153,6 +1209,7 @@ export async function approveReferenceFullDeconstruction(
         sourceText: source.sourceText,
         chapters: source.sourceManifest.detectedStructure.chapters,
         outputs: run.outputs,
+        ...(input.maxChunkChars === undefined ? {} : { maxChunkChars: input.maxChunkChars }),
       });
     } catch (error) {
       throw validationFrom(error, 'Reference full work plan is invalid.');
@@ -1195,7 +1252,7 @@ export async function approveReferenceFullDeconstruction(
 }
 
 export async function reserveReferenceFullDeconstructionUnit(
-  input: MutateReferenceDeconstructionRunInput,
+  input: ReserveReferenceFullDeconstructionUnitInput,
 ): Promise<ReferenceFullDeconstructionReservationResult> {
   return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
     const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
@@ -1225,73 +1282,95 @@ export async function reserveReferenceFullDeconstructionUnit(
     }
     assertReceiptCapacity(run);
 
-    const unit = run.full.units.find((candidate) =>
-      candidate.status === 'queued'
-      && candidate.predecessorUnitIds.every((predecessorId) => {
-        const predecessor = run.full!.units.find((item) => item.id === predecessorId);
-        return predecessor?.status === 'completed' && Boolean(predecessor.selectedAttemptId);
-      }));
-    if (!unit) {
+    const readyUnits = selectReadyFullUnits(
+      run.full,
+      boundedParallelUnits(input.maxParallelUnits),
+    );
+    if (!readyUnits.length) {
       throw new ReferenceDeconstructionConflictError(
         'Reference full deconstruction has no ready work unit.',
         'invalidTransition',
       );
     }
 
-    const predecessorAttempts = unit.predecessorUnitIds.map((predecessorId) =>
-      requireSelectedAttempt(run.full!, predecessorId));
-    const rollingContext = unit.kind === 'chapterChunk' && predecessorAttempts.length
-      ? await readRollingContextFromAttempt(
-          input.workspaceRoot,
-          run.runId,
-          predecessorAttempts.at(-1)!,
-        )
-      : undefined;
-    const predecessorOutputHashes = predecessorAttempts.map((attempt) =>
-      requireAttemptOutputHash(attempt));
-    const inputFingerprint = createReferenceDeconstructionStageInputFingerprint({
-      sourceChecksumSha256: run.sourceChecksumSha256,
-      structureFingerprint: run.structureFingerprint,
-      stageId: unit.stageId,
-      unitId: unit.id,
-      options: {
-        kind: unit.kind,
-        chapterId: unit.chapterId ?? null,
-        chunkId: unit.chunkId ?? null,
-      },
-      predecessorOutputHashes,
-      ...(rollingContext ? { rollingContextHash: rollingContext.checksumSha256 } : {}),
-    });
-    const execution = await prepareReferenceFullExecution(input.workspaceRoot, run, unit);
-    const attemptNumber = unit.attemptIds.length + 1;
-    const attemptId = `${unit.id}-attempt-${String(attemptNumber).padStart(4, '0')}`;
-    const now = await ensureReferenceAttemptInputManifest(
-      input.workspaceRoot,
-      run,
-      unit,
-      attemptId,
-      inputFingerprint,
-      predecessorOutputHashes,
-      normalizeNow(input.now),
-    );
+    const now = normalizeNow(input.now);
+    const prepared: Array<{
+      unit: ReferenceDeconstructionStoredUnit;
+      attempt: ReferenceDeconstructionAttemptSummary;
+      execution: ReferenceFullDeconstructionExecution;
+    }> = [];
+    for (const unit of readyUnits) {
+      const predecessorAttempts = unit.predecessorUnitIds.map((predecessorId) =>
+        requireSelectedAttempt(run.full!, predecessorId));
+      // Only chapter chunks planned by earlier chained runs have predecessors.
+      const rollingContext = unit.kind === 'chapterChunk' && predecessorAttempts.length
+        ? await readRollingContextFromAttempt(
+            input.workspaceRoot,
+            run.runId,
+            predecessorAttempts.at(-1)!,
+          )
+        : undefined;
+      const predecessorOutputHashes = predecessorAttempts.map((attempt) =>
+        requireAttemptOutputHash(attempt));
+      const inputFingerprint = createReferenceDeconstructionStageInputFingerprint({
+        sourceChecksumSha256: run.sourceChecksumSha256,
+        structureFingerprint: run.structureFingerprint,
+        stageId: unit.stageId,
+        unitId: unit.id,
+        options: {
+          kind: unit.kind,
+          chapterId: unit.chapterId ?? null,
+          chunkId: unit.chunkId ?? null,
+        },
+        predecessorOutputHashes,
+        ...(rollingContext ? { rollingContextHash: rollingContext.checksumSha256 } : {}),
+      });
+      const execution = await prepareReferenceFullExecution(input.workspaceRoot, run, unit);
+      const attemptNumber = unit.attemptIds.length + 1;
+      const attemptId = `${unit.id}-attempt-${String(attemptNumber).padStart(4, '0')}`;
+      const startedAt = await ensureReferenceAttemptInputManifest(
+        input.workspaceRoot,
+        run,
+        unit,
+        attemptId,
+        inputFingerprint,
+        predecessorOutputHashes,
+        now,
+      );
+      prepared.push({
+        unit,
+        execution,
+        attempt: {
+          id: attemptId,
+          unitId: unit.id,
+          attemptNumber,
+          status: 'running',
+          inputFingerprint,
+          predecessorOutputHashes,
+          startedAt,
+        },
+      });
+    }
+    const [lead, ...batch] = prepared;
     const reservation: ReferenceFullDeconstructionReservation = {
       kind: 'fullUnit',
       id: `full-reservation-${run.revision + 1}-${randomUUID()}`,
       idempotencyKey,
-      unitId: unit.id,
-      attemptId,
-      inputFingerprint,
-      startedAt: now,
+      unitId: lead!.unit.id,
+      attemptId: lead!.attempt.id,
+      inputFingerprint: lead!.attempt.inputFingerprint,
+      ...(batch.length
+        ? {
+            batchUnits: batch.map((item) => ({
+              unitId: item.unit.id,
+              attemptId: item.attempt.id,
+              inputFingerprint: item.attempt.inputFingerprint,
+            })),
+          }
+        : {}),
+      startedAt: lead!.attempt.startedAt,
     };
-    const attempt: ReferenceDeconstructionAttemptSummary = {
-      id: attemptId,
-      unitId: unit.id,
-      attemptNumber,
-      status: 'running',
-      inputFingerprint,
-      predecessorOutputHashes,
-      startedAt: now,
-    };
+    const attemptsByUnit = new Map(prepared.map((item) => [item.unit.id, item.attempt]));
     const revision = run.revision + 1;
     const receipt: ReferenceDeconstructionMutationReceipt = {
       idempotencyKey,
@@ -1301,14 +1380,17 @@ export async function reserveReferenceFullDeconstructionUnit(
     };
     const full: ReferenceFullDeconstructionState = {
       ...run.full,
-      units: run.full.units.map((candidate) => candidate.id === unit.id
-        ? {
-            ...candidate,
-            status: 'running',
-            attemptIds: [...candidate.attemptIds, attemptId],
-          }
-        : candidate),
-      attempts: [...run.full.attempts, attempt],
+      units: run.full.units.map((candidate) => {
+        const attempt = attemptsByUnit.get(candidate.id);
+        return attempt
+          ? {
+              ...candidate,
+              status: 'running',
+              attemptIds: [...candidate.attemptIds, attempt.id],
+            }
+          : candidate;
+      }),
+      attempts: [...run.full.attempts, ...prepared.map((item) => item.attempt)],
     };
     const next: ReferenceDeconstructionRun = {
       ...run,
@@ -1318,11 +1400,54 @@ export async function reserveReferenceFullDeconstructionUnit(
       activeReservation: reservation,
       failure: undefined,
       mutationReceipts: [...run.mutationReceipts, receipt],
-      updatedAt: now,
+      updatedAt: lead!.attempt.startedAt,
     };
     await writeRunState(input.workspaceRoot, next);
-    return { run: next, receipt, replayed: false, reservation, execution };
+    const executions = prepared.map((item) => item.execution);
+    return {
+      run: next,
+      receipt,
+      replayed: false,
+      reservation,
+      execution: executions[0],
+      executions,
+    };
   });
+}
+
+/**
+ * Pick the next ready units in plan order. The analysis quality gate reads the
+ * whole track, so it always runs alone.
+ */
+function selectReadyFullUnits(
+  full: ReferenceFullDeconstructionState,
+  maxParallelUnits: number,
+): ReferenceDeconstructionStoredUnit[] {
+  const ready = full.units.filter((candidate) =>
+    candidate.status === 'queued'
+    && candidate.predecessorUnitIds.every((predecessorId) => {
+      const predecessor = full.units.find((item) => item.id === predecessorId);
+      return predecessor?.status === 'completed' && Boolean(predecessor.selectedAttemptId);
+    }));
+  if (!ready.length) return [];
+  if (ready[0]!.kind === 'analysisQuality') return [ready[0]!];
+  return ready
+    .filter((unit) => unit.kind !== 'analysisQuality')
+    .slice(0, maxParallelUnits);
+}
+
+function boundedParallelUnits(value: number | undefined): number {
+  if (value === undefined) return MAX_REFERENCE_FULL_PARALLEL_UNITS;
+  if (
+    !Number.isSafeInteger(value)
+    || value < 1
+    || value > MAX_REFERENCE_FULL_PARALLEL_UNITS
+  ) {
+    throw new ReferenceDeconstructionValidationError(
+      `maxParallelUnits must be between 1 and ${MAX_REFERENCE_FULL_PARALLEL_UNITS}.`,
+    );
+  }
+  return value;
 }
 
 export async function completeReferenceFullDeconstructionUnit(
@@ -1332,22 +1457,98 @@ export async function completeReferenceFullDeconstructionUnit(
     const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
     assertRevision(run, input.baseRunRevision);
     const reservation = assertFullReservation(run, input.reservationId);
-    const full = run.full!;
-    const unit = requireStoredUnit(full, reservation.unitId);
-    const attempt = requireAttempt(full, reservation.attemptId);
+    if (reservation.batchUnits?.length) throw reservationConflict();
+    return settleFullReservationUnlocked(input, run, reservation, [
+      { unitId: reservation.unitId, status: 'completed', output: input.output },
+    ]);
+  });
+}
+
+export async function failReferenceFullDeconstructionUnit(
+  input: FailReferenceFullDeconstructionUnitInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    assertRevision(run, input.baseRunRevision);
+    const reservation = assertFullReservation(run, input.reservationId);
+    return settleFullReservationUnlocked(
+      input,
+      run,
+      reservation,
+      listReferenceFullReservationUnits(reservation).map((unit) => ({
+        unitId: unit.unitId,
+        status: 'failed' as const,
+        errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
+      })),
+    );
+  });
+}
+
+/** Settle every unit of one reservation at once, keeping completed siblings of a failed unit. */
+export async function settleReferenceFullDeconstructionReservation(
+  input: SettleReferenceFullDeconstructionReservationInput,
+): Promise<ReferenceDeconstructionRun> {
+  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
+    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
+    assertRevision(run, input.baseRunRevision);
+    const reservation = assertFullReservation(run, input.reservationId);
+    return settleFullReservationUnlocked(input, run, reservation, input.results);
+  });
+}
+
+async function settleFullReservationUnlocked(
+  input: { workspaceRoot: string; now?: string },
+  run: ReferenceDeconstructionRun,
+  reservation: ReferenceFullDeconstructionReservation,
+  results: readonly ReferenceFullDeconstructionUnitSettlement[],
+): Promise<ReferenceDeconstructionRun> {
+  const full = run.full!;
+  const reservedUnits = listReferenceFullReservationUnits(reservation);
+  const resultsByUnit = new Map(results.map((result) => [result.unitId, result]));
+  if (
+    results.length !== reservedUnits.length
+    || resultsByUnit.size !== results.length
+    || reservedUnits.some((item) => !resultsByUnit.has(item.unitId))
+  ) {
+    throw reservationConflict();
+  }
+  for (const item of reservedUnits) {
+    const unit = requireStoredUnit(full, item.unitId);
+    const attempt = requireAttempt(full, item.attemptId);
     if (attempt.status !== 'running' || unit.status !== 'running') {
       throw reservationConflict();
     }
-    const drift = await detectRunSourceDrift(input.workspaceRoot, run);
-    if (drift) {
-      return persistStaleRun(
-        input.workspaceRoot,
-        run,
-        normalizeNow(input.now),
-        drift,
-        reservation.idempotencyKey,
-        false,
-      );
+  }
+  const drift = await detectRunSourceDrift(input.workspaceRoot, run);
+  if (drift) {
+    return persistStaleRun(
+      input.workspaceRoot,
+      run,
+      normalizeNow(input.now),
+      drift,
+      reservation.idempotencyKey,
+      false,
+    );
+  }
+  const now = normalizeNow(input.now);
+  const outcomes: FullUnitOutcome[] = [];
+  for (const item of reservedUnits) {
+    const unit = requireStoredUnit(full, item.unitId);
+    const attempt = requireAttempt(full, item.attemptId);
+    const result = resultsByUnit.get(item.unitId)!;
+    if (result.status === 'interrupted') {
+      outcomes.push({ unit, attempt, kind: 'interrupted' });
+      continue;
+    }
+    if (result.status === 'failed') {
+      const failure: ReferenceDeconstructionRunFailure = {
+        code: assertCode(result.errorCode, 'errorCode'),
+        message: boundedText(result.errorMessage, 'errorMessage', 1_000),
+        failedAt: now,
+      };
+      outcomes.push(await writeFailedAttemptReceipt(input.workspaceRoot, run, unit, attempt, failure));
+      continue;
     }
     let output: ReferenceFullDeconstructionOutput;
     try {
@@ -1355,31 +1556,18 @@ export async function completeReferenceFullDeconstructionUnit(
         input.workspaceRoot,
         run,
         unit,
-        input.output,
+        result.output,
         createStoredOutputValidationContext(),
       );
     } catch (error) {
-      const now = normalizeNow(input.now);
-      return settleFullAttemptFailure(
-        input.workspaceRoot,
-        run,
-        unit,
-        attempt,
-        reservation,
-        {
-          code: 'invalid_output',
-          message: boundedText(
-            sanitizeErrorMessage(error),
-            'invalid output message',
-            1_000,
-          ),
-          failedAt: now,
-        },
-        now,
-      );
+      outcomes.push(await writeFailedAttemptReceipt(input.workspaceRoot, run, unit, attempt, {
+        code: 'invalid_output',
+        message: boundedText(sanitizeErrorMessage(error), 'invalid output message', 1_000),
+        failedAt: now,
+      }));
+      continue;
     }
     const outputHash = sha256(stableJson(output));
-    const now = normalizeNow(input.now);
     try {
       await writeReferenceAttemptYaml(
         input.workspaceRoot,
@@ -1407,123 +1595,50 @@ export async function completeReferenceFullDeconstructionUnit(
         },
       );
     } catch (error) {
-      return settleFullAttemptFailure(
-        input.workspaceRoot,
-        run,
-        unit,
-        attempt,
-        reservation,
-        {
-          code: 'artifact_conflict',
-          message: boundedText(
-            sanitizeErrorMessage(error),
-            'attempt artifact failure message',
-            1_000,
-          ),
-          failedAt: now,
-        },
-        now,
-      );
+      outcomes.push(await writeFailedAttemptReceipt(input.workspaceRoot, run, unit, attempt, {
+        code: 'artifact_conflict',
+        message: boundedText(
+          sanitizeErrorMessage(error),
+          'attempt artifact failure message',
+          1_000,
+        ),
+        failedAt: now,
+      }));
+      continue;
     }
-    const qualityReport = unit.kind === 'analysisQuality'
-      ? output as ReferenceFullDeconstructionQualityReport
-      : undefined;
-    const diagnostics = qualityReport
-      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
-      : run.diagnostics;
-    const quality = qualityReport
-      ? {
-          status: effectiveQualityStatus(qualityReport.status, qualityReport.diagnostics),
-          coveragePercent: qualityReport.coverage.percent,
-          blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
-            item.blocking).length,
-          outputHashes: [...qualityReport.outputHashes],
-        } satisfies ReferenceDeconstructionAnalysisQualitySummary
-      : undefined;
-    const nextFull: ReferenceFullDeconstructionState = {
-      ...full,
-      units: full.units.map((candidate) => candidate.id === unit.id
-        ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
-        : candidate),
-      attempts: full.attempts.map((candidate) => candidate.id === attempt.id
-        ? { ...candidate, status: 'completed', outputHash, completedAt: now }
-        : candidate),
-      analysisQuality: quality
-        ? { ...full.analysisQuality, [unit.track]: quality }
-        : full.analysisQuality,
-    };
-    const resultStatus: ReferenceDeconstructionRunStatus = quality?.status === 'failed'
-      ? 'failed'
-      : quality && allTrackQualitiesPublishable(nextFull)
-        && nextFull.units.every((candidate) => candidate.status === 'completed')
-        ? 'reviewReady'
-        : 'fullRunning';
-    const next: ReferenceDeconstructionRun = {
-      ...run,
-      status: resultStatus,
-      full: nextFull,
-      diagnostics,
-      mutationReceipts: updateReceiptStatus(
-        run.mutationReceipts,
-        reservation.idempotencyKey,
-        run.revision,
-        resultStatus,
-      ),
-      activeReservation: undefined,
-      ...(resultStatus === 'failed'
-        ? {
-            failure: {
-              code: 'analysis_quality_failed',
-              message: 'Reference analysis quality gate failed.',
-              failedAt: now,
-            },
-          }
-        : { failure: undefined }),
-      updatedAt: now,
-    };
-    await writeRunState(input.workspaceRoot, next);
-    await writeRunDiagnostics(input.workspaceRoot, next);
-    return next;
-  });
+    outcomes.push({ unit, attempt, kind: 'completed', output, outputHash, completedAt: now });
+  }
+  return applyFullUnitOutcomes(input.workspaceRoot, run, reservation, outcomes, now);
 }
 
-export async function failReferenceFullDeconstructionUnit(
-  input: FailReferenceFullDeconstructionUnitInput,
-): Promise<ReferenceDeconstructionRun> {
-  return withReferenceLock(input.workspaceRoot, input.referenceId, async () => {
-    const run = await readRunState(input.workspaceRoot, input.referenceId, input.runId);
-    assertRevision(run, input.baseRunRevision);
-    const reservation = assertFullReservation(run, input.reservationId);
-    const full = run.full!;
-    const unit = requireStoredUnit(full, reservation.unitId);
-    const attempt = requireAttempt(full, reservation.attemptId);
-    const now = normalizeNow(input.now);
-    const failure: ReferenceDeconstructionRunFailure = {
-      code: assertCode(input.errorCode, 'errorCode'),
-      message: boundedText(input.errorMessage, 'errorMessage', 1_000),
-      failedAt: now,
+type FullUnitOutcome =
+  | {
+      unit: ReferenceDeconstructionStoredUnit;
+      attempt: ReferenceDeconstructionAttemptSummary;
+      kind: 'completed';
+      output: ReferenceFullDeconstructionOutput;
+      outputHash: string;
+      completedAt: string;
+    }
+  | {
+      unit: ReferenceDeconstructionStoredUnit;
+      attempt: ReferenceDeconstructionAttemptSummary;
+      kind: 'failed';
+      failure: ReferenceDeconstructionRunFailure;
+    }
+  | {
+      unit: ReferenceDeconstructionStoredUnit;
+      attempt: ReferenceDeconstructionAttemptSummary;
+      kind: 'interrupted';
     };
-    return settleFullAttemptFailure(
-      input.workspaceRoot,
-      run,
-      unit,
-      attempt,
-      reservation,
-      failure,
-      now,
-    );
-  });
-}
 
-async function settleFullAttemptFailure(
+async function writeFailedAttemptReceipt(
   workspaceRoot: string,
   run: ReferenceDeconstructionRun,
   unit: ReferenceDeconstructionStoredUnit,
   attempt: ReferenceDeconstructionAttemptSummary,
-  reservation: ReferenceFullDeconstructionReservation,
   failure: ReferenceDeconstructionRunFailure,
-  completedAt: string,
-): Promise<ReferenceDeconstructionRun> {
+): Promise<FullUnitOutcome> {
   await writeReferenceAttemptYaml(
     workspaceRoot,
     run.runId,
@@ -1538,18 +1653,135 @@ async function settleFullAttemptFailure(
       status: 'failed',
       inputFingerprint: attempt.inputFingerprint,
       failure,
-      completedAt,
+      completedAt: failure.failedAt,
     },
   );
-  return adoptFailedFullAttempt(
-    workspaceRoot,
-    run,
-    unit,
-    attempt,
-    reservation,
-    failure,
-    completedAt,
-  );
+  return { unit, attempt, kind: 'failed', failure };
+}
+
+/**
+ * Fold settled units into the run and release the reservation. A failure
+ * fails the run, an interruption interrupts it, and completed units are kept
+ * either way so a retry only repeats what did not finish.
+ */
+async function applyFullUnitOutcomes(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  reservation: ReferenceFullDeconstructionReservation,
+  outcomes: readonly FullUnitOutcome[],
+  now: string,
+): Promise<ReferenceDeconstructionRun> {
+  const full = run.full!;
+  let diagnostics = run.diagnostics;
+  let analysisQuality = full.analysisQuality;
+  let failure: ReferenceDeconstructionRunFailure | undefined;
+  let interrupted = false;
+  let qualityFailed = false;
+  const unitUpdates = new Map<string, Partial<ReferenceDeconstructionStoredUnit>>();
+  const attemptUpdates = new Map<string, Partial<ReferenceDeconstructionAttemptSummary>>();
+  for (const outcome of outcomes) {
+    const { unit, attempt } = outcome;
+    if (outcome.kind === 'completed') {
+      unitUpdates.set(unit.id, { status: 'completed', selectedAttemptId: attempt.id });
+      attemptUpdates.set(attempt.id, {
+        status: 'completed',
+        outputHash: outcome.outputHash,
+        completedAt: outcome.completedAt,
+      });
+      if (unit.kind === 'analysisQuality') {
+        const qualityReport = outcome.output as ReferenceFullDeconstructionQualityReport;
+        diagnostics = mergeRunDiagnostics(diagnostics, qualityReport.diagnostics);
+        const quality = {
+          status: effectiveQualityStatus(qualityReport.status, qualityReport.diagnostics),
+          coveragePercent: qualityReport.coverage.percent,
+          blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
+            item.blocking).length,
+          outputHashes: [...qualityReport.outputHashes],
+        } satisfies ReferenceDeconstructionAnalysisQualitySummary;
+        analysisQuality = { ...analysisQuality, [unit.track]: quality };
+        if (quality.status === 'failed') qualityFailed = true;
+      }
+    } else if (outcome.kind === 'failed') {
+      failure ??= outcome.failure;
+      diagnostics = appendLifecycleDiagnostic(diagnostics, normalizeStoreDiagnostic({
+        id: `full-unit-failed-${unit.id}-${attempt.attemptNumber}`,
+        code: `full.${outcome.failure.code}`,
+        severity: 'error',
+        blocking: true,
+        message: outcome.failure.message,
+        evidenceRefs: [],
+        stageId: unit.stageId,
+        unitId: unit.id,
+        attemptId: attempt.id,
+      }));
+      unitUpdates.set(unit.id, { status: 'failed' });
+      attemptUpdates.set(attempt.id, {
+        status: 'failed',
+        completedAt: outcome.failure.failedAt,
+        failure: outcome.failure,
+      });
+    } else {
+      interrupted = true;
+      diagnostics = appendLifecycleDiagnostic(diagnostics, normalizeStoreDiagnostic({
+        id: `full-interrupted-${unit.id}-${run.revision}`,
+        code: 'full.interrupted',
+        severity: 'warning',
+        blocking: false,
+        message: 'The full-deconstruction unit was interrupted and will not resume automatically.',
+        evidenceRefs: [],
+        stageId: unit.stageId,
+        unitId: unit.id,
+        attemptId: attempt.id,
+      }));
+      unitUpdates.set(unit.id, { status: 'interrupted' });
+      attemptUpdates.set(attempt.id, { status: 'interrupted', completedAt: now });
+    }
+  }
+  const nextFull: ReferenceFullDeconstructionState = {
+    ...full,
+    units: full.units.map((candidate) => {
+      const update = unitUpdates.get(candidate.id);
+      return update ? { ...candidate, ...update } : candidate;
+    }),
+    attempts: full.attempts.map((candidate) => {
+      const update = attemptUpdates.get(candidate.id);
+      return update ? { ...candidate, ...update } : candidate;
+    }),
+    analysisQuality,
+  };
+  const resultStatus: ReferenceDeconstructionRunStatus = failure || qualityFailed
+    ? 'failed'
+    : interrupted
+      ? 'interrupted'
+      : allTrackQualitiesPublishable(nextFull)
+        && nextFull.units.every((candidate) => candidate.status === 'completed')
+        ? 'reviewReady'
+        : 'fullRunning';
+  const runFailure = failure ?? (qualityFailed
+    ? {
+        code: 'analysis_quality_failed',
+        message: 'Reference analysis quality gate failed.',
+        failedAt: now,
+      }
+    : undefined);
+  const next: ReferenceDeconstructionRun = {
+    ...run,
+    status: resultStatus,
+    full: nextFull,
+    diagnostics,
+    mutationReceipts: updateReceiptStatus(
+      run.mutationReceipts,
+      reservation.idempotencyKey,
+      run.revision,
+      resultStatus,
+    ),
+    activeReservation: undefined,
+    failure: runFailure,
+    updatedAt: now,
+  };
+  await writeRunState(workspaceRoot, next);
+  await writeRunDiagnostics(workspaceRoot, next);
+  return next;
 }
 
 export async function interruptReferenceFullDeconstructionUnit(
@@ -1624,6 +1856,13 @@ export async function retryReferenceDeconstructionUnit(
         );
       }
       const invalidated = collectDependentUnitIds(run.full, unitId);
+      // A parallel round can leave several units unfinished; retrying one
+      // re-queues its siblings too so the run cannot stall on them.
+      for (const unit of run.full.units) {
+        if (unit.status === 'failed' || unit.status === 'interrupted') {
+          for (const id of collectDependentUnitIds(run.full, unit.id)) invalidated.add(id);
+        }
+      }
       const invalidatedQualityTracks = new Set(run.full.units
         .filter((unit) => invalidated.has(unit.id) && unit.kind === 'analysisQuality')
         .map((unit) => unit.track));
@@ -1661,7 +1900,11 @@ export async function cancelReferenceDeconstructionRun(
     'cancel',
     CANCELLABLE_RUN_STATUSES,
     (run, _receipt, now) => {
-      const reservation = run.activeReservation;
+      const reserved = run.activeReservation?.kind === 'fullUnit'
+        ? listReferenceFullReservationUnits(run.activeReservation)
+        : [];
+      const reservedUnitIds = new Set(reserved.map((item) => item.unitId));
+      const reservedAttemptIds = new Set(reserved.map((item) => item.attemptId));
       return {
         ...run,
         revision: run.revision + 1,
@@ -1671,11 +1914,11 @@ export async function cancelReferenceDeconstructionRun(
               full: {
                 ...run.full,
                 units: run.full.units.map((unit) =>
-                  reservation?.kind === 'fullUnit' && unit.id === reservation.unitId
+                  reservedUnitIds.has(unit.id)
                     ? { ...unit, status: 'cancelled' as const }
                     : unit),
                 attempts: run.full.attempts.map((attempt) =>
-                  reservation?.kind === 'fullUnit' && attempt.id === reservation.attemptId
+                  reservedAttemptIds.has(attempt.id)
                     ? { ...attempt, status: 'cancelled' as const, completedAt: now }
                     : attempt),
               },
@@ -1740,8 +1983,33 @@ async function tryAdoptTerminalFullAttempt(
 ): Promise<ReferenceDeconstructionRun | undefined> {
   if (!run.full || run.activeReservation?.kind !== 'fullUnit') return undefined;
   const reservation = run.activeReservation;
-  const unit = requireStoredUnit(run.full, reservation.unitId);
-  const attempt = requireAttempt(run.full, reservation.attemptId);
+  const outcomes: FullUnitOutcome[] = [];
+  let adopted = 0;
+  for (const item of listReferenceFullReservationUnits(reservation)) {
+    const unit = requireStoredUnit(run.full, item.unitId);
+    const attempt = requireAttempt(run.full, item.attemptId);
+    const terminal = await readTerminalFullAttemptOutcome(
+      workspaceRoot,
+      run,
+      unit,
+      attempt,
+      item.inputFingerprint,
+    );
+    if (terminal) adopted += 1;
+    outcomes.push(terminal ?? { unit, attempt, kind: 'interrupted' });
+  }
+  if (!adopted) return undefined;
+  return applyFullUnitOutcomes(workspaceRoot, run, reservation, outcomes, now);
+}
+
+/** Read a receipt a crashed backend wrote before it could settle the run. */
+async function readTerminalFullAttemptOutcome(
+  workspaceRoot: string,
+  run: ReferenceDeconstructionRun,
+  unit: ReferenceDeconstructionStoredUnit,
+  attempt: ReferenceDeconstructionAttemptSummary,
+  reservedInputFingerprint: string,
+): Promise<FullUnitOutcome | undefined> {
   let receiptValue: unknown;
   try {
     const receiptPath = await resolveReferenceDeconstructionAttemptArtifactPath(
@@ -1756,8 +2024,7 @@ async function tryAdoptTerminalFullAttempt(
       receiptPath,
       'Reference attempt receipt is invalid.',
     );
-  } catch (error) {
-    if (error instanceof ReferenceDeconstructionNotFoundError) return undefined;
+  } catch {
     return undefined;
   }
   const receipt = isRecord(receiptValue) ? receiptValue : undefined;
@@ -1768,7 +2035,7 @@ async function tryAdoptTerminalFullAttempt(
       || receipt.runId !== run.runId
       || receipt.unitId !== unit.id
       || receipt.attemptId !== attempt.id
-      || receipt.inputFingerprint !== reservation.inputFingerprint
+      || receipt.inputFingerprint !== reservedInputFingerprint
       || receipt.inputFingerprint !== attempt.inputFingerprint
     ) return undefined;
     if (receipt.status === 'failed') {
@@ -1785,15 +2052,7 @@ async function tryAdoptTerminalFullAttempt(
       const failure = assertStoredFailure(receipt.failure);
       const completedAt = assertIsoDate(receipt.completedAt, 'attempt receipt completedAt');
       if (failure.failedAt !== completedAt) return undefined;
-      return adoptFailedFullAttempt(
-        workspaceRoot,
-        run,
-        unit,
-        attempt,
-        reservation,
-        failure,
-        completedAt,
-      );
+      return { unit, attempt, kind: 'failed', failure };
     }
     assertOnlyKnownFields(receipt, [
       'version',
@@ -1828,118 +2087,10 @@ async function tryAdoptTerminalFullAttempt(
       storedOutput,
       createStoredOutputValidationContext(),
     );
-    const qualityReport = unit.kind === 'analysisQuality'
-      ? output as ReferenceFullDeconstructionQualityReport
-      : undefined;
-    const diagnostics = qualityReport
-      ? mergeRunDiagnostics(run.diagnostics, qualityReport.diagnostics)
-      : run.diagnostics;
-    const quality = qualityReport
-      ? {
-          status: effectiveQualityStatus(qualityReport.status, qualityReport.diagnostics),
-          coveragePercent: qualityReport.coverage.percent,
-          blockingDiagnosticCount: qualityReport.diagnostics.filter((item) =>
-            item.blocking).length,
-          outputHashes: [...qualityReport.outputHashes],
-        } satisfies ReferenceDeconstructionAnalysisQualitySummary
-      : undefined;
-    const nextFull: ReferenceFullDeconstructionState = {
-      ...run.full,
-      units: run.full.units.map((candidate) => candidate.id === unit.id
-        ? { ...candidate, status: 'completed', selectedAttemptId: attempt.id }
-        : candidate),
-      attempts: run.full.attempts.map((candidate) => candidate.id === attempt.id
-        ? { ...candidate, status: 'completed', outputHash, completedAt }
-        : candidate),
-      analysisQuality: quality
-        ? { ...run.full.analysisQuality, [unit.track]: quality }
-        : run.full.analysisQuality,
-    };
-    const resultStatus: ReferenceDeconstructionRunStatus = quality?.status === 'failed'
-      ? 'failed'
-      : quality && allTrackQualitiesPublishable(nextFull)
-        && nextFull.units.every((candidate) => candidate.status === 'completed')
-        ? 'reviewReady'
-        : 'fullRunning';
-    const next: ReferenceDeconstructionRun = {
-      ...run,
-      status: resultStatus,
-      full: nextFull,
-      diagnostics,
-      mutationReceipts: updateReceiptStatus(
-        run.mutationReceipts,
-        reservation.idempotencyKey,
-        run.revision,
-        resultStatus,
-      ),
-      activeReservation: undefined,
-      ...(resultStatus === 'failed'
-        ? {
-            failure: {
-              code: 'analysis_quality_failed',
-              message: 'Reference analysis quality gate failed.',
-              failedAt: now,
-            },
-          }
-        : { failure: undefined }),
-      updatedAt: now,
-    };
-    await writeRunState(workspaceRoot, next);
-    await writeRunDiagnostics(workspaceRoot, next);
-    return next;
+    return { unit, attempt, kind: 'completed', output, outputHash, completedAt };
   } catch {
     return undefined;
   }
-}
-
-async function adoptFailedFullAttempt(
-  workspaceRoot: string,
-  run: ReferenceDeconstructionRun,
-  unit: ReferenceDeconstructionStoredUnit,
-  attempt: ReferenceDeconstructionAttemptSummary,
-  reservation: ReferenceFullDeconstructionReservation,
-  failure: ReferenceDeconstructionRunFailure,
-  completedAt: string,
-): Promise<ReferenceDeconstructionRun> {
-  const diagnostic = normalizeStoreDiagnostic({
-    id: `full-unit-failed-${unit.id}-${attempt.attemptNumber}`,
-    code: `full.${failure.code}`,
-    severity: 'error',
-    blocking: true,
-    message: failure.message,
-    evidenceRefs: [],
-    stageId: unit.stageId,
-    unitId: unit.id,
-    attemptId: attempt.id,
-  });
-  const diagnostics = appendLifecycleDiagnostic(run.diagnostics, diagnostic);
-  const next: ReferenceDeconstructionRun = {
-    ...run,
-    status: 'failed',
-    full: {
-      ...run.full!,
-      units: run.full!.units.map((candidate) => candidate.id === unit.id
-        ? { ...candidate, status: 'failed' }
-        : candidate),
-      attempts: run.full!.attempts.map((candidate) => candidate.id === attempt.id
-        ? { ...candidate, status: 'failed', completedAt, failure }
-        : candidate),
-      analysisQuality: run.full!.analysisQuality,
-    },
-    diagnostics,
-    mutationReceipts: updateReceiptStatus(
-      run.mutationReceipts,
-      reservation.idempotencyKey,
-      run.revision,
-      'failed',
-    ),
-    activeReservation: undefined,
-    failure,
-    updatedAt: completedAt,
-  };
-  await writeRunState(workspaceRoot, next);
-  await writeRunDiagnostics(workspaceRoot, next);
-  return next;
 }
 
 export async function listReferenceDeconstructionRuns(
@@ -2901,6 +3052,11 @@ async function persistStaleRun(
     stageId: 'quickPreview',
   };
   const diagnostics = appendLifecycleDiagnostic(run.diagnostics, diagnostic);
+  const reserved = run.activeReservation?.kind === 'fullUnit'
+    ? listReferenceFullReservationUnits(run.activeReservation)
+    : [];
+  const reservedUnitIds = new Set(reserved.map((item) => item.unitId));
+  const reservedAttemptIds = new Set(reserved.map((item) => item.attemptId));
   const next: ReferenceDeconstructionRun = {
     ...run,
     revision,
@@ -2925,13 +3081,11 @@ async function persistStaleRun(
           full: {
             ...run.full,
             units: run.full.units.map((unit) =>
-              run.activeReservation?.kind === 'fullUnit'
-                && unit.id === run.activeReservation.unitId
+              reservedUnitIds.has(unit.id)
                 ? { ...unit, status: 'stale' as const }
                 : unit),
             attempts: run.full.attempts.map((attempt) =>
-              run.activeReservation?.kind === 'fullUnit'
-                && attempt.id === run.activeReservation.attemptId
+              reservedAttemptIds.has(attempt.id)
                 ? { ...attempt, status: 'stale' as const, completedAt: now }
                 : attempt),
             analysisQuality: run.full.analysisQuality,
@@ -2991,42 +3145,17 @@ async function persistInterruptedFullRun(
     throw reservationConflict();
   }
   const reservation = run.activeReservation;
-  const diagnostic = normalizeStoreDiagnostic({
-    id: `full-interrupted-${reservation.unitId}-${run.revision}`,
-    code: 'full.interrupted',
-    severity: 'warning',
-    blocking: false,
-    message: 'The full-deconstruction unit was interrupted and will not resume automatically.',
-    evidenceRefs: [],
-    stageId: requireStoredUnit(run.full, reservation.unitId).stageId,
-    unitId: reservation.unitId,
-    attemptId: reservation.attemptId,
-  });
-  const next: ReferenceDeconstructionRun = {
-    ...run,
-    status: 'interrupted',
-    full: {
-      ...run.full,
-      units: run.full.units.map((unit) => unit.id === reservation.unitId
-        ? { ...unit, status: 'interrupted' }
-        : unit),
-      attempts: run.full.attempts.map((attempt) => attempt.id === reservation.attemptId
-        ? { ...attempt, status: 'interrupted', completedAt: now }
-        : attempt),
-    },
-    diagnostics: appendLifecycleDiagnostic(run.diagnostics, diagnostic),
-    mutationReceipts: updateReceiptStatus(
-      run.mutationReceipts,
-      reservation.idempotencyKey,
-      run.revision,
-      'interrupted',
-    ),
-    activeReservation: undefined,
-    updatedAt: now,
-  };
-  await writeRunState(workspaceRoot, next);
-  await writeRunDiagnostics(workspaceRoot, next);
-  return next;
+  return applyFullUnitOutcomes(
+    workspaceRoot,
+    run,
+    reservation,
+    listReferenceFullReservationUnits(reservation).map((item) => ({
+      unit: requireStoredUnit(run.full!, item.unitId),
+      attempt: requireAttempt(run.full!, item.attemptId),
+      kind: 'interrupted' as const,
+    })),
+    now,
+  );
 }
 
 function updateReceiptStatus(
@@ -5939,13 +6068,16 @@ function assertFullStateMatchesRun(run: ReferenceDeconstructionRun): void {
   const runningUnits = full.units.filter((unit) => unit.status === 'running');
   const runningAttempts = full.attempts.filter((attempt) => attempt.status === 'running');
   if (run.activeReservation?.kind === 'fullUnit') {
+    const reserved = listReferenceFullReservationUnits(run.activeReservation);
     if (
-      runningUnits.length !== 1
-      || runningAttempts.length !== 1
-      || runningUnits[0]?.id !== run.activeReservation.unitId
-      || runningAttempts[0]?.id !== run.activeReservation.attemptId
-      || runningAttempts[0]?.unitId !== runningUnits[0]?.id
-      || runningAttempts[0]?.inputFingerprint !== run.activeReservation.inputFingerprint
+      runningUnits.length !== reserved.length
+      || runningAttempts.length !== reserved.length
+      || reserved.some((item) =>
+        !runningUnits.some((unit) => unit.id === item.unitId)
+        || !runningAttempts.some((attempt) =>
+          attempt.id === item.attemptId
+          && attempt.unitId === item.unitId
+          && attempt.inputFingerprint === item.inputFingerprint))
     ) {
       throw new ReferenceDeconstructionValidationError(
         'Reference full reservation does not match its running unit and attempt.',
@@ -6915,8 +7047,28 @@ function assertStoredReservation(value: unknown): ReferenceDeconstructionReserva
     'unitId',
     'attemptId',
     'inputFingerprint',
+    'batchUnits',
     'startedAt',
   ]);
+  const batchUnits = record.batchUnits === undefined
+    ? undefined
+    : requireArray(
+        record.batchUnits,
+        'reservation batchUnits',
+        1,
+        MAX_REFERENCE_FULL_PARALLEL_UNITS - 1,
+      ).map((value) => {
+        const item = requireRecord(value, 'reservation batch unit');
+        assertOnlyKnownFields(item, ['unitId', 'attemptId', 'inputFingerprint']);
+        return {
+          unitId: assertSafeIdentifier(item.unitId, 'reservation batch unitId'),
+          attemptId: assertSafeIdentifier(item.attemptId, 'reservation batch attemptId'),
+          inputFingerprint: assertSha256(
+            item.inputFingerprint,
+            'reservation batch inputFingerprint',
+          ),
+        };
+      });
   return {
     kind,
     id: assertSafeIdentifier(record.id, 'reservation id'),
@@ -6924,6 +7076,7 @@ function assertStoredReservation(value: unknown): ReferenceDeconstructionReserva
     unitId: assertSafeIdentifier(record.unitId, 'reservation unitId'),
     attemptId: assertSafeIdentifier(record.attemptId, 'reservation attemptId'),
     inputFingerprint: assertSha256(record.inputFingerprint, 'reservation inputFingerprint'),
+    ...(batchUnits ? { batchUnits } : {}),
     startedAt: assertIsoDate(record.startedAt, 'reservation startedAt'),
   };
 }

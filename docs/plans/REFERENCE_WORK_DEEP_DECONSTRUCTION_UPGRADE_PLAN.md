@@ -154,7 +154,7 @@ contextEligible =
 - source checksum 与章节结构 fingerprint 校验。
 - 前 1–3 章或用户明确选段的 Quick Preview。
 - Preview 后的显式 full-run confirmation。
-- deterministic chapter / chunk 切分和 bounded rolling context。
+- deterministic chapter / chunk 切分；chunk 之间互不依赖，块大小按模型 context window 在 12k–96k 字之间选择（见 task 1370）。
 - 分章摘要与可选 deep dive。
 - plotline、pacing、hooks、characters、relationships、worldbuilding、timeline、tropes、style profile 和 scene techniques 聚合。
 - evidence/source pointer、confidence、uncertainty 与 coverage。
@@ -579,9 +579,9 @@ Preview 完成后进入 `awaitingFullApproval`。用户的“继续全量拆解�
 
 - 每章独立工作单元；超长章再按 chunk 拆分。
 - 一个 reference 默认只有一个 active run，不并发执行多个模型写作人格。
-- 可以使用很小、明确有上限的 chunk 并发，但第一版建议串行，优先保证恢复和顺序可解释。
-- 当前 chunk context 包含 protected analysis contract、no-copy rule、当前 source window、宿主 pointer map 和 bounded rolling summary。
-- 前文 rolling summary 只是 compressible context，不能替代当前 chunk evidence。
+- 一次 reservation 最多并行 4 个就绪 work unit（`MAX_REFERENCE_FULL_PARALLEL_UNITS`）；quality gate 单独执行。一轮里失败的单元不影响已完成的兄弟单元，retry 只重跑未完成部分。
+- 当前 chunk context 包含 protected analysis contract、no-copy rule、当前 source window 和宿主 pointer map。chunk 之间不再传 rolling summary，跨章关联交给 aggregate tree。
+- 早期串行 run 里已存的 rolling summary 仍按原 fingerprint 校验，只作 compressible context，不能替代当前 chunk evidence。
 - 每章完成即写 provisional attempt artifact；不发布目标文件。
 - retry 生成新 attempt，不覆盖旧 finding；selected attempt 由宿主显式记录。
 
@@ -946,7 +946,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 ### 15.2 Agent
 
 - Preview 只收到 bounded selected chunks。
-- Full chapter call 只收到当前 chunk、protected rules 和 bounded rolling context。
+- Full chapter call 只收到当前 chunk 和 protected rules；不同 chunk 可以并行。
 - Reference 中的 prompt injection 不改变 schema 或触发 tools。
 - 无证据 finding 被拒绝或明确降级为 general inference。
 - Aggregate 只使用 verified chapter findings 和宿主提供的 evidence windows。

@@ -19,12 +19,38 @@ import type {
   WritingProfileOutput,
 } from './writing-profile.js';
 
-export const MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS = 12_000 as const;
+/** Chunk size used when the model's context window is unknown. */
+export const DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS = 12_000 as const;
+/** Hard ceiling for one chapter chunk, reached only by long-context models. */
+export const MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS = 96_000 as const;
+/** Bound for legacy rolling summaries stored by runs planned before chunks became independent. */
 export const MAX_REFERENCE_ROLLING_CONTEXT_CHARS = 6_000 as const;
 export const MAX_REFERENCE_DECONSTRUCTION_WORK_UNITS = 2_048 as const;
 export const MAX_REFERENCE_AGGREGATE_FAN_IN = 8 as const;
 export const MAX_REFERENCE_DECONSTRUCTION_FINDINGS_PER_UNIT = 24 as const;
 export const MAX_REFERENCE_DECONSTRUCTION_UNCERTAINTIES = 32 as const;
+/** A chunk takes at most this share of the context window, leaving room for rules and output. */
+const REFERENCE_CHAPTER_CHUNK_CONTEXT_SHARE = 0.25;
+
+/**
+ * Size chapter chunks from the model's context window. Token estimates treat
+ * one CJK character as one token, so the share is applied to characters
+ * directly and stays conservative for other scripts.
+ */
+export function resolveReferenceChapterChunkChars(contextWindowTokens?: number): number {
+  if (
+    contextWindowTokens === undefined
+    || !Number.isSafeInteger(contextWindowTokens)
+    || contextWindowTokens <= 0
+  ) {
+    return DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS;
+  }
+  const fitted = Math.floor(contextWindowTokens * REFERENCE_CHAPTER_CHUNK_CONTEXT_SHARE);
+  return Math.min(
+    MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
+    Math.max(DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS, fitted),
+  );
+}
 
 export type ReferenceDeconstructionWorkUnitKind =
   | 'chapterChunk'
@@ -176,8 +202,9 @@ export interface ReferenceChapterAnalysisModelOutput {
   unitSummary: ReferenceEvidenceLinkedSummaryModelOutput;
   chapterSummary?: ReferenceEvidenceLinkedSummaryModelOutput | null;
   findings: ReferenceChapterAnalysisModelFinding[];
-  rollingSummary: string;
-  rollingEvidenceRefs: string[];
+  /** Only present when re-validating outputs stored by earlier chained runs. */
+  rollingSummary?: string;
+  rollingEvidenceRefs?: string[];
   uncertainties: string[];
 }
 
@@ -196,7 +223,8 @@ export interface ReferenceChapterAnalysisResult {
   unitSummary: ReferenceDeconstructionFinding;
   chapterSummary?: ReferenceDeconstructionFinding;
   findings: ReferenceDeconstructionFinding[];
-  rollingContext: ReferenceRollingContext;
+  /** Legacy continuity summary kept only on outputs stored by earlier chained runs. */
+  rollingContext?: ReferenceRollingContext;
   coveredUnitIds: string[];
   coveredChapterIds: string[];
   uncertainties: string[];
@@ -348,7 +376,7 @@ export function createReferenceDeconstructionWorkPlan(
     throw new Error('Reference full analysis source checksum does not match sourceText.');
   }
   const maxChunkChars = boundedInteger(
-    input.maxChunkChars ?? MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
+    input.maxChunkChars ?? DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
     1_000,
     MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
     'maxChunkChars',
@@ -441,7 +469,6 @@ export function createReferenceDeconstructionWorkPlan(
   let ordinal = 0;
   const aggregateRootIds = new Map<ReferenceDeconstructionTrackId, string>();
   for (const track of selectedTracks) {
-    let previousChapterUnitId: string | undefined;
     const chapterUnitIds: string[] = [];
     for (const chunk of sourceChunks) {
       ordinal += 1;
@@ -459,7 +486,9 @@ export function createReferenceDeconstructionWorkPlan(
           ? 'chapterAnalysis'
           : 'materialChapterAnalysis',
         kind: 'chapterChunk',
-        predecessorUnitIds: previousChapterUnitId ? [previousChapterUnitId] : [],
+        // Chapter chunks are independent so they can run in parallel; the
+        // aggregate tree is where findings from different chunks meet.
+        predecessorUnitIds: [],
         chapterId: chunk.chapterId,
         chunkId: chunk.chunkId,
         pointerId: chunk.pointerId,
@@ -472,7 +501,6 @@ export function createReferenceDeconstructionWorkPlan(
               lineCharEnd: chunk.lineCharEnd,
             }),
       });
-      previousChapterUnitId = id;
       chapterUnitIds.push(id);
     }
 
@@ -774,16 +802,10 @@ export function normalizeReferenceChapterAnalysisModelOutput(
     runId,
     unit.id,
   ));
-  const rollingSummary = requireText(
-    record.rollingSummary,
-    'rollingSummary',
-    MAX_REFERENCE_ROLLING_CONTEXT_CHARS,
-  );
-  const rollingEvidenceRefs = requireEvidenceRefs(
-    record.rollingEvidenceRefs,
-    options.allowedPointers,
-    { min: 1, max: 32, requiredPointerId: unit.pointerId },
-  );
+  const rollingContext = record.rollingSummary === undefined
+    && record.rollingEvidenceRefs === undefined
+    ? undefined
+    : normalizeLegacyRollingContext(record, options.allowedPointers, unit.pointerId);
   const uncertainties = requireStringArray(
     record.uncertainties,
     'chapter uncertainties',
@@ -799,15 +821,33 @@ export function normalizeReferenceChapterAnalysisModelOutput(
     unitSummary,
     ...(chapterSummary ? { chapterSummary } : {}),
     findings,
-    rollingContext: {
-      summary: rollingSummary,
-      evidenceRefs: rollingEvidenceRefs,
-      checksumSha256: sha256(stableJson({ rollingSummary, rollingEvidenceRefs })),
-      charLength: rollingSummary.length,
-    },
+    ...(rollingContext ? { rollingContext } : {}),
     coveredUnitIds: [unit.id],
     coveredChapterIds: [unit.chapterId],
     uncertainties,
+  };
+}
+
+function normalizeLegacyRollingContext(
+  record: Record<string, unknown>,
+  allowedPointers: NormalizeReferenceChapterAnalysisOptions['allowedPointers'],
+  pointerId: string,
+): ReferenceRollingContext {
+  const rollingSummary = requireText(
+    record.rollingSummary,
+    'rollingSummary',
+    MAX_REFERENCE_ROLLING_CONTEXT_CHARS,
+  );
+  const rollingEvidenceRefs = requireEvidenceRefs(
+    record.rollingEvidenceRefs,
+    allowedPointers,
+    { min: 1, max: 32, requiredPointerId: pointerId },
+  );
+  return {
+    summary: rollingSummary,
+    evidenceRefs: rollingEvidenceRefs,
+    checksumSha256: sha256(stableJson({ rollingSummary, rollingEvidenceRefs })),
+    charLength: rollingSummary.length,
   };
 }
 
@@ -1000,18 +1040,21 @@ export function parseReferenceChapterAnalysisResult(
     'coveredChapterIds',
     'uncertainties',
   ]);
-  const rollingContext = requireRecord(
-    record.rollingContext,
-    'Stored reference chapter rolling context',
-  );
+  const rollingContext = record.rollingContext === undefined
+    ? undefined
+    : requireRecord(record.rollingContext, 'Stored reference chapter rolling context');
   const normalized = normalizeReferenceChapterAnalysisModelOutput({
     unitSummary: projectStoredSummaryToModel(record.unitSummary),
     ...(record.chapterSummary === undefined
       ? {}
       : { chapterSummary: projectStoredSummaryToModel(record.chapterSummary) }),
     findings: projectStoredFindingArrayToModel(record.findings, false),
-    rollingSummary: rollingContext.summary,
-    rollingEvidenceRefs: rollingContext.evidenceRefs,
+    ...(rollingContext
+      ? {
+          rollingSummary: rollingContext.summary,
+          rollingEvidenceRefs: rollingContext.evidenceRefs,
+        }
+      : {}),
     uncertainties: record.uncertainties,
   }, options);
   assertCanonicalStoredOutput(value, normalized, 'chapter analysis');

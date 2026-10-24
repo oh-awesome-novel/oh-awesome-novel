@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   createReferenceDeconstructionWorkPlan,
   createReferenceStructureFingerprint,
+  DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
+  MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS,
+  resolveReferenceChapterChunkChars,
   resolveReferenceChapterWorkUnitWindow,
 } from '@oh-awesome-novel/core';
 import type { WritingProfileOutput } from '@oh-awesome-novel/core';
@@ -192,6 +195,49 @@ describe('reference full deconstruction work plan', () => {
     ]);
     expect(windows.map((window) => window.content).join('')).toBe(longLine);
     expect(new Set(windows.map((window) => window.content))).toHaveLength(3);
+  });
+
+  it('plans chapter chunks without predecessors so they can run in parallel', () => {
+    const plan = createPlan(['techniques', 'characters']);
+    const chapterUnits = plan.units.filter((unit) => unit.kind === 'chapterChunk');
+    expect(chapterUnits.length).toBeGreaterThan(2);
+    expect(chapterUnits.every((unit) => unit.predecessorUnitIds.length === 0)).toBe(true);
+    const firstAggregate = plan.units.find((unit) =>
+      unit.kind === 'aggregate' && unit.track === 'technique');
+    expect(firstAggregate?.predecessorUnitIds).toEqual(chapterUnits
+      .filter((unit) => unit.track === 'technique')
+      .map((unit) => unit.id));
+  });
+
+  it('sizes chapter chunks from the model context window within hard bounds', () => {
+    expect(resolveReferenceChapterChunkChars()).toBe(DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS);
+    expect(resolveReferenceChapterChunkChars(0)).toBe(DEFAULT_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS);
+    expect(resolveReferenceChapterChunkChars(32_000)).toBe(12_000);
+    expect(resolveReferenceChapterChunkChars(200_000)).toBe(50_000);
+    expect(resolveReferenceChapterChunkChars(1_000_000)).toBe(MAX_REFERENCE_CHAPTER_ANALYSIS_CHUNK_CHARS);
+
+    const longLine = 'x'.repeat(60_000);
+    const sourceText = `Chapter 1\n${longLine}`;
+    const chapters = [{ id: '0001', title: 'Chapter 1', lineStart: 1, lineEnd: 2 }];
+    const plan = createReferenceDeconstructionWorkPlan({
+      referenceId: 'reference-long-context',
+      sourceChecksumSha256: sha256(sourceText),
+      structureFingerprint: createReferenceStructureFingerprint({
+        chapterCount: 1,
+        chapters,
+        confidence: 'high',
+      }),
+      sourceText,
+      chapters,
+      maxChunkChars: resolveReferenceChapterChunkChars(200_000),
+    });
+    const sliced = plan.units.filter((unit) =>
+      unit.kind === 'chapterChunk' && unit.lineCharStart !== undefined);
+    expect(sliced.map((unit) => [unit.lineCharStart, unit.lineCharEnd])).toEqual([
+      [0, 50_000],
+      [50_000, 60_000],
+    ]);
+    expect(resolveReferenceChapterWorkUnitWindow(sourceText, sliced[0]!).charLength).toBe(50_000);
   });
 });
 
