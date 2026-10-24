@@ -18,6 +18,7 @@ function send() { if (message.value.trim()) { emit('answer', {message: message.v
         @click="question.kind === 'multi' ? toggle(question.id, option.label) : emit('answer', {message: `${question.title}：${option.label}。${option.sample ?? ''}`, selection: {questionId: question.id, optionIndices: [optionIndex]}})">
         <strong>{{ option.label }}</strong><span v-if="option.detail">{{ option.detail }}</span><blockquote v-if="option.sample">{{ option.sample }}</blockquote>
       </button>
+      <button type="button" class="delegate" @click="emit('answer', {message: `${question.title}：你来定`})">你来定</button>
       <button v-if="question.kind === 'multi'" type="button" :disabled="!(choices[question.id]?.length)" @click="emit('answer', {message: `${question.title}：${choices[question.id]?.join('、')}`, selection: {questionId: question.id, optionIndices: question.options.flatMap((option, index) => choices[question.id]?.includes(option.label) ? [index] : [])}})">确认多选</button>
     </fieldset>
     <form @submit.prevent="send"><label for="forge-answer">补充你的想法</label><textarea id="forge-answer" v-model="message" :disabled="busy" rows="3" /><button type="submit" :disabled="busy || !message.trim()">发送</button></form>

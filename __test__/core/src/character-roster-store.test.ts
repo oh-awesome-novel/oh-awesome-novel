@@ -17,7 +17,7 @@ describe('filesystem character roster', () => {
     await writePlaySessionFiles(root, next, { expectedAbsent: true });
     await writeFile(join(root, 'characters/nian/roster-profile.yaml'), serializeRosterProfile({ ...profile, aliases: [] }));
     const reloaded = await readPlaySessionFiles(root, session.id);
-    expect(reloaded.transcript[0]?.stageSnapshot?.beats[0]?.speaker).toBe('nian');
+    expect(reloaded.transcript[0]?.stageSnapshot?.beats[0]?.speaker).toBe('念念');
     expect(reloaded.transcript[0]?.stageSnapshot?.sceneId).toBe('客栈');
   });
   it('freezes local scene backgrounds on narrative nodes across reload and sibling scenes', async () => {
@@ -28,15 +28,18 @@ describe('filesystem character roster', () => {
     const session = createPlaySessionDraft({ id: 'scenery', title: 'scenery', sceneStart: 'inn', characters: [] });
     await attachPlayCharacterRoster(root, session);
     const first = addPlayTranscriptTurn(session, { speaker: 'narrator', content: '雨停。', createdAt: '2026-01-01T00:00:00.000Z' });
-    const frozen = first.transcript[0]?.stageSnapshot?.backgroundDataUrl;
+    // Turns reference the scene; the image itself is frozen once in the session's launch snapshot.
+    expect(first.transcript[0]?.stageSnapshot?.backgroundId).toBe('inn');
+    const frozen = (first.metadataExtensions.sceneBackgrounds as Record<string, string>).inn;
     expect(frozen).toBe(`data:image/png;base64,${png.toString('base64')}`);
     await writePlaySessionFiles(root, first, { expectedAbsent: true });
     await writeFile(join(root, 'world/places/inn.png'), 'changed');
     const reloaded = await readPlaySessionFiles(root, session.id);
-    expect(reloaded.transcript[0]?.stageSnapshot?.backgroundDataUrl).toBe(frozen);
+    expect(reloaded.transcript[0]?.stageSnapshot?.backgroundId).toBe('inn');
+    expect((reloaded.metadataExtensions.sceneBackgrounds as Record<string, string>).inn).toBe(frozen);
     const sibling = addPlayTranscriptTurn({ ...session, sceneStart: 'mountain' }, { speaker: 'narrator', content: '雪落。', createdAt: '2026-01-01T00:00:01.000Z' });
     expect(sibling.transcript[0]?.stageSnapshot?.sceneId).toBe('mountain');
-    expect(sibling.transcript[0]?.stageSnapshot?.backgroundDataUrl).toBeUndefined();
+    expect(sibling.transcript[0]?.stageSnapshot?.backgroundId).toBeUndefined();
     expect(first.transcript[0]?.stageSnapshot?.sceneId).toBe('inn');
   });
   it('rejects symlink scene images rather than reading their targets', async () => {

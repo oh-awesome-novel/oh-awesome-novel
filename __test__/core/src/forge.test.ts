@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyForgeBriefEdits, createEmptyForgeBrief, parseForgeDiscussResponse, parseForgeJson, parseForgePlan, parseForgeWriterResponse, parseForgeDraft, formatForgePlanPrompt, type ForgePlan } from '@oh-awesome-novel/core';
+import { forgeChunkKeys, parseForgeEntityWriterResponse, formatForgeWriterPrompt, applyForgeBriefEdits, createEmptyForgeBrief, parseForgeDiscussResponse, parseForgeJson, parseForgePlan, parseForgeWriterResponse, parseForgeDraft, formatForgePlanPrompt, type ForgePlan } from '@oh-awesome-novel/core';
 
 function response(brief: unknown): string {
   const questions = [1, 2].map(i => ({ id: `q${i}`, title: '她怎么回应？', why: '确定你们的关系', kind: 'single', options: [{ label: '冷静', sample: '最后一班船，走吗？' }, { label: '关心', sample: '你先上船，我殿后。' }] }));
@@ -18,7 +18,8 @@ describe('guided Forge contracts', () => {
       expect(parsed.brief.items.find(i => i.key === key)).toMatchObject({ by: 'assistant', locked: false });
       brief = parsed.brief;
     }
-    expect(brief.readiness).toBe(40);
+    // The four core slots (stage, lead, bond, tone) are what makes a sketch plan-ready.
+    expect(brief.readiness).toBe(75);
   });
   it('attributes only complete host-evidenced statements and preserves prior author facts', () => {
     const previous = applyForgeBriefEdits(createEmptyForgeBrief(), [{ key: 'stage', value: '不是夜城，而是渡口', locked: false }]);
@@ -76,9 +77,27 @@ describe('guided Forge contracts', () => {
     expect(() => parseForgePlan(traversal)).toThrow();
     expect(formatForgePlanPrompt(createEmptyForgeBrief())).toContain('T04');
   });
+  it('locking keeps the author of an assistant proposal; only changed text becomes the author\'s', () => {
+    const proposed = { title: '渡口', readiness: 0, openPoints: [], items: [{ key: 'bond' as const, label: '关系', value: '欠债搭档', by: 'assistant' as const, locked: false }] };
+    expect(applyForgeBriefEdits(proposed, [{ key: 'bond', value: '欠债搭档', locked: true }]).items[0]).toMatchObject({ by: 'assistant', locked: true });
+    expect(applyForgeBriefEdits(proposed, [{ key: 'bond', value: '同门', locked: true }]).items[0]).toMatchObject({ by: 'user', locked: true });
+  });
+  it('writes character and place blocks per object id', () => {
+    const p = plan();
+    expect(forgeChunkKeys(p)).toEqual(['world', ...p.places.map(place => `places:${place.id}`), 'characters:lin', 'facets:lin', 'clarifications:lin', 'opening']);
+    expect(formatForgeWriterPrompt(p, 'facets')).toContain('<content id="lin">');
+    expect(parseForgeEntityWriterResponse('<content id="lin">林的三面</content>', ['lin'])).toEqual({ lin: '林的三面' });
+    expect(() => parseForgeEntityWriterResponse('<content>林</content>', ['lin'])).toThrow();
+    expect(() => parseForgeEntityWriterResponse('<content id="lin">a</content><content id="lin">b</content>', ['lin'])).toThrow();
+  });
   it('requires one bounded writer block and coherent persisted stages', () => {
     expect(parseForgeWriterResponse('<content># 渡口\n- 夜雨</content>')).toBe('# 渡口\n- 夜雨');
     expect(() => parseForgeWriterResponse('just text')).toThrow();
     expect(() => parseForgeDraft({ schemaVersion: 1, id: 'draft', revision: 0, idea: '渡口', stage: 'proposed', brief: createEmptyForgeBrief(), questions: [], reply: '' })).toThrow();
+    // A draft written with one combined block per kind returns to the plan stage to be rewritten per object.
+    const legacy = Object.fromEntries(['world', 'places', 'characters', 'facets', 'clarifications', 'opening'].map(kind => [kind, kind]));
+    const restored = parseForgeDraft({ schemaVersion: 1, id: 'draft', revision: 3, idea: '渡口', stage: 'written', brief: createEmptyForgeBrief(), questions: [], reply: '', plan: plan(), chunks: legacy });
+    expect(restored.stage).toBe('plan');
+    expect(restored.chunks).toBeUndefined();
   });
 });

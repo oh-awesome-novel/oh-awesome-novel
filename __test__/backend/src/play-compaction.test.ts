@@ -48,7 +48,7 @@ describe('frozen permanent context safety', () => {
   });
   it('truncates oversized permanent files to the budget instead of rejecting launch', async () => {
     const { freezePlayPermanentContext } = await import('@oh-awesome-novel/backend');
-    const { createPlaySessionDraft } = await import('@oh-awesome-novel/core');
+    const { createPlaySessionDraft, buildPlayFrozenSystemPrompt } = await import('@oh-awesome-novel/core');
     const root = await mkdtemp(join(tmpdir(), 'oan-prefix-budget-'));
     try {
       await mkdir(join(root, 'world')); await mkdir(join(root, 'characters/hero'), { recursive: true });
@@ -60,7 +60,8 @@ describe('frozen permanent context safety', () => {
       expect(prompt).toContain('规则界');
       expect(prompt).toContain('world/rules.md truncated');
       expect(prompt).not.toContain('\uFFFD');
-      expect(Buffer.byteLength(prompt)).toBeLessThan(260 * 1024);
+      // The budget bounds permanent files; the fixed referee rules are a constant overhead.
+      expect(Buffer.byteLength(prompt) - Buffer.byteLength(buildPlayFrozenSystemPrompt(s))).toBeLessThan(260 * 1024);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

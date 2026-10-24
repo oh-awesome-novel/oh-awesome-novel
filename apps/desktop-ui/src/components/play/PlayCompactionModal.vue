@@ -43,7 +43,7 @@ function close() { requestVersion++; busy.value = false; open.value = false; }
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="preview">
       <h3>人物</h3><p v-for="character in preview.data.characters" :key="character.name">{{ character.name }}：{{ character.currentSituation }} · {{ character.relationshipChange }}</p>
-      <h3>经过</h3><ol><li v-for="(fact, index) in preview.data.chronicle" :key="index">{{ fact }}</li></ol>
+      <h3>经过</h3><ol><li v-for="(fact, index) in preview.data.chronicle" :key="index">{{ typeof fact === 'string' ? fact : fact.fact }}<q v-if="typeof fact !== 'string' && fact.quote !== fact.fact" class="evidence">{{ fact.quote }}</q></li></ol>
       <h3>未完的线</h3><ul><li v-for="(fact, index) in preview.data.unresolvedThreads" :key="index">{{ fact }}</li></ul>
       <h3>当前场景</h3><p>{{ preview.data.currentScene.timeAndPlace }} · {{ preview.data.currentScene.immediateCrisis }}</p>
       <h3>文风</h3><p>{{ preview.data.voiceAndStyle.pov }} · {{ preview.data.voiceAndStyle.rhythm }} · {{ preview.data.voiceAndStyle.tonePoints.join('、') }}</p>
@@ -55,4 +55,5 @@ function close() { requestVersion++; busy.value = false; open.value = false; }
 <style scoped>
 .compaction-dialog { position: fixed; inset: 8vh 10vw; z-index: 50; max-height: 80vh; overflow: auto; padding: 1.5rem; border: 1px solid var(--border-color, #888); border-radius: 12px; background: var(--surface, #fff); color: var(--text-color, #222); box-shadow: 0 12px 60px #0005; }
 footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .75rem; margin-top: 1rem; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.evidence { display: block; margin-top: .25rem; font-size: .85em; opacity: .7; }
 </style>

@@ -12,7 +12,7 @@ function move(index: number, direction: number) {
   [values[index], values[target]] = [values[target], values[index]];
   emit('change', values);
 }
-const labels: Record<string, string> = { title:'标题', characters:'角色', name:'姓名', id:'标识', palette:'性格调色盘', base:'底色', mainTones:'主色调', accents:'点缀', facets:'三面性', normal:'常态面', pressure:'压力面', private:'私密面', trigger:'触发条件', state:'身心状态', dialogue:'纯台词', habit:'习惯动作', clarifications:'特质边界', stage:'舞台', rules:'规则', places:'地点', opening:'开场白', desire:'当前欲望', goal:'即时目标', cost:'代价', choice:'主动选择', resources:'资源账本', world:'世界', techniques:'故事动力', description:'描述', initial:'初态', consumption:'消耗', reward:'收益', behaviors:'场景行为' };
+const labels: Record<string, string> = { title:'标题', characters:'角色', name:'名称', id:'标识', aliases:'别名', palette:'性格调色盘', base:'底色', mainTones:'主色调', accents:'点缀', behaviors:'场景行为', facets:'三面性', kind:'类型', trigger:'触发条件', state:'身心状态', dialogue:'纯台词', habitualAction:'习惯动作', clarifications:'特质边界', trait:'特质', meaning:'真正含义', when:'何时出现', not:'绝不是', desire:'当前欲望', goal:'即时目标', obstacle:'阻力', cost:'代价', choice:'主动选择', dilemma:'两难', decision:'决定', sacrifice:'牺牲', consequence:'后果', resources:'资源账本', initial:'初态', settlement:'兑现条件', world:'世界', premise:'前提', rules:'规则', factions:'势力', history:'往事', places:'地点', appearance:'样子', atmosphere:'氛围', events:'常发事件', opening:'开场白' };
 </script>
 <template>
   <div class="plan-field">

@@ -8,6 +8,7 @@ export interface ForgeDraft {
   brief: ForgeBrief; questions: ForgeQuestion[]; reply: string;
   plan?: Record<string, unknown>; chunks?: Record<string, string>;
   pendingActionId?: string; sourcePaths?: string[];
+  rounds?: Array<{ answer: string; questions: string[] }>;
 }
 export interface ForgeMutation { expectedWorkspaceRoot: string; expectedRevision: number }
 export interface ForgeClientMethods {

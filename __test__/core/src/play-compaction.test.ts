@@ -16,7 +16,7 @@ describe('Play frozen prefix and five-dimension archive', () => {
   });
   it('parses wrapper/fence tolerance and rejects missing dimensions and fabricated costs/quotes', () => {
     const s = session(); const d = data(s);
-    expect(parsePlayCompaction(`<剧情存档>\n\`\`\`json\n${JSON.stringify(d)}\n\`\`\``)).toEqual(d);
+    expect(parsePlayCompaction(`<剧情存档>\n\`\`\`json\n${JSON.stringify(d)}\n\`\`\``)).toEqual({ ...d, chronicle: [{ fact: 'At gate 0.', quote: 'At gate 0.' }] });
     expect(() => parsePlayCompaction('{}')).toThrow();
     expect(auditPlayCompaction(s, { ...d, version: 1, resourceState: {} })).toContain('Resource/state ledger changed or omitted facts.');
     expect(() => createPlayCompactionPreview(s, JSON.stringify({ ...d, chronicle: ['He healed.'] }))).toThrow('Unverified');
@@ -78,5 +78,16 @@ describe('Play frozen prefix and five-dimension archive', () => {
     next.playLocalState.injury = 'changed'; expect(s.playLocalState.injury).toBe('lost arm');
     const root = await mkdtemp(join(tmpdir(), 'oan-archive-'));
     try { const saved = createCompactedPlaySession(s, preview, 'continued'); await writePlaySessionFiles(root, saved, { expectedAbsent: true }); const restored = await readPlaySessionFiles(root, saved.id); expect(restored.metadataExtensions.playContinuation).toBe(saved.metadataExtensions.playContinuation); expect(restored.playLocalState).toEqual(s.playLocalState); } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('accepts distilled facts backed by verbatim quotes and rejects unbacked summaries', () => {
+    const s = session(); const d = data(s);
+    expect(auditPlayCompaction(s, { ...d, chronicle: [{ fact: '主角在城门前守了五轮', quote: 'At gate 3.' }] })).toEqual([]);
+    expect(auditPlayCompaction(s, { ...d, chronicle: [{ fact: '主角离开了城门', quote: 'He left the gate.' }] })).toContain('Unverified historical quote: He left the gate.');
+    // No host record for this character: a distilled value needs a verbatim quote.
+    const hero = { name: '未记录', identity: '守门人', relationshipChange: '未记录', currentSituation: '仍在城门前' };
+    expect(auditPlayCompaction(s, { ...d, characters: [hero] })).toContain('Unverified current fact (characters.未记录.identity): 守门人');
+    expect(auditPlayCompaction(s, { ...d, characters: [{ ...hero, quote: 'At gate 4.' }] })).toEqual([]);
+    expect(auditPlayCompaction(s, { ...d, currentScene: { ...d.currentScene, atmosphere: '安静', quote: 'At gate 4.' } })).toEqual([]);
+    expect(buildPlayCompactionPrompt(s)).not.toContain('At gate 2.');
   });
 });
