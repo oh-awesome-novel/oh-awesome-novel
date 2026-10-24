@@ -1,4 +1,5 @@
 import { playContextHistory } from './play-context-history.js';
+export { playContextHistory, stablePlayHistoryWindow } from './play-context-history.js';
 import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 export { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 import { askInPlayContext } from './play-context-question.js';
@@ -14,7 +15,7 @@ import { assertForgeActionFresh, assertForgePreviewFresh } from './forge';
 import { attachPlayCharacterRoster } from '@oh-awesome-novel/core';
 import { createNovelLintHandlers } from './novel-lint';
 import { generateNovelLintReview } from '@oh-awesome-novel/agent';
-import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, buildPlayCompactionPrompt, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
+import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereeTurnContext, buildPlayCompactionPrompt, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
 import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import { assertManuscriptImportPreview, assertTavernImportPreviewFresh } from '@oh-awesome-novel/tools';
@@ -75,7 +76,6 @@ import {
   createPlaySessionFromLaunchPackage,
   createPlaySessionDraft,
   createPlayTurnArtifactId,
-  formatPlayWorldRefereePrompt,
   fingerprintPlayOutcomeReport,
   formatPlayWritingReferenceContext,
   formatReferenceContextSelectionMarkdown,
@@ -4445,19 +4445,11 @@ async function createPlayWorldRefereeTurnStreamResponse(
             sourceDrift: activatedSourceContext.driftStatus.overall,
           });
 
-          const request = [
-            formatPlayWorldRefereePrompt(turnSession, {
-              actionKind,
-              userText,
-              ...(timeAdvance ? { timeAdvance } : {}),
-            }),
-            ...(activatedSourceContext.content
-              ? ['', activatedSourceContext.content]
-              : []),
-            '',
-            `Action kind: ${actionKind}`,
-            `User turn: ${userText}`,
-          ].join('\n');
+          const request = buildPlayRefereeTurnTail(turnSession, {
+            actionKind,
+            userText,
+            ...(timeAdvance ? { timeAdvance } : {}),
+          }, activatedSourceContext);
 
           await logPlayMessages([
             {
@@ -4480,7 +4472,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
               state,
               workspaceRoot,
               session: turnSession,
-              request: formatPlayTurnTail(turnSession, request, userText),
+              request,
               userText,
               actionKind,
               ...(timeAdvance ? { timeAdvance } : {}),
@@ -4992,17 +4984,11 @@ async function handlePlayWorldRefereeTurn(
     }
 
     const activatedSourceContext = await loadPlayActivatedSourceContext(workspaceRoot, session, userText);
-    const request = [
-      formatPlayWorldRefereePrompt(session, {
-        actionKind,
-        userText,
-        ...(timeAdvance ? { timeAdvance } : {}),
-      }),
-      ...(activatedSourceContext.content ? ['', activatedSourceContext.content] : []),
-      '',
-      `Action kind: ${actionKind}`,
-      `User turn: ${userText}`,
-    ].join('\n');
+    const request = buildPlayRefereeTurnTail(session, {
+      actionKind,
+      userText,
+      ...(timeAdvance ? { timeAdvance } : {}),
+    }, activatedSourceContext);
     let refereeText: string;
 
     if (options.runPlayTurn) {
@@ -5030,7 +5016,7 @@ async function handlePlayWorldRefereeTurn(
         resolveModel: options.resolveModel ?? createAiSdkProviderResolver(),
         workspaceRoot,
         workspace: { workspaceRoot },
-        request: formatPlayTurnTail(session, request, userText),
+        request,
         frozenSystemPrompt: getPlayFrozenSystemPrompt(session),
         priorMessages: playContinuationMessages(session),
         capability: 'novel.play_scene',
@@ -5153,6 +5139,7 @@ async function loadPlayActivatedSourceContext(
   userText = '',
 ): Promise<{
   content: string;
+  blocks: string[];
   sources: PlayContextSourceTrace[];
   driftStatus: PlaySourceDriftStatus;
 }> {
@@ -5408,7 +5395,12 @@ async function loadPlayActivatedSourceContext(
     );
   }
 
-  const content = blocks.length
+  const content = formatPlayActivatedSourceBlocks(blocks, omittedValidatedSourceCount);
+  return { content, blocks, sources: sourceTraces, driftStatus };
+}
+
+function formatPlayActivatedSourceBlocks(blocks: readonly string[], omittedValidatedSourceCount = 0): string {
+  return blocks.length
     ? [
         '# Activated Source Contents',
         '',
@@ -5420,7 +5412,25 @@ async function loadPlayActivatedSourceContext(
         ...blocks,
       ].join('\n\n')
     : '';
-  return { content, sources: sourceTraces, driftStatus };
+}
+
+/**
+ * The newest user message of a frozen-prefix referee turn. Source blocks already
+ * frozen into the prefix and the committed history (sent as prior messages) are
+ * never repeated, so only this tail changes between turns.
+ */
+function buildPlayRefereeTurnTail(
+  session: PlaySession,
+  turn: { actionKind: PlayActionKind; userText: string; timeAdvance?: PlayRelativeTimeAdvance },
+  activatedSourceContext: { blocks: readonly string[] },
+): string {
+  const frozen = getPlayFrozenSystemPrompt(session);
+  const context = formatPlayWorldRefereeTurnContext(session, turn);
+  return formatPlayTurnTail(session, {
+    world: formatPlayActivatedSourceBlocks(activatedSourceContext.blocks.filter(block => !frozen.includes(block))),
+    state: context.state,
+    requirements: context.requirements,
+  }, turn.userText);
 }
 
 async function handleCreatePlayAdoptionPreview(

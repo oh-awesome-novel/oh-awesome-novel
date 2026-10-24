@@ -380,6 +380,7 @@ export {
   evaluatePlaySessionEligibleEvents,
   evaluatePlaySessionDueEvents,
   formatPlayWorldRefereePrompt,
+  formatPlayWorldRefereeTurnContext,
   listPlaySessionCheckpoints,
   listPlaySessionSummaries,
   listPlaySessions,
@@ -1190,6 +1191,7 @@ export { normalizePlayIsoWorldTime, comparePlayIsoWorldTime, normalizePlayStateD
 export { TAVERN_PLAY_IMPORT_METADATA_KEY, prepareTavernCardPlaySession, resolveTavernPlaySourceContent, isTavernInteractionSourcePath, formatTavernLorebookContext } from './tavern-play.js';
 
 export * from './play-turn-prompt.js';
+export * from './play-referee-protocol.js';
 export * from './play-compaction.js';
 
 export * from './novel-lint.js';

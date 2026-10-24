@@ -25,6 +25,7 @@ import {
 } from '@oh-awesome-novel/backend';
 import {
   createReferenceEvidencePointerMap,
+  getPlayFrozenSystemPrompt,
   normalizeReferenceQuickPreviewModelOutput,
   reserveReferenceQuickPreview,
 } from '@oh-awesome-novel/core';
@@ -2302,9 +2303,10 @@ describe('novel HTTP backend', () => {
     let providerRequest = '';
     const backend = await startNovelHttpBackend({
       workspaceRoot,
-      runPlayTurn: async ({ request }) => {
+      runPlayTurn: async ({ request, session }) => {
         providerCalls += 1;
-        providerRequest = request;
+        // Launch-time sources live in the frozen prefix; the tail only adds what it lacks.
+        providerRequest = `${getPlayFrozenSystemPrompt(session)}\n${request}`;
         return [
           'The world remains still.',
           '```oan-play-settlement',
@@ -2512,13 +2514,15 @@ describe('novel HTTP backend', () => {
     const canonicalChapterBefore = await readFile(canonicalChapterPath, 'utf-8');
     const interactionPath = join(workspaceRoot, 'characters/heroine/interaction.md');
     let playTurnRequest = '';
+    let playTurnTail = '';
     let playTurnTimeAdvance: { amount: number; unit: string } | undefined;
     await mkdir(join(workspaceRoot, 'characters/heroine'), { recursive: true });
     await writeFile(interactionPath, '她在压力下会先观察出口。\n', 'utf-8');
     const backend = await startNovelHttpBackend({
       workspaceRoot,
       runPlayTurn: async (input) => {
-        playTurnRequest = input.request;
+        playTurnRequest = `${getPlayFrozenSystemPrompt(input.session)}\n${input.request}`;
+        playTurnTail = input.request;
         playTurnTimeAdvance = input.timeAdvance;
         return [
           '远处的铁门落锁，东侧入口已被控制。',
@@ -2657,9 +2661,12 @@ describe('novel HTTP backend', () => {
     ]);
     expect(playTurnRequest).toContain('她在压力下会先观察出口。');
     expect(playTurnRequest).toContain('Trust: interactionHint');
-    expect(playTurnRequest).toContain('User turn: 等待并观察封锁变化');
-    expect(playTurnRequest).toContain('requested elapsed PT2H');
-    expect(playTurnRequest).toContain('pressure station-lockdown');
+    expect(playTurnTail).toContain('<玩家输入>等待并观察封锁变化</玩家输入>');
+    expect(playTurnTail).toContain('requested elapsed PT2H');
+    expect(playTurnTail).toContain('pressure station-lockdown');
+    // Frozen rules and sources are not resent in the per-turn tail.
+    expect(playTurnTail).not.toContain('她在压力下会先观察出口。');
+    expect(playTurnTail).not.toContain('Output protocol:');
     expect(playTurnTimeAdvance).toEqual({ amount: 2, unit: 'hour' });
 
     await expect(fetchJson<{
