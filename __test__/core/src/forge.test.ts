@@ -18,7 +18,8 @@ describe('guided Forge contracts', () => {
       expect(parsed.brief.items.find(i => i.key === key)).toMatchObject({ by: 'assistant', locked: false });
       brief = parsed.brief;
     }
-    expect(brief.readiness).toBe(40);
+    // The four core slots (stage, lead, bond, tone) are what makes a sketch plan-ready.
+    expect(brief.readiness).toBe(75);
   });
   it('attributes only complete host-evidenced statements and preserves prior author facts', () => {
     const previous = applyForgeBriefEdits(createEmptyForgeBrief(), [{ key: 'stage', value: '不是夜城，而是渡口', locked: false }]);
