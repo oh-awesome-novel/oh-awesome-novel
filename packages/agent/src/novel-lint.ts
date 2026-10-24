@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
 import { generateText } from 'ai';
-import { formatNovelLintReviewPrompt, validateNovelLintReplacements } from '@oh-awesome-novel/core';
+import { formatNovelLintReviewPrompt, parseNovelLintReviewResponse, validateNovelLintReplacements } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, LintReplacement } from '@oh-awesome-novel/core';
 import type { AiSdkProviderResolver } from './index.js';
 export async function generateNovelLintReview(input: {source:string; sourceHash:string; workspaceRoot?:string; sourcePath?:string; providerConfig:LlmProviderConfig; resolveModel:AiSdkProviderResolver; abortSignal?:AbortSignal}): Promise<LintReplacement[]> {
@@ -13,6 +13,5 @@ export async function generateNovelLintReview(input: {source:string; sourceHash:
     systemPrompt:'',userPrompt:prompt,sourceId:`lint:${input.sourceHash}`,sourceKind:'novelLint',sourcePath:input.sourcePath,sourceHash:input.sourceHash,
     rawUsage:extractAiSdkUsageFields(result.usage),finishReason:result.finishReason,outcome:result.finishReason==='stop'?'completed':'failed'});
   if (result.finishReason !== 'stop') throw new Error('LINT review did not finish; retry the review.');
-  const text = result.text.trim().replace(/^```(?:json)?\s*/u,'').replace(/\s*```$/u,'');
-  return validateNovelLintReplacements(input.source,input.sourceHash,JSON.parse(text));
+  return validateNovelLintReplacements(input.source,input.sourceHash,parseNovelLintReviewResponse(result.text));
 }

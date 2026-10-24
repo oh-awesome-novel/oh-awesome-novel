@@ -5,6 +5,7 @@ import ForgeBriefPanel from './ForgeBriefPanel.vue';
 import ForgePlanPanel from './ForgePlanPanel.vue';
 import { useForge } from '../../composables/useForge';
 import { useWorkspaceDialog } from '../../composables/useWorkspaceDialog';
+import { scanLocalNovelLint } from '@oh-awesome-novel/core/novel-lint-rules';
 const props = defineProps<{ workspaceRoot: string; providerConfigured: boolean }>();
 const emit = defineEmits<{ close: []; configureProvider: []; pendingActionCreated: []; reviewPendingAction: [id: string]; playSessionCreated: [id: string]; writingReferencesUpdated: [paths: string[]] }>();
 const panel = shallowRef<HTMLElement | null>(null);
@@ -17,6 +18,14 @@ const { draft, drafts, busy, error, accepted, pendingStatus, canHandoff, refresh
   onPlaySession: id => emit('playSessionCreated', id),
   onWritingReferences: paths => emit('writingReferencesUpdated', paths),
 });
+const CHUNK_LABELS: Record<string, string> = { world: '世界规则', places: '地点', characters: '角色档案', facets: '三面性', clarifications: '特质边界', opening: '开场白' };
+function chunkLabel(key: string): string {
+  const [kind = key, id] = key.split(':');
+  const plan = draft.value?.plan as { characters?: Array<{ id: string; name: string }>; places?: Array<{ id: string; name: string }> } | undefined;
+  const owner = id ? [...(plan?.characters ?? []), ...(plan?.places ?? [])].find(item => item.id === id)?.name ?? id : '';
+  return owner ? `${CHUNK_LABELS[kind] ?? kind} · ${owner}` : CHUNK_LABELS[kind] ?? kind;
+}
+function remainingLint(content: string): number { return scanLocalNovelLint(content).length; }
 function select(event: Event) { const id = (event.target as HTMLSelectElement).value; if (id) void read(id); }
 </script>
 <template>
@@ -32,7 +41,7 @@ function select(event: Event) { const id = (event.target as HTMLSelectElement).v
       <button type="button" :disabled="busy || !providerConfigured" @click="mutate('plan')">{{ draft.plan ? '重新生成方案' : '生成方案' }}</button>
       <ForgePlanPanel v-if="draft.plan" :plan="draft.plan" :busy="busy" @save="mutate('update', { plan: $event })" @dirty="planDirty = $event" />
       <button v-if="draft.plan" type="button" :disabled="busy || !providerConfigured || planDirty" @click="mutate('write')">核准方案并分块撰写</button>
-      <section v-if="draft.chunks" aria-label="生成结果"><h3>撰写与质检结果</h3><details v-for="(content, name) in draft.chunks" :key="name"><summary>{{ name }}</summary><pre>{{ content }}</pre></details><button type="button" :disabled="busy || Boolean(draft.pendingActionId)" @click="mutate('propose')">定稿生成并入库：审查差异</button></section>
+      <section v-if="draft.chunks" aria-label="生成结果"><h3>撰写与质检结果</h3><details v-for="(content, name) in draft.chunks" :key="name"><summary>{{ chunkLabel(String(name)) }}<span v-if="remainingLint(content)"> · 仍有 {{ remainingLint(content) }} 处套话提示</span></summary><pre>{{ content }}</pre></details><button type="button" :disabled="busy || Boolean(draft.pendingActionId)" @click="mutate('propose')">定稿生成并入库：审查差异</button></section>
       <section v-if="draft.pendingActionId" aria-label="入库审批"><h3>审查与落盘</h3><p>通过现有审批面板查看逐文件差异并 Accept；拒绝不会写入设定库。</p><button type="button" @click="emit('reviewPendingAction', draft.pendingActionId)">打开审批差异</button><button type="button" :disabled="busy" @click="refreshApproval">刷新审批状态</button><button v-if="!accepted && !pendingStatus" type="button" :disabled="busy" @click="mutate('propose')">恢复审批</button><p v-if="pendingStatus" role="status">{{ accepted ? '设定已批准入库' : pendingStatus === 'rejected' ? '已拒绝，可重新修改生成' : '等待审批' }}</p>
         <button type="button" :disabled="!canHandoff" @click="handoff('play')">一键开演</button><button type="button" :disabled="!canHandoff" @click="handoff('writing')">一键入书</button>
       </section>

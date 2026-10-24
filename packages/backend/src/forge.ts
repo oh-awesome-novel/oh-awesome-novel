@@ -1,4 +1,4 @@
-import { saveCanonicalWritingSources } from './canonical-writing-selection.js';
+import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 import { selectCanonicalWritingSourcePaths } from './canonical-writing-context.js';
 import { freezePlayPermanentContext } from './play-frozen-context.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -7,7 +7,7 @@ import type { Context } from 'hono';
 import { generateForgeText } from '@oh-awesome-novel/agent';
 import {
   attachPlayCharacterRoster, addPlayTranscriptTurn, applyForgeBriefEdits, applyNovelLintReplacements, createEmptyForgeBrief,
-  createPlaySessionDraft, FORGE_CHUNK_KINDS, formatForgeDiscussPrompt, formatForgePlanPrompt,
+  createPlaySessionDraft, FORGE_CHUNK_KINDS, FORGE_MAX_DISCUSS_ROUNDS, forgeChunkEntityIds, forgeChunkKeys, isForgeEntityChunkKind, parseForgeEntityWriterResponse, parseNovelLintReviewResponse, serializeRosterProfile, formatForgeDiscussPrompt, formatForgePlanPrompt,
   formatForgeWriterPrompt, formatNovelLintReviewPrompt, parseForgeDiscussResponse, parseForgePlan,
   parseForgeWriterResponse, scanNovelLint, writePlaySessionFiles, readPlaySessionFiles,
 } from '@oh-awesome-novel/core';
@@ -34,6 +34,14 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
     const runtime = await options.getModelRuntime();
     return generateForgeText({prompt,workspaceRoot,providerConfig:runtime.providerConfig,resolveModel:runtime.resolveModel,abortSignal:signal});
   }
+  /** One bounded correction pass; an unusable review keeps the text and its flags for the author. */
+  async function correctForgeLint(content: string, signal: AbortSignal, root: string): Promise<string> {
+    const scan = scanNovelLint(content);
+    if (!scan.hits.length) return content;
+    const raw = await generate(formatNovelLintReviewPrompt(content),signal,root);
+    try { return applyNovelLintReplacements(content,scan.sourceHash,parseNovelLintReviewResponse(raw)); }
+    catch { signal.throwIfAborted(); return content; }
+  }
   function workspace(root: string, body: Record<string, unknown>) {
     if (options.getWorkspaceRoot() !== root || body.expectedWorkspaceRoot !== root) throw new Error('Workspace changed; reopen Forge.');
   }
@@ -59,7 +67,12 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           }
           workspace(root, body);
           if (body.mode === 'writing') {
-            const selectedPaths = await saveCanonicalWritingSources(root, selectCanonicalWritingSourcePaths(sourcePaths));
+            // Add the new setting to the author's existing selection; Forge sources take precedence within the budget.
+            const forgePaths = selectCanonicalWritingSourcePaths(sourcePaths);
+            const previous = await readCanonicalWritingSources(root);
+            const kept = previous.length ? (await createWorkspaceProjection({ workspaceRoot: root, rules: previous.map(path => ({kind:'exact' as const,path})) })).baselineFiles.map(file => file.path) : [];
+            const merged = [...forgePaths, ...previous.filter(path => kept.includes(path) && !forgePaths.includes(path))].slice(0, 16);
+            const selectedPaths = await saveCanonicalWritingSources(root, merged);
             return context.json({ draft, sourcePaths: selectedPaths });
           }
           if (body.mode !== 'play') throw new Error('Unknown Forge handoff.');
@@ -107,8 +120,9 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
             // Resolve labels and samples from the current host-owned draft; request text cannot forge them.
             authorStatements.push(...indices.flatMap(index => { const option = question.options[index]!; return [option.label, option.sample, ...(option.detail ? [option.detail] : [])]; }));
           }
-          const result = parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(draft.brief)}\n作者最初想法：${draft.idea}\n作者本轮回答：${message}\n作者已确认的完整原文表达（草图引用时保留完整原句，不截取否定句）：${JSON.stringify(authorStatements)}`,signal,root), draft.brief, authorStatements);
-          draft = {...draft,...result, stage:'discuss'}; delete draft.plan; delete draft.chunks;
+          const result = parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(draft.brief,draft.rounds)}\n作者最初想法：${draft.idea}\n作者本轮回答：${message}\n作者已确认的完整原文表达（草图引用时保留完整原句，不截取否定句）：${JSON.stringify(authorStatements)}`,signal,root), draft.brief, authorStatements);
+          const rounds = [...(draft.rounds ?? []), { answer: message, questions: draft.questions.map(question => question.title) }].slice(-FORGE_MAX_DISCUSS_ROUNDS);
+          draft = {...draft,...result, stage:'discuss', rounds}; delete draft.plan; delete draft.chunks;
         } else if (name === 'edit') {
           if (body.edits !== undefined) {
             if (!Array.isArray(body.edits) || body.edits.length > 10) throw new Error('Invalid brief edits.');
@@ -118,7 +132,14 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           if (body.plan !== undefined) { draft.plan = parseForgePlan(body.plan); draft.stage = 'plan'; }
           delete draft.chunks;
         } else if (name === 'plan') {
-          draft.plan = parseForgePlan(await generate(formatForgePlanPrompt(draft.brief),signal,root));
+          const prompt = formatForgePlanPrompt(draft.brief);
+          const first = await generate(prompt,signal,root);
+          try { draft.plan = parseForgePlan(first); }
+          catch (error) {
+            // One directed correction, e.g. a facet line that explains instead of speaking.
+            signal.throwIfAborted();
+            draft.plan = parseForgePlan(await generate(`${prompt}\n上次输出未通过校验：${error instanceof Error ? error.message : String(error)}\n请完整重新输出修正后的 JSON。`,signal,root));
+          }
           draft.stage = 'plan'; delete draft.chunks;
         } else if (name === 'write') {
           if (!draft.plan) throw new Error('Review a plan before writing.');
@@ -126,23 +147,21 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           const chunks: Record<string,string> = {};
           // Bounded pipeline: a failed/aborted chunk never advances the stored revision.
           for (const kind of FORGE_CHUNK_KINDS) {
-            let content = parseForgeWriterResponse(await generate(formatForgeWriterPrompt(plan,kind),signal,root));
-            const scan = scanNovelLint(content);
-            if (scan.hits.length) {
-              const raw = await generate(formatNovelLintReviewPrompt(content),signal,root);
-              const replacements: unknown = JSON.parse(raw.replace(/^\s*```(?:json)?\s*/u,'').replace(/\s*```\s*$/u,''));
-              content = applyNovelLintReplacements(content,scan.sourceHash,replacements);
-            }
-            chunks[kind] = content;
+            const response = await generate(formatForgeWriterPrompt(plan,kind),signal,root);
+            const written = isForgeEntityChunkKind(kind)
+              ? Object.entries(parseForgeEntityWriterResponse(response,forgeChunkEntityIds(plan,kind))).map(([id,content]) => [`${kind}:${id}`,content] as const)
+              : [[kind,parseForgeWriterResponse(response)] as const];
+            for (const [key,content] of written) chunks[key] = await correctForgeLint(content,signal,root);
           }
           draft.chunks = chunks; draft.stage = 'written';
         } else if (name === 'propose') {
-          if (!draft.plan || !draft.chunks) throw new Error('Generate and review all writing blocks first.');
-          const files = forgeCanonicalFiles(draft.plan,draft.chunks);
-          const projection = await createWorkspaceProjection({workspaceRoot:root,rules:files.map(f=>({kind:'exact' as const,path:f.path}))});
-          // Never silently overwrite an existing character/place. World rules are shown as an explicit diff.
-          const existing = new Set(projection.baselineFiles.map(f=>f.path));
-          if (files.some(f=>f.path !== 'world/rules.md' && existing.has(f.path))) throw new Error('A generated character or place already exists. Change its id in the plan.');
+          if (!draft.plan || !draft.chunks || forgeChunkKeys(draft.plan).some(key => !draft.chunks?.[key])) throw new Error('Generate and review all writing blocks first.');
+          const paths = forgeCanonicalPaths(draft.plan);
+          const projection = await createWorkspaceProjection({workspaceRoot:root,rules:paths.map(path=>({kind:'exact' as const,path}))});
+          // Never silently overwrite an existing character/place. World rules gain a section shown as an explicit diff.
+          const existing = new Map(projection.baselineFiles.map(f=>[f.path,f.content]));
+          if (paths.some(path=>path !== 'world/rules.md' && existing.has(path))) throw new Error('A generated character or place already exists. Change its id in the plan.');
+          const files = forgeCanonicalFiles(draft.plan,draft.chunks,existing.get('world/rules.md'));
           const id = `pa_${randomUUID()}`;
           const builder = createCandidateChangeSetBuilder({sessionId:draft.id,producer:'setting-forge',capability:'novel.multi-file-edit',repository:await readRepositoryBaseline(root),baselineFiles:projection.baselineFiles});
           for (const file of files) builder.write(file.path,file.content);
@@ -180,19 +199,34 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
   };
 }
 
-export function forgeCanonicalFiles(plan: ForgePlan,chunks:Record<string,string>):Array<{path:string;content:string}> {
+export function forgeCanonicalPaths(plan: ForgePlan): string[] {
+  return [
+    ...plan.characters.flatMap(character => ['meta.yaml','profile.md','summary.md','roster-profile.yaml'].map(name => `characters/${character.id}/${name}`)),
+    ...plan.places.map(place => `world/places/${place.id}.md`),
+    'world/rules.md',
+    `world/openings/${plan.characters[0]!.id}.md`,
+  ];
+}
+/** Readable canonical Markdown: each character and place file holds only its own written block. */
+export function forgeCanonicalFiles(plan: ForgePlan,chunks:Record<string,string>,existingRules?:string):Array<{path:string;content:string}> {
   const files:Array<{path:string;content:string}>=[];
-  const markdown=(title:string,value:unknown)=>`# ${title}\n\n${typeof value==='string'?value:JSON.stringify(value,null,2)}\n`;
+  const section=(title:string,body:string|undefined)=>body?.trim()?[`## ${title}`,'',body.trim(),'']:[];
+  const doc=(lines:string[])=>`${lines.join('\n').trimEnd()}\n`;
   for (const character of plan.characters) {
     const base=`characters/${character.id}`;
-    files.push({path:`${base}/meta.yaml`,content:JSON.stringify({id:character.id,displayName:character.name,aliases:character.aliases})});
-    files.push({path:`${base}/profile.md`,content:markdown(character.name,{character,writing:chunks.characters,facets:chunks.facets,clarifications:chunks.clarifications})});
-    files.push({path:`${base}/summary.md`,content:markdown(character.name,`${character.desire.goal}\n${character.desire.obstacle}\n${character.desire.cost}`)});
-    files.push({path:`${base}/roster-profile.yaml`,content:JSON.stringify({id:character.id,name:character.name,aliases:character.aliases,genderKind:'other',isPlayer:false,looks:{fixedBooruTags:'',outfitDescription:'',outfitTags:''}})});
+    files.push({path:`${base}/meta.yaml`,content:`${JSON.stringify({id:character.id,displayName:character.name,aliases:character.aliases},null,2)}\n`});
+    files.push({path:`${base}/profile.md`,content:doc([`# ${character.name}`,'',
+      ...(character.aliases.length?[`别名：${character.aliases.join('、')}`,'']:[]),
+      ...section('角色档案',chunks[`characters:${character.id}`]),
+      ...section('三面性',chunks[`facets:${character.id}`]),
+      ...section('特质边界',chunks[`clarifications:${character.id}`])])});
+    files.push({path:`${base}/summary.md`,content:doc([`# ${character.name}`,'',`- 即时目标：${character.desire.goal}`,`- 阻力：${character.desire.obstacle}`,`- 代价：${character.desire.cost}`])});
+    files.push({path:`${base}/roster-profile.yaml`,content:serializeRosterProfile({id:character.id,name:character.name,aliases:character.aliases,genderKind:'other',isPlayer:false,looks:{fixedBooruTags:'',outfitDescription:'',outfitTags:''}})});
   }
-  for (const place of plan.places) files.push({path:`world/places/${place.id}.md`,content:markdown(place.name,{place,writing:chunks.places})});
-  files.push({path:'world/rules.md',content:markdown(plan.title,{world:plan.world,writing:chunks.world})});
-  files.push({path:`world/openings/${plan.characters[0]!.id}.md`,content:markdown('开场白',chunks.opening!)});
+  for (const place of plan.places) files.push({path:`world/places/${place.id}.md`,content:doc([`# ${place.name}`,'',chunks[`places:${place.id}`]!.trim()])});
+  const rules=[`## ${plan.title}`,'',chunks.world!.trim()];
+  files.push({path:'world/rules.md',content:existingRules?.trim()?doc([existingRules.trimEnd(),'',...rules]):doc(['# 世界规则','',...rules])});
+  files.push({path:`world/openings/${plan.characters[0]!.id}.md`,content:doc(['# 开场白','',chunks.opening!.trim()])});
   return files;
 }
 export async function assertForgePreviewFresh(root:string,preview:PreparedChangePreviewV1):Promise<void> {

@@ -27,10 +27,26 @@ export interface ForgePlan {
 export const FORGE_CHUNK_KINDS = ['world', 'places', 'characters', 'facets', 'clarifications', 'opening'] as const;
 export type ForgeChunkKind = typeof FORGE_CHUNK_KINDS[number];
 export interface ForgeChunk { kind: ForgeChunkKind; text: string }
+/** Kinds written once per character or place; their chunk keys are `kind:id`. */
+export const FORGE_ENTITY_CHUNK_KINDS = ['places', 'characters', 'facets', 'clarifications'] as const satisfies readonly ForgeChunkKind[];
+export function isForgeEntityChunkKind(kind: ForgeChunkKind): kind is typeof FORGE_ENTITY_CHUNK_KINDS[number] {
+  return (FORGE_ENTITY_CHUNK_KINDS as readonly string[]).includes(kind);
+}
+export function forgeChunkEntityIds(plan: ForgePlan, kind: ForgeChunkKind): string[] {
+  if (kind === 'places') return plan.places.map(place => place.id);
+  return isForgeEntityChunkKind(kind) ? plan.characters.map(character => character.id) : [];
+}
+/** Every chunk key a written draft must hold for its plan. */
+export function forgeChunkKeys(plan: ForgePlan): string[] {
+  return FORGE_CHUNK_KINDS.flatMap(kind => isForgeEntityChunkKind(kind) ? forgeChunkEntityIds(plan, kind).map(id => `${kind}:${id}`) : [kind]);
+}
 export function createEmptyForgeBrief(): ForgeBrief { return { title: '未命名设定', readiness: 0, items: [], openPoints: [] }; }
 export interface ForgeDraft {
   schemaVersion: 1; id: string; revision: number; idea: string;
   stage: 'discuss' | 'plan' | 'written' | 'proposed';
   brief: ForgeBrief; questions: ForgeQuestion[]; reply: string;
   plan?: ForgePlan; chunks?: Record<string, string>; pendingActionId?: string; sourcePaths?: string[];
+  /** Recent discussion rounds, so later rounds do not repeat questions. */
+  rounds?: Array<{ answer: string; questions: string[] }>;
 }
+export const FORGE_MAX_DISCUSS_ROUNDS = 12;
