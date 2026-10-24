@@ -5,9 +5,10 @@ describe('visual novel protocol', () => {
   it('infers pre/post dialogue names, aliases, trades and rejects narrative phrases', () => {
     expect(parseTextBeats('念念轻声说：“回来。”')[0]?.speaker).toBe('念念');
     expect(parseTextBeats('“回来。”林师兄苦笑道。')[0]?.speaker).toBe('林师兄');
-    expect(inferSpeaker('小念低声说', [character])).toBe('nian');
+    expect(inferSpeaker('小念低声说', [character])).toBe('念念');
     for (const role of ['掌柜', '店小二', '老伯', '侍女']) expect(inferSpeaker(`${role}说道`)).toBe(role);
-    for (const phrase of ['沉默片刻', '忽然', '笑得很短']) expect(inferSpeaker(`${phrase}说`)).toBe('');
+    for (const phrase of ['沉默片刻', '忽然', '笑得很短', '点头', '转身']) expect(inferSpeaker(`${phrase}说`)).toBe('');
+    for (const role of ['老板娘', '郎中', '船夫']) expect(inferSpeaker(`${role}笑道`)).toBe(role);
   });
   it('balances inline tags and markdown per beat without executing HTML', () => {
     expect(carryTags(['<b>a', 'b</b>'])).toEqual(['<b>a</b>', '<b>b</b>']);
@@ -34,6 +35,16 @@ describe('visual novel protocol', () => {
     expect(artifact.messages[0]?.stageSnapshot?.beats[0]?.text).not.toBe('changed');
     expect(() => normalizeStageSnapshot({ sceneId: 'x', activeCharacters: [], beats: [{}] })).toThrow();
     expect(createStageSnapshot('a', '风停。').beats).toHaveLength(1);
+  });
+  it('stages only the characters present in the turn and references scenery by id', () => {
+    const other = { ...character, id: 'lin', name: '林师兄', aliases: [] };
+    const absent = { ...character, id: 'ghost', name: '阿鬼', aliases: [] };
+    const stage = createStageSnapshot('inn', '林师兄推门。小念说：“回来。”', [character, other, absent], { inn: 'data:image/png;base64,AAAA' });
+    expect(stage.activeCharacters).toEqual([{ characterId: 'lin', name: '林师兄', position: 'left' }, { characterId: 'nian', name: '念念', position: 'right' }]);
+    expect(stage.backgroundId).toBe('inn');
+    expect(JSON.stringify(stage)).not.toContain('base64');
+    expect(stage.beats.find(beat => beat.isDialogue)?.speaker).toBe('念念');
+    expect(() => normalizeStageSnapshot({ ...stage, backgroundId: '../x' })).toThrow('background');
   });
   it('bounds stage snapshots so a valid long referee turn stays readable after reload', () => {
     const scene = `${'长'.repeat(30_000)}\n第二行`;

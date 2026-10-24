@@ -46,9 +46,9 @@ describe('visual novel stage', () => {
     await wrapper.setProps({ draft: '小念说：“回' });
     expect(wrapper.find('.vn-cast .left.speaking').exists()).toBe(true);
     expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
-    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('念念');
     await wrapper.setProps({ draft: '小念说：“回来。”' });
-    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('念念');
     expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
     expect(frozen.stageSnapshot.activeCharacters).toEqual(cast);
     await wrapper.setProps({ sessionId: 'b', turns: [], roster: [], portraits: {}, draft: '另一个场景。' });
@@ -60,7 +60,7 @@ describe('visual novel stage', () => {
     const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [], choices: [], disabled: true, draft: '小念说：“回来。”', roster: [{ id: 'nian', name: '念念', aliases: ['小念'] }], portraits: { nian: image } } });
     expect(wrapper.find('.vn-cast .speaking').exists()).toBe(true);
     expect(wrapper.find('.vn-cast img').attributes('src')).toBe(image);
-    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('nian');
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat').speaker).toBe('念念');
     wrapper.unmount();
   });
   it('retains already revealed streaming prefix while appending text', async () => {
@@ -74,6 +74,16 @@ describe('visual novel stage', () => {
     expect(wrapper.text()).toContain('风来了。');
     await wrapper.trigger('click');
     expect(wrapper.emitted('next')).toHaveLength(1);
+    wrapper.unmount();
+  });
+  it('resolves referenced scenery and portraits from the session snapshot and labels the cast by name', () => {
+    const image = 'data:image/png;base64,aGVsbG8=';
+    const stageSnapshot = { sceneId: '客栈', backgroundId: 'inn', activeCharacters: [{ characterId: 'nian', name: '念念', position: 'center' as const }], beats: [{ text: '“回来。”', speaker: '念念', isDialogue: true }] };
+    const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [{ ...turn, stageSnapshot }], choices: [], disabled: true, portraits: { nian: image }, backgrounds: { inn: image } } });
+    expect(wrapper.find('.vn-background').attributes('src')).toBe(image);
+    expect(wrapper.find('.vn-cast .center.speaking img').attributes('src')).toBe(image);
+    expect(wrapper.find('.vn-cast').text()).toContain('念念');
+    expect(wrapper.find('.vn-cast').text()).not.toContain('nian');
     wrapper.unmount();
   });
   it('keeps draft and history separate, clears on branch/session switch and blocks draft actions', async () => {

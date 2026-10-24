@@ -17,6 +17,15 @@ describe('guided Forge wizard', () => {
     })); wrapper.unmount();
   });
 
+  it('lets the author hand a question back to the guide without claiming an option', async () => {
+    const wrapper = await loaded(); api.discussForgeDraft.mockResolvedValue({draft:draft()});
+    await button(wrapper, '你来定').trigger('click'); await flushPromises();
+    const input = api.discussForgeDraft.mock.calls[0]![1];
+    expect(input.message).toMatch(/你来定$/u);
+    expect(input.selection).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it('restores drafts and sends author edits and locks with the displayed revision', async () => {
     const wrapper = await loaded(); expect(wrapper.text()).toContain('跟紧我。');
     await button(wrapper, '锁定此项').trigger('click'); await flushPromises();

@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNovelHonoApp, createForgeHandlers, assertForgePreviewFresh, assertForgeActionFresh } from '@oh-awesome-novel/backend';
+import { createNovelHonoApp, createForgeHandlers, assertForgePreviewFresh, assertForgeActionFresh, forgeCanonicalFiles, forgeCanonicalPaths } from '@oh-awesome-novel/backend';
 import { createPendingActionStore, createChangeMaterializer } from '@oh-awesome-novel/tools';
-import { createEmptyForgeBrief, type ForgeDraft, type ForgePlan } from '@oh-awesome-novel/core';
+import { createEmptyForgeBrief, forgeChunkKeys, type ForgeDraft, type ForgePlan } from '@oh-awesome-novel/core';
 const exec = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -54,7 +54,7 @@ async function setup(model?: (prompt: string, signal: AbortSignal) => Promise<st
   async function written() {
     expect((await op('edit', { plan: plan() })).response.status).toBe(200);
     // Seed a validated written draft to exercise proposal/recovery independently of model quality.
-    draft = { ...draft, stage: 'written', chunks: Object.fromEntries(['world', 'places', 'characters', 'facets', 'clarifications', 'opening'].map(k => [k, '# 夜渡\n\n船靠岸了。'])) };
+    draft = { ...draft, stage: 'written', chunks: Object.fromEntries(forgeChunkKeys(plan()).map(k => [k, `${k}：船靠岸了。`])) };
     await writeFile(join(root, '.workspace/forge/drafts', `${draft.id}.yaml`), JSON.stringify(draft));
   }
   return { root, store, app, op, written, reload: async () => { draft = (await (await app.request(`/drafts/${draft.id}`)).json()).draft; }, getDraft: () => draft, switchWorkspace: () => { currentRoot = '/different-workspace'; }, failGenerate: () => { generateFailure = true; } };
@@ -84,6 +84,18 @@ describe('Forge approval and persistence boundary', () => {
     await h.reload(); expect(h.getDraft()).toEqual(before);
   });
 
+  it('adds a section to existing world rules and keeps every other file to its own object', () => {
+    const two: ForgePlan = { ...plan(), characters: [plan().characters[0]!, { ...plan().characters[0]!, id: 'yu', name: '渔' }] };
+    const chunks = Object.fromEntries(forgeChunkKeys(two).map(key => [key, `${key} 正文`]));
+    const files = forgeCanonicalFiles(two, chunks, '# 世界规则\n\n旧的潮汐规则。\n');
+    expect(files.map(file => file.path)).toEqual(forgeCanonicalPaths(two));
+    const content = (path: string) => files.find(file => file.path === path)!.content;
+    expect(content('world/rules.md')).toBe('# 世界规则\n\n旧的潮汐规则。\n\n## 渡口\n\nworld 正文\n');
+    expect(content('characters/lin/profile.md')).toContain('characters:lin 正文');
+    expect(content('characters/lin/profile.md')).not.toContain('characters:yu');
+    expect(content('characters/yu/profile.md')).not.toContain(':lin');
+    expect(content('characters/yu/roster-profile.yaml')).toContain('name: 渔');
+  });
   it('runs Discuss → Plan → six writing blocks → exact LINT correction → proposal', async () => {
     const chunks: string[] = []; let reviews = 0;
     const h = await setup(async (prompt, signal) => {
@@ -96,7 +108,8 @@ describe('Forge approval and persistence boundary', () => {
       }
       if (prompt.includes('只撰写已由作者核准方案')) {
         const kind = prompt.match(/“([^”]+)”块/)![1]; chunks.push(kind);
-        return `<content># ${kind}\n\n船似乎靠岸了。</content>`;
+        const ids = [...prompt.matchAll(/<content id="([^"]+)">正文/g)].map(match => match[1]);
+        return ids.length ? ids.map(id => `<content id="${id}">${kind} ${id}\n船似乎靠岸了。</content>`).join('') : `<content>${kind}\n船似乎靠岸了。</content>`;
       }
       if (prompt.includes('整理为可编辑的设定方案')) return JSON.stringify(plan());
       return discussion();
@@ -165,7 +178,11 @@ describe('Forge approval and persistence boundary', () => {
     expect((await h.op('edit', { edits: [] })).response.status).toBe(409);
     const materializer = createChangeMaterializer({ store: h.store, assertOriginFresh: action => assertForgeActionFresh(h.root, action) });
     await materializer.accept({ actionId: h.getDraft().pendingActionId!, autoCommitOnAccept: false });
-    expect(await readFile(join(h.root, 'characters/lin/profile.md'), 'utf8')).toContain('林');
+    // Each canonical file is readable Markdown holding only its own object's written blocks.
+    const profile = await readFile(join(h.root, 'characters/lin/profile.md'), 'utf8');
+    expect(profile).toBe('# 林\n\n## 角色档案\n\ncharacters:lin：船靠岸了。\n\n## 三面性\n\nfacets:lin：船靠岸了。\n\n## 特质边界\n\nclarifications:lin：船靠岸了。\n');
+    expect(await readFile(join(h.root, 'world/places/pier.md'), 'utf8')).toBe('# 渡口\n\nplaces:pier：船靠岸了。\n');
+    expect(await readFile(join(h.root, 'world/rules.md'), 'utf8')).toContain('world：船靠岸了。');
     const writing = await h.op('handoff', { mode: 'writing' });
     expect(writing.response.status).toBe(200);
     expect(writing.result.sourcePaths).toEqual(['world/rules.md', 'characters/lin/profile.md', 'world/places/pier.md', 'characters/lin/roster-profile.yaml']);

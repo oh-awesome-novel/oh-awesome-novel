@@ -10,7 +10,7 @@ import { loadCanonicalWritingContext } from './canonical-writing-context.js';
 import type { CanonicalWritingContext } from './canonical-writing-context.js';
 export { loadCanonicalWritingContext } from './canonical-writing-context.js';
 import { createForgeHandlers } from './forge.js';
-export { createForgeHandlers, forgeCanonicalFiles, assertForgePreviewFresh, assertForgeActionFresh } from './forge.js';
+export { createForgeHandlers, forgeCanonicalFiles, forgeCanonicalPaths, assertForgePreviewFresh, assertForgeActionFresh } from './forge.js';
 import { assertForgeActionFresh, assertForgePreviewFresh } from './forge';
 import { attachPlayCharacterRoster } from '@oh-awesome-novel/core';
 import { createNovelLintHandlers } from './novel-lint';

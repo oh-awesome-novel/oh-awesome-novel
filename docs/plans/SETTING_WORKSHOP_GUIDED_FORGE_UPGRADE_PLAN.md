@@ -1,6 +1,6 @@
 # 设定工坊引导式共创向导升级计划 (Setting Workshop Guided Forge)
 
-> 状态：Planned
+> 状态：Needs Review（实现与复核见 [`docs/tasks/1360.md`](../tasks/1360.md)）
 >
 > 优先级：P1
 >

@@ -1732,7 +1732,7 @@ export const settlePlayWorldRefereeSettlement = (
       id: refereeTurnId,
       speaker: 'world-referee',
       content: narrative,
-      stageSnapshot: createStageSnapshot(typeof playLocalState.currentScene === 'string' && playLocalStateVisibility.currentScene !== 'playerUnknown' ? playLocalState.currentScene : input.session.sceneStart, narrative, stageRoster(input.session), stagePortraits(input.session), stageBackgrounds(input.session)),
+      stageSnapshot: createStageSnapshot(typeof playLocalState.currentScene === 'string' && playLocalStateVisibility.currentScene !== 'playerUnknown' ? playLocalState.currentScene : input.session.sceneStart, narrative, stageRoster(input.session), stageBackgrounds(input.session)),
       createdAt,
     },
   ];
@@ -1796,11 +1796,6 @@ function stageBackgrounds(session: PlaySession): Record<string, string> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {};
 }
 
-function stagePortraits(session: PlaySession): Record<string, string> {
-  const value = session.metadataExtensions.characterPortraits;
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {};
-}
-
 function stageRoster(session: PlaySession) {
   const value = session.metadataExtensions.characterRoster;
   return Array.isArray(value) ? value.map(normalizeRosterCharacter) : session.characters.map(name => ({ id: name, name, aliases: [] }));
@@ -1829,7 +1824,7 @@ export const addPlayTranscriptTurn = (
     ...(parentTurnId ? { parentTurnId } : {}),
     messages: [{
       ...turn,
-      ...(turn.speaker !== 'user' ? { stageSnapshot: createStageSnapshot(session.sceneStart, turn.content, stageRoster(session), stagePortraits(session), stageBackgrounds(session)) } : {}),
+      ...(turn.speaker !== 'user' ? { stageSnapshot: createStageSnapshot(session.sceneStart, turn.content, stageRoster(session), stageBackgrounds(session)) } : {}),
       id: turn.id ?? `${artifactId}-message-1`,
     }],
     worldClock: { ...next.worldClock },

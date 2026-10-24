@@ -4,7 +4,7 @@ import { createStageSnapshot, type StageSnapshot, type SpeakerIdentity } from '@
 import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import VisualNovelTextBox from './VisualNovelTextBox.vue';
 import VisualNovelChoiceOverlay from './VisualNovelChoiceOverlay.vue';
-const props = defineProps<{ sessionId: string; scene: string; turns: PlayTranscriptTurn[]; choices: string[]; draft?: string; disabled: boolean; hasMoreBefore?: boolean; loadingEarlier?: boolean; roster?: unknown; portraits?: unknown }>();
+const props = defineProps<{ sessionId: string; scene: string; turns: PlayTranscriptTurn[]; choices: string[]; draft?: string; disabled: boolean; hasMoreBefore?: boolean; loadingEarlier?: boolean; roster?: unknown; portraits?: unknown; backgrounds?: unknown }>();
 const emit = defineEmits<{ choose: [text: string]; close: []; loadEarlier: [] }>();
 const stage = ref<HTMLElement>();
 onMounted(() => stage.value?.focus());
@@ -20,28 +20,36 @@ const roster = computed<SpeakerIdentity[]>(() => {
     && typeof item.id === 'string' && typeof item.name === 'string'
     && Array.isArray(item.aliases) && item.aliases.every((alias: unknown) => typeof alias === 'string'));
 });
-const portraits = computed<Record<string, string>>(() => {
-  if (!props.portraits || typeof props.portraits !== 'object' || Array.isArray(props.portraits)) return {};
-  return Object.fromEntries(Object.entries(props.portraits).filter((entry): entry is [string, string] =>
-    typeof entry[1] === 'string' && entry[1].length <= 350000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(entry[1])));
-});
+const IMAGE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+function images(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] =>
+    typeof entry[1] === 'string' && entry[1].length <= 350000 && IMAGE.test(entry[1])));
+}
+// Launch-time snapshots of the session; turns reference them by id.
+const portraits = computed(() => images(props.portraits));
+const backgrounds = computed(() => images(props.backgrounds));
 const snapshot = computed<StageSnapshot>(() => {
   if (!historicalId.value && props.draft) {
     const committed = selected.value?.stageSnapshot;
-    const identities = committed
-      ? committed.activeCharacters.map(character => roster.value.find(item => item.id === character.characterId)
-        ?? { id: character.characterId, name: character.characterId, aliases: [] })
-      : roster.value;
-    const draft = createStageSnapshot(committed?.sceneId ?? props.scene, props.draft, identities, portraits.value);
+    const draft = createStageSnapshot(committed?.sceneId ?? props.scene, props.draft, roster.value, backgrounds.value);
     return {
       ...draft,
-      // The draft changes prose only; committed cast positions, portraits and scenery stay frozen.
-      ...(committed ? { activeCharacters: committed.activeCharacters.map(character => ({ ...character })) } : {}),
+      // Characters already on the committed stage keep their frozen place and portrait while the draft streams.
+      activeCharacters: draft.activeCharacters.map(character => ({ ...(committed?.activeCharacters.find(item => item.characterId === character.characterId) ?? character) })),
+      // The draft changes prose and who is present; committed scenery stays frozen.
+      ...(committed?.backgroundId ? { backgroundId: committed.backgroundId } : {}),
       ...(committed?.backgroundDataUrl ? { backgroundDataUrl: committed.backgroundDataUrl } : {}),
     };
   }
-  return selected.value?.stageSnapshot ?? createStageSnapshot(props.scene, selected.value?.content ?? props.scene, roster.value, portraits.value);
+  return selected.value?.stageSnapshot ?? createStageSnapshot(props.scene, selected.value?.content ?? props.scene, roster.value, backgrounds.value);
 });
+const background = computed(() => snapshot.value.backgroundDataUrl ?? (snapshot.value.backgroundId ? backgrounds.value[snapshot.value.backgroundId] : undefined));
+const cast = computed(() => snapshot.value.activeCharacters.map(character => ({
+  ...character,
+  label: character.name ?? roster.value.find(item => item.id === character.characterId)?.name ?? character.characterId,
+  portrait: character.portraitDataUrl ?? portraits.value[character.characterId],
+})));
 const beat = computed(() => snapshot.value.beats[beatIndex.value]);
 const isLast = computed(() => beatIndex.value >= snapshot.value.beats.length - 1);
 const NUMBERED_CHOICE = /^[1-9](?:️⃣|[.、)])\s*/;
@@ -67,10 +75,10 @@ function keydown(event: KeyboardEvent): void {
 </script>
 <template>
   <section ref="stage" class="vn-stage" :class="atmosphere" aria-label="视觉小说演出" tabindex="0" @keydown="keydown">
-    <img v-if="snapshot.backgroundDataUrl" class="vn-background" :src="snapshot.backgroundDataUrl" alt="" aria-hidden="true" />
+    <img v-if="background" class="vn-background" :src="background" alt="" aria-hidden="true" />
     <header><strong>{{ snapshot.sceneId }}</strong><div><button type="button" @click="logOpen = !logOpen">Log · 历史</button><button type="button" @click="emit('close')">返回推演工作台</button></div></header>
     <p v-if="draft && !historicalId" role="status">正在演出草稿 · 尚未保存</p>
-    <div class="vn-cast" aria-label="在场角色"><span v-for="character in snapshot.activeCharacters" :key="character.characterId" :class="[character.position, { speaking: beat?.speaker === character.characterId }]"><img v-if="character.portraitDataUrl" :src="character.portraitDataUrl" :alt="character.characterId" />{{ character.characterId }}</span></div>
+    <div class="vn-cast" aria-label="在场角色"><span v-for="character in cast" :key="character.characterId" :class="[character.position, { speaking: beat?.speaker === character.label || beat?.speaker === character.characterId }]"><img v-if="character.portrait" :src="character.portrait" :alt="character.label" />{{ character.label }}</span></div>
     <VisualNovelChoiceOverlay v-if="isLast && !historicalId && !draft" :choices="choices" :disabled="disabled" @choose="choose" />
     <VisualNovelTextBox ref="textbox" :beat="beat" @next="beatIndex = Math.min(beatIndex + 1, snapshot.beats.length - 1)" />
     <aside v-if="logOpen" class="vn-log" aria-label="历史文本"><button v-if="hasMoreBefore" type="button" :disabled="loadingEarlier" @click="emit('loadEarlier')">加载更早回合</button><button type="button" @click="historicalId = undefined; beatIndex = 0">回到当前回合</button><article v-for="turn in narratives" :key="turn.id"><button type="button" @click="historicalId = turn.id; beatIndex = 0">回看 {{ turn.createdAt }}</button><p>{{ turn.content }}</p></article></aside>

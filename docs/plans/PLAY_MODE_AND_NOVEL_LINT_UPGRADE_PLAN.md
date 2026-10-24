@@ -1,6 +1,6 @@
 # Play 模式与小说去 AI 味反套话质检升级计划
 
-> 状态：Planned
+> 状态：Needs Review（实现与复核见 [`docs/tasks/1360.md`](../tasks/1360.md)）
 >
 > 对标参考：`reference-only/CicaTavern` (v1.8.1)、`reference-only/storyforge` (v4.0.2 增量更新) 及分析报告 [`docs/research/CICATAVERN_REFERENCE_ANALYSIS.md`](../research/CICATAVERN_REFERENCE_ANALYSIS.md)
 >
