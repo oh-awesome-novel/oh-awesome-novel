@@ -52,6 +52,11 @@ Copilot 会把 `.oan/workflow.yaml`、constitution、大纲、summary、state、
 - 正文搜索与导出：中文正文/标题/路径搜索，按章节顺序下载 Markdown/TXT。
 - 作者旧稿导入：UTF-8 `.md` 拆章与卷章映射、冲突/diff 预览，经 PendingAction 接受后创建章节。
 - Play：Quick Start、Guided Start、Immersive Journey、Scene Rehearsal、世界事件与时间、分支与 checkpoint、branch-local knowledge、Director 控制、Outcome Report、Writing Reference 与显式 adoption。
+- 设定工坊（Forge）：引导式角色与世界舞台共创向导，通过台词样例选性格、试写片段挑文风、性格调色盘、三面性、二次反刻板解释与小说动力学技法，生成后经 PendingAction 审批入库，并支持一键开演或一键入书（[1360](tasks/1360.md)）。
+- Play 演进：Prompt Cache 冻结前缀降本、五维剧情存档（Play Compaction）与资源对账、独立视觉小说（Visual Novel）视窗演出（分句对白、说话人名字牌、半身立绘排布与中央选项卡）、角色名册（Character Roster）固定外貌声线契约（[1360](tasks/1360.md)）。
+- 实时去 AI 味质检：Novel LINT 11 类反套话规则本地毫秒级扫描、锚定行号、模型微创审稿与针对性替换审批（[1360](tasks/1360.md)）。
+- 运行中交互与推理可见性：Steer 生成中插话、Follow-up 消息排队、模型推理过程（Thinking）折叠查看与 Play 调试消息日志（[1350](tasks/1350.md)）。
+- 参考作品深度拆解与探索：章节分块独立并行拆解（按上下文窗口切分，[1370](tasks/1370.md)）、只读源文本探索工具与针对参考作品的自主提问面板（[1380](tasks/1380.md)）。
 - 参考素材：Tavern 兼容角色卡导入（Play only / 新建角色 / 合并）、参考作品深度拆解（技巧轨与故事材料轨）与材料采纳。
 - Writing Profile：同人二创（默认）、商业写作提示风格与自定义组合。
 - Copilot 快捷指令：`/规划大纲`、`/规划下一卷`、`/规划下一章`、`/写下一章`、`/生成角色卡`、`/审稿`、`/去AI味`、`/整理本章`、`/整理本卷`、`/整理全书`、`/更新状态`、`/补伏笔`。

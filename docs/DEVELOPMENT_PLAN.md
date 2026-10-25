@@ -17,16 +17,17 @@ bash-tool + just-bash fixed sandbox
 
 优先保持：filesystem first、Object File Tree、Aider-style Runtime、Vercel AI SDK ToolSet、人类审批和 Git history。不要提前引入 Multi-Agent、autonomous background writing、extension marketplace、vector database memory 或 rich-text database，也不做商业化、连载或协作功能。
 
-## Current Delivery Priority (2026-10-15)
+## Current Delivery Priority (2026-10-24)
 
-产品重新定位为个人同人/综漫创作工作台（[PROJECT_VISION](PROJECT_VISION.md)、[评估记录](reviews/PRODUCT_DESIGN_REVIEW_2026-10-15.md)）。优先级：
+产品重新定位为个人同人/综漫创作工作台（[PROJECT_VISION](PROJECT_VISION.md)、[评估记录](reviews/PRODUCT_DESIGN_REVIEW_2026-10-15.md)）。交付状态：
 
-1. **写作核心闭环（已交付）**：[1330](tasks/1330.md) 自动目标路径（写下一章、生成角色卡、规划）、续写上下文与章节进度引导。
-2. **审批与记忆体验（已交付）**：[1340](tasks/1340.md) 派生记录整批接受、未整理章节提示、默认同人二创 Profile。
-3. **Play 保持高优先级**：[1120](tasks/1120.md) 剩余可靠性，以及作者使用中提出的穿越/导演/世界线体验改进，直接立项推进。
-4. 其余：[0580](tasks/0580.md) 远端同步与更多环境验收、[1230](tasks/1230.md) 独立剩余范围。
+1. **写作核心闭环（已交付）**：[1330](tasks/1330.md) 自动目标路径（写下一章、生成角色卡、规划）、续写上下文与章节进度引导；[1340](tasks/1340.md) 派生记录整批接受、未整理章节提示、默认同人二创 Profile。
+2. **交互体验与思考过程（已交付）**：[1350](tasks/1350.md) Steer 运行中插话、Follow-up 排队、推理过程（Thinking）折叠可见性与 Play 调试消息日志。
+3. **共创向导与推演/质检升级（已交付）**：[1360](tasks/1360.md) 设定工坊 Forge 引导式共创向导、Play 模式 Prompt Cache 布局重构（Frozen Prefix & Tail Injection）、五维剧情存档协议（Play Compaction）、视觉小说演出视窗（Visual Novel View）与 11 类去 AI 味 Novel LINT。
+4. **参考作品深度拆解升级（已交付）**：[1370](tasks/1370.md) 章节独立分块并行拆解；[1380](tasks/1380.md) 参考作品源文本只读探索与“针对此参考作品提问”面板。
+5. **长尾与外部验收（进行中）**：[0580](tasks/0580.md) 远端同步、[1120](tasks/1120.md) Play 极端故障恢复、[1230](tasks/1230.md) 存储可靠性收尾。
 
-第一梯队可靠性与治理收尾（2026-10-15）：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复提示与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 跨管线 usage/egress 记录（Reference 与 Play）、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试。三份 Needs Review task 仍未全部关闭：设备断电、商业 provider、远端鉴权/多平台与发行环境验收留在各自 Remaining。
+第一梯队可靠性与治理收尾（2026-10-15）：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复提示与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 跨管线 usage/egress 记录（Reference 与 Play）、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试。Needs Review tasks 的代码与单测已就绪，剩余设备断电、商业 provider、远端鉴权/多平台与发行环境验收留在各自 Remaining。
 
 不做商业写作、连载平台或团队协作相关功能。**Extension 系统开发继续暂缓**：不新增动态 Tool 注册或 extension host code。
 

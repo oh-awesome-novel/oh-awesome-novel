@@ -105,6 +105,8 @@
 
 ## Priority And Deferred Development (2026-10-15)
 
+2026-10-24 记录：已交付 1350（Steer 运行中插话、Follow-up 排队、推理过程 Thinking 可见性与 Play 消息日志）、1360（设定工坊 Forge 引导共创、Play Prompt Cache 冻结前缀、Play 剧情存档 Compaction、视觉小说视窗与名册一致性、Novel LINT 11 类套话质检与微创审批）、1370（参考作品上下文窗口并行拆解）以及 1380（参考作品源文本只读探索与提问面板）。相关核心功能已全部合入 main 并具备端到端测试覆盖；各 Needs Review task 的剩余外部实机/长尾验证（真实 provider 鉴权、商业网络、断电设备矩阵等）见各自 Remaining。
+
 2026-10-15 重新定位（见 [PROJECT_VISION](../PROJECT_VISION.md)）：1330/1340 写作闭环已交付，Play 保持高优先级，新的 Play 体验需求按作者使用反馈直接立项，不再受 2026-10-01 “更多 Director 扩展暂缓”约束。Extension manifest 与动态 Tool/prompt/workflow registration 继续暂缓。
 
 2026-10-15 第一梯队可靠性/治理收尾：0580 远端同步 preflight 与结构化失败、1230 缺失 receipt 的可操作恢复、1110 G7 Reference/Play 跨管线 usage/egress、1120 在线 Play 锁 tombstone 保留及延迟竞争者回归已交付；三份 Needs Review task 的剩余范围仍以各自 Remaining 为准。
