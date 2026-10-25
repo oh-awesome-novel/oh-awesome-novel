@@ -41,6 +41,8 @@ import {
   reconcileReferenceDeconstructionPublish,
   rejectReferenceDeconstructionPublish,
   reserveReferenceFullDeconstructionUnit,
+  normalizeReferenceQuestion,
+  prepareReferenceQuestionSource,
   resolveReferenceChapterChunkChars,
   settleReferenceFullDeconstructionReservation,
   reserveReferenceQuickPreview,
@@ -67,6 +69,7 @@ import type {
   ReferenceStoryMaterialKind,
   ReferenceStoryMaterialProjectionResult,
 } from '@oh-awesome-novel/core';
+import type { ReferenceQuestionAnswer } from '@oh-awesome-novel/core';
 import {
   createPendingActionStore,
   createReferencePublicationChangeProposal,
@@ -94,6 +97,7 @@ import {
   generateReferenceMaterialChapter,
   generateReferenceMaterialCoverage,
   generateReferenceMaterialProjection,
+  generateReferenceQuestionAnswer,
   generateReferenceQuickPreview,
   generateReferenceStyleProfile,
 } from '@oh-awesome-novel/agent';
@@ -105,6 +109,7 @@ import type {
   GenerateReferenceMaterialChapterInput,
   GenerateReferenceMaterialCoverageInput,
   GenerateReferenceMaterialProjectionInput,
+  GenerateReferenceQuestionAnswerInput,
   GenerateReferenceQuickPreviewInput,
   GenerateReferenceStyleProfileInput,
   ReferenceAggregateAnalysisOutput,
@@ -154,7 +159,20 @@ export interface CreateReferenceDeconstructionBackendControllerOptions {
   runMaterialProjection?: (
     input: GenerateReferenceMaterialProjectionInput,
   ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialProjectionResult>>;
+  runQuestion?: (
+    input: GenerateReferenceQuestionAnswerInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceQuestionAnswer>>;
 }
+
+export interface AskReferenceQuestionCommand {
+  readonly question: string;
+}
+
+/** Advisory, read-only answer; nothing is written to the reference bundle. */
+export type ReferenceQuestionTransportResult =
+  | { readonly status: 'completed'; readonly answer: ReferenceQuestionAnswer }
+  | { readonly status: 'failed'; readonly error: { code: string; message: string; retryable: boolean } }
+  | { readonly status: 'aborted' };
 
 export interface CreateReferenceDeconstructionRunCommand {
   readonly mode: 'quickPreview';
@@ -246,6 +264,11 @@ export interface ReferenceDeconstructionBackendController {
     origin: ReferenceDeconstructionPublishPendingActionOrigin,
   ): Promise<ReferenceDeconstructionMutationTransportResult>;
   hasActiveExecution(workspaceRoot?: string): boolean;
+  askQuestion(
+    referenceId: string,
+    input: AskReferenceQuestionCommand,
+    requestSignal?: AbortSignal,
+  ): Promise<ReferenceQuestionTransportResult>;
 }
 
 interface ActiveReferenceExecution {
@@ -426,6 +449,11 @@ export function createReferenceDeconstructionBackendController(
     }));
   const runMaterialProjection = options.runMaterialProjection
     ?? ((input) => generateReferenceMaterialProjection({
+      ...input,
+      workspaceRoot: options.getWorkspaceRoot(),
+    }));
+  const runQuestion = options.runQuestion
+    ?? ((input) => generateReferenceQuestionAnswer({
       ...input,
       workspaceRoot: options.getWorkspaceRoot(),
     }));
@@ -1450,7 +1478,71 @@ export function createReferenceDeconstructionBackendController(
       );
   }
 
+  async function askQuestion(
+    referenceId: string,
+    input: AskReferenceQuestionCommand,
+    requestSignal?: AbortSignal,
+  ): Promise<ReferenceQuestionTransportResult> {
+    let question: string;
+    try {
+      question = normalizeReferenceQuestion(input.question);
+    } catch (error) {
+      throw new ReferenceDeconstructionRequestError(
+        error instanceof Error ? error.message : 'Reference question is invalid.',
+        'invalidRequest',
+      );
+    }
+    const workspaceRoot = options.getWorkspaceRoot();
+    const runtime = await options.getModelRuntime();
+    const model = runtime.providerConfig.models
+      ?.find((entry) => entry.id === runtime.providerConfig.model);
+    const source = await prepareReferenceQuestionSource(workspaceRoot, referenceId, {
+      maxChunkChars: resolveReferenceChapterChunkChars(model?.contextWindow),
+    });
+    assertReferenceWorkspaceUnchanged(options, workspaceRoot);
+    let generation: ReferenceFullDeconstructionGenerationResult<ReferenceQuestionAnswer>;
+    try {
+      generation = await runQuestion({
+        referenceId: source.referenceId,
+        title: source.title,
+        question,
+        windows: source.windows,
+        providerConfig: runtime.providerConfig,
+        resolveModel: runtime.resolveModel,
+        ...(requestSignal ? { abortSignal: requestSignal } : {}),
+      });
+    } catch {
+      generation = requestSignal?.aborted
+        ? { status: 'aborted' }
+        : {
+            status: 'failed',
+            error: {
+              code: 'provider_error',
+              message: 'Reference question provider request failed.',
+              retryable: true,
+            },
+          };
+    }
+    if (generation.status === 'completed') {
+      return { status: 'completed', answer: generation.output };
+    }
+    if (generation.status === 'failed') {
+      return {
+        status: 'failed',
+        error: {
+          code: generation.error.code,
+          message: generation.error.code === 'invalid_output'
+            ? 'Reference question answer did not pass evidence validation.'
+            : 'Reference question provider request failed.',
+          retryable: generation.error.retryable,
+        },
+      };
+    }
+    return { status: 'aborted' };
+  }
+
   return {
+    askQuestion,
     createRun,
     readRun,
     readActiveRun,
@@ -1871,7 +1963,12 @@ async function runReferenceFullUnitProvider(
       coveredChapterIds: execution.coveredChapterIds ?? [],
     };
     if (execution.unit.kind === 'aggregate') {
-      return runners.runAggregateAnalysis(reductionInput);
+      return runners.runAggregateAnalysis({
+        ...reductionInput,
+        ...(execution.explorableSourceWindows?.length
+          ? { explorableSourceWindows: execution.explorableSourceWindows }
+          : {}),
+      });
     }
     if (execution.unit.kind === 'style') {
       return runners.runStyleProfile(reductionInput);

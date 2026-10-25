@@ -143,6 +143,7 @@ import type {
   ReferenceStoryMaterialAggregateResult,
   ReferenceStoryMaterialChapterResult,
   ReferenceStoryMaterialCoveragePreview,
+  ReferenceQuestionAnswer,
   ReferenceStoryMaterialProjectionResult,
   ReferenceMaterialAdoptionSelection,
   ThemePreference,
@@ -204,6 +205,7 @@ import type {
   GenerateReferenceMaterialCoverageInput,
   GenerateReferenceMaterialProjectionInput,
   GenerateReferenceQuickPreviewInput,
+  GenerateReferenceQuestionAnswerInput,
   GenerateReferenceStyleProfileInput,
   ReferenceAggregateAnalysisOutput,
   ReferenceChapterAnalysisOutput,
@@ -345,6 +347,9 @@ export interface NovelBackendOptions {
   runReferenceQuickPreview?: (
     input: GenerateReferenceQuickPreviewInput,
   ) => Promise<ReferenceQuickPreviewGenerationResult>;
+  runReferenceQuestion?: (
+    input: GenerateReferenceQuestionAnswerInput,
+  ) => Promise<ReferenceFullDeconstructionGenerationResult<ReferenceQuestionAnswer>>;
   runReferenceMaterialCoverage?: (
     input: GenerateReferenceMaterialCoverageInput,
   ) => Promise<ReferenceStoryMaterialGenerationResult<ReferenceStoryMaterialCoveragePreview>>;
@@ -596,6 +601,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ...(options.runReferenceQuickPreview
       ? { runQuickPreview: options.runReferenceQuickPreview }
       : {}),
+    ...(options.runReferenceQuestion
+      ? { runQuestion: options.runReferenceQuestion }
+      : {}),
     ...(options.runReferenceMaterialCoverage
       ? { runMaterialCoverage: options.runReferenceMaterialCoverage }
       : {}),
@@ -794,6 +802,12 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       referenceMaterialAdoption,
       context.req.param('referenceId') ?? '',
       context.req.param('previewId') ?? '',
+      context,
+    ));
+  app.post('/api/workspace/references/:referenceId/questions', (context) =>
+    handleAskReferenceQuestion(
+      referenceDeconstruction,
+      context.req.param('referenceId') ?? '',
       context,
     ));
   app.post('/api/workspace/references/:referenceId/deconstruction-runs', (context) =>
@@ -2344,6 +2358,23 @@ async function handleAdvanceReferenceDeconstructionRun(
       context,
     );
     return controller.advanceRun(referenceId, runId, input, context.req.raw.signal);
+  });
+}
+
+async function handleAskReferenceQuestion(
+  controller: ReferenceDeconstructionBackendController,
+  referenceId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceDeconstructionJsonRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, ['question']);
+    return controller.askQuestion(
+      referenceId,
+      { question: getOptionalString(body, 'question') ?? '' },
+      context.req.raw.signal,
+    );
   });
 }
 

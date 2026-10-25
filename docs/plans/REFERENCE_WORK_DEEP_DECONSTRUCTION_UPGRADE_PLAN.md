@@ -156,6 +156,7 @@ contextEligible =
 - Preview 后的显式 full-run confirmation。
 - deterministic chapter / chunk 切分；chunk 之间互不依赖，块大小按模型 context window 在 12k–96k 字之间选择（见 task 1370）。
 - 分章摘要与可选 deep dive。
+- 技法聚合阶段可用只读的检索与按行读取工具回查所覆盖的原文块；另有只读的「按问题拆书」入口，由模型自由检索整本原文回答一个问题，不落盘（见 task 1380）。
 - plotline、pacing、hooks、characters、relationships、worldbuilding、timeline、tropes、style profile 和 scene techniques 聚合。
 - evidence/source pointer、confidence、uncertainty 与 coverage。
 - `deconstruction-manifest.yaml`、`diagnostics.yaml` 和人类可读 progress projection。
