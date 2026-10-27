@@ -3,7 +3,7 @@
 import { mount } from '@vue/test-utils';
 import type { ChatStatus, UIMessage } from 'ai';
 import { shallowRef, type ShallowRef } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 interface MockChatInstance {
   messages: ShallowRef<UIMessage[]>;

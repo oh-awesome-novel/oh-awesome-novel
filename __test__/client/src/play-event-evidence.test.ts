@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createOanClient } from '@oh-awesome-novel/client';
 import { createPlaySessionDraft, settlePlayWorldRefereeResponse, type PlaySession } from '@oh-awesome-novel/core';
 

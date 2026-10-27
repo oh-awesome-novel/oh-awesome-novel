@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import PlayContextInspector from '../../../apps/desktop-ui/src/components/play/context/PlayContextInspector.vue';
 import PlayEventFeed from '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue';

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { forgeChunkKeys, parseForgeEntityWriterResponse, formatForgeWriterPrompt, applyForgeBriefEdits, createEmptyForgeBrief, parseForgeDiscussResponse, parseForgeJson, parseForgePlan, parseForgeWriterResponse, parseForgeDraft, formatForgePlanPrompt, type ForgePlan } from '@oh-awesome-novel/core';
 
 function response(brief: unknown): string {

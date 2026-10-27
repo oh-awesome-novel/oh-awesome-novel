@@ -9,7 +9,7 @@ import {
   type NovelBackendHandle,
 } from '@oh-awesome-novel/backend';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 const workspaces: string[] = [];
 const backends: NovelBackendHandle[] = [];

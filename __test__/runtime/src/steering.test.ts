@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import type { RuntimeEvent, RuntimeSteeringMessage, RuntimeSteeringSource } from '@oh-awesome-novel/runtime';

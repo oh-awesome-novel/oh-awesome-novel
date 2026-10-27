@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import {
   createPlaySessionDraft, formatPlayTurnTail, formatPlayWorldRefereePrompt, formatPlayWorldRefereeTurnContext,
   getPlayFrozenSystemPrompt, PLAY_REFEREE_PROTOCOL_MARKER, settlePlayWorldRefereeResponse,

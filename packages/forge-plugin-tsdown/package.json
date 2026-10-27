@@ -20,16 +20,17 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prebuild": "tsc -p tsconfig.json",
-    "build": "tsdown"
+    "build": "vp pack"
   },
   "dependencies": {
     "@electron-forge/plugin-base": "^8.0.1",
-    "tsdown": "^0.23.1",
-    "vite": "^8.3.5"
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
+    "tsdown": "^0.23.1"
   },
   "devDependencies": {
     "@electron-forge/shared-types": "^8.0.1",
     "@types/node": "^24.19.2",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vite-plus": "1.4.0"
   }
 }

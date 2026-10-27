@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createRuntimeTurnInput } from '@oh-awesome-novel/agent';
 import { PriorityRuntimeContextBuilder } from '@oh-awesome-novel/runtime';
 describe('frozen Play prefix at the runtime boundary', () => {

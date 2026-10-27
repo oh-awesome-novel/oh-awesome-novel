@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import { readStoredPlayAdoptionPreview } from '../../../packages/backend/src/play-adoption-preview.js';
 import { readStoredReferenceMaterialAdoptionPreview } from '../../../packages/backend/src/reference-material-adoption-preview.js';

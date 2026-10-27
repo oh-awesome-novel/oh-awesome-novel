@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { inferNovelAgentCapability } from '@oh-awesome-novel/agent';
 
 describe('inferNovelAgentCapability keyword matching', () => {

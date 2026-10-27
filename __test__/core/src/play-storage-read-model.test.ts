@@ -2,7 +2,7 @@ import { cp, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import {
   createPlaySessionDraft, listPlaySessionSummaries, projectPlaySessionSelectedDetail,
   readPlaySessionFiles, readPlaySessionSelectedDetail, settlePlayWorldRefereeResponse,

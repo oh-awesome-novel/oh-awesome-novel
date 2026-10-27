@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createStageSnapshot, normalizeStageSnapshot, parseTextBeats, inferSpeaker, carryTags, parseRosterProfile, serializeRosterProfile, findRosterCharacter, parseSceneFrame, createPlaySessionDraft, addPlayTranscriptTurn, normalizePlayTurnArtifact } from '@oh-awesome-novel/core';
 const character = { id: 'nian', name: '念念', aliases: ['小念'], genderKind: 'girl' as const, isPlayer: false, looks: { fixedBooruTags: 'silver hair', outfitDescription: '白衣', outfitTags: 'white dress' }, voiceConfig: { preferredVoiceId: 'reserved', pitchOffset: 0 } };
 describe('visual novel protocol', () => {

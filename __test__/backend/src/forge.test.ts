@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createNovelHonoApp, createForgeHandlers, assertForgePreviewFresh, assertForgeActionFresh, forgeCanonicalFiles, forgeCanonicalPaths } from '@oh-awesome-novel/backend';
 import { createPendingActionStore, createChangeMaterializer } from '@oh-awesome-novel/tools';
 import { createEmptyForgeBrief, forgeChunkKeys, type ForgeDraft, type ForgePlan } from '@oh-awesome-novel/core';

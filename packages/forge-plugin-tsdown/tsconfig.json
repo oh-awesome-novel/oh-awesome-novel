@@ -27,6 +27,6 @@
     "index.ts",
     "spec",
     "tmpl",
-    "tsdown.config.ts"
+    "vite.config.ts"
   ]
 }

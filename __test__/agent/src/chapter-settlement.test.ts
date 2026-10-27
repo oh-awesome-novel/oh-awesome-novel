@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { createNovelAgentTurnEditEnvironment, inferNovelAgentCapability } from '@oh-awesome-novel/agent';
 import { createChapterSettlementSource } from '@oh-awesome-novel/core';
 import { createPendingActionStore } from '@oh-awesome-novel/tools';

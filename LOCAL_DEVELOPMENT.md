@@ -4,10 +4,38 @@ This guide describes how to run oh-awesome-novel locally without Electron, using
 
 ## Prerequisites
 
-- Node.js 24. The repo includes `mise.toml`, so `mise install` can prepare the expected runtime.
-- npm dependencies installed with `npm install`.
+- Node.js 24.11.0 or newer in the 24.x line, with npm 12.2.1. The repo includes `mise.toml`, so `mise install` can prepare the expected runtime.
+- Locked npm dependencies installed with `npm ci` (or `npm install` when updating dependencies).
 - A local Git command available on `PATH`.
 - Optional for agent testing: Ollama running locally with the model you want to use.
+
+## Project-local Vite+
+
+Vite+ 1.4.0 is pinned in the workspace devDependencies and `package-lock.json`.
+Electron download mirrors, when needed, are configured with `ELECTRON_MIRROR` and
+`ELECTRON_CUSTOM_DIR` environment variables. Legacy custom `.npmrc` keys were removed
+because npm 12 warns about them and exports them over CI download settings.
+No global `vp` installation or Vite+ Node management is required: continue using
+mise (or your existing Node manager), npm 12, `npm ci`, and `npm run`.
+The scripts resolve the local `vp` binary automatically. For an ad hoc command,
+use `npm exec -- vp --help` or `npm exec --workspace @oh-awesome-novel/desktop-ui -- vp dev`.
+
+The renderer uses `vp dev/build/preview`; the seven test workspaces use `vp test`;
+library and HTTP launcher builds use `vp pack` with `pack` in each `vite.config.ts`.
+Test APIs import from `vite-plus/test`. Root npm overrides align all Vite consumers
+(including VitePress and the Forge dev server) to Vite+ core and Vitest to 5.0.5.
+When upgrading Vite+, update these pins together and rerun the full quality gate.
+
+Nx still orders dependent builds. Electron Forge and its programmatic tsdown
+runtime dependency remain responsible for main/preload bundles and native packaging.
+VitePress remains the wiki CLI; Vue source and smoke fixtures still use vue-tsc.
+`npm run lint` uses Vite+ Oxlint (including type-aware diagnostics); existing lint
+warnings are reported, while errors fail the command. `npm run typecheck` retains
+the existing strict production checks. There was no repository-wide formatting
+gate before migration; `npm exec -- vp fmt --check` can report existing style debt,
+but bulk formatting is deliberately separate from this migration. Consequently,
+use `npm exec -- vp check --no-fmt` for the lint portion, not as a replacement for
+`npm run typecheck` or the full quality gate.
 
 ## Recommended Local Paths
 
@@ -119,7 +147,7 @@ Run the same quality gate used by pull requests and releases from the repository
 npm run quality
 ```
 
-This builds production packages in dependency order, checks all ten production TypeScript workspaces plus the renderer smoke fixture, runs the seven Vitest workspaces sequentially with one worker each, checks architecture terminology and task/index status, and builds the wiki. The empty `ui-vue` placeholder has no source to typecheck. Vitest test files are executed by Vitest; the production source check is not a claim that every test fixture has a standalone TypeScript project.
+This lints the repository after building production packages in dependency order, checks all ten production TypeScript workspaces plus the renderer smoke fixture, runs the seven Vitest workspaces sequentially with one worker each, checks architecture terminology and task/index status, and builds the wiki. The empty `ui-vue` placeholder has no source to typecheck. Vitest test files are executed by Vitest; the production source check is not a claim that every test fixture has a standalone TypeScript project.
 
 For an already built checkout, `npm run typecheck`, `npm run test:ci`, and `npm run docs:check` can be run separately. `test:ci` deliberately skips workspace lifecycle rebuilds so each suite consumes the same completed build; run `npm run build` after changing production code. Backend and SDK integration tests need local loopback sockets and use temporary workspaces and controlled model responses, without personal credentials.
 
@@ -132,7 +160,7 @@ npm run build --workspace @oh-awesome-novel/desktop-ui
 Build backend packages:
 
 ```sh
-nx run @oh-awesome-novel/backend:build
+npm exec -- nx run @oh-awesome-novel/backend:build
 ```
 
 Run module tests from their package workspaces, for example:

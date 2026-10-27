@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parse, stringify } from 'yaml';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { createChapterSettlementSource } from '@oh-awesome-novel/core';
 import type { ChapterSettlementDomainChange, ChapterSettlementObservationLog } from '@oh-awesome-novel/core';
 import { createChapterSettlementChangeProposal, createChangeMaterializer, createPendingActionStore,

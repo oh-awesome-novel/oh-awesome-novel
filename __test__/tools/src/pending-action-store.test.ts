@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import {
   createCandidateChangeSet,

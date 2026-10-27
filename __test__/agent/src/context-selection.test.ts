@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createNovelAgentWorkspaceSnapshotFromProjection, createBaselineNovelAgentContextPackage } from '@oh-awesome-novel/agent';
 import type { SandboxProjectionSnapshot } from '@oh-awesome-novel/tools';
 

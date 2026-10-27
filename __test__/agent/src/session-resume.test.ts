@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { writeSessionRunMetadata } from '@oh-awesome-novel/core';
 const streamText = vi.fn();
 vi.mock('ai', async (original) => ({ ...(await original<typeof import('ai')>()), streamText }));

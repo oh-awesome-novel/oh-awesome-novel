@@ -1,5 +1,5 @@
 import { InMemoryFs, latin1FromBytes } from 'just-bash';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import { TrackingFs } from '@oh-awesome-novel/tools';
 

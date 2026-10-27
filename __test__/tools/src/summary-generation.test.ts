@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { evaluateAggregateSummaries, parseSummaryDocument, mergeSummaryDocument, createChapterSettlementSource } from '@oh-awesome-novel/core';
 import { createSummaryGenerationChangeProposal, createChangeMaterializer, createPendingActionStore, createWorkspaceProjection,
   readRepositoryBaseline, parsePendingAction, parsePendingActionOrigin, validateFinalDocument, summaryGenerationProjectionRules,

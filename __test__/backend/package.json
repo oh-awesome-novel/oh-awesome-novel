@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "pretest": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
-    "test": "vitest",
+    "test": "vp test",
     "pretest:run": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend",
-    "test:run": "vitest run"
+    "test:run": "vp test run"
   },
   "dependencies": {
     "@oh-awesome-novel/backend": "^0.0.1",
@@ -18,6 +18,6 @@
   },
   "devDependencies": {
     "typescript": "~6.0.3",
-    "vitest": "^5.0.5"
+    "vite-plus": "1.4.0"
   }
 }

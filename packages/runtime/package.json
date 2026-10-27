@@ -12,7 +12,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "vp pack",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "tsdown": "^0.23.1",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vite-plus": "1.4.0"
   }
 }

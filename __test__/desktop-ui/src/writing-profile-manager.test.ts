@@ -2,7 +2,7 @@
 
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const api = vi.hoisted(() => ({
   getWritingProfiles: vi.fn(),

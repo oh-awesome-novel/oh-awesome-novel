@@ -15,16 +15,15 @@
     "yaml": "^2.9.1"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "vp pack",
     "test": "npm run test:run --workspace @oh-awesome-novel/test-core",
     "test:watch": "npm run test --workspace @oh-awesome-novel/test-core",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "tsdown": "^0.23.1",
     "typescript": "~6.0.3",
-    "vitest": "^5.0.5"
+    "vite-plus": "1.4.0"
   },
   "exports": {
     "./novel-copilot-contract": {

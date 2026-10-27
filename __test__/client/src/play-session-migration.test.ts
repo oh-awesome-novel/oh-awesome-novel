@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vite-plus/test';
 import { createOanClient, parsePlayMigrationPreview } from '@oh-awesome-novel/client';
 const preview = { sessionId: 'legacy', baseRevision: 0, sourceFingerprint: 'a'.repeat(64), fromSchemaVersion: 2, toSchemaVersion: 4, unknownMetadataKeys: [], legacyTranscriptCount: 0, projectedTurnCount: 0, generatedTurnIds: [], backupRelativePath: '.migrations/v2-to-v4/original' };
 it('strictly validates migration identity, fingerprint, counts and backup path', () => {

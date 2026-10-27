@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it } from 'vite-plus/test';
 import { addPlayTranscriptTurn, confirmPlaySessionMigration, previewPlaySessionMigration, readPlaySessionFiles, writePlaySessionFiles } from '@oh-awesome-novel/core';
 
 const roots: string[] = [];

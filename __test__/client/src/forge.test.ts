@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { createForgeClientMethods, parseForgeDraft } from '@oh-awesome-novel/client';
 const draft = { schemaVersion: 1, id: 'forge-one', revision: 0, idea: '夜城', stage: 'discuss', reply: '', questions: [], brief: { title: '', readiness: 0, items: [], openPoints: [] } };
 describe('Forge client boundaries', () => {

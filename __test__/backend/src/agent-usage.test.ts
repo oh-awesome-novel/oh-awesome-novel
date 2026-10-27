@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { appendAgentUsageRecord } from '@oh-awesome-novel/core';
 import { createNovelHonoApp } from '@oh-awesome-novel/backend';
 import { createOanClient } from '@oh-awesome-novel/client';

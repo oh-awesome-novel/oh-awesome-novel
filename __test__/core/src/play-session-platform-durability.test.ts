@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { open } from 'node:fs/promises';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createPlaySessionDraft, readPlaySessionFiles, writePlaySessionFiles } from '@oh-awesome-novel/core';
 
 vi.mock('node:fs/promises', async (importOriginal) => {

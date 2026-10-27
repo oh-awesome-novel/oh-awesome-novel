@@ -27,7 +27,7 @@ import type {
   NovelBackendPlayRehearsalActorInput,
   NovelBackendPlayRehearsalRefereeInput,
 } from "@oh-awesome-novel/backend";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 interface JsonResponse<T> {
   response: Response;

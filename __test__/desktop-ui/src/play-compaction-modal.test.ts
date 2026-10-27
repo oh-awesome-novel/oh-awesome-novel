@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { PlaySession } from '@oh-awesome-novel/client';
 import PlayCompactionModal from '../../../apps/desktop-ui/src/components/play/PlayCompactionModal.vue';
 const api = vi.hoisted(() => ({ compactPlaySession: vi.fn(), continueCompactedPlaySession: vi.fn() }));

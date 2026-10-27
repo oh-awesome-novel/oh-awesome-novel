@@ -15,7 +15,7 @@ import {
   startNovelHttpBackend,
   type NovelBackendHandle,
 } from '@oh-awesome-novel/backend';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 const workspaces: string[] = [];
 const backends: NovelBackendHandle[] = [];

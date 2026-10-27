@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: {
   getComposerSubmitShortcutPreference: vi.fn().mockResolvedValue('ctrl-enter'),
   setComposerSubmitShortcutPreference: vi.fn().mockResolvedValue(undefined),

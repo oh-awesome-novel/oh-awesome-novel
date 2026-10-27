@@ -1,6 +1,6 @@
 import { Bash, InMemoryFs, latin1FromBytes } from 'just-bash';
 import type { IFileSystem } from 'just-bash';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import {
   PolicyFs,

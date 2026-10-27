@@ -31,7 +31,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "tsdown.config.ts"
+    "vite.config.ts"
   ],
   "exclude": [
     "node_modules",

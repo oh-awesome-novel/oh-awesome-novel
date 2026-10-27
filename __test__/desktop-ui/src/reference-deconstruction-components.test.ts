@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import ReferenceDeconstructionPanel from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceDeconstructionPanel.vue';
 import ReferenceList from '../../../apps/desktop-ui/src/components/workspace/ReferenceList.vue';

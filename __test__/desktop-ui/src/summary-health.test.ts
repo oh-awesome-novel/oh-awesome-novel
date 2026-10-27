@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 vi.mock('../../../apps/desktop-ui/src/composables/useWorkspaceApi', () => ({ useWorkspaceApi: () => ({ rebuildProjections: vi.fn() }) }));
 import ProjectHealthTab from '../../../apps/desktop-ui/src/components/workspace/ProjectHealthTab.vue';
 

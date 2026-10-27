@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { parsePendingActionOrigin } from '@oh-awesome-novel/tools';
 
 const hash = 'a'.repeat(64);

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { effectScope, nextTick } from 'vue';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vite-plus/test';
 
 import {
   readWorkspaceModePreference,

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vite-plus/test';
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import type { PlaySession } from '@oh-awesome-novel/core';
 describe('Play compaction HTTP flow', () => {

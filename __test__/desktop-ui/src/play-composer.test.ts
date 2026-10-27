@@ -2,7 +2,7 @@
 
 import { mount } from '@vue/test-utils';
 import { defineComponent, shallowRef } from 'vue';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import type { PlayRelativeTimeAdvance } from '@oh-awesome-novel/client';
 import PlayComposer from '../../../apps/desktop-ui/src/components/play/PlayComposer.vue';

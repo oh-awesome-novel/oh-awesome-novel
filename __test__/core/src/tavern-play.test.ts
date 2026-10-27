@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stringify } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import {
   normalizeTavernCard, prepareTavernCardPlaySession, resolveTavernPlaySourceContent,
   formatTavernLorebookContext, readPlaySessionFiles, writePlaySessionFiles,

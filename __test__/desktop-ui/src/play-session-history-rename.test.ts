@@ -1,6 +1,6 @@
 import { flushPromises } from '@vue/test-utils';
 import { computed, effectScope, shallowRef } from 'vue';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import { usePlaySessionHistory } from '../../../apps/desktop-ui/src/composables/usePlaySessionHistory';
 import type { PlaySessionHistoryClient } from '../../../apps/desktop-ui/src/composables/usePlaySessionHistory';

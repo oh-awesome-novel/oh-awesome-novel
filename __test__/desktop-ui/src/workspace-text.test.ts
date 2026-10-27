@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import WorkspaceSearchDialog from '../../../apps/desktop-ui/src/components/workspace/WorkspaceSearchDialog.vue';
 import ManuscriptExportDialog from '../../../apps/desktop-ui/src/components/workspace/ManuscriptExportDialog.vue';
 import FileViewer from '../../../apps/desktop-ui/src/components/workspace/FileViewer.vue';

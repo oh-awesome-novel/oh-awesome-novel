@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { createOanClient, parseAgentUsageRecord } from '@oh-awesome-novel/client';
 const summary = () => ({ schemaVersion: 1, recordType: 'turn', sessionId: 's1', turnId: 't1', createdAt: '2026-10-01T00:00:00.000Z', stepCount: 1, estimatedMessageTokens: 10, estimatedRequestTokens: 20, actualUsage: { availability: 'unavailable' }, actualCoverage: 'unavailable', fieldCoverage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, outcome: 'completed' });
 const history = () => ({ schemaVersion: 1, sessionId: 's1', records: [summary()], diagnostics: [], truncated: false });

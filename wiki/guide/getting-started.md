@@ -8,7 +8,7 @@ Oh Awesome Novel（OAN）把小说正文、角色、设定和创作记录保存�
 
 当前仓库提供 Electron 桌面入口和浏览器开发预览。以下命令都在仓库根目录执行。
 
-准备 Node.js **24.x**、npm 和 Git。可以先检查版本：
+准备 Node.js **24.11.0–24.x**、npm **12.2.1** 和 Git。可以先检查版本：
 
 ```sh
 node --version

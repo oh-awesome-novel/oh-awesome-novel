@@ -110,7 +110,9 @@ npm run dev --workspace @oh-awesome-novel/desktop-ui
 
 打开 `http://127.0.0.1:5173/`。完整配置与测试说明见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。
 
-提交前运行 `npm run quality`：依赖顺序构建、生产源码严格类型检查、七个测试 workspace、文档状态/术语检查和 Wiki 构建使用同一入口。PR、main 与发行前检查复用这条命令；发行只打包通过质量门禁的精确源码提交。
+项目使用 devDependency 中固定的 Vite+ 1.4.0；要求 Node.js 24.11.0–24.x、npm 12.2.1。继续使用 mise/外部 Node 管理与 `npm ci` / `npm run`，无需全局安装 `vp`。开发与工具链说明见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。
+
+提交前运行 `npm run quality`：依赖顺序构建、Vite+ lint、生产源码严格类型检查、七个测试 workspace、文档状态/术语检查和 Wiki 构建使用同一入口。PR、main 与发行前检查复用这条命令；发行只打包通过质量门禁的精确源码提交。
 
 ## 关键文档
 

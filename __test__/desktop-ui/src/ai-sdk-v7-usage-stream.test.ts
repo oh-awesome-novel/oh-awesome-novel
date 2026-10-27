@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineComponent, h } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createNovelHonoApp, type NovelBackendAgentInput } from '@oh-awesome-novel/backend';
 import { createOanClient } from '@oh-awesome-novel/client';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';

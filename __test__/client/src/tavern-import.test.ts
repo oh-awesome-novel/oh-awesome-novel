@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vite-plus/test';
 import { createOanClient, parseTavernImportPreview, parsePendingActionView } from '@oh-awesome-novel/client';
 const id = 'pa_aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
 const hash = 'a'.repeat(64);

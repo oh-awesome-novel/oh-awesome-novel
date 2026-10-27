@@ -17,7 +17,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import {
   hasExplicitReferenceRecallIntent,
