@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { evaluateChapterEvidence, evaluateProjectHealth, formatChapterEvidenceCoverage, readProjectHealth } from '@oh-awesome-novel/core';
 
 const roots: string[] = [];

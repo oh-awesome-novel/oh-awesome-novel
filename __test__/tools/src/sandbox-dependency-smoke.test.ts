@@ -1,7 +1,7 @@
 import { createBashTool } from 'bash-tool';
 import { createPatch } from 'diff';
 import { Bash, InMemoryFs } from 'just-bash';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import type { ToolSet } from 'ai';
 

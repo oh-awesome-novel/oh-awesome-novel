@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { UIMessage } from 'ai';
 const api = vi.hoisted(() => ({ listAgentUsageSessions: vi.fn(), getAgentGovernanceHistory: vi.fn() }));
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));

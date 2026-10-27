@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createChapterSettlementSource, parseChapterSettlementObservationLog } from '@oh-awesome-novel/core';
 
 const source = createChapterSettlementSource('0001/0001', '---\ntitle: Chapter\n---\n林安拿起钥匙。\n他离开房间。\n');

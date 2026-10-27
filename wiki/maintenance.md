@@ -4,7 +4,7 @@
 
 ## 本地预览
 
-仓库要求 Node.js 24 和 npm。在仓库根目录安装依赖后启动：
+仓库要求 Node.js 24.11.0–24.x 和 npm 12.2.1。在仓库根目录安装依赖后启动：
 
 ```sh
 npm install
@@ -23,6 +23,8 @@ npm run docs:dev
 | `wiki/public/screenshots/` | 实际应用界面截图 |
 | `wiki/screenshots.md` | 截图清单、来源与补图状态 |
 | `docs/` | 项目架构、设计、计划与任务，继续单独维护 |
+
+Vite+ 1.4.0 是项目 devDependency，版本写入 `package-lock.json`；不需要全局安装 `vp` 或由 Vite+ 管理 Node，仍可使用 mise。文档保留 VitePress CLI，底层 Vite 通过 npm override 使用同版本 Vite+ core。完整检查运行 `npm run quality`（构建、lint、类型检查、七组测试及 wiki 构建）。
 
 文档使用 VitePress 原生默认主题。不要新增自定义 CSS、覆盖主题或引入仅用于装饰的组件。
 

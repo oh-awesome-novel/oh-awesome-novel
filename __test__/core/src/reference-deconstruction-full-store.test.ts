@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parse, stringify } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import {
   approveReferenceFullDeconstruction,

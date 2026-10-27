@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayDirectorInterventionPanel from '../../../apps/desktop-ui/src/components/play/rehearsal/PlayDirectorInterventionPanel.vue';
 import type {

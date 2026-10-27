@@ -3,7 +3,7 @@
 import type { PendingActionViewV1 } from '@oh-awesome-novel/client';
 import type { UIMessage } from 'ai';
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import PendingActionCard from '../../../apps/desktop-ui/src/components/agent-checkpoint/PendingActionCard.vue';
 import DiffReviewTab from '../../../apps/desktop-ui/src/components/workspace/DiffReviewTab.vue';

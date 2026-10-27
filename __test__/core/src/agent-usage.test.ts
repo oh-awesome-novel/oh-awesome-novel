@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { aggregateModelUsage, appendAgentUsageRecord, estimateTextTokens, listAgentUsageSessions, normalizeModelUsage, parseAgentGovernanceHistory, parseAgentUsageRecord, readAgentGovernanceHistory, safeEndpointOrigin } from '@oh-awesome-novel/core';
 import type { ModelStepUsageRecord } from '@oh-awesome-novel/core';
 const roots: string[] = [];

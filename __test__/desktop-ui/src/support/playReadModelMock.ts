@@ -6,8 +6,8 @@ import type {
   PlaySessionSummary,
   PlaySourceDriftStatus,
 } from '@oh-awesome-novel/client';
-import type { Mock } from 'vitest';
-import { vi } from 'vitest';
+import type { Mock } from 'vite-plus/test';
+import { vi } from 'vite-plus/test';
 
 type TestMock = Mock<(...args: any[]) => any>;
 

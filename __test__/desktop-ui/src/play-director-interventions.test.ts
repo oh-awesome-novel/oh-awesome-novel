@@ -1,5 +1,5 @@
 import { effectScope, nextTick, ref, shallowRef } from 'vue';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import type { PlaySceneMemoryArtifact } from '@oh-awesome-novel/client';
 import type { PlayDirectorInterventionDraft } from '../../../apps/desktop-ui/src/components/play/rehearsal/types';

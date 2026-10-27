@@ -3,7 +3,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import type { UIMessage } from 'ai';
 import { computed } from 'vue';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import AgentTimeline from '../../../apps/desktop-ui/src/components/agent-checkpoint/AgentTimeline.vue';
 import PlayMessageLog from '../../../apps/desktop-ui/src/components/play/message-log/PlayMessageLog.vue';

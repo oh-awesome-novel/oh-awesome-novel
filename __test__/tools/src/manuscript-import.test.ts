@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { prepareManuscriptImport } from '@oh-awesome-novel/core';
 import { createManuscriptImportChangeProposal, createPendingActionStore, assertManuscriptImportPreview, assertManuscriptImportActionFresh, parsePendingAction, parsePendingActionOrigin } from '@oh-awesome-novel/tools';
 

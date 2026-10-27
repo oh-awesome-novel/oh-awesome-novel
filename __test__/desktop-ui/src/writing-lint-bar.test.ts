@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import {mount,flushPromises} from '@vue/test-utils';
-import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {beforeEach,describe,it,expect,vi} from 'vite-plus/test';
 import WritingLintBar from '../../../apps/desktop-ui/src/components/editor/WritingLintBar.vue';
 const mocks=vi.hoisted(()=>({scanNovelLint:vi.fn(),reviewNovelLint:vi.fn(),proposeNovelLint:vi.fn()}));
 vi.mock('../../../apps/desktop-ui/src/client',()=>({oanClient:mocks}));

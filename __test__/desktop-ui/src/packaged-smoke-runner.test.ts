@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 const require = createRequire(import.meta.url);
 const runner = require('../packaged-main-smoke/run.cjs') as {

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import ReferenceQuestionPanel from '../../../apps/desktop-ui/src/components/workspace/reference/ReferenceQuestionPanel.vue';
 import { referenceFixture } from './support/referenceDeconstructionFixture';

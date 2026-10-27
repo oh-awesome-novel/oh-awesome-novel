@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import ManuscriptImportDialog from '../../../apps/desktop-ui/src/components/workspace/ManuscriptImportDialog.vue';
 import WorkspaceToolbar from '../../../apps/desktop-ui/src/components/workspace/WorkspaceToolbar.vue';
 const api = vi.hoisted(() => ({ previewManuscriptImport: vi.fn(), proposeManuscriptImport: vi.fn(), readPendingAction: vi.fn() }));

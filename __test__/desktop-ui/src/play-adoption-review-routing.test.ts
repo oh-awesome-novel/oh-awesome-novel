@@ -2,7 +2,7 @@
 
 import { flushPromises, mount } from '@vue/test-utils';
 import { defineComponent } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const api = vi.hoisted(() => ({
   getWorkspaceTree: vi.fn(),

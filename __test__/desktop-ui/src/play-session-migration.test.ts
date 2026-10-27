@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, h, ref } from 'vue';
-import { expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vite-plus/test';
 import PlaySessionMigration from '../../../apps/desktop-ui/src/components/play/PlaySessionMigration.vue';
 import { usePlaySessionMigration } from '../../../apps/desktop-ui/src/composables/usePlaySessionMigration';
 const preview = { sessionId: 'legacy', baseRevision: 0, sourceFingerprint: 'a'.repeat(64), fromSchemaVersion: 2 as const, toSchemaVersion: 4 as const, unknownMetadataKeys: ['customField'], legacyTranscriptCount: 3, projectedTurnCount: 1, generatedTurnIds: ['legacy-turn-0001'], backupRelativePath: '.migrations/v2-to-v4/original' };

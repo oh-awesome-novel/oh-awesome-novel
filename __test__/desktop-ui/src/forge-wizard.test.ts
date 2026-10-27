@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import ForgeWizardModal from '../../../apps/desktop-ui/src/components/forge/ForgeWizardModal.vue';
 const api = vi.hoisted(() => ({ listForgeDrafts: vi.fn(), readForgeDraft: vi.fn(), createForgeDraft: vi.fn(), discussForgeDraft: vi.fn(), updateForgeDraft: vi.fn(), planForgeDraft: vi.fn(), writeForgeDraft: vi.fn(), proposeForgeDraft: vi.fn(), handoffForgeDraft: vi.fn(), readPendingAction: vi.fn() }));
 vi.mock('../../../apps/desktop-ui/src/composables/useWorkspaceApi', () => ({ useWorkspaceApi: () => api }));

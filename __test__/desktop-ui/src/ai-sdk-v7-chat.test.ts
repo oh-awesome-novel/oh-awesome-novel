@@ -3,7 +3,7 @@
 import { createOanClient } from '@oh-awesome-novel/client';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { defineComponent, effectScope, h, nextTick, type EffectScope } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { UIMessage } from 'ai';
 
 const api = vi.hoisted(() => ({ createAgentChatTransport: vi.fn() }));

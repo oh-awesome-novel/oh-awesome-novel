@@ -1,5 +1,5 @@
 import { createOanClient } from '@oh-awesome-novel/client';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 describe('Play outcome client transport', () => {
   it('routes player-by-default and director reports through strict typed methods', async () => {

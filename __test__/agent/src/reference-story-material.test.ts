@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import {
   MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS,

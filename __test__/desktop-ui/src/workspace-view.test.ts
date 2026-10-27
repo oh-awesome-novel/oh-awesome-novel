@@ -7,7 +7,7 @@ import {
   createRouter,
   type Router,
 } from 'vue-router';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vite-plus/test';
 
 import WorkspaceView from '../../../apps/desktop-ui/src/views/WorkspaceView.vue';
 import {

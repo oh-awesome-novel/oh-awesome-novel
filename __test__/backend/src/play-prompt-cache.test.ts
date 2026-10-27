@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { stablePlayHistoryWindow } from '@oh-awesome-novel/backend';
 
 const history = (count: number, size = 10) => Array.from({ length: count }, (_, n) => ({ content: `${n}`.padEnd(size, '.') }));

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import {mount} from '@vue/test-utils';
-import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
+import {beforeEach,afterEach,describe,it,expect,vi} from 'vite-plus/test';
 import FileViewer from '../../../apps/desktop-ui/src/components/workspace/FileViewer.vue';
 beforeEach(()=>vi.useFakeTimers());afterEach(()=>vi.useRealTimers());
 describe('live local manuscript LINT highlights',()=>{

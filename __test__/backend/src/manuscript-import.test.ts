@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { createNovelHonoApp, startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import type { NovelHonoApp } from '@oh-awesome-novel/backend';
 

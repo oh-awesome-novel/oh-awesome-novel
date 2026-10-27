@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { createOanClient, parseWorkspaceSearchResponse, parseManuscriptExport } from '@oh-awesome-novel/client';
 const search = () => ({ schemaVersion: 1, query: '风雪', scannedAt: '2026-10-01T00:00:00.000Z', scannedFiles: 1, sourceFingerprint: 'a'.repeat(64), truncated: false,
   results: [{ path: 'chapters/0001/0001.md', name: '0001.md', domain: 'chapters', line: 2, snippet: '风雪', matchedField: 'content' }] });

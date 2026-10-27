@@ -2,7 +2,7 @@
 
 import { mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayAdoptionDraftForm from '../../../apps/desktop-ui/src/components/play/PlayAdoptionDraftForm.vue';
 import type {

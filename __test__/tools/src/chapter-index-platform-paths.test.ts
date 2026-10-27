@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import { buildChapterIndex, readChapterIndexStatus, writeChapterIndexFile } from '@oh-awesome-novel/tools';
 

@@ -9,7 +9,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import {
   PLAY_WORLD_MOMENTUM_STATE_KEY,

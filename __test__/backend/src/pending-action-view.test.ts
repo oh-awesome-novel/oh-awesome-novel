@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import {
   PENDING_ACTION_RESET_REQUIRED_CODE,

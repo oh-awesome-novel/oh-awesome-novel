@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayEventFeed from '../../../apps/desktop-ui/src/components/play/PlayEventFeed.vue';
 import type { PlayEventCardView } from '../../../apps/desktop-ui/src/composables/playWorldPresentation';

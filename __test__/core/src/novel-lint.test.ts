@@ -1,4 +1,4 @@
-import { describe,it,expect } from 'vitest';
+import { describe,it,expect } from 'vite-plus/test';
 import { scanNovelLint, NOVEL_LINT_RULES, applyNovelLintReplacements, validateNovelLintReplacements, formatNovelLintReviewPrompt, scanLocalNovelLint } from '@oh-awesome-novel/core';
 const samples=['——','仿佛','嘴角微微上扬','带着不耐烦的语气','心湖','万念俱灰','不是生气，而是','某城市','本卡','她感到','一股寒意涌'];
 describe('host-owned novel lint',()=>{

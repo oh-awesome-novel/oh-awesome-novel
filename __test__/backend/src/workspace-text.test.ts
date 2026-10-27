@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { createNovelHonoApp } from '@oh-awesome-novel/backend';
 import { createOanClient } from '@oh-awesome-novel/client';
 const roots: string[] = [];

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createPlaySessionDraft, settlePlayWorldRefereeResponse, getPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereePrompt, createPlayCompactionPreview, createCompactedPlaySession, parsePlayCompaction, auditPlayCompaction, buildPlayCompactionPrompt, writePlaySessionFiles, readPlaySessionFiles } from '@oh-awesome-novel/core';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

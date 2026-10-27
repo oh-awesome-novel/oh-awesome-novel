@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, utimes, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createPendingActionStore } from '@oh-awesome-novel/tools';
 
 const openFault = vi.hoisted(() => ({ path: '', mode: '', hits: 0 }));

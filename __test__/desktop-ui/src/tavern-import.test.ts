@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vite-plus/test';
 const api = vi.hoisted(() => ({ previewTavernImport: vi.fn(), proposeTavernImport: vi.fn(), createTavernPlaySession: vi.fn() }));
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 import TavernImportPanel from '../../../apps/desktop-ui/src/components/play/TavernImportPanel.vue';

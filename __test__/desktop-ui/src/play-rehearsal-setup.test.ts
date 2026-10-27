@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayRehearsalSetup from '../../../apps/desktop-ui/src/components/play/rehearsal/PlayRehearsalSetup.vue';
 import PlaySessionPurposePicker from '../../../apps/desktop-ui/src/components/play/rehearsal/PlaySessionPurposePicker.vue';

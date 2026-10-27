@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import VisualNovelStage from '../../../apps/desktop-ui/src/components/play/VisualNovelStage.vue';
 import VisualNovelTextBox from '../../../apps/desktop-ui/src/components/play/VisualNovelTextBox.vue';
 const turn = { id: 'turn-a', speaker: 'world-referee', content: '雨停。', createdAt: '2026-01-01', stageSnapshot: { sceneId: '客栈', activeCharacters: [], beats: [{ text: '雨停。', speaker: '', isDialogue: false }] } };

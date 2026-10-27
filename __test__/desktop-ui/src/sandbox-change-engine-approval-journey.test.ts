@@ -18,7 +18,7 @@ import {
   expect,
   it,
   vi,
-} from 'vitest';
+} from 'vite-plus/test';
 
 import { startNovelHttpBackend } from '@oh-awesome-novel/backend';
 import type { NovelBackendHandle } from '@oh-awesome-novel/backend';

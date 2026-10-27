@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayHistoryControls from '../../../apps/desktop-ui/src/components/play/PlayHistoryControls.vue';
 import type { PlayCheckpointSummary } from '../../../apps/desktop-ui/src/composables/useWorkspaceApi';

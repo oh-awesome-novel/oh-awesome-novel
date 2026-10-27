@@ -6,9 +6,9 @@
   "scripts": {
     "typecheck": "npm run typecheck:renderer-smoke",
     "pretest": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",
-    "test": "vitest",
+    "test": "vp test",
     "pretest:run": "npm run build --workspace @oh-awesome-novel/core && npm run build --workspace @oh-awesome-novel/runtime && npm run build --workspace @oh-awesome-novel/tools && npm run build --workspace @oh-awesome-novel/agent && npm run build --workspace @oh-awesome-novel/backend && npm run build --workspace @oh-awesome-novel/client",
-    "test:run": "vitest run",
+    "test:run": "vp test run",
     "pretest:renderer-smoke": "npm run typecheck:renderer-smoke",
     "typecheck:renderer-smoke": "vue-tsc --noEmit -p ./renderer-smoke/tsconfig.json",
     "test:renderer-smoke": "node ./renderer-smoke/run.cjs",
@@ -25,8 +25,8 @@
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^21.0.4",
     "typescript": "~6.0.3",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
+    "vite-plus": "1.4.0",
     "vue-tsc": "^3.3.13"
   }
 }

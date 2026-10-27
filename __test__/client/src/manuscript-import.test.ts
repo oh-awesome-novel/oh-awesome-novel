@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { createOanClient, parseManuscriptImportPreviewResult, parsePendingActionView } from '@oh-awesome-novel/client';
 
 const id = 'pa_aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';

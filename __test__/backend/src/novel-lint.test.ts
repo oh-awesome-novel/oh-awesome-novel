@@ -3,7 +3,7 @@ import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {promisify} from 'node:util';
-import {afterEach,describe,it,expect} from 'vitest';
+import {afterEach,describe,it,expect} from 'vite-plus/test';
 import {MockLanguageModelV4} from 'ai/test';
 import {createNovelHonoApp} from '@oh-awesome-novel/backend';
 import type {NovelHonoApp} from '@oh-awesome-novel/backend';

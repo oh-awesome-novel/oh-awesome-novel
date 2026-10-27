@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { parse } from 'yaml';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { normalizeTavernCard } from '@oh-awesome-novel/core';
 import { assertTavernImportActionFresh, assertTavernImportPreview, assertTavernImportPreviewFresh, createChangeMaterializer,
   createPendingActionStore, createTavernImportChangeProposal, parsePendingAction, parsePendingActionOrigin,

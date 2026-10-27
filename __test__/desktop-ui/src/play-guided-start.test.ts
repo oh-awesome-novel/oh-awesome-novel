@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import PlayGuidedStartWizard from '../../../apps/desktop-ui/src/components/play/launch/PlayGuidedStartWizard.vue';
 import type {

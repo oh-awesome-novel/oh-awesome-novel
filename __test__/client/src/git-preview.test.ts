@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { createOanClient } from '@oh-awesome-novel/client';
 const preview = { id: 'git_00000000-0000-4000-8000-000000000000', fingerprint: 'a'.repeat(64), files: ['中文.md'], head: 'b'.repeat(40), expiresAt: '2030-01-01T00:00:00.000Z' };
 describe('reviewed Git client contract', () => {

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createNovelHonoApp } from '@oh-awesome-novel/backend';
 import type { NovelHonoApp } from '@oh-awesome-novel/backend';
 

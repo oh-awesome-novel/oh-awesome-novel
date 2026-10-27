@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { jsonSchema, tool } from 'ai';
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';

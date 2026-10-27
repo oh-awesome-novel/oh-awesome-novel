@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import { createRuntime } from '@oh-awesome-novel/runtime';
 import type { RuntimeEvent, RuntimeModelRequest } from '@oh-awesome-novel/runtime';

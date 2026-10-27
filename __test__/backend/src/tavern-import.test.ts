@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { crc32 } from 'node:zlib';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 import { createNovelHonoApp } from '@oh-awesome-novel/backend';
 import { readPlaySessionFiles, writePlaySessionFiles } from '@oh-awesome-novel/core';
 import type { NovelBackendOptions, NovelHonoApp } from '@oh-awesome-novel/backend';

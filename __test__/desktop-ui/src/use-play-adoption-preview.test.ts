@@ -1,6 +1,6 @@
 import { effectScope, shallowRef } from 'vue';
 import type { ShallowRef } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import type { PlaySession } from '@oh-awesome-novel/client';
 import {

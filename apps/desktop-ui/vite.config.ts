@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, lazyPlugins } from "vite-plus";
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 import { fileURLToPath, URL } from "node:url";
@@ -10,7 +10,7 @@ const backendProxyTarget =
 // https://vite.dev/config/
 export default defineConfig({
   base: "./",
-  plugins: [tailwindcss(), vue()],
+  plugins: lazyPlugins(() => [tailwindcss(), vue()]),
   resolve: {
     alias: {
       "@oh-awesome-novel/client": fileURLToPath(

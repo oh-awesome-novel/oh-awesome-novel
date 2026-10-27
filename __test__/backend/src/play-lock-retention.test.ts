@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { createPlaySessionDraft, initWorkspace, readPlaySessionFiles, writePlaySessionFiles } from '@oh-awesome-novel/core';
 
 const execFileAsync = promisify(execFile);

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { flushPromises, mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 import PlayDirectorControls from '../../../apps/desktop-ui/src/components/play/rehearsal/PlayDirectorControls.vue';
 import type { PlayRehearsalControlCapabilities } from '../../../apps/desktop-ui/src/components/play/rehearsal/types';

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 import { prepareManuscriptImport, MAX_MANUSCRIPT_IMPORT_BYTES } from '@oh-awesome-novel/core';
 
 function originalPieces(plan: ReturnType<typeof prepareManuscriptImport>) {

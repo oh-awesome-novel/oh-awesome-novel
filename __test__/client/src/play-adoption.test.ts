@@ -6,7 +6,7 @@ import {
   type PlayAdoptionSeed,
   type PlayAdoptionTarget,
 } from '@oh-awesome-novel/client';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 const PREVIEW_ID = 'pa_00000000-0000-4000-8000-000000000001';
 const FINGERPRINT = 'a'.repeat(64);
