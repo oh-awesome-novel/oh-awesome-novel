@@ -106,6 +106,7 @@ const emit = defineEmits<{
   toggleWritingReference: [id: string];
   refreshWritingProfiles: [];
   writingProfileStateChanged: [state: WritingProfileState];
+  forgeHandoff: [input: { draftId: string; revision: number; mode: 'play' | 'writing' }];
 }>();
 </script>
 
@@ -240,6 +241,7 @@ const emit = defineEmits<{
       @review-pending-action-id="emit('reviewPendingActionId', $event)"
       @refresh-writing-profiles="emit('refreshWritingProfiles')"
       @writing-profile-state-changed="emit('writingProfileStateChanged', $event)"
+      @forge-handoff="emit('forgeHandoff', $event)"
     />
   </div>
 </template>

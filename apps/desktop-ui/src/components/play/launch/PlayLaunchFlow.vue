@@ -29,6 +29,7 @@ const emit = defineEmits<{
   quickCreate: [input: PlaySessionCreateRequest];
   created: [session: PlaySession];
   cancel: [];
+  openForge: [];
 }>();
 
 const purpose = shallowRef<PlaySessionPurposeChoice>();
@@ -112,6 +113,7 @@ async function focusFirst(): Promise<void> {
       :disabled="creating || busy"
       @cancel="returnToMode"
       @created="emit('created', $event)"
+      @open-forge="emit('openForge')"
     />
   </section>
 </template>

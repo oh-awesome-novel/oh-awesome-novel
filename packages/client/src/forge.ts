@@ -9,18 +9,21 @@ export interface ForgeDraft {
   plan?: Record<string, unknown>; chunks?: Record<string, string>;
   pendingActionId?: string; sourcePaths?: string[];
   rounds?: Array<{ answer: string; questions: string[] }>;
+  updatedAt?: number;
 }
+export interface ForgeDiscussSelection { questionId: string; optionIndices: number[] }
 export interface ForgeMutation { expectedWorkspaceRoot: string; expectedRevision: number }
 export interface ForgeClientMethods {
   listForgeDrafts(): Promise<{ drafts: ForgeDraft[] }>;
   readForgeDraft(id: string): Promise<{ draft: ForgeDraft }>;
+  deleteForgeDraft(id: string): Promise<{ ok: boolean }>;
   createForgeDraft(input: { idea: string; expectedWorkspaceRoot: string }): Promise<{ draft: ForgeDraft }>;
-  discussForgeDraft(id: string, input: ForgeMutation & { message: string; selection?: {questionId: string; optionIndices: number[]} }): Promise<{ draft: ForgeDraft }>;
-  updateForgeDraft(id: string, input: ForgeMutation & { edits?: Array<{ key: string; value: string; label?: string; locked?: boolean }>; plan?: Record<string, unknown> }): Promise<{ draft: ForgeDraft }>;
+  discussForgeDraft(id: string, input: ForgeMutation & { message?: string; selection?: ForgeDiscussSelection; selections?: ForgeDiscussSelection[] }): Promise<{ draft: ForgeDraft }>;
+  updateForgeDraft(id: string, input: ForgeMutation & { edits?: Array<{ key: string; value: string; label?: string; locked?: boolean }>; plan?: Record<string, unknown>; chunks?: Record<string, string> }): Promise<{ draft: ForgeDraft }>;
   planForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft }>;
-  writeForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft }>;
+  writeForgeDraft(id: string, input: ForgeMutation & { force?: boolean }): Promise<{ draft: ForgeDraft }>;
   proposeForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft; pendingActionId: string }>;
-  handoffForgeDraft(id: string, input: ForgeMutation & { mode: 'play' | 'writing' }): Promise<{ draft: ForgeDraft; sessionId?: string; sourcePaths?: string[] }>;
+  handoffForgeDraft(id: string, input: ForgeMutation & { mode: 'play' | 'writing'; strictHandoff?: boolean }): Promise<{ draft: ForgeDraft; sessionId?: string; sourcePaths?: string[] }>;
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(item => typeof item === 'string'); }
@@ -46,15 +49,17 @@ export function parseForgeDraft(value: unknown): ForgeDraft {
   required(value.chunks === undefined || (record(value.chunks) && Object.values(value.chunks).every(item => typeof item === 'string')));
   required(value.pendingActionId === undefined || typeof value.pendingActionId === 'string');
   required(value.sourcePaths === undefined || strings(value.sourcePaths));
+  required(value.updatedAt === undefined || (typeof value.updatedAt === 'number' && Number.isSafeInteger(value.updatedAt) && value.updatedAt >= 0));
   return value as unknown as ForgeDraft;
 }
-export function createForgeClientMethods(request: <T>(path: string, options?: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown }) => Promise<T>): ForgeClientMethods {
+export function createForgeClientMethods(request: <T>(path: string, options?: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown }) => Promise<T>): ForgeClientMethods {
   const route = (id: string) => { if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Invalid Forge id.'); return `/api/forge/drafts/${encodeURIComponent(id)}`; };
   const envelope = (value: unknown) => { required(record(value)); return { draft: parseForgeDraft(value.draft) }; };
   const mutate = (id: string, action: string, input: unknown, method: 'POST' | 'PATCH' = 'POST') => request<unknown>(`${route(id)}${action}`, { method, body: input }).then(envelope);
   return {
     listForgeDrafts: async () => { const result = await request<unknown>('/api/forge/drafts'); required(record(result) && Array.isArray(result.drafts)); return { drafts: result.drafts.map(parseForgeDraft) }; },
     readForgeDraft: id => request<unknown>(route(id)).then(envelope),
+    deleteForgeDraft: async id => request<{ ok: boolean }>(route(id), { method: 'DELETE' }),
     createForgeDraft: input => request<unknown>('/api/forge/drafts', { method: 'POST', body: input }).then(envelope),
     discussForgeDraft: (id, input) => mutate(id, '/discuss', input),
     updateForgeDraft: (id, input) => mutate(id, '', input, 'PATCH'),

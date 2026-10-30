@@ -739,6 +739,7 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.post('/api/forge/drafts', context => forge.create(context));
   app.get('/api/forge/drafts/:id', context => forge.get(context,context.req.param('id')));
   app.patch('/api/forge/drafts/:id', context => forge.operation(context,context.req.param('id'),'edit'));
+  app.delete('/api/forge/drafts/:id', context => forge.delete(context, context.req.param('id')));
   for (const operation of ['discuss','plan','write','propose','handoff']) {
     app.post(`/api/forge/drafts/:id/${operation}`, context => forge.operation(context,context.req.param('id'),operation));
   }

@@ -36,17 +36,48 @@ export function useForge(options: {
     await run(async () => { const result = await api.readForgeDraft(id); if (current === epoch) { draft.value = result.draft; accepted.value = false; pendingStatus.value = ''; } });
     if (current === epoch) await refreshApproval();
   }
+  async function deleteDraft(id: string) {
+    const current = epoch;
+    await run(async () => {
+      await api.deleteForgeDraft(id);
+      if (current === epoch) {
+        drafts.value = drafts.value.filter(d => d.id !== id);
+        if (draft.value?.id === id) {
+          draft.value = undefined;
+          accepted.value = false;
+          pendingStatus.value = '';
+        }
+      }
+    });
+  }
   async function create(idea: string) {
     const current = epoch;
     await run(async () => { const result = await api.createForgeDraft({ idea, expectedWorkspaceRoot: options.workspaceRoot.value }); if (current === epoch) { draft.value = result.draft; accepted.value = false; pendingStatus.value = ''; drafts.value = [result.draft, ...drafts.value]; } });
   }
-  async function mutate(action: 'discuss' | 'update' | 'plan' | 'write' | 'propose', extra: { selection?: {questionId: string; optionIndices: number[]}; message?: string; brief?: ForgeBrief; plan?: Record<string, unknown> } = {}) {
+  async function mutate(action: 'discuss' | 'update' | 'plan' | 'write' | 'propose', extra: {
+    selection?: {questionId: string; optionIndices: number[]};
+    selections?: Array<{questionId: string; optionIndices: number[]}>;
+    message?: string;
+    brief?: ForgeBrief;
+    plan?: Record<string, unknown>;
+    chunks?: Record<string, string>;
+  } = {}) {
     const selected = draft.value; if (!selected) return;
     const current = epoch;
     const input = { expectedRevision: selected.revision, expectedWorkspaceRoot: options.workspaceRoot.value };
     await run(async () => {
-      const result = action === 'discuss' ? await api.discussForgeDraft(selected.id, { ...input, message: extra.message ?? '', ...(extra.selection ? {selection: extra.selection} : {}) })
-        : action === 'update' ? await api.updateForgeDraft(selected.id, { ...input, ...(extra.plan ? { plan: extra.plan } : {}), ...(extra.brief ? { edits: extra.brief.items.filter(item => { const before = selected.brief.items.find(candidate => candidate.key === item.key); return !before || before.value !== item.value || before.locked !== item.locked; }).map(({ key, value, label, locked }) => ({ key, value, label, ...(locked !== undefined ? { locked } : {}) })) } : {}) })
+      const result = action === 'discuss' ? await api.discussForgeDraft(selected.id, {
+          ...input,
+          message: extra.message ?? '',
+          ...(extra.selections ? { selections: extra.selections } : {}),
+          ...(extra.selection ? { selection: extra.selection } : {}),
+        })
+        : action === 'update' ? await api.updateForgeDraft(selected.id, {
+            ...input,
+            ...(extra.plan ? { plan: extra.plan } : {}),
+            ...(extra.chunks ? { chunks: extra.chunks } : {}),
+            ...(extra.brief ? { edits: extra.brief.items.filter(item => { const before = selected.brief.items.find(candidate => candidate.key === item.key); return !before || before.value !== item.value || before.locked !== item.locked; }).map(({ key, value, label, locked }) => ({ key, value, label, ...(locked !== undefined ? { locked } : {}) })) } : {}),
+          })
         : action === 'plan' ? await api.planForgeDraft(selected.id, input)
         : action === 'write' ? await api.writeForgeDraft(selected.id, input)
         : await api.proposeForgeDraft(selected.id, input);
@@ -72,5 +103,5 @@ export function useForge(options: {
       if (mode === 'writing') options.onWritingReferences(result.sourcePaths ?? []);
     });
   }
-  return { draft, drafts, busy, error, accepted, pendingStatus, canHandoff, refreshList, read, create, mutate, refreshApproval, handoff };
+  return { draft, drafts, busy, error, accepted, pendingStatus, canHandoff, refreshList, read, create, deleteDraft, mutate, refreshApproval, handoff };
 }

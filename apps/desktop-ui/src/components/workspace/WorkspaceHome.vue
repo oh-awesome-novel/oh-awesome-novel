@@ -15,6 +15,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  openForge: [];
   generateNextChapter: [];
   openChapters: [];
   openCopilot: [];
@@ -116,6 +117,10 @@ const healthIssues = computed(() => props.health?.issues.slice(0, 3) ?? []);
     </div>
 
     <div class="quick-action-grid" aria-label="Quick actions">
+      <button class="quick-action" type="button" @click="emit('openForge')">
+        <strong>设定工坊 Forge</strong>
+        <span>聊想法、定方案、分块撰写并入库世界与角色。</span>
+      </button>
       <button class="quick-action" type="button" @click="emit('generateNextChapter')">
         <strong>生成下一章</strong>
         <span>打开 Copilot，并填入明确的写作请求。</span>

@@ -48,5 +48,6 @@ export interface ForgeDraft {
   plan?: ForgePlan; chunks?: Record<string, string>; pendingActionId?: string; sourcePaths?: string[];
   /** Recent discussion rounds, so later rounds do not repeat questions. */
   rounds?: Array<{ answer: string; questions: string[] }>;
+  updatedAt?: number;
 }
 export const FORGE_MAX_DISCUSS_ROUNDS = 12;

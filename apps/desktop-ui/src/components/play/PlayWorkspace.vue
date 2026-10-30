@@ -50,6 +50,7 @@ const emit = defineEmits<{
   pendingActionCreated: [];
   reviewPendingAction: [pendingActionId: string];
   writingReferencesUpdated: [];
+  openForge: [];
 }>();
 
 const providerConfigured = toRef(props, 'providerConfigured');
@@ -316,6 +317,7 @@ function acceptGuidedSession(session: PlaySession): void {
         @quick-create="createQuickSession"
         @created="acceptGuidedSession"
         @cancel="cancelLaunch"
+        @open-forge="emit('openForge')"
       />
 
       <PlaySessionMigration

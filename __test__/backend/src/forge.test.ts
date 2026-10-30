@@ -38,6 +38,8 @@ async function setup(model?: (prompt: string, signal: AbortSignal) => Promise<st
   app.post('/drafts', c => handlers.create(c));
   app.get('/drafts', c => handlers.list(c));
   app.get('/drafts/:id', c => handlers.get(c, c.req.param('id')));
+  app.delete('/drafts/:id', c => handlers.delete(c, c.req.param('id')));
+  app.patch('/drafts/:id', c => handlers.operation(c, c.req.param('id'), 'edit'));
   app.post('/drafts/:id/:op', c => handlers.operation(c, c.req.param('id'), c.req.param('op')));
   async function post(path: string, body: unknown) {
     return app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -226,5 +228,69 @@ describe('Forge approval and persistence boundary', () => {
     await rm(join(h.root, '.workspace/forge/drafts'), { recursive: true });
     await symlink(tmpdir(), join(h.root, '.workspace/forge/drafts'));
     expect((await h.app.request('/drafts')).status).toBe(422);
+  });
+  it('supports multi-question batching in discuss stage', async () => {
+    const h = await setup(async () => {
+      const brief = { title: '渡口', readiness: 90, items: [
+        { key: 'tone', label: '语气', value: '冷静', by: 'user' },
+        { key: 'stage', label: '舞台', value: '渡口', by: 'user' },
+      ], openPoints: [] };
+      return discussion().replace(/<brief>[\s\S]*?<\/brief>/, `<brief>${JSON.stringify(brief)}</brief>`);
+    });
+    const res = await h.op('discuss', {
+      message: '我们是同伴',
+      selections: [{ questionId: 'q1', optionIndices: [0] }],
+    });
+    expect(res.response.status).toBe(200);
+    expect(h.getDraft().brief.items.find(item => item.key === 'tone')).toMatchObject({ value: '冷静', by: 'user' });
+
+    // Also test selection-only submission without freeform message
+    const selOnly = await h.op('discuss', {
+      selections: [{ questionId: 'q2', optionIndices: [1] }],
+    });
+    expect(selOnly.response.status).toBe(200);
+  });
+  it('supports in-place chunk updates via edit and deletes drafts', async () => {
+    const h = await setup(); await h.written();
+    const updated = await h.op('edit', { chunks: { opening: '新的开场白。' } });
+    expect(updated.response.status).toBe(200);
+    expect(h.getDraft().chunks?.opening).toBe('新的开场白。');
+
+    const draftId = h.getDraft().id;
+    const delRes = await h.app.request(`/drafts/${draftId}`, { method: 'DELETE' });
+    expect(delRes.status).toBe(200);
+    const getRes = await h.app.request(`/drafts/${draftId}`);
+    expect(getRes.status).toBe(422);
+  });
+  it('persists T03, T04, and roster profile metadata into canonical files', () => {
+    const p = plan();
+    p.characters[0]!.name = '少女林';
+    p.characters[0]!.choice = { dilemma: '留或走', decision: '留下来', sacrifice: '自由', consequence: '被困渡口' };
+    p.characters[0]!.resources = [{ name: '铜钱', initial: '三文', cost: '每晚一文', settlement: '归零即死' }];
+    const chunks = Object.fromEntries(forgeChunkKeys(p).map(k => [k, `${k} 正文`]));
+    const files = forgeCanonicalFiles(p, chunks);
+    const summary = files.find(f => f.path.endsWith('summary.md'))!;
+    expect(summary.content).toContain('## 主动抉择 (T03)');
+    expect(summary.content).toContain('- 两难：留或走');
+    expect(summary.content).toContain('- 决断：留下来');
+    expect(summary.content).toContain('## 资源账本 (T04)');
+    expect(summary.content).toContain('**铜钱**：初态 三文 | 消耗 每晚一文 | 结算兑现 归零即死');
+
+    const roster = files.find(f => f.path.endsWith('roster-profile.yaml'))!;
+    expect(roster.content).toContain('id: lin');
+    expect(roster.content).toContain('name: 少女林');
+    expect(roster.content).toContain('genderKind: girl');
+    expect(roster.content).toContain('fixedBooruTags: 1girl, lin');
+  });
+  it('recovers from orphaned stale lock leases automatically', async () => {
+    const h = await setup();
+    const draft = h.getDraft();
+    const lockPath = join(h.root, '.workspace/forge/drafts', `${draft.id}.lock`);
+    // Create an orphaned lock file with a non-existent PID and old timestamp
+    await writeFile(lockPath, JSON.stringify({ pid: 99999999, createdAt: Date.now() - 4 * 60 * 1000 }));
+    // Operation should self-heal the orphaned lock and succeed
+    const res = await h.op('edit', { edits: [{ key: 'stage', value: '新舞台', locked: true }] });
+    expect(res.response.status).toBe(200);
+    expect(h.getDraft().brief.items.find(i => i.key === 'stage')?.value).toBe('新舞台');
   });
 });

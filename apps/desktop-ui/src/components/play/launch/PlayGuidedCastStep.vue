@@ -22,6 +22,7 @@ const emit = defineEmits<{
   updateParticipant: [participantRef: string, patch: PlayGuidedParticipantPatch];
   addParticipant: [];
   removeParticipant: [participantRef: string];
+  openForge: [];
   back: [];
   next: [];
   cancel: [];
@@ -160,9 +161,14 @@ function updateVisibility(participantRef: string, event: Event): void {
       {{ purpose === 'sceneRehearsal' ? 'Add at least one participant to rehearse the scene.' : 'No cast is required for an immersive entry.' }}
     </p>
 
-    <button class="add-participant" type="button" :disabled="disabled" @click="emit('addParticipant')">
-      <span aria-hidden="true">[+]</span> Add participant
-    </button>
+    <div class="cast-actions">
+      <button class="add-participant" type="button" :disabled="disabled" @click="emit('addParticipant')">
+        <span aria-hidden="true">[+]</span> Add participant
+      </button>
+      <button class="add-participant forge-entry" type="button" :disabled="disabled" @click="emit('openForge')">
+        在设定工坊共创角色
+      </button>
+    </div>
 
     <footer>
       <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
@@ -263,6 +269,12 @@ select {
 button {
   min-height: 32px;
   padding: 5px 9px;
+}
+
+.cast-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .add-participant {

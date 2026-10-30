@@ -52,6 +52,7 @@ const emit = defineEmits<{
   settleChapter: [path: string];
   refreshWritingProfiles: [];
   writingProfileStateChanged: [state: WritingProfileState];
+  forgeHandoff: [input: { draftId: string; revision: number; mode: 'play' | 'writing' }];
 }>();
 </script>
 
@@ -79,6 +80,7 @@ const emit = defineEmits<{
       v-else-if="activeTab === 'diff'"
       :actions="pendingActions"
       :selected-action="selectedPendingAction"
+      @forge-handoff="emit('forgeHandoff', $event)"
     />
     <ApprovalTab
       v-else-if="activeTab === 'approval'"
@@ -92,6 +94,7 @@ const emit = defineEmits<{
       @quick-commit="emit('quickCommitPendingAction', $event)"
       @review="emit('reviewPendingAction', $event)"
       @open-diff="emit('openPendingActionDiff', $event)"
+      @forge-handoff="emit('forgeHandoff', $event)"
     />
     <ProjectHealthTab
       v-else-if="activeTab === 'health'"

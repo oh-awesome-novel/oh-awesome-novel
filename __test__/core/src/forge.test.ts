@@ -63,7 +63,7 @@ describe('guided Forge contracts', () => {
   });
   it('enforces taste sample length and allows an author to unlock their own item', () => {
     const text = response(createEmptyForgeBrief()).replaceAll('"kind":"single"', '"kind":"taste"');
-    expect(() => parseForgeDiscussResponse(text)).toThrow('60–120');
+    expect(() => parseForgeDiscussResponse(text)).toThrow('40–160');
     const locked = applyForgeBriefEdits(createEmptyForgeBrief(), [{ key: 'stage', value: '渡口', locked: true }]);
     const edited = applyForgeBriefEdits(locked, [{ key: 'stage', value: '桥头', locked: false }]);
     expect(edited.items[0]).toMatchObject({ value: '桥头', locked: false, by: 'user' });
@@ -96,8 +96,23 @@ describe('guided Forge contracts', () => {
     expect(() => parseForgeDraft({ schemaVersion: 1, id: 'draft', revision: 0, idea: '渡口', stage: 'proposed', brief: createEmptyForgeBrief(), questions: [], reply: '' })).toThrow();
     // A draft written with one combined block per kind returns to the plan stage to be rewritten per object.
     const legacy = Object.fromEntries(['world', 'places', 'characters', 'facets', 'clarifications', 'opening'].map(kind => [kind, kind]));
-    const restored = parseForgeDraft({ schemaVersion: 1, id: 'draft', revision: 3, idea: '渡口', stage: 'written', brief: createEmptyForgeBrief(), questions: [], reply: '', plan: plan(), chunks: legacy });
+    const restored = parseForgeDraft({ schemaVersion: 1, id: 'draft', revision: 3, idea: '渡口', stage: 'written', brief: createEmptyForgeBrief(), questions: [], reply: '', plan: plan(), chunks: legacy, updatedAt: 1700000000000 });
     expect(restored.stage).toBe('plan');
     expect(restored.chunks).toBeUndefined();
+    expect(restored.updatedAt).toBe(1700000000000);
+  });
+  it('permits natural dialogue with "因为" and "其实" while rejecting parentheses explanations', () => {
+    const p = plan();
+    p.characters[0].facets[0].dialogue[0] = '因为渡船未到，我们只能等。';
+    p.characters[0].facets[0].dialogue[1] = '其实你不用这么戒备。';
+    expect(() => parseForgePlan(p)).not.toThrow();
+    p.characters[0].facets[0].dialogue[2] = '（叹了口气）快走吧。';
+    expect(() => parseForgePlan(p)).toThrow();
+  });
+  it('allows author manual editing with softer structural constraints', () => {
+    const p = plan();
+    p.characters[0].facets[0].dialogue = ['只有一句简短台词。'];
+    expect(() => parseForgePlan(p)).toThrow();
+    expect(() => parseForgePlan(p, { authorEdit: true })).not.toThrow();
   });
 });

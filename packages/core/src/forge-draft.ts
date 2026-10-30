@@ -34,6 +34,10 @@ export function parseForgeDraft(value: unknown): ForgeDraft {
     draft.sourcePaths = forgeStrings(d.sourcePaths, 0, 100);
     if (draft.sourcePaths.some(path => !/^(characters|world)\/[a-zA-Z0-9_/-]+\.(md|yaml)$/.test(path) || path.includes('..'))) throw new Error('Invalid Forge source path.');
   }
+  if (d.updatedAt !== undefined) {
+    if (typeof d.updatedAt !== 'number' || !Number.isSafeInteger(d.updatedAt) || d.updatedAt < 0) throw new Error('Invalid Forge updatedAt.');
+    draft.updatedAt = d.updatedAt;
+  }
   if (draft.stage !== 'discuss' && !draft.plan) throw new Error('Plan missing.');
   if (draft.stage === 'written' && forgeChunkKeys(draft.plan!).some(key => !draft.chunks?.[key])) throw new Error('Written chunks missing.');
   if (draft.stage === 'proposed' && !draft.chunks?.opening) throw new Error('Written chunks missing.');

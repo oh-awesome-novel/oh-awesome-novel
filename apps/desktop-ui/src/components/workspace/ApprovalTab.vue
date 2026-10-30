@@ -22,6 +22,7 @@ const emit = defineEmits<{
   review: [action: PendingActionView];
   openDiff: [action: PendingActionView];
   acceptDerived: [actions: PendingActionView[]];
+  forgeHandoff: [input: { draftId: string; revision: number; mode: 'play' | 'writing' }];
 }>();
 
 // Summaries, state, timeline, foreshadow and growth records derived from an
@@ -62,6 +63,7 @@ const batchBusy = computed(() => props.actions.some((action) => action.decision 
         @quick-commit="emit('quickCommit', $event)"
         @review="emit('review', $event)"
         @open-diff="emit('openDiff', $event)"
+        @forge-handoff="emit('forgeHandoff', $event)"
       />
     </div>
     <p v-else class="empty-copy">No pending actions.</p>

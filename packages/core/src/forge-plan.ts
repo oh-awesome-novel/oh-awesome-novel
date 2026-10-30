@@ -1,35 +1,42 @@
 import { forgeArray, forgeRecord, forgeString, forgeStrings, parseForgeJson } from './forge-discuss.js';
 import type { ForgeBrief, ForgeCharacterPlan, ForgeFacet, ForgePlan, ForgeTrait } from './forge-types.js';
 function id(value: unknown): string { const text = forgeString(value, 64); if (!/^[a-z0-9][a-z0-9_-]*$/.test(text)) throw new Error('Invalid Forge object id.'); return text; }
-function traits(value: unknown, min: number, max: number): ForgeTrait[] { return forgeArray(value, min, max).map(v => { const t = forgeRecord(v); return { name: forgeString(t.name), behaviors: forgeStrings(t.behaviors, 2, 3) }; }); }
-function character(value: unknown): ForgeCharacterPlan {
-  const c = forgeRecord(value); const p = forgeRecord(c.palette); const desire = forgeRecord(c.desire); const choice = forgeRecord(c.choice);
-  const facets = forgeArray(c.facets, 3, 3).map(v => {
-    const f = forgeRecord(v);
-    if (!['normal', 'pressure', 'private'].includes(String(f.kind))) throw new Error('Invalid character facet.');
-    const dialogue = forgeStrings(f.dialogue, 5, 10);
-    if (dialogue.some(line => /[（()）]|因为|本质上|其实/.test(line))) throw new Error('Facets require pure dialogue without retrospective explanation.');
-    return { kind: f.kind as ForgeFacet['kind'], trigger: forgeString(f.trigger), state: forgeString(f.state), dialogue, habitualAction: forgeString(f.habitualAction) };
+function traits(value: unknown, min: number, max: number, authorEdit = false): ForgeTrait[] {
+  return forgeArray(value, min, max).map(v => {
+    const t = forgeRecord(v);
+    return { name: forgeString(t.name), behaviors: forgeStrings(t.behaviors, authorEdit ? 0 : 2, authorEdit ? 10 : 3) };
   });
-  if (new Set(facets.map(f => f.kind)).size !== 3) throw new Error('Three distinct facets are required.');
+}
+function character(value: unknown, authorEdit = false): ForgeCharacterPlan {
+  const c = forgeRecord(value); const p = forgeRecord(c.palette); const desire = forgeRecord(c.desire); const choice = forgeRecord(c.choice);
+  const facets = forgeArray(c.facets, authorEdit ? 1 : 3, authorEdit ? 10 : 3).map(v => {
+    const f = forgeRecord(v);
+    const kind = String(f.kind);
+    if (!authorEdit && !['normal', 'pressure', 'private'].includes(kind)) throw new Error('Invalid character facet.');
+    const dialogue = forgeStrings(f.dialogue, authorEdit ? 0 : 5, authorEdit ? 30 : 10);
+    if (!authorEdit && dialogue.some(line => /[（()）]|本质上/.test(line))) throw new Error('Facets require pure dialogue without retrospective explanation.');
+    return { kind: (['normal', 'pressure', 'private'].includes(kind) ? kind : 'normal') as ForgeFacet['kind'], trigger: forgeString(f.trigger), state: forgeString(f.state), dialogue, habitualAction: forgeString(f.habitualAction) };
+  });
+  if (!authorEdit && new Set(facets.map(f => f.kind)).size !== 3) throw new Error('Three distinct facets are required.');
   return {
     id: id(c.id), name: forgeString(c.name, 100), aliases: forgeStrings(c.aliases, 0, 30),
-    palette: { base: forgeString(p.base), mainTones: traits(p.mainTones, 1, 2), accents: traits(p.accents, 1, 5) }, facets,
-    clarifications: forgeArray(c.clarifications, 1, 20).map(v => { const x = forgeRecord(v); return { trait: forgeString(x.trait), meaning: forgeString(x.meaning), when: forgeString(x.when), not: forgeString(x.not) }; }),
+    palette: { base: forgeString(p.base), mainTones: traits(p.mainTones, authorEdit ? 0 : 1, authorEdit ? 10 : 2, authorEdit), accents: traits(p.accents, authorEdit ? 0 : 1, authorEdit ? 10 : 5, authorEdit) }, facets,
+    clarifications: forgeArray(c.clarifications, 0, 30).map(v => { const x = forgeRecord(v); return { trait: forgeString(x.trait), meaning: forgeString(x.meaning), when: forgeString(x.when), not: forgeString(x.not) }; }),
     desire: { goal: forgeString(desire.goal), obstacle: forgeString(desire.obstacle), cost: forgeString(desire.cost) },
     choice: { dilemma: forgeString(choice.dilemma), decision: forgeString(choice.decision), sacrifice: forgeString(choice.sacrifice), consequence: forgeString(choice.consequence) },
     resources: forgeArray(c.resources, 0, 30).map(v => { const x = forgeRecord(v); return { name: forgeString(x.name), initial: forgeString(x.initial), cost: forgeString(x.cost), settlement: forgeString(x.settlement) }; }),
   };
 }
-export function parseForgePlan(value: unknown): ForgePlan {
+export function parseForgePlan(value: unknown, options?: { authorEdit?: boolean }): ForgePlan {
+  const authorEdit = Boolean(options?.authorEdit);
   const p = forgeRecord(typeof value === 'string' ? parseForgeJson(value.replace(/^\s*<plan>\s*/i, '').replace(/\s*<\/plan>\s*$/i, '')) : value);
   const world = forgeRecord(p.world);
   if (world.kind !== 'real' && world.kind !== 'fictional') throw new Error('Invalid world kind.');
-  const characters = forgeArray(p.characters, 1, 20).map(character);
+  const characters = forgeArray(p.characters, 1, 20).map(c => character(c, authorEdit));
   if (new Set(characters.map(c => c.id)).size !== characters.length) throw new Error('Duplicate character id.');
-  const places = forgeArray(p.places, 1, 30).map(v => { const x = forgeRecord(v); return { id: id(x.id), name: forgeString(x.name), appearance: forgeString(x.appearance), atmosphere: forgeString(x.atmosphere), characters: forgeStrings(x.characters), events: forgeStrings(x.events, 1) }; });
+  const places = forgeArray(p.places, authorEdit ? 0 : 1, 30).map(v => { const x = forgeRecord(v); return { id: id(x.id), name: forgeString(x.name), appearance: forgeString(x.appearance), atmosphere: forgeString(x.atmosphere), characters: forgeStrings(x.characters), events: forgeStrings(x.events, authorEdit ? 0 : 1) }; });
   if (new Set(places.map(c => c.id)).size !== places.length) throw new Error('Duplicate place id.');
-  return { title: forgeString(p.title, 200), characters, world: { kind: world.kind, premise: forgeString(world.premise), rules: forgeStrings(world.rules, 1), factions: forgeStrings(world.factions, 1), history: forgeStrings(world.history, 1) }, places, opening: forgeString(p.opening) };
+  return { title: forgeString(p.title, 200), characters, world: { kind: world.kind, premise: forgeString(world.premise), rules: forgeStrings(world.rules, authorEdit ? 0 : 1), factions: forgeStrings(world.factions, authorEdit ? 0 : 1), history: forgeStrings(world.history, authorEdit ? 0 : 1) }, places, opening: forgeString(p.opening) };
 }
 export function formatForgePlanPrompt(brief: ForgeBrief): string {
   return `把作者草图整理为可编辑的设定方案。尊重锁定事实。只返回 JSON（可用 <plan> 包裹）。字段如下：

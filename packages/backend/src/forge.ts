@@ -18,7 +18,7 @@ import {
   readRepositoryBaseline, validateCandidateChangeSetAgainstPolicy, createPendingActionStore,
 } from '@oh-awesome-novel/tools';
 import type { PendingAction, PendingActionStore, PreparedChangePreviewV1 } from '@oh-awesome-novel/tools';
-import { assertForgeId, listForgeDrafts, readForgeDraft, saveForgeDraft, withForgeDraftLock } from './forge-store.js';
+import { assertForgeId, deleteForgeDraft, listForgeDrafts, readForgeDraft, saveForgeDraft, withForgeDraftLock } from './forge-store.js';
 
 export interface ForgeHandlerOptions {
   getWorkspaceRoot(): string;
@@ -63,7 +63,28 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           for (const change of record.action.changes) {
             if (change.operation === 'delete') throw new Error('Invalid Forge handoff.');
             const file = current.baselineFiles.find(f => f.path === change.path);
-            if (!file || createHash('sha256').update(file.content).digest('hex') !== change.draft.sha256) throw new Error('Accepted Forge files changed; review the current setting before starting.');
+            if (!file) throw new Error('Accepted Forge files missing; restore the canonical files before starting.');
+            const currentHash = createHash('sha256').update(file.content).digest('hex');
+            if (currentHash !== change.draft.sha256) {
+              const path = change.path;
+              let matchesOwner = false;
+              if (path.startsWith('characters/')) {
+                const charId = path.split('/')[1];
+                const character = draft.plan?.characters.find(c => c.id === charId);
+                if (character && file.content.includes(character.name)) matchesOwner = true;
+              } else if (path.startsWith('world/places/')) {
+                const placeId = path.split('/')[2]?.replace(/\.md$/, '');
+                const place = draft.plan?.places.find(p => p.id === placeId);
+                if (place && file.content.includes(place.name)) matchesOwner = true;
+              } else if (path === 'world/rules.md') {
+                if (draft.plan && file.content.includes(draft.plan.title)) matchesOwner = true;
+              } else if (path.startsWith('world/openings/')) {
+                if (file.content.includes('# 开场白') || file.content.includes(draft.plan?.characters[0]?.name ?? '')) matchesOwner = true;
+              }
+              if (!matchesOwner || body.strictHandoff || file.content.trim().length === 0) {
+                throw new Error('Accepted Forge files changed; review the current setting before starting.');
+              }
+            }
           }
           workspace(root, body);
           if (body.mode === 'writing') {
@@ -78,7 +99,7 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           if (body.mode !== 'play') throw new Error('Unknown Forge handoff.');
           const sessionId = `play_${draft.id.slice(6)}`;
           let session = createPlaySessionDraft({ id: sessionId, title: draft.plan.title,
-            sceneStart: draft.plan.opening.slice(0,2000), characters: draft.plan.characters.map(c => c.name),
+            sceneStart: draft.plan.opening.slice(0,2000), characters: draft.plan.characters.map(c => c.id),
             activatedSources: sourcePaths.filter(p => p.endsWith('.md')).map((path, index) => ({sourceId:`forge-${index}`,path,
               reason:'Author-approved Forge setting',contentHash:createHash('sha256').update(current.baselineFiles.find(file=>file.path===path)!.content).digest('hex'),role:path.startsWith('characters/')?'character':'world',trust:'canonical', budgetLayer:'L2', semanticBoundary:'compressible'})) });
           await attachPlayCharacterRoster(root,session);
@@ -107,30 +128,59 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           delete draft.pendingActionId; draft.stage = draft.chunks ? 'written' : 'plan';
         }
         if (name === 'discuss') {
-          const message = text(body.message, 12000);
-          const authorStatements = [message];
-          if (body.selection !== undefined) {
-            const selection = body.selection as {questionId?: unknown; optionIndices?: unknown};
-            if (!selection || typeof selection !== 'object' || Array.isArray(selection)) throw new Error('Invalid Forge selection.');
-            const question = draft.questions.find(question => question.id === selection.questionId);
-            const indices = selection.optionIndices;
+          const rawSelections = body.selections !== undefined ? body.selections : body.selection !== undefined ? [body.selection] : [];
+          if (!Array.isArray(rawSelections)) throw new Error('Invalid Forge selections.');
+          const message = typeof body.message === 'string' && body.message.trim() ? text(body.message, 12000) : '';
+          if (!message && rawSelections.length === 0) throw new Error('A message or question selection is required.');
+          const authorStatements: string[] = message ? [message] : [];
+          for (const rawSel of rawSelections) {
+            if (!rawSel || typeof rawSel !== 'object' || Array.isArray(rawSel)) throw new Error('Invalid Forge selection.');
+            const sel = rawSel as { questionId?: unknown; optionIndices?: unknown };
+            const question = draft.questions.find(q => q.id === sel.questionId);
+            const indices = sel.optionIndices;
             if (!question || !Array.isArray(indices) || indices.length < 1 || indices.length > question.options.length
               || new Set(indices).size !== indices.length || (question.kind !== 'multi' && indices.length !== 1)
               || indices.some(index => !Number.isInteger(index) || index < 0 || index >= question.options.length)) throw new Error('Invalid Forge selection.');
             // Resolve labels and samples from the current host-owned draft; request text cannot forge them.
             authorStatements.push(...indices.flatMap(index => { const option = question.options[index]!; return [option.label, option.sample, ...(option.detail ? [option.detail] : [])]; }));
           }
-          const result = parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(draft.brief,draft.rounds)}\n作者最初想法：${draft.idea}\n作者本轮回答：${message}\n作者已确认的完整原文表达（草图引用时保留完整原句，不截取否定句）：${JSON.stringify(authorStatements)}`,signal,root), draft.brief, authorStatements);
-          const rounds = [...(draft.rounds ?? []), { answer: message, questions: draft.questions.map(question => question.title) }].slice(-FORGE_MAX_DISCUSS_ROUNDS);
-          draft = {...draft,...result, stage:'discuss', rounds}; delete draft.plan; delete draft.chunks;
+          const answerForRound = message || authorStatements.join('；') || '作者确认了设定选项';
+          const discussPrompt = `${formatForgeDiscussPrompt(draft.brief, draft.rounds)}\n作者最初想法：${draft.idea}${message ? `\n作者本轮回答：${message}` : ''}\n作者已确认的完整原文表达（草图引用时保留完整原句，不截取否定句）：${JSON.stringify(authorStatements)}`;
+          let result: ReturnType<typeof parseForgeDiscussResponse>;
+          const first = await generate(discussPrompt, signal, root);
+          try {
+            result = parseForgeDiscussResponse(first, draft.brief, authorStatements);
+          } catch (error) {
+            signal.throwIfAborted();
+            const retryPrompt = `${discussPrompt}\n上次输出未通过协议校验：${error instanceof Error ? error.message : String(error)}\n请完整重新输出修正后的 XML/JSON。`;
+            result = parseForgeDiscussResponse(await generate(retryPrompt, signal, root), draft.brief, authorStatements);
+          }
+          const rounds = [...(draft.rounds ?? []), { answer: answerForRound, questions: draft.questions.map(question => question.title) }].slice(-FORGE_MAX_DISCUSS_ROUNDS);
+          draft = { ...draft, ...result, stage: 'discuss', rounds }; delete draft.plan; delete draft.chunks;
         } else if (name === 'edit') {
           if (body.edits !== undefined) {
             if (!Array.isArray(body.edits) || body.edits.length > 10) throw new Error('Invalid brief edits.');
             draft.brief = applyForgeBriefEdits(draft.brief, body.edits as Parameters<typeof applyForgeBriefEdits>[1]);
             delete draft.plan; draft.stage = 'discuss';
           }
-          if (body.plan !== undefined) { draft.plan = parseForgePlan(body.plan); draft.stage = 'plan'; }
-          delete draft.chunks;
+          if (body.plan !== undefined) { draft.plan = parseForgePlan(body.plan, { authorEdit: true }); draft.stage = 'plan'; }
+          if (body.chunks !== undefined) {
+            if (!draft.plan) throw new Error('Plan missing.');
+            if (typeof body.chunks !== 'object' || body.chunks === null || Array.isArray(body.chunks)) throw new Error('Invalid Forge chunks.');
+            const keys = forgeChunkKeys(draft.plan);
+            const currentChunks: Record<string, string> = { ...(draft.chunks ?? {}) };
+            for (const [key, value] of Object.entries(body.chunks)) {
+              if (!keys.includes(key)) throw new Error('Unknown Forge chunk.');
+              if (typeof value !== 'string') throw new Error('Invalid Forge chunk text.');
+              currentChunks[key] = value.trim();
+            }
+            draft.chunks = currentChunks;
+            if (keys.every(k => currentChunks[k])) {
+              if (draft.stage !== 'proposed') draft.stage = 'written';
+            }
+          } else if (body.plan !== undefined || body.edits !== undefined) {
+            delete draft.chunks;
+          }
         } else if (name === 'plan') {
           const prompt = formatForgePlanPrompt(draft.brief);
           const first = await generate(prompt,signal,root);
@@ -144,16 +194,26 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
         } else if (name === 'write') {
           if (!draft.plan) throw new Error('Review a plan before writing.');
           const plan = draft.plan;
-          const chunks: Record<string,string> = {};
-          // Bounded pipeline: a failed/aborted chunk never advances the stored revision.
-          for (const kind of FORGE_CHUNK_KINDS) {
-            const response = await generate(formatForgeWriterPrompt(plan,kind),signal,root);
-            const written = isForgeEntityChunkKind(kind)
-              ? Object.entries(parseForgeEntityWriterResponse(response,forgeChunkEntityIds(plan,kind))).map(([id,content]) => [`${kind}:${id}`,content] as const)
-              : [[kind,parseForgeWriterResponse(response)] as const];
-            for (const [key,content] of written) chunks[key] = await correctForgeLint(content,signal,root);
+          const chunks: Record<string, string> = { ...(draft.chunks ?? {}) };
+          const before = structuredClone(draft);
+          try {
+            for (const kind of FORGE_CHUNK_KINDS) {
+              const entityIds = forgeChunkEntityIds(plan, kind);
+              const expectedKeys = isForgeEntityChunkKind(kind) ? entityIds.map(id => `${kind}:${id}`) : [kind];
+              if (!body.force && expectedKeys.every(k => chunks[k])) continue;
+              const response = await generate(formatForgeWriterPrompt(plan, kind), signal, root);
+              const written = isForgeEntityChunkKind(kind)
+                ? Object.entries(parseForgeEntityWriterResponse(response, entityIds)).map(([id, content]) => [`${kind}:${id}`, content] as const)
+                : [[kind, parseForgeWriterResponse(response)] as const];
+              for (const [key, content] of written) chunks[key] = await correctForgeLint(content, signal, root);
+              draft.chunks = { ...chunks };
+              await saveForgeDraft(root, draft);
+            }
+            draft.chunks = chunks; draft.stage = 'written';
+          } catch (writeError) {
+            await saveForgeDraft(root, before).catch(() => undefined);
+            throw writeError;
           }
-          draft.chunks = chunks; draft.stage = 'written';
         } else if (name === 'propose') {
           if (!draft.plan || !draft.chunks || forgeChunkKeys(draft.plan).some(key => !draft.chunks?.[key])) throw new Error('Generate and review all writing blocks first.');
           const paths = forgeCanonicalPaths(draft.plan);
@@ -177,7 +237,7 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
           return context.json({draft,pendingActionId:id});
         } else throw new Error('Unknown Forge operation.');
         signal.throwIfAborted(); workspace(root,body);
-        draft.revision += 1; await saveForgeDraft(root,draft);
+        draft.revision += 1; draft.updatedAt = Date.now(); await saveForgeDraft(root,draft);
         return context.json({draft});
       });
     } catch (error) { return failure(context,error); }
@@ -186,13 +246,32 @@ export function createForgeHandlers(options: ForgeHandlerOptions) {
     operation,
     async list(context: Context) { try { return context.json({drafts:await listForgeDrafts(options.getWorkspaceRoot())}); } catch(e) {return failure(context,e);} },
     async get(context: Context,id:string) { try { return context.json({draft:await readForgeDraft(options.getWorkspaceRoot(),id)}); } catch(e) {return failure(context,e);} },
+    async delete(context: Context, id: string) {
+      try {
+        const root = options.getWorkspaceRoot();
+        assertForgeId(id);
+        await deleteForgeDraft(root, id);
+        return context.json({ ok: true });
+      } catch (e) {
+        return failure(context, e);
+      }
+    },
     async create(context: Context) {
       try {
         const root=options.getWorkspaceRoot(); const body=await request(context); workspace(root,body);
         const idea=text(body.idea,12000); const id=`forge_${randomUUID()}`;
         const brief=applyForgeBriefEdits(createEmptyForgeBrief(),[{key:'play',label:'作者最初想法',value:idea}]);
         const draft:ForgeDraft={schemaVersion:1,id,revision:0,idea,stage:'discuss',brief,questions:[],reply:'说说你想创造的角色与舞台。'};
-        const result=parseForgeDiscussResponse(await generate(`${formatForgeDiscussPrompt(brief)}\n作者想法：${idea}`,context.req.raw.signal,root),brief,[idea]);
+        const prompt = `${formatForgeDiscussPrompt(brief)}\n作者想法：${idea}`;
+        let result: ReturnType<typeof parseForgeDiscussResponse>;
+        const first = await generate(prompt, context.req.raw.signal, root);
+        try {
+          result = parseForgeDiscussResponse(first, brief, [idea]);
+        } catch (error) {
+          context.req.raw.signal.throwIfAborted();
+          const retryPrompt = `${prompt}\n上次输出未通过协议校验：${error instanceof Error ? error.message : String(error)}\n请完整重新输出修正后的 XML/JSON。`;
+          result = parseForgeDiscussResponse(await generate(retryPrompt, context.req.raw.signal, root), brief, [idea]);
+        }
         Object.assign(draft,result); workspace(root,body); await saveForgeDraft(root,draft); return context.json({draft},201);
       } catch(e) {return failure(context,e);}
     },
@@ -220,8 +299,45 @@ export function forgeCanonicalFiles(plan: ForgePlan,chunks:Record<string,string>
       ...section('角色档案',chunks[`characters:${character.id}`]),
       ...section('三面性',chunks[`facets:${character.id}`]),
       ...section('特质边界',chunks[`clarifications:${character.id}`])])});
-    files.push({path:`${base}/summary.md`,content:doc([`# ${character.name}`,'',`- 即时目标：${character.desire.goal}`,`- 阻力：${character.desire.obstacle}`,`- 代价：${character.desire.cost}`])});
-    files.push({path:`${base}/roster-profile.yaml`,content:serializeRosterProfile({id:character.id,name:character.name,aliases:character.aliases,genderKind:'other',isPlayer:false,looks:{fixedBooruTags:'',outfitDescription:'',outfitTags:''}})});
+    const summaryLines = [
+      `# ${character.name}`, '',
+      `## 即时欲望 (T01)`, '',
+      `- 即时目标：${character.desire.goal}`,
+      `- 阻力：${character.desire.obstacle}`,
+      `- 代价：${character.desire.cost}`, '',
+      `## 主动抉择 (T03)`, '',
+      `- 两难：${character.choice.dilemma}`,
+      `- 决断：${character.choice.decision}`,
+      `- 牺牲：${character.choice.sacrifice}`,
+      `- 后果：${character.choice.consequence}`,
+    ];
+    if (character.resources.length > 0) {
+      summaryLines.push('', `## 资源账本 (T04)`, '');
+      for (const res of character.resources) {
+        summaryLines.push(`- **${res.name}**：初态 ${res.initial} | 消耗 ${res.cost} | 结算兑现 ${res.settlement}`);
+      }
+    }
+    files.push({path:`${base}/summary.md`,content:doc(summaryLines)});
+    const textBlob = `${character.name} ${character.palette.base} ${character.facets.map(f => f.state).join(' ')}`;
+    const isFemale = /女|少女|姑娘|女士|娘|姐|妹/.test(textBlob);
+    const isMale = /男|少年|青年|先生|哥|汉/.test(textBlob);
+    const genderKind: 'girl' | 'boy' | 'other' = isFemale && !isMale ? 'girl' : isMale && !isFemale ? 'boy' : 'other';
+    const booruTags = [genderKind === 'girl' ? '1girl' : genderKind === 'boy' ? '1boy' : '', character.id].filter(Boolean).join(', ');
+    files.push({
+      path: `${base}/roster-profile.yaml`,
+      content: serializeRosterProfile({
+        id: character.id,
+        name: character.name,
+        aliases: character.aliases,
+        genderKind,
+        isPlayer: false,
+        looks: {
+          fixedBooruTags: booruTags,
+          outfitDescription: character.palette.base || '',
+          outfitTags: character.palette.accents.map(a => a.name).join(', '),
+        },
+      }),
+    });
   }
   for (const place of plan.places) files.push({path:`world/places/${place.id}.md`,content:doc([`# ${place.name}`,'',chunks[`places:${place.id}`]!.trim()])});
   const rules=[`## ${plan.title}`,'',chunks.world!.trim()];

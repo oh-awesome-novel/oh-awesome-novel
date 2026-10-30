@@ -10,6 +10,7 @@ import ManuscriptImportDialog from './ManuscriptImportDialog.vue';
 import WorkspaceWorkbench from './WorkspaceWorkbench.vue';
 import WorkspaceRightPanel from './WorkspaceRightPanel.vue';
 import { acceptPendingActionsInOrder } from '@oh-awesome-novel/client';
+import { oanClient } from '../../client';
 
 import { useAgentConversationSessions } from '../../composables/useAgentConversationSessions';
 import type { AgentFollowUpControls } from '../../composables/useAgentFollowUpQueue';
@@ -460,6 +461,23 @@ function openForgeSession(sessionId: string) {
   emit('selectMode', 'play');
 }
 
+async function handleForgeHandoff(input: { draftId: string; revision: number; mode: 'play' | 'writing' }) {
+  try {
+    const res = await oanClient.handoffForgeDraft(input.draftId, {
+      expectedRevision: input.revision,
+      expectedWorkspaceRoot: props.workspace.path,
+      mode: input.mode,
+    });
+    if (input.mode === 'play' && res.sessionId) {
+      openForgeSession(res.sessionId);
+    } else if (input.mode === 'writing') {
+      activateForgeWritingSources(res.sourcePaths ?? []);
+    }
+  } catch (cause) {
+    console.error('Failed to handoff forge draft:', cause);
+  }
+}
+
 function reviewManuscriptImport(pendingActionId: string) {
   manuscriptImportOpen.value = false;
   void reviewPendingActionById(pendingActionId);
@@ -670,6 +688,7 @@ function activateForgeWritingSources(paths: string[]) {
       @settle-chapter="settleChapter"
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
+      @forge-handoff="handleForgeHandoff"
     />
 
     <div v-show="mode === 'play'" class="workspace-play-workbench">
@@ -684,6 +703,7 @@ function activateForgeWritingSources(paths: string[]) {
         @pending-action-created="refreshPendingActionSurface"
         @review-pending-action="reviewPendingActionById"
         @writing-references-updated="conversations.refreshWritingReferences"
+        @open-forge="forgeOpen = true"
       />
 
       <div
@@ -725,6 +745,7 @@ function activateForgeWritingSources(paths: string[]) {
           @settle-chapter="settleChapter"
           @refresh-writing-profiles="loadWritingProfiles"
           @writing-profile-state-changed="updateWritingProfileState"
+          @forge-handoff="handleForgeHandoff"
         />
       </div>
     </div>

@@ -35,6 +35,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   created: [session: PlaySession];
   cancel: [];
+  openForge: [];
 }>();
 
 const workspaceApi = useWorkspaceApi();
@@ -198,6 +199,7 @@ async function focusStepPanel(): Promise<void> {
         @back="back"
         @next="advance"
         @cancel="cancel"
+        @open-forge="emit('openForge')"
       />
       <PlayGuidedReviewStep
         v-else-if="preview"
