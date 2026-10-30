@@ -90,6 +90,7 @@ docs/
 
 ## 参考项目研究
 
+- [research/AINT_REFERENCE_ANALYSIS.md](research/AINT_REFERENCE_ANALYSIS.md)：AINT (Agentic Interactive Narrative Theatre) 架构深度逆向分析与吸收设计（5 层前缀冻结、动态断点仲裁退让、阶段块长会话整理与 VFS、增量叙事标记 AST、舞台背景复合滤镜、伪工具拦截与 Gemini/Anthropic 协议自愈、显式审计与无锁死 SQLite 单连接写池）。
 - [research/CICATAVERN_REFERENCE_ANALYSIS.md](research/CICATAVERN_REFERENCE_ANALYSIS.md)：CicaTavern 架构深度分析报告与推荐吸收设计（Prompt Cache 冻结前缀、视觉小说模式、五维剧情存档、名册一致性、Forge 引导共创与反套话 LINT）。
 - [research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md](research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md)：OpenTavern 两套参考实现对 Play Mode 的优化分析。
 - [research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md](research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md)：MuseAI 推演与多角色模式分析。
