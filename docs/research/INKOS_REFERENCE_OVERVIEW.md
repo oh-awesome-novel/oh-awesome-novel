@@ -2,15 +2,19 @@
 
 > 范围：本文分析 `reference-only/inkos` 当前检出的最新主线，并与 OAN 的稳定架构事实进行对照。
 >
-> 当前基准：`master@a6e05d4d4567df0efd5825e9b0037146a16e4f3e`（2026-08-03），与 `origin/master` 一致。应用版本仍为 `1.7.2`。
+> 当前基准：`53adac4e974b54dafda975edc4edd07cad364c18`（2026-10-24，`docs: remove clickable Kimi sponsor links`）。应用 / `core` / `cli` / `studio` 版本均为 `2.0.0`。
 >
-> 旧基准：本文上一版使用 `b0cc9a54fc7ee2c14664d192c2c9d5f65e09dafd`（2026-07-28）。更早的推定基准 `3f9b4e80` 只用于保留长期变化背景。
+> 旧基准：本文上一版使用 `a6e05d4d4567df0efd5825e9b0037146a16e4f3e`（2026-08-03，版本 `1.7.2`）；再早为 `b0cc9a54`（2026-07-28）和推定基准 `3f9b4e80`，仅用于保留长期变化背景。
 >
-> 验证范围：本文以实际源码、提交历史和包清单为准。本轮 `pnpm` 因本地 `node_modules` 状态不一致尝试重装，随后受 registry 请求失败与非 TTY 清理保护阻断，没有执行测试，详见“工程验证状态”。
+> 本轮增量：从 `a6e05d4d` 到当前共 131 个提交，730 个文件变化，约 36,063 行新增、94,915 行删除。绝大多数提交是 v1.8.0 与 2.0 的 “Creative Harness v2” 重构；2026-10 的 6 个提交只改赞助 / 推广文案。
+>
+> 验证范围：本文以实际源码、提交历史、`spec/creative-harness-v2.md`、`docs/harness-result-first-redesign.md` 和包清单为准。本轮只读源码，没有安装依赖、构建或运行测试；测试通过数字均为 InkOS 自己记录的结果，详见“工程验证状态”。
+>
+> 阅读提示：第 “2.0 Creative Harness v2” 节取代旧文中关于 Chat 工具表、`books/` 目录权威、确认卡、Skill 数量与材料检索的描述；其余旧章节中仍与 2.0 冲突之处已就地标注“2.0 更新”。
 
 ## 结论概览
 
-InkOS 当前已经从“小说章节生产流水线 + Studio / CLI”扩张成一个广覆盖的 **filesystem-persisted Story Creation Agent**：
+InkOS 当前（2.0.0）已经从“小说章节生产流水线 + Studio / CLI”重构成一个围绕 **Work / Artifact / Revision + Capability 工具 + Episode 账本** 的 **filesystem-persisted Story Creation Agent**。1.x 的 “Chat Agent 调工具 + 各类作品管线” 被收敛为单一 pi-agent 生产 harness；Pipeline 降为可被 capability 直接调用的确定性能力：
 
 - 长篇、短篇、同人、番外、续写和仿写。
 - 剧本、分镜、互动影游和封面。
@@ -23,6 +27,9 @@ InkOS 当前已经从“小说章节生产流水线 + Studio / CLI”扩张成�
 - 章节版本工作区、安全改写预览和下游失效标记。
 - 章节正文与主要状态投影的多文件 staged commit / rollback。
 - 单任务、最多 20 章的顺序批量写作与 LM Studio 本地 provider。
+- 统一 `works/<id>/` 作品库、按 Profile 装配的 capability 工具、可校验 checksum 的产物版本、结构化 Action 观察、SQLite Episode 账本和带 journal 的原子文件集（2.0）。
+- 20 个内置标准 `SKILL.md` 专业能力包、SQLite FTS5 / BM25 统一本地检索、书籍参考资料绑定（1.8 / 2.0）。
+- 旧项目通过 `inkos work migrate` 预览并导入统一作品库（2.0）。
 
 它的核心形态可以概括为：
 
@@ -42,13 +49,41 @@ Play / Interactive Film / Translation Domain Runtimes
 Studio + CLI + TUI Product Shells
 ```
 
+2.0 之后更准确的形态是：
+
+```text
+InkOS 2.0
+  =
+Work / Artifact / Revision Library (works/<id>/work.json)
+  +
+Profile-scoped Capability Tools on pi-agent (Skills = guidance only)
+  +
+Structured ActionResult / Observation + SQLite Episode Ledger
+  +
+Deterministic Domain Pipelines (long / short / script / film / play / translation)
+  +
+Atomic File Set (journal + recovery) + checksum-verified Revisions
+  +
+Studio + CLI + TUI Product Shells
+```
+
 “filesystem-persisted”不等于 OAN 意义上的 filesystem-first：InkOS 确实把正文、JSON、Markdown、JSONL 和运行产物放在项目目录，但正式变更由工具与流水线直接写入，没有 CandidateChangeSet、PendingAction、Git diff approval，也不以 Git 作为统一历史引擎。
 
 上一版中仍然成立的判断是：InkOS 很适合参考产品化工作流、上下文治理、状态投影、provider 诊断和互动创作领域建模；不适合作为 OAN 的 Runtime 或写入架构模板。
 
+2.0 新增的判断：InkOS 在“产物版本身份、结构化执行回执、局部修订范围保护、崩溃恢复”上明显向 OAN 的关注点靠拢，值得认真参考；但同时把 Profile 的默认确认策略改成“可恢复写入直接执行、仅破坏性写入确认”，**弱化**了 1.7.x 的确认卡，与 OAN 的 Human Approval 差距进一步拉大。
+
 ## 版本变化规模
 
-从推定旧基准 `3f9b4e80` 到当前 `b0cc9a54`：
+**最新增量（`a6e05d4d` → `53adac4e`，v1.7.2 → v2.0.0）**：
+
+- 131 个提交、730 个文件变化、约 36,063 行新增、94,915 行删除；净删除远多于新增，说明这是替换式重构而不是继续叠加功能。
+- 关键提交：`8dee4cb2` 随包专业 Skill；`c56586ec` / `d1d6d8ec` / `e7c04465` 统一 pi harness；`127957a9` 建立 creative harness v2 契约；`b399a8d3`、`2c4dacaf` 删除 1.x 控制路径（单提交约 -17,973 / -1,961 行）；`fb8c8e3e` 替换旧质量状态机（约 -16,639 行）；`39a6af2e` 用 mini flow 替换防御性测试套件（约 -20,904 行）；`7e60e13f` 完成 2.0 创作工作流与恢复契约（251 个文件）。
+- 发布线：v1.8.0（2026-08-17，统一 Pi harness、Skill 包、FTS5 检索、章节工作区）→ 2026-08-26 至 09-26 的 creative harness v2 → v2.0.0（`CHANGELOG.md` 尚未写入 2.0 条目，2.0 说明在 `README.md` 与 `spec/creative-harness-v2.md`）。
+- 2026-10 的 6 个提交仅涉及 README / 推广文案（KK models、MCP 链接、Kimi sponsor），无源码行为变化。
+
+**此前增量（`3f9b4e80` → `b0cc9a54`）**：
+
 
 - 236 个提交。
 - 343 个文件变化。
@@ -68,18 +103,103 @@ InkOS 是 TypeScript monorepo：
 - `packages/cli`：原子命令、自然语言入口、TUI、daemon、doctor、备份恢复和通知。
 - `packages/studio`：React 19 + Hono + Vite 6 + Zustand 的本地 Web 工作台。
 - Agent loop：`@mariozechner/pi-agent-core` 与 `@mariozechner/pi-ai` 原生工具调用。
-- Provider：云端 / OpenAI-compatible / Ollama，以及本轮新增的 LM Studio 本地 endpoint（默认 `1234/v1`、无需 API key、动态模型列表）。
+- Provider：云端 / OpenAI-compatible（Chat Completions 与 Responses）/ Anthropic Messages / Ollama / LM Studio 本地 endpoint；协议格式集中在统一的 API format 模块（2.0 更新）。
 - Schema：Zod 与 TypeBox。
-- 持久化：JSON、Markdown、JSONL、YAML，以及 Node 22+ 的 SQLite。
+- 持久化：JSON、Markdown、JSONL、YAML，以及 `node:sqlite`（Episode 账本、FTS5 检索投影、Play 图）。最低运行时 Node.js 22.16.0。
 - 工程：Vitest、Playwright、TypeScript、ESLint 和发布清单检查。
 - 许可证：实际 npm 包与源码为 `AGPL-3.0-only`；外部 Skill descriptor 的平台许可说明不能替代项目本体许可证。
 
-根 package 版本为 `1.7.2`；`skills/SKILL.md` 的 `2.8.3` 是 Skill 描述包版本，不是 InkOS 应用版本。
+根 package 与 `core` / `cli` / `studio` 版本均为 `2.0.0`（2.0 更新；上一版为 `1.7.2`）；`skills/SKILL.md` 是 Skill 描述包版本，不是 InkOS 应用版本。
+
+## 2.0 Creative Harness v2
+
+> 本节依据 `spec/creative-harness-v2.md`、`docs/harness-result-first-redesign.md`、`packages/core/src/harness/*` 与 README。它取代旧文中按 1.7.x “book session / Chat 工具表”描述的部分。
+
+### 作品库：Work / Artifact / Revision
+
+- 统一作品目录为 `works/<id>/`：`work.json` 记录 profile、状态（draft / active / archived）、lineage 与已登记 artifact，`source/` 保存工作文件。
+- 每个 artifact 有 `revisions[]`，状态为 `candidate | current | superseded`，记录 `parentRevisionId`、路径、snapshot、`checksum`、字节数和产生它的 `episodeId`；schema 强制“至多一个 current 且 `currentRevisionId` 必须指向它”。
+- `lineage` 用 `sourceWorkId / sourceArtifactId / sourceRevisionId` 保存跨作品派生（番外、同人、改编、翻译）的来源版本，而不是只存路径。
+- 读取、审稿、导出都通过统一版本读取器解析已登记版本并校验 checksum；产物缺失返回带类型的可恢复错误；候选版本必须显式指定，不会因为“最新文件”被默认当作已采纳版本。
+- 路径统一为 `/` 分隔的相对 artifact identity，拒绝绝对路径、盘符与 `..`，避免同一产物在 Windows 原生路径与登记路径之间产生竞争更新。
+- 旧项目通过 `inkos work migrate`（默认预览，`--apply` 才导入）迁移；保留 legacy 源文件，冲突报告而不覆盖，缺少运行时状态的项目以 draft 进入作品库。
+
+这与 OAN 的 Object File Tree + Git 思路最接近的一点是“产物有稳定身份和版本谱系”；差别是 InkOS 的版本链由 `work.json` + snapshot 维护，OAN 由 Git 提供。
+
+### Profile + Capability：单一工具循环
+
+- 内置 Profile：`workspace-default`、`longform-novel`、`short-fiction`、`script`、`storyboard`、`interactive-film`、`interactive-world`、`translation`、`visual-asset`；也可由项目 `.inkos/profiles/*.json` 覆盖（必须是普通文件、拒绝 symlink、Zod 校验）。
+- Profile 声明 `capabilityIds`、`requiredSkillIds / recommendedSkillIds`、`artifactKinds`、`artifactSchemas`、上下文配方和确认策略。
+- `createCapabilityPiTools` 把 Profile 允许的 capability action 编成 pi-agent 工具（`<capability>__<action>`）。每个 action 带 `risk`：`read | recoverable-write | destructive-write`。
+- Studio、CLI、TUI 与 worker 共用同一工具循环；原先平行的“自然语言路由 / 并行 planner”被删除。Pipeline 作为 capability 的实现保留。
+- 主模型与被委派 worker 都接收作者原始请求；创作方法写在 Skill 里，不替代作者指定的范围。委派草稿与审稿建议不能取代原请求。
+
+### 确认策略：默认执行，仅破坏性写入确认
+
+`ConfirmationPolicy` 有三项：`inferredMutation`、`explicitRecoverableMutation`、`destructiveMutation`。所有内置 Profile 当前都是：
+
+```text
+inferredMutation: execute
+explicitRecoverableMutation: execute
+destructiveMutation: confirm
+```
+
+系统提示明确要求：用户请求被允许的可恢复动作（含创建和生产）时直接调用，只有 Profile 或 action 要求确认时才使用 `workspace__propose_action`。`propose_action` 仍存在，但在默认 Profile 下基本不再出现。
+
+对 OAN 的含义：InkOS 1.7.x 的 “重动作先出确认卡” 在 2.0 中被**放宽**为“可恢复写入直接执行”；正式写入既没有 CandidateChangeSet，也不再有开始前的确认卡。它给出的反面教材是：当版本、回执和恢复足够强时，产品倾向于撤掉人类门；OAN 的 Accept 必须继续是硬约束。
+
+### 结构化 ActionResult / Observation
+
+- `ActionResult` 包含 `status`、`summary`、`artifacts[]`（workId / artifactId / revisionId / path）、`observations[]` 与 `data`。
+- 观察是结构化的：操作执行状态、交付检查、版本和选项分别保留；旧的文本拼接回执被替换。
+- 有类型的错误在模型边界保留 `code` 与 `recovery`（建议的下一步 action 与参数），底层 Episode 保留原始错误。
+- 质量发现与执行成功是两类结果：审稿未通过不等于导出失败，导出成功也不等于内容通过。
+- 每次调用 harness 的 `read` 先压成“事实投影”，同一份投影也供压缩进度使用，避免两份选择逻辑漂移。
+- 自述的代价：同一批 284 条历史回执，模型观察体积增加约 25.6%，没有拿到上下文成本下降的证据；文档明确说“JSON 化本身不是成功”。
+
+### Episode 账本
+
+`CreativeEpisodeStore` 使用 SQLite（WAL、`foreign_keys`、`busy_timeout`）保存 `creative_episodes` 与 `creative_episode_events`，事件含 `seq`、`type`、`workId`、`capabilityId`、`actionId` 与 payload，并记录 `owner_pid` 以识别僵尸 episode。设计强调：`Episode completed` 只表示本轮循环结束，**不**表示作品交付通过；验收不得从该字段推断成功。
+
+### 局部修订与范围保护
+
+- 局部修订只允许改作者授权的范围，范围外内容必须保留；请求的原始 baseline 在重试之间保持，可用于对比。
+- 审稿自动读取“本轮开始时的作品快照”、当前原文与实际 diff；同轮多次修改不会把比较起点推进到中间稿；没有执行上下文时只比较登记的父版本，并标明范围。比较范围、版本、哈希和 diff 随审稿报告与回执保存。
+- 修改成功的回执包含新版本和有长度上限的真实变化区域，供主模型核对“请求是否真的落实”。
+- 导出副本被设为不可直接修订，在进入写作模型前返回正文来源。
+- `artifact-edit-policy` 为领域维护的产物（如长篇 `story/`、`chapters/`，互动世界 `runs/`，影游 story graph）拒绝通用编辑，返回 `ARTIFACT_DOMAIN_ACTION_REQUIRED` 与恢复指引，要求走领域 action 以保持关联状态。
+- 组合交付动作 `review_and_export_work_artifact` 固定同一版本，先持久化审稿再导出；审稿失败或版本冲突时停止，已保存正文与审稿不丢失。
+
+### 原子文件集与崩溃恢复
+
+1.7.x 的 staged commit 已升级为带 journal 的事务：
+
+1. 在目标同级 `.inkos-file-txn-*` 里准备内容与 backup。
+2. 写 `journal.json`（`journal.next` + fsync + rename，含 pid 与 phase：`prepared` → `committed`）。
+3. 逐个 rename；任一失败则按 journal 回滚。
+4. 回滚也失败时保留 journal（`AggregateError`），由 `recoverAtomicFileSets` 在后续启动时处理：owner 进程已不存在且 phase 仍为 `prepared` 则回滚；无 journal 说明尚未开始替换。
+
+短篇、剧本 / 分镜与 Writer 的主要落盘都已使用它。短篇修订 checkpoint 带稳定 operation identity 和已完成章节进度；指令变化不能悄悄重置该 operation，恢复前先检测源文件变化。
+
+### Interactive / Play / 图像
+
+- Play 的 world mutation、场景呈现与选项作为同一 presentation 记录持久化；仅改文本的场景修订保留世界状态与选项；玩家动作保留原始输入；检查点与版本携带该记录。旧回执读取隔离到 `play-presentation-legacy.ts`。
+- Play 一回合被收敛到单个 Pi worker（commit `da464e0c` 折叠了原多步回合），state ownership 在 worker 内。
+- 互动影游 edit 接收完整图的 authoring context，写入范围仍有界；影游包由单 worker 生成。
+- 图像修订可把旧图作为 provider 参考；生成等待发生在 Work mutation lock 之外，随后按捕获时刻提交；替换失败保留旧成功图；provider 凭据只向该 provider 同源下载请求重试。
+
+### Skill 与检索
+
+- 内置 Skill 包 20 个（README 写 19，`packages/core/skills/` 实际目录 20 个），包括 long / short / script / storyboard / interactive-film / translation / play-world / play-illustration / story-review / story-deslop / story-import / story-cover / 市场研究与拆稿 / 同人、番外、续写、仿写。Profile 的 `requiredSkillIds` 让 worker 在 harness 内强制激活对应 Skill。
+- Skill 仍是指导而非授权；工具权限由 Profile + capability + `includeAction` 过滤决定。
+- 检索统一为 `LocalSearchIndex`：SQLite FTS5 / BM25，故事记忆、材料库和 Skill 参考共用，文档带 `scope / kind / source / metadata`，源文件仍是权威，索引可重建。旧文关于“透明本地词项打分”的描述已被替换为 FTS5 BM25，但“带来源、可重建”的性质没变。
+- 书籍参考资料绑定：材料可带用途绑定到具体书籍，规划 / 写作任务按需检索相关段落。
 
 ## 文件、Truth 与派生层
 
 InkOS 的持久化比纯数据库产品更接近 OAN，但内部仍有多套 authority。
 
+> 2.0 更新：新项目的权威目录是 `works/<id>/`（见上节）；下面的 `books/<book-id>/` 描述的是 1.x 布局与长篇领域内部仍沿用的 `source/story/*`、`source/chapters/*` 结构，旧项目需 `inkos work migrate`。
 ### 长篇书籍
 
 主要文件层次包括：
@@ -147,6 +267,8 @@ books/<book-id>/
 
 ### 原生工具循环
 
+> 2.0 更新：下面按 session kind 描述的工具表已被 Profile + capability 工具取代（见“2.0 Creative Harness v2”）。`agent-tools.ts` 仍包含 `propose_action`、`research_web`、`ingest_material`、`retrieve_material`、`manage_book_reference`、`import_chapters`、`play_*`、`read` / `grep` / `ls`、`list_works` / `inspect_work`、`delete_latest_chapter`、`resync_chapter_state` 等工具；`write_truth_file`、`patch_chapter_text`、`replace_chapter_text`、`rename_entity` 现位于 `harness/tools/longform-edits.ts`，作为长篇 capability 的 action 暴露。
+
 当前 Chat Agent 使用 pi-agent 原生 Tool Calling，不是上一版可以笼统概括的“自然语言路由器”。`AgentSession` 负责：
 
 - 按 session kind 组装工具表。
@@ -196,6 +318,7 @@ OAN
 
 ## AgentSkills v1.7.2 重构
 
+> 2.0 更新：Skill 已从“可选能力”变成 Profile 绑定的专业内核（20 个内置包）；下面的发现、导入防护和“不授予权限”原则仍成立。
 v1.7.2 的核心变化是删除旧 InkOS 私有 Skill 协议，收敛到标准 AgentSkills / OpenClaw `SKILL.md`：
 
 - 从项目 `skills/`、`.agents/skills/`，用户 `~/.agents/skills/`、`~/.openclaw/skills/` 和显式目录发现 Skill。
@@ -262,6 +385,8 @@ InkOS 的生产定位比 OAN 更自主：
 - 手动修订还有 strict / lenient / always gate；strict 默认要求关键指标不恶化且至少一类改善。
 - 未应用修订时返回前后 blocking / critical / AI-tell 指标和剩余问题。
 
+2.0 更新：v1.8 把审稿 / 修订 / 结算归入 capability 内部步骤，`quality state machine` 被替换（`fb8c8e3e`），改为以“可观察的完成证据”判断（`a7ed7ac5`）。自动审稿与修订的权力模型没有变化。
+
 这些 gate 改善了自动生产的可靠性，但不改变其本质：模型仍可在一次确认后自动生成、审稿、修订并写入正式章节。这与 OAN “AI 是 Copilot，最终文件变化由作者逐次确认”的边界不同。
 
 ### 章节版本工作区与多文件原子落盘
@@ -287,7 +412,9 @@ Studio 可以预览、恢复或按审稿 gate 改写章节。strict / lenient / 
 
 `WriterAgent.saveChapter()` 当前用它一次提交章节、`current_state.md`、`pending_hooks.md`、章节摘要 / 子线等投影和主要 runtime JSON，并可在同一集合删除被替代的旧章节文件。这是相对上一版的重要可靠性提升。
 
-仍需准确限定：整条 pipeline 不是一个事务。后续 truth file 保存、legacy JSON 同步、memory index、chapter index 和 snapshot 仍顺序执行；`reviseDraft()` 也在归档版本后顺序覆盖修订稿和最新状态。因此“主要章节 settlement 已原子化”成立，“所有 InkOS 长篇写入均原子化”不成立。
+2.0 更新：原子文件集已加入 journal 与崩溃恢复，并扩展到短篇与剧本 / 分镜路径；见“2.0 Creative Harness v2”。
+
+仍需准确限定（以下以长篇路径为例，2.0 是否已全部收敛未逐路径核对）：整条 pipeline 不是一个事务。后续 truth file 保存、legacy JSON 同步、memory index、chapter index 和 snapshot 仍顺序执行；`reviseDraft()` 也在归档版本后顺序覆盖修订稿和最新状态。因此“主要章节 settlement 已原子化”成立，“所有 InkOS 长篇写入均原子化”不成立。
 
 ### 顺序批量写章
 
@@ -322,9 +449,9 @@ InkOS 已经形成较完整的章节后状态闭环：
 - 原始来源、MIME、用途、字符数、页数和 excerpt。
 - 查询结果中的 source、charStart / charEnd 和匹配片段。
 
-当前召回是透明的本地词项打分，不是隐藏向量数据库：标题、来源和正文命中获得不同权重，最多返回 12 条。这个实现简单、可解释，也符合“派生检索不能成为 Canon”的原则。
+2.0 更新：召回已并入统一 `LocalSearchIndex`（SQLite FTS5 / BM25），仍不是向量数据库；索引可由源文件重建，结果保留来源与位置。1.7.x 的手写词项权重不再是实现事实。
 
-风险边界也要说明：URL ingest 在代码层只检查 HTTP / HTTPS 和体积、超时，没有看到私网地址 denylist 或重定向后地址复核；本地 Studio 作为服务运行时仍需要更强 SSRF 防护。
+风险边界仍在：本轮在 `materials/ingest.ts` 中没有找到私网地址 denylist 或重定向复核（只做了 grep 级检查，没有逐行审计）；本地 Studio 作为服务运行时仍需要更强 SSRF 防护。
 
 ### 联网研究
 
@@ -445,20 +572,17 @@ InkOS 的 provider 体系仍是强项：
 
 ## 工程验证状态
 
-当前仓库共有 295 个 `*.test.* / *.spec.*` 文件：
+2.0 更新：本轮在 `53adac4e` 上只读源码，**没有安装依赖、构建或运行测试**。排除 `node_modules` 与 `dist` 后，源码树里 `*.test.* / *.spec.*` 文件数为 core 124、cli 24、studio 58（上一版的 184 / 41 / 58 / 12 是另一种统计口径，不能直接比较；2.0 提交 `39a6af2e` 还用少量 mini flow 替换了大量防御性测试，净删除约 20,904 行测试）。
 
-- Core Vitest：184。
-- CLI Vitest：41。
-- Studio Vitest：58。
-- Studio Playwright E2E：12。
+InkOS 自述的验证记录（`spec/creative-harness-v2.md`，冻结候选 `delivery-verification-2026-09-25`，源码摘要 `7fe54438…6232`）：Node 22 与 Node 24 各通过 1,093 项检查（Core 701、Studio 304、CLI 88），全新安装与 1,779 个打包文件一致，配置迁移保留 legacy 文件。同一文档明确承认：13 类创作类型的完整真实模型验收仍在进行，内容、封面与市场验收独立于工程检查，合并实现不代表稳定发布验收完成。这些数字是项目自述，本轮未复现。
 
-本次验证结果：
+上一版（`a6e05d4d`）的验证结果：
 
 - 根 `pnpm test` 没有开始执行测试。本地 pnpm 11 发现 workspace `node_modules` 状态不一致，尝试重新安装；registry 请求失败，同时非 TTY 环境拒绝清理 modules 目录。
 - 因安装流程已失败，本轮没有继续用不同步的 workspace build artifact 直接运行 Vitest，也没有运行 Playwright。
 - 上一轮在 `b0cc9a54` 上得到的局部通过数字不能替代当前 `a6e05d4d` 的验证，故不沿用为当前结论。
 
-因此只能确认当前源码包含 atomic file set、chapter workspace、batch writing 和 provider 的新增回归测试，不能声称“最新主线测试通过”。最准确的结论是：参考目录源码是最新的，已安装依赖不是该主线的可复现验证环境。
+因此对当前 2.0 只能确认：源码里存在 harness、atomic file set、artifact revision、Play presentation 等的回归测试，以及作者自述的通过记录；不能声称“本地复现通过”。
 
 ## 值得肯定的工程优点
 
@@ -491,6 +615,18 @@ InkOS 的 provider 体系仍是强项：
 
 10. **历史章节改写会显式污染下游**
     版本归档、review gate 和 `needs-revision` 使旧章修改的影响范围可见，而不是假装 live state 自动保持一致。
+
+11. **产物版本身份与校验和**
+    artifact revision 带 parent、checksum、episode，读取 / 审稿 / 导出共用同一快照；候选必须显式指定，缺失返回可恢复错误。
+
+12. **执行状态与内容质量分离**
+    `Episode completed`、动作执行成功、交付检查和内容审稿分开记录，避免“循环结束 = 作品通过”。
+
+13. **局部修订范围保护与本轮起点对比**
+    范围外内容必须保留，审稿使用本轮开始的快照做 diff，同轮多次修改不会推进比较起点。
+
+14. **失败与自评写进文档**
+    `harness-result-first-redesign.md` 记录了观察体积增加 25.6%、真实模型首次完成率不足、导出误报等失败，不用测试数量证明设计正确。
 
 ## 当前限制与风险
 
@@ -533,15 +669,28 @@ InkOS 的 provider 体系仍是强项：
 13. **AGPL 限制代码级吸收**
     OAN 可以独立学习设计思想，但不能把实现源码或 prompt 文本直接复制进项目。
 
+14. **默认确认策略放宽**（2.0 新增）
+    所有内置 Profile 对可恢复写入默认 `execute`，只有破坏性写入确认；1.7.x 的重动作确认卡基本退出默认路径。这与 OAN Human Approval 的差距比上一版更大。
+
+15. **版本历史仍非 Git**（2.0 新增）
+    artifact revision / snapshot 提供谱系，但回滚、diff 与审计不由 Git 统一解释；同一目录里还有 `work.json`、Episode SQLite、FTS5、Play 图等多个状态面。
+
+16. **2.0 尚未完成稳定发布验收**（2.0 新增）
+    自述 13 类创作类型的真实模型验收在进行；`CHANGELOG.md` 没有 2.0 条目；README 称“2.0 开发版本，使用本地构建验证”。参考其设计时应把它视为快速演进中的分支。
+
+17. **Skill 数量表述不一致**（2.0 新增）
+    README 写 19 个内置 Skill，changelog 写 15 个，`packages/core/skills/` 实际 20 个目录；以源码目录为准，并应对类似文案差异保持谨慎。
+
 ## 与 OAN 的关键差异
 
 | 维度 | InkOS | OAN |
 | --- | --- | --- |
 | 定位 | Story production agent / 多产品创作系统 | Filesystem-first Novel IDE / Copilot |
-| Runtime | pi-agent Chat loop + 多阶段领域 Agent + 多种 domain runtime | 单一 Aider-style loop + AI SDK ToolSet |
-| 正式写入 | 确认动作后工具 / pipeline 直接写文件 | CandidateChangeSet → PendingAction → diff → Accept |
+| Runtime | 2.0 起单一 pi-agent 生产 harness + Profile / Capability 工具；Pipeline 为确定性能力 | 单一 Aider-style loop + AI SDK ToolSet |
+| 正式写入 | 2.0 起可恢复动作默认直接执行，仅破坏性写入确认；工具 / pipeline 直接写文件 | CandidateChangeSet → PendingAction → diff → Accept |
 | Truth | Markdown 控制文件 + JSON runtime state + 多领域 store | Markdown / YAML / Object File Tree |
-| 历史 | snapshot、backup、event、task state | Git 是统一历史引擎 |
+| 历史 | artifact revision + checksum、snapshot、journal、Episode 账本 | Git 是统一历史引擎 |
+| 产物身份 | `works/<id>/` + artifact / revision / lineage | Object File Tree 路径 + Git blob |
 | 自动化 | 自动审稿修订、批量写章、daemon | AI 提议，作者批准 |
 | Skill | 标准 AgentSkills 指导；不授予工具 | `novel-copilot` 文件 Skill + allowed-tools 收窄 |
 | Memory | JSON state + projection + SQLite derived index | 文件事实 + 可重建 projection / index |
@@ -593,7 +742,29 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
 13. **批量写作保持有界、顺序和逐章审批**
     可复用 1–20 的有界任务与遇错停止思路，但 execution consent 只启动候选生成，每章仍需独立 diff approval。
 
+14. **产物版本身份 + checksum 校验的读取**
+    OAN 的 Object File Tree 已由 Git 提供版本；可借鉴的是“读取 / 审稿 / 导出必须绑定同一已校验快照”和“缺失返回带 recovery 的类型化错误”，对应 Agent 读取证据与 PendingAction 的 source hash。
+
+15. **执行状态与内容质量分离，`completed` 不等于通过**
+    对 RuntimeEvent / PendingAction receipt 保持“循环结束、动作成功、内容审阅”三类状态分开。
+
+16. **局部修订的范围保护与本轮起点 diff**
+    对 OAN 的章节修订候选：范围外内容必须不变（可由 diff 校验），审稿对比使用本轮起点而不是中间稿。
+
+17. **带 journal 的 staged commit 与启动期恢复**
+    对 ChangeMaterializer：journal 写入顺序、`pid` + phase 判断僵尸事务、回滚失败时保留 journal；OAN 仍叠加 PendingAction receipt 与 Git commit。
+
+18. **FTS5 / BM25 作为可重建检索投影**
+    若 OAN 需要全文检索，可参考“源文件权威、索引可重建、命中带 source 与位置”；不引入把索引当事实源的做法。
+
+19. **Skill 绑定 Profile 的强制激活与“不授权”共存**
+    InkOS 通过 `requiredSkillIds` 强制激活，同时 Skill 不扩权；OAN 可复核 `novel-copilot` 的激活生命周期，但不要照搬 20 个专业包。
+
 ### 不建议吸收
+
+- 默认把可恢复写入设为 `execute`、只确认破坏性写入的 Profile 确认策略。
+- 以 `work.json` / revision snapshot 取代 Git 作为历史引擎。
+- 把 Episode SQLite 账本当作小说事实或审批依据。
 
 - 默认自动审稿 / 自动修订 / 多轮 repair loop。
 - daemon 自动写章。
@@ -609,6 +780,18 @@ InkOS 的最新发展没有推翻 OAN 的架构选择。相反，它展示了当
 
 ## 主要证据路径
 
+- 2.0 Harness：
+  - `reference-only/inkos/spec/creative-harness-v2.md`
+  - `reference-only/inkos/docs/harness-result-first-redesign.md`
+  - `reference-only/inkos/packages/core/src/harness/contracts.ts`
+  - `reference-only/inkos/packages/core/src/harness/builtin-profiles.ts`
+  - `reference-only/inkos/packages/core/src/harness/pi-tools.ts`
+  - `reference-only/inkos/packages/core/src/harness/capability-registry.ts`
+  - `reference-only/inkos/packages/core/src/harness/episode-store.ts`
+  - `reference-only/inkos/packages/core/src/harness/artifact-edit-policy.ts`
+  - `reference-only/inkos/packages/core/src/harness/system-prompt.ts`
+  - `reference-only/inkos/packages/core/src/retrieval/local-search.ts`
+  - `reference-only/inkos/packages/core/src/play/play-presentation.ts`
 - 产品与发布：
   - `reference-only/inkos/README.md`
   - `reference-only/inkos/CHANGELOG.md`

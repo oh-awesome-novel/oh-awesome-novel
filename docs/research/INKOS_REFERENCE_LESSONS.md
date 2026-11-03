@@ -1,8 +1,10 @@
 # InkOS 参考项目可借鉴经验
 
-> 参考基准：`reference-only/inkos@a6e05d4`（`master`，2026-08-03，与 `origin/master` 一致）。
+> 参考基准：`reference-only/inkos@53adac4e`（2026-10-24）。
 >
-> InkOS 应用版本：`1.7.2`。相对上一轮 `b0cc9a54`，当前增加 10 个提交、53 个变化文件，应用版本号未变化。
+> InkOS 应用版本：`2.0.0`（上一版基准 `a6e05d4`，版本 `1.7.2`）。相对上一版新增 131 个提交、730 个文件变化，约 +36,063 / −94,915 行：主体是 v1.8.0 与 2.0 “Creative Harness v2” 的替换式重构，2026-10 的 6 个提交仅改推广文案。
+>
+> 本轮只读源码，没有安装、构建或运行测试；InkOS 自述的测试通过数字未复现。
 >
 > 现状证据与完整对比见 [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md)。本文只记录可迁移的设计经验、边界和优先级，不自动创建实现任务，也不改变 OAN 既有架构决策。
 
@@ -22,14 +24,39 @@ InkOS 的局部机制
 
 不能从“InkOS 已验证某个工作流”推出“OAN 应采用同样的直接写入、自动修订或多 Agent Runtime”。两者的产品权力边界不同。
 
-## 本轮分析修正了什么
+## 2.0 增量带来的修正
+
+本节优先于下方 1.7.x 时期的条目；与之冲突时以本节和 [INKOS_REFERENCE_OVERVIEW.md](INKOS_REFERENCE_OVERVIEW.md) 的 “2.0 Creative Harness v2” 为准。
+
+1. **确认卡被放宽，不再是可依赖的启动前 gate**
+   所有内置 Profile 的确认策略为 `inferredMutation: execute`、`explicitRecoverableMutation: execute`、`destructiveMutation: confirm`；`propose_action` 只在 Profile / action 要求时使用。因此下文 “Execution Consent” 的借鉴点应改读为：OAN 自己设计启动前确认，不能指望 InkOS 的现状作为范例；它反而是“一旦回执和恢复足够强，产品倾向撤掉人类门”的反面参照。
+2. **Pipeline 降为 capability，Chat 与 worker 共用一个工具循环**
+   Profile 声明 `capabilityIds` / Skill / 产物 schema，`pi-tools` 把 capability action 编成 `<capability>__<action>` 工具，每个 action 带 `read | recoverable-write | destructive-write` 风险。这是 OAN “单一 Runtime + ToolSet” 的同向证据，但 InkOS 的 capability 直接写作品库。
+3. **产物有 Work / Artifact / Revision 身份**
+   `works/<id>/work.json` 登记 artifact 与 revision（parent、checksum、episode、candidate / current / superseded），读取、审稿、导出共用校验后的快照。这对 OAN 的启发是 source hash / receipt 的绑定方式，而不是新增 `work.json` 目录协议；Git 仍是 OAN 的版本来源。
+4. **Episode 账本把“循环结束”与“交付通过”分开**
+   `Episode completed` 只表示一轮循环结束；执行状态、交付检查、内容审稿分别记录。对应 OAN 已有的 “durable receipt 决定是否完成”，可作为 RuntimeEvent / PendingAction 的状态拆分参考。
+5. **原子文件集增加 journal 与启动期恢复**
+   `journal.json` 记录 pid 与 phase（`prepared` → `committed`），回滚失败时保留 journal，后续 `recoverAtomicFileSets` 根据 owner 进程是否存活决定回滚。这比 1.7.x 的 “staging + rename + rollback” 更接近可审计的 materialization 恢复协议，但仍只是文件系统级事务，不含审批、source hash 或 Git。
+6. **局部修订有范围保护与“本轮起点”对比**
+   范围外内容必须保留；审稿读取本轮开始的快照与实际 diff，同轮多次修改不会推进起点；领域维护的产物（长篇 `story/`、`chapters/`、互动世界 `runs/`、影游 story graph）拒绝通用编辑并返回 `ARTIFACT_DOMAIN_ACTION_REQUIRED` 与 recovery。
+7. **材料检索从手写词项权重变为统一 FTS5 / BM25**
+   故事记忆、材料库与 Skill 参考共用 `LocalSearchIndex`，源文件权威、索引可重建。下文 “透明词项基线” 的原则不变，但具体实现不再是手写打分。
+8. **Skill 从可选能力变成 Profile 绑定的专业内核**
+   `requiredSkillIds` 让 worker 在 harness 内强制激活对应 Skill（目录里 20 个内置包；README 写 19，changelog 写 15）。Skill 仍不授予工具权限。
+9. **结果优先的自评记录值得学习，结论仍不可外推**
+   `docs/harness-result-first-redesign.md` 记录了观察体积增加约 25.6%、真实模型首次完成率不足、导出误报等问题；`spec/creative-harness-v2.md` 说明 13 类创作的真实模型验收仍在进行。应把 2.0 视为快速演进分支，不把其设计当作已验证的稳定实践。
+10. **推广文案类提交与 CHANGELOG 滞后**
+    近 6 个提交只改赞助 / 推广内容；`CHANGELOG.md` 尚无 2.0 条目。引用 InkOS 行为时以源码与 spec 为准，不以营销文案为准。
+
+## 1.7.x 时期的分析修正（保留作背景）
 
 上一版 Lessons 的方向大体正确，但对当前 InkOS 和 OAN 的描述已经不够精确。本轮作出以下修正：
 
 1. **更新可复查的提交基准**
    本轮从 `b0cc9a54` 更新到 `a6e05d4`。更早的 `3f9b4e80` 只保留为长期变化的推定起点，不再用于描述当前实现。
 
-2. **Skill 已经更换协议**
+2. **Skill 已经更换协议**（2.0 起进一步成为 Profile 绑定的内核，见上节第 8 条）
    InkOS v1.7.2 已删除旧的私有 capability / skill 体系，改为标准 AgentSkills / OpenClaw `SKILL.md` 发现和按需加载。OAN 也已经有 built-in `novel-copilot`、workspace override 和 `allowedTools` 过滤，因此建议是复核兼容边界，不是从零建设 Skill loader。
 
 3. **确认卡不是最终写入审批**
@@ -54,7 +81,7 @@ InkOS 的局部机制
    一次最多 20 章、单 book lock、遇到非 ready 状态即停止。OAN 可参考任务边界，但每章的内容批准不能被一次 execution consent 取代。
 
 10. **测试数量不能替代可复现性**
-   当前源码中有 295 个测试源文件。本轮依赖恢复受 registry 与非 TTY 清理保护阻断，没有测试执行。Lesson 是保持单命令可复现验证，而不是把测试文件数量或上一轮通过结果当作当前质量结论。
+   2.0 更新：排除 `node_modules` 与 `dist` 后，当前源码树约有 core 124、cli 24、studio 58 个测试文件；提交 `39a6af2e` 还用少量 mini flow 替换大量防御性测试（净删除约 2 万行）。InkOS 自述 Node 22 / 24 各通过 1,093 项检查，但本轮没有复现。Lesson 仍是保持单命令可复现验证，不把文件数或自述结果当作当前质量结论。
 
 ## 吸纳原则
 
@@ -110,6 +137,8 @@ Skill 可以提供 prompt guidance、允许工具集合、静态参考和 quick 
 P0 表示值得对照现有实现和关联 task 查缺，不表示立即新增功能或扩大 scope。
 
 ### 1. 保持两阶段确认语义
+
+> 2.0 更新：InkOS 默认 Profile 已改为可恢复动作直接执行，以下借鉴点是 OAN 自行设计的方向，而不是 InkOS 当前行为；`ActionEnvelope` 仍存在于 `interaction/`，但默认路径很少触发。
 
 InkOS 的 `ActionEnvelope` / `RequestedIntent` 强制重动作 payload 自包含，并验证确认来源与 intent 匹配。这可以改善 OAN 高成本任务启动前的可理解性。
 
@@ -180,6 +209,8 @@ InkOS 章节结算不是让模型重写整份 current state，而是产生 typed
 
 ### 6. 把部分落盘当作一等失败场景
 
+> 2.0 更新：原子文件集已加入 `journal.json`（pid + phase）、回滚失败时保留 journal 并在启动时恢复，且扩展到短篇与剧本 / 分镜路径。下面的验证清单应补充：journal 写入顺序（`journal.next` → fsync → rename）、owner 进程已退出时的恢复、回滚也失败时的可操作错误。
+
 InkOS 当前同时提供正反两类证据：Writer 的主要 chapter settlement 已使用 staging、backup、rename 和 rollback 形成多文件原子集合；Play 和长篇后续 truth / index / snapshot 仍有顺序写入。先 render、局部 atomic file set、单 store transaction 和完整 pipeline transaction 是四件不同的事。
 
 对 PendingAction / ChangeMaterializer 应持续验证：
@@ -225,6 +256,8 @@ OAN 可以将其用于长时间参考分析、导入、健康检查或大规模�
 这不授权 daemon 自动写章，也不要求增加多 Agent scheduler。
 
 ### 9. 材料召回先建立透明的词项基线
+
+> 2.0 更新：召回已统一为 SQLite FTS5 / BM25（`LocalSearchIndex`），故事记忆、材料库与 Skill 参考共用，源文件权威、索引可重建。原则不变；若 OAN 采用，应保持索引可删除重建并带 source / 位置。
 
 InkOS 材料库保留 source、MIME、purpose、字符范围、excerpt 和匹配分数，用词项召回而不是先引入向量数据库。
 
@@ -300,6 +333,31 @@ InkOS 将 1–20 章放在单一 book lock 下顺序执行，并在中间状态�
 
 不能吸收的是“一次开始确认等于多章内容批准”。批量任务应该只生成候选；每章或用户明确选择的一组 diff 仍需 Apply Approval。
 
+### 19. 产物读取绑定同一已校验版本，缺失返回可恢复错误
+
+2.0 的读取 / 审稿 / 导出共用版本读取器：解析已登记 revision、校验 checksum，候选必须显式指定，缺失返回带 `code` 与 `recovery` 的类型化错误。OAN 可借鉴：
+
+- Agent 读取证据应带路径、blob / hash 与选择原因，审稿 / 提案使用同一份快照。
+- 读取失败返回“下一步可调用的动作与参数”，而不是一句自然语言。
+- 导出副本、派生产物不得被当作可直接修订的正文来源。
+
+不需要新增 `work.json` 或 revision 目录；版本事实仍由 Git 和 Object File Tree 提供。
+
+### 20. 执行状态、交付检查与内容质量分开
+
+InkOS 把 Episode 循环结束、动作成功、交付检查和内容审稿分别记录，并明确 “Episode completed 不等于作品通过”。OAN 的 RuntimeEvent / PendingAction receipt 可保持相同拆分：质量问题不应让已发生的 materialization 失败，materialization 成功也不代表内容通过。
+
+### 21. 局部修订保护范围，审稿对比本轮起点
+
+- 修订候选声明允许改动的范围；范围外内容用确定性 diff 校验必须不变。
+- 审稿对比本轮开始时的快照，同轮多次修改不推进比较起点；单独审稿时明确只比较父版本。
+- 修改回执返回有长度上限的真实变化区域，供模型自检“请求是否真的落实”。
+- 由领域逻辑维护的对象（如 summary、timeline、state）拒绝通用编辑，返回指向领域动作的 recovery。
+
+### 22. 失败设计要写进文档
+
+`docs/harness-result-first-redesign.md` 记录观察体积增加、首次完成率不足和误报等失败，并设置“改动必须有结果改善证据”的决策门槛。OAN 的设计文档也应记录此类证据，避免用测试数量或单次成功证明设计。
+
 ## P2：仅在产品范围明确后参考
 
 ### 16. Translation 应是隔离的派生产品域
@@ -340,6 +398,8 @@ OAN 已有更适合自身架构的 world referee、branch-local knowledge、type
 
 ### Runtime 与自动化
 
+- 2.0 的 Profile 默认 `execute`、只确认破坏性写入的确认策略（OAN 的 Accept 门不得弱化）。
+- 以 `work.json` / revision snapshot / Episode SQLite 取代 Git 与 PendingAction receipt 作为历史与审批依据。
 - Architect / Writer / Auditor / Reviser 多 Agent 编排进入 `packages/runtime`。
 - 默认自动审稿、自动修订或多轮 repair loop。
 - daemon 定时写章、无人值守批量生产或隐藏重试。
@@ -386,6 +446,9 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
 8. Durable receipts, not assistant prose, determine whether an action completed.
 9. Background execution may suppress conflicting tools, but may not gain new authority.
 10. External research remains evidence until the author explicitly adopts it into Canon.
+11. Reads, reviews, and exports must bind to one verified snapshot; a missing target returns a typed, recoverable error.
+12. Loop completion, action success, delivery checks, and content quality are separate states.
+13. A partial-edit candidate may change only its authorized range; review compares against the turn-start baseline.
 
 ## 与现有 OAN 任务的建议映射
 
@@ -399,7 +462,11 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
 | 有界批量写章 | 仅在具体批量生成需求出现时 | 单任务顺序生成候选，逐章或分组 diff approval |
 | 非 Canon fingerprint / adoption | Play adoption、reference publish 现有链路 | 复用统一 preview / PendingAction 语义 |
 | 导入已有小说 | `0700` 与 `0900` 边界 | 自有原稿导入和外部 reference 严格分离 |
-| 多文件部分落盘与 Git receipt | `0800` 及 PendingAction / Git task | 补 source drift、partial materialization、commit failure 测试 |
+| 多文件部分落盘与 Git receipt | `0800` 及 PendingAction / Git task | 补 source drift、partial materialization、commit failure 测试；参考 journal + 启动期恢复 |
+| 读取绑定已校验版本、typed recovery 错误 | 读取证据 / PendingAction source hash 相关 task | 只做证据与错误类型，不新增作品库目录 |
+| 执行 / 交付 / 内容三类状态分离 | RuntimeEvent、PendingAction receipt | 复核状态枚举，避免 `completed` 单值 |
+| 局部修订范围保护与本轮起点 diff | 章节修订候选、审稿 task | 范围外 diff 校验；审稿使用本轮起点 |
+| 可重建 FTS5 检索投影 | context selection / search task | 仅在需要全文检索时评估；索引不作 truth |
 | 后台任务、task card、恢复 | 仅在具体长任务需要时 | 先做单 domain、单槽和只读任务，不建通用 scheduler |
 | 材料 / 研究 provenance | reference 与 context selection 相关 task | 先透明词项检索，再用评测决定是否需要 embedding |
 
@@ -407,6 +474,15 @@ InkOS 为 `AGPL-3.0-only`。可以独立学习公开行为、约束和抽象思�
 
 ## 主要证据路径
 
+- 2.0 Harness：
+  - `reference-only/inkos/spec/creative-harness-v2.md`
+  - `reference-only/inkos/docs/harness-result-first-redesign.md`
+  - `reference-only/inkos/packages/core/src/harness/contracts.ts`
+  - `reference-only/inkos/packages/core/src/harness/builtin-profiles.ts`
+  - `reference-only/inkos/packages/core/src/harness/pi-tools.ts`
+  - `reference-only/inkos/packages/core/src/harness/episode-store.ts`
+  - `reference-only/inkos/packages/core/src/harness/artifact-edit-policy.ts`
+  - `reference-only/inkos/packages/core/src/retrieval/local-search.ts`
 - 版本与产品范围：
   - `reference-only/inkos/README.md`
   - `reference-only/inkos/CHANGELOG.md`
