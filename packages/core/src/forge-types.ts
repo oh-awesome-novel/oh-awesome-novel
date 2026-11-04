@@ -10,6 +10,8 @@ export interface ForgeTrait { name: string; behaviors: string[] }
 export interface ForgeFacet { kind: 'normal' | 'pressure' | 'private'; trigger: string; state: string; dialogue: string[]; habitualAction: string }
 export interface ForgeCharacterPlan {
   id: string; name: string; aliases: string[];
+  /** Optional so older plans stay readable; roster profiles fall back to 'other'. */
+  genderKind?: 'girl' | 'boy' | 'other';
   palette: { base: string; mainTones: ForgeTrait[]; accents: ForgeTrait[] };
   facets: ForgeFacet[];
   clarifications: Array<{ trait: string; meaning: string; when: string; not: string }>;

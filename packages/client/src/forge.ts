@@ -16,14 +16,14 @@ export interface ForgeMutation { expectedWorkspaceRoot: string; expectedRevision
 export interface ForgeClientMethods {
   listForgeDrafts(): Promise<{ drafts: ForgeDraft[] }>;
   readForgeDraft(id: string): Promise<{ draft: ForgeDraft }>;
-  deleteForgeDraft(id: string): Promise<{ ok: boolean }>;
+  deleteForgeDraft(id: string, input: ForgeMutation): Promise<{ ok: boolean }>;
   createForgeDraft(input: { idea: string; expectedWorkspaceRoot: string }): Promise<{ draft: ForgeDraft }>;
   discussForgeDraft(id: string, input: ForgeMutation & { message?: string; selection?: ForgeDiscussSelection; selections?: ForgeDiscussSelection[] }): Promise<{ draft: ForgeDraft }>;
   updateForgeDraft(id: string, input: ForgeMutation & { edits?: Array<{ key: string; value: string; label?: string; locked?: boolean }>; plan?: Record<string, unknown>; chunks?: Record<string, string> }): Promise<{ draft: ForgeDraft }>;
   planForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft }>;
   writeForgeDraft(id: string, input: ForgeMutation & { force?: boolean }): Promise<{ draft: ForgeDraft }>;
   proposeForgeDraft(id: string, input: ForgeMutation): Promise<{ draft: ForgeDraft; pendingActionId: string }>;
-  handoffForgeDraft(id: string, input: ForgeMutation & { mode: 'play' | 'writing'; strictHandoff?: boolean }): Promise<{ draft: ForgeDraft; sessionId?: string; sourcePaths?: string[] }>;
+  handoffForgeDraft(id: string, input: ForgeMutation & { mode: 'play' | 'writing'; acceptChangedFiles?: boolean }): Promise<{ draft: ForgeDraft; sessionId?: string; sourcePaths?: string[] }>;
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(item => typeof item === 'string'); }
@@ -59,7 +59,7 @@ export function createForgeClientMethods(request: <T>(path: string, options?: { 
   return {
     listForgeDrafts: async () => { const result = await request<unknown>('/api/forge/drafts'); required(record(result) && Array.isArray(result.drafts)); return { drafts: result.drafts.map(parseForgeDraft) }; },
     readForgeDraft: id => request<unknown>(route(id)).then(envelope),
-    deleteForgeDraft: async id => request<{ ok: boolean }>(route(id), { method: 'DELETE' }),
+    deleteForgeDraft: async (id, input) => request<{ ok: boolean }>(route(id), { method: 'DELETE', body: input }),
     createForgeDraft: input => request<unknown>('/api/forge/drafts', { method: 'POST', body: input }).then(envelope),
     discussForgeDraft: (id, input) => mutate(id, '/discuss', input),
     updateForgeDraft: (id, input) => mutate(id, '', input, 'PATCH'),

@@ -55,6 +55,9 @@ const searchOpen = shallowRef(false);
 const exportOpen = shallowRef(false);
 const manuscriptImportOpen = shallowRef(false);
 const forgeOpen = shallowRef(false);
+/** A draft the Forge wizard should load when it opens (set by a failed approval-banner handoff). */
+const forgeInitialDraftId = shallowRef<string>();
+watch(forgeOpen, open => { if (!open) forgeInitialDraftId.value = undefined; });
 const forgeSessionId = shallowRef('');
 const searchRefreshVersion = shallowRef(0);
 const activeFileLine = shallowRef<number>();
@@ -474,7 +477,10 @@ async function handleForgeHandoff(input: { draftId: string; revision: number; mo
       activateForgeWritingSources(res.sourcePaths ?? []);
     }
   } catch (cause) {
+    // Open the draft in Forge, where the refusal is shown and edited files can be confirmed.
     console.error('Failed to handoff forge draft:', cause);
+    forgeInitialDraftId.value = input.draftId;
+    forgeOpen.value = true;
   }
 }
 
@@ -750,7 +756,7 @@ function activateForgeWritingSources(paths: string[]) {
       </div>
     </div>
 
-    <ForgeWizardModal v-if="forgeOpen" :workspace-root="workspace.path" :provider-configured="providerConfigured"
+    <ForgeWizardModal v-if="forgeOpen" :workspace-root="workspace.path" :provider-configured="providerConfigured" :initial-draft-id="forgeInitialDraftId"
       @close="forgeOpen = false" @configure-provider="emit('configureProvider')"
       @pending-action-created="refreshPendingActionSurface"
       @review-pending-action="forgeOpen = false; reviewPendingActionById($event)"

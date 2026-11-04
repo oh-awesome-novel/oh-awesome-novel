@@ -54,11 +54,9 @@ function send(): void {
     } else {
       const indices = selected[q.id] ?? [];
       if (indices.length > 0) {
+        // Option labels and samples are resolved by the host from the stored draft; only the
+        // author's own words travel in the message.
         selectionsList.push({ questionId: q.id, optionIndices: [...indices] });
-        const chosen = indices.map(i => q.options[i]).filter(Boolean);
-        const labels = chosen.map(o => o.label).join('、');
-        const samples = chosen.map(o => o.sample).filter(Boolean).join(' ');
-        messageParts.push(`${q.title}：${labels}。${samples}`);
       }
     }
   }
@@ -71,7 +69,6 @@ function send(): void {
   emit('answer', {
     message: fullMessage,
     ...(selectionsList.length ? { selections: selectionsList } : {}),
-    ...(selectionsList.length === 1 ? { selection: selectionsList[0] } : {}),
   });
 
   message.value = '';

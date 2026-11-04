@@ -17,7 +17,7 @@ const action = computed(() => props.selectedAction ?? props.actions[0]);
 const changes = computed(() => action.value?.changes ?? []);
 const isForgeAccepted = computed(() => {
   const a = action.value;
-  return a?.origin?.kind === 'forge' && (a.status === 'accepted' || (a as any).decision === 'accepted');
+  return a?.origin?.kind === 'forge' && a.status === 'accepted';
 });
 </script>
 

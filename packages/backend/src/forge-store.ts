@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, rename, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseForgeDraft } from '@oh-awesome-novel/core';
@@ -7,6 +7,10 @@ import type { ForgeDraft } from '@oh-awesome-novel/core';
 
 const LIMIT = 2 * 1024 * 1024;
 export const FORGE_LOCK_TTL_MS = 3 * 60 * 1000;
+/** A live holder refreshes its lease well inside the TTL, so long model pipelines keep the lock. */
+const FORGE_LOCK_HEARTBEAT_MS = 30 * 1000;
+/** Locks held by this process; checked synchronously so concurrent requests never interleave on one draft. */
+const heldLocks = new Set<string>();
 
 export function assertForgeId(id: string): void {
   if (!/^forge_[a-f0-9-]{36}$/u.test(id)) throw new Error('Invalid Forge draft id.');
@@ -46,10 +50,10 @@ export async function listForgeDrafts(root: string): Promise<ForgeDraft[]> {
 export async function deleteForgeDraft(root: string, id: string): Promise<void> {
   assertForgeId(id);
   const dir = await directory(root);
+  // Callers hold the draft lock; the lock file is released by withForgeDraftLock.
   await unlink(join(dir, `${id}.yaml`)).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
   });
-  await unlink(join(dir, `${id}.lock`)).catch(() => undefined);
 }
 export async function saveForgeDraft(root: string, draft: ForgeDraft): Promise<void> {
   if (draft.updatedAt === undefined) draft.updatedAt = Date.now();
@@ -64,53 +68,55 @@ export async function saveForgeDraft(root: string, draft: ForgeDraft): Promise<v
   try { await rename(temp, join(dir, `${draft.id}.yaml`)); }
   finally { await unlink(temp).catch(() => undefined); }
 }
-/** A cross-process exclusive lock with lease self-healing for crashed processes. */
+async function isStaleForgeLock(path: string): Promise<boolean> {
+  let info;
+  try { info = await lstat(path); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+  // Live holders heartbeat the mtime, so an old mtime means the holder is gone.
+  if (Date.now() - info.mtimeMs > FORGE_LOCK_TTL_MS) return true;
+  let owner: { pid?: unknown };
+  try { owner = JSON.parse(await readFile(path, 'utf8')) as { pid?: unknown }; }
+  catch { return false; } // A holder may not have written its record yet; wait for the TTL instead.
+  if (typeof owner?.pid !== 'number') return false;
+  // Same process but not in heldLocks: an orphan left by an earlier failed release.
+  if (owner.pid === process.pid) return !heldLocks.has(path);
+  try { process.kill(owner.pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+}
+/**
+ * A cross-process exclusive lock. Holders write {pid, token} and heartbeat the lease; a lock is
+ * reclaimed only when its lease expired or its process is gone, and a holder releases the file
+ * only while it still carries its own token.
+ */
 export async function withForgeDraftLock<T>(root: string, id: string, fn: () => Promise<T>): Promise<T> {
   assertForgeId(id);
   const path = join(await directory(root), `${id}.lock`);
-  let handle;
+  if (heldLocks.has(path)) throw new Error('Forge draft is busy; reload before retrying.');
+  heldLocks.add(path);
   try {
-    handle = await open(path, 'wx', 0o600);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      let isStale = false;
-      try {
-        const lockStat = await lstat(path);
-        if (Date.now() - lockStat.mtimeMs > FORGE_LOCK_TTL_MS) {
-          isStale = true;
-        } else {
-          const content = await readFile(path, 'utf8');
-          const data = JSON.parse(content);
-          if (typeof data?.pid === 'number') {
-            try { process.kill(data.pid, 0); }
-            catch (killErr: unknown) {
-              if ((killErr as NodeJS.ErrnoException).code === 'ESRCH') isStale = true;
-            }
-          }
-        }
-      } catch {
-        isStale = true;
-      }
-      if (isStale) {
-        await unlink(path).catch(() => undefined);
-        try {
-          handle = await open(path, 'wx', 0o600);
-        } catch {
-          throw new Error('Forge draft is busy; reload before retrying.');
-        }
-      } else {
-        throw new Error('Forge draft is busy; reload before retrying.');
-      }
-    } else {
-      throw error;
+    let handle;
+    try { handle = await open(path, 'wx', 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (!await isStaleForgeLock(path)) throw new Error('Forge draft is busy; reload before retrying.');
+      await unlink(path).catch(() => undefined);
+      try { handle = await open(path, 'wx', 0o600); }
+      catch { throw new Error('Forge draft is busy; reload before retrying.'); }
     }
-  }
-  try {
-    await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }), 'utf8');
-    await handle.sync();
-    return await fn();
+    const token = randomUUID();
+    const heartbeat = setInterval(() => { const now = new Date(); void utimes(path, now, now).catch(() => undefined); }, FORGE_LOCK_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    try {
+      await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: Date.now() }), 'utf8');
+      await handle.sync();
+      return await fn();
+    } finally {
+      clearInterval(heartbeat);
+      await handle.close();
+      const owner = await readFile(path, 'utf8').then(text => JSON.parse(text) as { token?: unknown }, () => undefined);
+      if (owner?.token === token) await unlink(path).catch(() => undefined);
+    }
   } finally {
-    await handle.close();
-    await unlink(path).catch(() => undefined);
+    heldLocks.delete(path);
   }
 }

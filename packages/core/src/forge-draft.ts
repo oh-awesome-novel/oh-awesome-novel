@@ -13,7 +13,9 @@ export function parseForgeDraft(value: unknown): ForgeDraft {
   });
   if (typeof d.reply !== 'string' || d.reply.length > 20_000) throw new Error('Invalid Forge reply.');
   const draft: ForgeDraft = { schemaVersion: 1, id, revision: d.revision as number, idea: forgeString(d.idea), stage: d.stage as ForgeDraft['stage'], brief: parseForgeBrief(d.brief), questions, reply: d.reply };
-  if (d.plan !== undefined) draft.plan = parseForgePlan(d.plan);
+  // Stored plans may carry author edits, so storage enforces the structural (author) contract;
+  // model output is held to the full contract when it is generated.
+  if (d.plan !== undefined) draft.plan = parseForgePlan(d.plan, { authorEdit: true });
   if (d.chunks !== undefined) {
     draft.chunks = {};
     if (!draft.plan) throw new Error('Plan missing.');
