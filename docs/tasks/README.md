@@ -98,13 +98,20 @@
 
 ## Planned Tasks
 
-暂无。
+- [1390 Play And Reference Usage Inspector](1390.md)
+- [1400 Play Phase Memory And Recall](1400.md)
+- [1410 Reference Material Adoption Workbench](1410.md)
+- [1420 Play To Chapter Writing Flow](1420.md)
+- [1430 Evidence-backed Chapter Review Workbench](1430.md)
+- [1440 Revision Impact Review](1440.md)
 
-其余剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
+当前共 **60 Completed、4 Needs Review、6 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。首轮优先 1390/1400/1410，第二轮 1420/1430/1440 按作者使用反馈排序；1360 handoff 的来源漂移收口仍留在原任务。
+
+Planned 表示本次已规划但尚未实现。其余剩余工作按 Needs Review tasks 的具体 scope 推进；研究材料和历史计划中的未勾选项不能直接视为待办。
 
 ## Corrective Delivery (2026-11-06)
 
-按作者要求修复状态审计发现的两处实现缺口并补回归后，当前共 **60 Completed、4 Needs Review、0 Planned**：
+按作者要求修复状态审计发现的两处实现缺口并补回归后，当时共 **60 Completed、4 Needs Review、0 Planned**；同日随后规划的 1390–1440 见上方 Planned Tasks。
 
 - [1360](1360.md)：Forge 不再按 TTL 抢占活跃锁；只回收确定退出的 owner，串行化回收并保留 owner fence，删除与生成/编辑共用锁。覆盖同/跨进程竞争、owner 退出、迟到回收者和未知 owner 的回归已补齐。该任务仍需 handoff 漂移后校验复核与真实模型质量/缓存验收，保留 Needs Review。
 - [1380](1380.md)：80 字检测覆盖所有起点和跨工具分块，hash 命中后逐字比较；完整原文只用于宿主核验。另补提问期间切换 reference 的状态复位与迟到响应隔离。范围内缺口关闭，更新为 Completed。

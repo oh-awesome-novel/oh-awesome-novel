@@ -1,8 +1,10 @@
 # OAN Agent Writing Guide Reference Notes
 
-Status: Reference Notes
+Status: Historical reference notes; current scope is tracked by [tasks](../tasks/README.md).
 
-本文档记录 `oh-awesome-novel` 自身 agent 写作指引的当前状态，以及从参考项目 InkOS、StoryForge、SillyTavern、Webnovel Writer 和若干写作 skill 项目中可吸收的写作 workflow / Play 经验。
+本文档记录各次参考分析时的 `oh-awesome-novel` agent 写作指引状态，以及从 InkOS、StoryForge、SillyTavern、Webnovel Writer 和若干写作 skill 项目中归纳的 workflow / Play 经验。
+
+2026-11-06 适用性说明：下文 `Current Gaps`、`Accepted direction; not implemented` 与 `Novel IDE` 等历史表述不代表当前产品。1000–1380 已覆盖大量契约、上下文、结算、Play 与 Reference 能力；定位以 [PROJECT_VISION](../PROJECT_VISION.md) 为准，后续净增量见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。保留原表用于来源追溯，不再逐行当作未实现清单。
 
 后续还会继续阅读其他参考项目。因此本文档刻意保留来源标注，避免把不同项目的启发混在一起，也避免把“候选改进”误认为 OAN 已实现能力。
 

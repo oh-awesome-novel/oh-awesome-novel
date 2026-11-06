@@ -71,6 +71,7 @@ docs/
 
 ## 专题计划
 
+- [plans/NEXT_FEATURE_ROADMAP_2026-11-06.md](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)：下一阶段功能路线图，逐项去重参考项目建议，规划 1390–1440 的长局 Play、素材采纳、转写、审稿与修改影响分析。
 - [plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md)：Play 世界事件（M1–M5）。
 - [plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md](plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md)：Play 引导入场与角色推演（F1–F4）。
 - [plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md](plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)：参考作品深度拆解（D0–D5）。
@@ -89,6 +90,8 @@ docs/
 评估文档是带日期的建议，不替代稳定合同；尚未实施的建议不能视为当前功能或已更新的 task 状态。
 
 ## 参考项目研究
+
+研究文档中的 “OAN 当前缺口” 描述各自分析时点，不能直接当作最新 backlog。实施前先对照 [任务索引](tasks/README.md) 与 [2026-11-06 功能路线图](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)；缓存收益、供应商参数和上游自述验收也不能直接外推为本项目结论。
 
 - [research/AINT_REFERENCE_ANALYSIS.md](research/AINT_REFERENCE_ANALYSIS.md)：AINT (Agentic Interactive Narrative Theatre) 架构深度逆向分析与吸收设计（5 层前缀冻结、动态断点仲裁退让、阶段块长会话整理与 VFS、增量叙事标记 AST、舞台背景复合滤镜、伪工具拦截与 Gemini/Anthropic 协议自愈、显式审计与无锁死 SQLite 单连接写池）。
 - [research/CICATAVERN_REFERENCE_ANALYSIS.md](research/CICATAVERN_REFERENCE_ANALYSIS.md)：CicaTavern 架构深度分析报告与推荐吸收设计（Prompt Cache 冻结前缀、视觉小说模式、五维剧情存档、名册一致性、Forge 引导共创与反套话 LINT）。
@@ -118,5 +121,7 @@ docs/
 当前修正交付与暂缓范围见 [1230 Review-driven Reliability Corrections](tasks/1230.md)。2026-10-05 已交付 [1290 Long-novel Context And Memory Freshness](tasks/1290.md)、[1300 Author Manuscript Markdown Import](tasks/1300.md) 和 [1310 Delivery Quality Gates And Reviewed Git Commits](tasks/1310.md)。源提交`7f7e087`已通过[四平台质量、构建与真实打包写作/重启预检](https://github.com/oh-awesome-novel/oh-awesome-novel/actions/runs/37273973876)；[`v0.2.0`](https://github.com/oh-awesome-novel/oh-awesome-novel/releases/tag/v0.2.0)已公开，七项分发附件SHA-256校验全部通过，完整证据见[1280](tasks/1280.md)。对应作者说明见 [上下文与用量](../wiki/guide/usage.md) 和 [导入旧稿](../wiki/guide/manuscript-import.md)。
 
 2026-11-06 代码复核与修复：原 6 个 Needs Review 中，[1370](tasks/1370.md) 已闭环；[1380](tasks/1380.md) 的非对齐/跨分块 80 字复制漏报和提问状态已修复并补回归，两项均为 Completed。[1360](tasks/1360.md) 的 Forge 锁竞争已修复，仍保留 handoff 与真实模型/缓存验收；0580/1120/1230 的主要功能已实现，残余可靠性协议与外部验收分别保留。完整状态见 [任务索引](tasks/README.md#corrective-delivery-2026-11-06)。
+
+同日后续规划新增 [1390–1440](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md) 六项 Planned，当前任务统计为 60 Completed、4 Needs Review、6 Planned。规划保留既有写入/审批边界，不把参考项目的完整功能表移入 OAN。
 
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。

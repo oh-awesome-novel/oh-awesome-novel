@@ -27,11 +27,22 @@ bash-tool + just-bash fixed sandbox
 4. **参考作品深度拆解升级（已完成）**：[1370](tasks/1370.md) 章节独立分块并行拆解已按代码和回归复核为 Completed；[1380](tasks/1380.md) 原文只读探索与提问面板已接通，非对齐/跨分块 80 字检测和切换 reference 的状态问题已补齐回归，更新为 Completed。
 5. **可靠性与外部验收（进行中）**：[0580](tasks/0580.md) 同步代码已交付，余真实远端鉴权/发行环境验证；[1120](tasks/1120.md) 和 [1230](tasks/1230.md) 余安全离线 tombstone 清理、设备/跨平台/provider 故障验证及按实测推进的完整 mutation 成本优化。
 
-第一梯队可靠性与治理收尾（2026-10-15）：[0580](tasks/0580.md) 同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 跨管线 usage/egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试。2026-11-06 逐项复核并修复 Forge 锁竞争与 copy-risk 漏报后共有 60 个 Completed、4 个 Needs Review、无 Planned；当前交付与外部验收分开记录于 [任务索引](tasks/README.md#corrective-delivery-2026-11-06)，不再把已交付的恢复/升级能力列作未实现。
+第一梯队可靠性与治理收尾（2026-10-15）：[0580](tasks/0580.md) 同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 跨管线 usage/egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试。2026-11-06 逐项复核并修复 Forge 锁竞争与 copy-risk 漏报后，软件交付收口为 60 个 Completed、4 个 Needs Review；本日后续功能规划另新增 6 个 Planned。交付与外部验收分开记录于 [任务索引](tasks/README.md#corrective-delivery-2026-11-06)，不再把已交付的恢复/升级能力列作未实现。
 
 不做商业写作、连载平台或团队协作相关功能。**Extension 系统开发继续暂缓**：不新增动态 Tool 注册或 extension host code。
 
 此前交付记录：首次使用、审批恢复、中文 Git 路径、最终树引用校验、标准上下文治理、会话恢复、Play 可靠性修正、usage 治理、受限多领域结构化结算、正文搜索、Markdown/TXT 导出、Play 派生窗口/快照优化、[1290](tasks/1290.md) 章级来源新鲜度、[1300](tasks/1300.md) 旧稿导入、[0700](tasks/0700.md) 卷/全书摘要与 [1310](tasks/1310.md) 发行质量门禁。完整 Play mutation/CAS 成本仍线性，进一步优化以实测门槛为准。
+
+## Next Feature Priority (2026-11-06)
+
+根据当前代码与 `docs/research/` 的参考分析，下一阶段按 [功能路线图](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md) 执行：
+
+1. **长局 Play 与素材准备**：[1390](tasks/1390.md) Play/Reference 用量与上下文检查器；[1400](tasks/1400.md) 作者控制的阶段整理与带证据历史回忆；[1410](tasks/1410.md) 材料采纳工作台 W3b 的筛选/预检/映射。
+2. **从推演到可维护正文**：[1420](tasks/1420.md) Play 素材转完整章节的连贯入口；[1430](tasks/1430.md) 审稿问题选择与局部修订；[1440](tasks/1440.md) 旧章/设定修改的影响清单。
+
+六项均为 Planned，不在本次规划中实施。1360 handoff 来源边界是相关转写功能的局部前置项；0580/1120/1230 的外部验收并行推进，不成为全部产品功能的等待条件。先量化现有缓存与预算行为，再决定优化；不照搬参考报告的降本比例或供应商协议参数。
+
+结构化 VN 演出、补行动建议/定向重演、作者长期文风资产与文本剧本导入列入候选池；生图/TTS、跨设备、Extension 和商业/协作平台不进入本轮范围。Play 可以独立使用，转入 Writing 是可选路径。
 
 ## Milestone Overview
 
@@ -51,6 +62,7 @@ M11  Extension System
 M12  Polish, Tests, Import / Export
 M13  Sandbox Change Engine And Unified Producers
 M14  Core Writing Loop And Proportionate Review
+M15  Long-session Play And Author Review Workflows (Planned)
 ```
 
 ## M0. Documentation Foundation
@@ -211,6 +223,12 @@ Done criteria:
 - 角色卡与大纲的目标路径由 host 推导，作者无需预先选中文件。
 - 续写默认上下文包含大纲与上一章。
 - 派生记录可整批接受，失败即停；首页显示未整理章节数。
+
+## M15. Long-session Play And Author Review Workflows
+
+Status: Planned。Tasks：[1390](tasks/1390.md)–[1440](tasks/1440.md)，范围与先后关系见 [下一阶段功能路线图](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。
+
+目标：长局 Play 有可解释预算与可追溯回忆，大批参考材料可方便采用，推演转写、审稿和修改影响形成作者可控的正文维护闭环。先交付 1390/1400/1410，再按实际使用推进 1420/1430/1440；每项以自身的生产旅程、来源绑定与验收为准，不扩大 Runtime 或正式写入架构。
 
 ## MVP Vertical Slice
 
