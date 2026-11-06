@@ -1507,6 +1507,7 @@ export function createReferenceDeconstructionBackendController(
         title: source.title,
         question,
         windows: source.windows,
+        sourceText: source.sourceText,
         providerConfig: runtime.providerConfig,
         resolveModel: runtime.resolveModel,
         ...(requestSignal ? { abortSignal: requestSignal } : {}),

@@ -44,4 +44,41 @@ describe('ReferenceQuestionPanel', () => {
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain('evidence validation');
   });
+
+  it('allows asking about a new reference immediately and ignores the cancelled response', async () => {
+    const reference = referenceFixture();
+    const answer = (text: string) => ({
+      status: 'completed' as const,
+      answer: { question: 'Why?', answer: text, findings: [], uncertainties: [], evidence: [], copyRisk: false },
+    });
+    let resolveFirst!: (result: ReturnType<typeof answer>) => void;
+    let resolveSecond!: (result: ReturnType<typeof answer>) => void;
+    const ask = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve; }));
+    const wrapper = mount(ReferenceQuestionPanel, { props: { reference, ask } });
+    try {
+      await wrapper.get('textarea').setValue('Why?');
+      await wrapper.get('form').trigger('submit');
+      const signal = ask.mock.calls[0]![2].signal as AbortSignal;
+      await wrapper.setProps({ reference: { ...reference, id: 'another-reference' } });
+      expect(signal.aborted).toBe(true);
+      expect(wrapper.get('textarea').attributes('disabled')).toBeUndefined();
+      await wrapper.get('form').trigger('submit');
+      expect(ask).toHaveBeenLastCalledWith('another-reference', 'Why?', { signal: expect.any(AbortSignal) });
+      resolveFirst(answer('Cancelled old answer'));
+      await flushPromises();
+      expect(wrapper.text()).not.toContain('Cancelled old answer');
+      expect(wrapper.get('textarea').attributes('disabled')).toBeDefined();
+      resolveSecond(answer('Current answer'));
+      await flushPromises();
+      expect(wrapper.text()).toContain('Current answer');
+      expect(wrapper.get('textarea').attributes('disabled')).toBeUndefined();
+    } finally {
+      resolveFirst?.(answer('Old'));
+      resolveSecond?.(answer('Current'));
+      await flushPromises();
+      wrapper.unmount();
+    }
+  });
 });

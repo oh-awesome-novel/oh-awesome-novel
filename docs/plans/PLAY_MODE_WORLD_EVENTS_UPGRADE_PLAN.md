@@ -4,7 +4,7 @@
 
 > 里程碑状态：M1–M5 Completed
 >
-> 文档状态：Needs Review（并行 correctness lane 仍持续复核）
+> 文档状态：Needs Review（2026-11-06 代码复核：软件恢复/升级链路已落地；安全离线 tombstone 清理、设备/跨平台/provider 验收及进一步因果强制仍见 task 1120）
 >
 > 文档目标：把 Play Mode 从“角色对话沙盒”升级为“角色、时间、场景与外部世界共同推进的互动小说沙盒”。
 >
@@ -99,9 +99,9 @@ Play Mode
 2. 已完成 M2：事件原因 / 影响卡片、命名 checkpoint、初始世界入口、variant worldline 与 Retry / Restore 已形成非技术化的分支探索体验。
 3. 已完成跨计划 F2：真实 workspace source 可经五步 Guided Start 创建 v4 Journey 或 v5 Rehearsal，Quick Start 保持兼容。
 4. 已完成 M3 branch-local knowledge / reveal、F3 evidence-backed outcome / writing handoff 与 M4 unified adoption / Human Approval 路径。
-5. 已完成 M5：summary / selected detail、windowing、turn-scoped context trace、source drift choices 与 renderer 功能旅程已落地；旧 endpoint 下线、migration 与完整无障碍矩阵按当前产品阶段暂缓。
+5. 已完成 M5：summary / selected detail、windowing、turn-scoped context trace、source drift choices 与 renderer 功能旅程已落地；显式 migration 已由 1120 补齐，旧 endpoint 最终下线与完整无障碍矩阵仍独立评估。
 
-F1 已因实际并发边界补入 cooperative cross-process session / attempt filesystem lock、持锁 CAS、staged attempt publish 与 crash self-healing。产品层 migration confirmation、fsync、完整跨进程故障矩阵、可重启 terminal registry、deadline / backpressure 等仍由 `docs/tasks/1120.md` 追踪，并保持为并行 correctness lane。
+F1 已因实际并发边界补入 cooperative cross-process session / attempt filesystem lock、持锁 CAS、staged attempt publish 与 crash self-healing。后续 1120 已接通产品层 migration confirmation、fsync、durable terminal receipt、deadline / backpressure 并有进程故障回归；安全离线清理、设备断电和更多跨平台/provider 验收仍是并行 correctness lane。
 
 ## 2. 规划依据与参考边界
 
@@ -146,16 +146,16 @@ OAN：变化怎样保持 filesystem-first、可追溯，并在人工审批后进
 
 SillyTavern 与本地 InkOS 参考均按 AGPL 项目对待。本计划只吸收产品模式、领域概念、状态机思想和测试场景。实现时必须独立命名、独立建模、独立编写代码与 prompt，不复制源文件、prompt 片段、UI 文案或视觉资产。
 
-## 3. 当前产品缺口
+## 3. 产品能力与剩余边界（2026-11-06）
 
 最初的结构化事实、回合事务、流式结算、HUD 与 checkpoint 基础已经解决；当前缺口不再是“Play 能否安全提交一个世界回合”，而是这些能力是否形成了足够有生命力、可理解、可控制的产品体验：
 
 1. hard-due 与 M1 eligible event 已能推进世界，M2 已补齐原因 / 影响卡片，M5 已补齐 turn-scoped actual source trace 与长列表诊断。
-2. typed 相对等待已有一等入口；绝对 `atWorldTime` 仍需和规范化 comparator 一起交付，宿主继续拒绝猜测自然语言时间顺序。
+2. typed 相对等待已有一等入口；绝对 `atWorldTime` 已支持显式 `format: iso8601` 的确定性比较，未声明格式的旧 trigger 保持 pending，宿主不猜测自然语言时间顺序。
 3. M3 已交付 branch-local knowledge / reveal store 与正式的 `playerUnknown -> rumor / playerVisible` 因果揭示链；F4 已增加 participant-scoped `grantKnowledge`。
 4. M2 已把 checkpoint / restore / Retry 收口为命名 checkpoint、可见初始世界与统一 worldline；M5 已增加长 session renderer 功能旅程回归。
 5. F3 / M4 已把 event、observation 与 outcome 统一带入 evidence-backed preview 和既有 Human Approval；新 canonical target 仍明确排除。
-6. context trace、omitted source、canonical drift 与长 session windowing 已形成面向用户的诊断；当前剩余项主要是发布前迁移、旧入口下线及被真实使用触发的局部 hardening。
+6. context trace、omitted source、canonical drift、长 session windowing 和显式升级均已形成用户旅程；当前剩余是安全离线清理、外部故障验收及被真实使用触发的性能/因果加固，旧入口最终下线需独立版本决策。
 
 因此，下一阶段不再默认扩建通用基础设施；新增 schema、store 或 endpoint 必须直接服务于可玩的行为、可见反馈、分支控制或可采纳结果。
 
@@ -282,7 +282,7 @@ interface PlayEventCause {
 - 除 opening seed 与 `manual` 外，事件至少要有一个可定位的 cause reference。
 - `reason` 是给作者看的简短解释，不是 chain-of-thought。
 - 随机性只能影响同等 eligible 事件的选择，不能替代因果来源；默认第一版不启用随机选择。
-- 事件造成的每项 state delta 都必须能回指 event id。
+- 当前可选 `event.stateDeltaRefs` 必须指向 owning turn 中真实变化的非保留叶路径。强制所有新 state delta 都拥有 event 因果仍需独立版本/watermark 设计，不是现有 validator 已提供的保证。
 
 ### 6.4 事件可见性
 
@@ -343,7 +343,7 @@ type PlayEventTrigger =
   | { type: 'nextTurn' }
   | { type: 'afterTurns'; turns: number }
   | { type: 'flagEquals'; path: string; value: string | number | boolean }
-  | { type: 'atWorldTime'; value: string }
+  | { type: 'atWorldTime'; value: string; format?: 'iso8601' }
   | { type: 'manual' };
 ```
 
@@ -400,7 +400,7 @@ interface PlayWorldEvent {
   worldTime: PlayWorldClock;
   knowledge: PlayEventKnowledge;
   cause: PlayEventCause;
-  stateDeltaRefs: string[];
+  stateDeltaRefs?: string[];
   status: 'occurred' | 'cancelled';
   canonical: false;
 }
@@ -531,7 +531,7 @@ flowchart TD
 5. terminal committed event 只在 staged snapshot swap 写入成功后发布；取消、provider / validation failure 或 commit 前 drift 保持零写入。
 6. Retry 与普通流式 turn 复用 run registry / commit barrier；Restore 复用权威 ledger、session lock 与 staged writer，但不进入流式 commit barrier。
 
-cooperative cross-process session / attempt lock 与当前触发的 stage / marker crash recovery 已落地。fsync、逐故障点注入矩阵、长期 quarantine / stage 清理、可重启 terminal registry 与 graceful shutdown 继续作为并行 correctness lane；在完成这些项目之前不宣称断电级强耐久保证。
+cooperative cross-process session / attempt lock、stage/marker recovery、文件/目录 fsync、进程故障注入、持锁残留 stage 清理、durable terminal receipt 与 graceful shutdown 已落地。receipt 按 30 天期限有界清理；quarantine/tombstone 在线保留。安全离线清理协议、设备断电/更多跨平台故障矩阵和真实 provider 资源回收仍待验收，不宣称已证明断电级强耐久保证。
 
 由于这些文件都位于 `.workspace/play-sessions/`，Play-local 提交不需要 canonical PendingAction；但它仍必须保持可观察、可恢复，并通过现有 Human Approval 边界与 canonical truth 隔离。
 
@@ -555,7 +555,7 @@ cooperative cross-process session / attempt lock 与当前触发的 stage / mark
     └── v1-to-v4/ | v2-to-v4/ | v3-to-v4/
 ```
 
-checkpoint、variant 与 Retry 已由 `turns/*.yaml` ledger、parent link、branch snapshot 和 `selectedTurnIds` 表达，不新增平行事实目录。`traces/`、summary 或 branch-local knowledge 文件只在对应用户功能进入实施时按稳定 schema 增加；Core 使用的 sibling stage / backup 是内部提交机制，不作为 session 内长期产品数据布局。
+checkpoint、variant 与 Retry 已由 `turns/*.yaml` ledger、parent link、branch snapshot 和 `selectedTurnIds` 表达，不新增平行事实目录。M3 knowledge 与 M5 summary/context trace 的持久化和派生读取已由 1160/1180/1260 交付；具体布局以对应 task 和 `FILESYSTEM_SPEC.md` 为准。Core 使用的 sibling stage / backup 是内部提交机制，不作为 session 内长期产品数据布局。
 
 ### 9.2 事实与投影边界
 
@@ -568,7 +568,7 @@ checkpoint、variant 与 Retry 已由 `turns/*.yaml` ledger、parent link、bran
 | `event-schedule.yaml` | 尚未发生、已取消或已改期的计划事件 |
 | `transcript.md` | 从 selected turn path 生成的人类可读 projection，不是第二份可独立修改的 transcript truth |
 
-M5 若交付持久化 context trace，可按需增加 `traces/*.context.yaml`，只记录 source 选择、预算、omission 与规则来源，不保存私有 reasoning；在 schema 冻结前它不是当前事实布局。
+M5 已交付持久化 context trace，记录 source 选择、预算、omission 与规则来源，不保存私有 reasoning；该能力不再是待定 schema，见 [1180](../tasks/1180.md)。
 
 必须消除 `session.yaml.transcript` 与 `transcript.md` 的双写歧义：
 
@@ -804,12 +804,12 @@ Play observation / event
 当前已落地 `schemaVersion: 4` 的 turn fact 与迁移基础：
 
 1. v1 / v2 session 继续可读；v3 只在为空 session，或 structured turns 仍为 artifact v1 且 projection 可验证时兼容读取与迁移。缺少 branch base / cutoff 却已包含 artifact v2 的 v3 session 会 fail closed，不静默推断前驱。
-2. Core 可在写入前生成 migration preview；第一次写入 v4 staged snapshot 时保存原始备份和 preview，v1 / v2 / v3 备份路径分别为 `.migrations/v1-to-v4/`、`.migrations/v2-to-v4/` 与 `.migrations/v3-to-v4/`。backend / client / UI 的显式确认仍待实现。
+2. Core 在写入前生成 migration preview，Backend / Client / UI 已提供显式确认，确认绑定 revision 与原始文件 bytes 指纹；普通 mutation 在 provider 前拒绝旧格式。确认后的 v4 staged snapshot 保存原始备份和 preview，v1 / v2 / v3 备份路径分别为 `.migrations/v1-to-v4/`、`.migrations/v2-to-v4/` 与 `.migrations/v3-to-v4/`。
 3. 把旧 `session.yaml.transcript` 转换为 legacy turn artifacts。
 4. 重新生成 `transcript.md` projection。
 5. 保留未知顶层 session metadata，并让 `.migrations/` 历史跨后续保存延续；升级时用 `branchBaseSnapshot` 封存当前 selected legacy projection，以当前 revision 作为 cutoff。
 6. v4 中 cutoff 与 branch base 都是必需证据，不得删除或静默重算；watermark 必须等于 base revision，revision 高于 cutoff 的 artifact 必须有完整 v2 snapshot，前驱、selected projection 或 schedule 不连续时 fail closed。
-7. migration 与 v4 snapshot 在同一个持 filesystem lock 的 staged directory swap 中提交；更完整的 fsync 和逐故障点验证仍待实现。
+7. migration 与 v4 snapshot 在同一个持 filesystem lock 的 staged directory swap 中提交，复用已实现的 fsync 和进程故障恢复边界；设备断电与更多原生平台矩阵仍待验收。
 
 不应在应用升级时批量静默重写全部 Play session。
 
@@ -887,10 +887,10 @@ Play observation / event
 
 ### 并行 correctness lane：不作为全局 Gate
 
-- cooperative cross-process session / attempt lock 已落地；fsync、ready / stage / backup 完整故障点注入、quarantine / 残留清理仍待完成。
-- 可重启 terminal registry、graceful shutdown、provider / source deadline、bounded read 与 SSE backpressure。
-- legacy migration confirmation 与旧 endpoint 下线（产品发布前再统一处理）。
-- 与正在交付功能直接相关的 typed delta / provenance 加固。
+- 已交付：cooperative cross-process session / attempt lock、fsync、ready / stage / backup 进程故障注入与持锁残留清理。
+- 已交付：durable terminal receipt / 重启对账、30 天 terminal 清理、graceful shutdown、provider / source deadline、bounded read 与 SSE 队列上界。
+- 已交付：legacy migration preview/confirmation、ISO 时间比较与可选 state delta refs。旧 endpoint 已标记弃用，最终移除需独立版本决策。
+- 待关闭：安全离线 tombstone 清理、设备断电/更多跨平台/provider 故障验收；全部新 delta 的因果强制和完整 mutation/CAS/copy 成本优化按独立设计与实测推进。
 
 这条并行轨不能因为追求更完整的通用事务框架而暂停 M1–M4。只有可复现的数据丢失、历史覆盖、安全边界破坏，或某个里程碑直接需要改变对应持久化 / 并发保证时，相关项才成为该里程碑的局部 correctness gate。新增领域能力继续拆为独立深模块，由现有 facade 组合，不把新状态机堆回单个 `play-session.ts`。
 
@@ -989,12 +989,14 @@ Play observation / event
 - [x] hard-due evaluator 与 immediate consequence 的 typed event / cause 基础已落地。
 - [x] Pressure / Agenda 与 eligible event evaluator 形成可玩的世界推进闭环。
 - [x] event origin、cause、visibility 与 world time 已进入结构化结算和投影校验。
-- [ ] 更严格的通用 typed state-delta refs 完成；M2 的 spoiler-safe 事件原因 / 影响 UI 已落地。
+- [x] 可选 typed state-delta refs 校验 owning turn 的真实变化叶路径；M2 的 spoiler-safe 事件原因 / 影响 UI 已落地。
+- [ ] 所有新 delta 强制归属 event 的进一步约束，需要独立版本/watermark 设计。
 - [x] hidden event 的保存、Player / Author 投影与 adoption 防泄漏规则已明确。
 - [x] Scene Rehearsal 的 per-step event partition、独立 host hard-due notice、exact derived content、selected aggregate projection 与 Client strict guard 已落地；`rumor` / hidden 不会被 notice 意外升级。
 - [x] branch-local knowledge、显式 reveal link 与随分支恢复完成。
 - [x] PlayTurnTransaction、失败零写入、revision conflict、中断 stage 恢复，以及 cooperative cross-process session / attempt lock 与持锁 CAS 已明确。
-- [ ] fsync、完整跨进程故障注入矩阵与可重启 terminal truth 作为并行加固闭环。
+- [x] fsync、既有进程中断/跨进程竞争回归、durable receipt 与可重启 terminal truth 已实现。
+- [ ] 安全离线 tombstone 清理协议、设备断电/更多跨平台/provider 故障矩阵尚未验收。
 - [x] provisional stream 与 committed turn 在 UI 上有清晰区别；Stop 通过服务端 cancel confirmation 与 commit barrier 处理。
 - [x] checkpoint / variant / Retry 已覆盖 transcript、state、events、schedule 与 suggestions。
 - [x] 命名 checkpoint、可见初始世界与统一 worldline 已完成。
@@ -1013,4 +1015,4 @@ Play observation / event
 5. 已完成 F3 evidence-backed Outcome / Writing Reference 与 M4 unified adoption preview / 人工审批路径。
 6. 已完成 M5 长 session windowing、turn-scoped context trace、source drift 选择与 renderer Play journey；跨计划 F4 advanced Director controls 也已按独立 task 完成。
 
-这些能力按纵向切片交付后，Play Mode 已从“具备正确底座”成长为“世界会回应、作者能控制、结果可用于写作，并能承受长 session”的顶级功能。当前更适合进入真实使用反馈；耐久性、发布迁移与系统化无障碍加固保持后续候选，但不再默认抢占产品功能主线。
+这些能力按纵向切片交付后，Play Mode 已从“具备正确底座”成长为“世界会回应、作者能控制、结果可用于写作，并能承受长 session”的顶级功能。当前更适合进入真实使用反馈；安全离线清理、外部故障矩阵、进一步性能/因果约束与系统化无障碍验收仍按各自边界推进，不再把已交付的迁移/恢复链路重新列为缺失功能。

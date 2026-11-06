@@ -122,4 +122,20 @@ describe('reference question exploration', () => {
     });
     expect(result).toMatchObject({ status: 'failed', error: { code: 'invalid_output' } });
   });
+
+  it('checks cross-window copying with host-only source text without adding the source to the prompt', async () => {
+    const excerpt = Array.from({ length: 80 }, (_, index) => String.fromCharCode(0x4e00 + index)).join('');
+    const sourceText = `第一章\n${excerpt}。`;
+    const { model, doGenerate } = scripted([{
+      content: [{ type: 'text', text: JSON.stringify({ answer: `说明：${excerpt}。`, findings: [], uncertainties: [] }) }],
+      finishReason: 'stop',
+    }]);
+    const result = await generateReferenceQuestionAnswer({
+      referenceId: 'reference-alpha', title: '样书', question: '如何开篇？',
+      windows: [window(0, `第一章\n${excerpt.slice(0, 40)}`), window(1, excerpt.slice(40))],
+      sourceText, providerConfig, resolveModel: vi.fn(() => model),
+    });
+    expect(result).toMatchObject({ status: 'completed', output: { copyRisk: true } });
+    expect(JSON.stringify(doGenerate.mock.calls[0])).not.toContain(excerpt);
+  });
 });

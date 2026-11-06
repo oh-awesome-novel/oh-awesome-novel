@@ -32,6 +32,7 @@ onBeforeUnmount(stop);
 function stop(): void {
   controller?.abort();
   controller = undefined;
+  asking.value = false;
 }
 
 async function submit(): Promise<void> {
@@ -63,7 +64,6 @@ async function submit(): Promise<void> {
 
 function cancel(): void {
   stop();
-  asking.value = false;
   error.value = 'The question was stopped.';
 }
 

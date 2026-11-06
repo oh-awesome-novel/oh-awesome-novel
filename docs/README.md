@@ -117,4 +117,6 @@ docs/
 
 当前修正交付与暂缓范围见 [1230 Review-driven Reliability Corrections](tasks/1230.md)。2026-10-05 已交付 [1290 Long-novel Context And Memory Freshness](tasks/1290.md)、[1300 Author Manuscript Markdown Import](tasks/1300.md) 和 [1310 Delivery Quality Gates And Reviewed Git Commits](tasks/1310.md)。源提交`7f7e087`已通过[四平台质量、构建与真实打包写作/重启预检](https://github.com/oh-awesome-novel/oh-awesome-novel/actions/runs/37273973876)；[`v0.2.0`](https://github.com/oh-awesome-novel/oh-awesome-novel/releases/tag/v0.2.0)已公开，七项分发附件SHA-256校验全部通过，完整证据见[1280](tasks/1280.md)。对应作者说明见 [上下文与用量](../wiki/guide/usage.md) 和 [导入旧稿](../wiki/guide/manuscript-import.md)。
 
+2026-11-06 代码复核与修复：原 6 个 Needs Review 中，[1370](tasks/1370.md) 已闭环；[1380](tasks/1380.md) 的非对齐/跨分块 80 字复制漏报和提问状态已修复并补回归，两项均为 Completed。[1360](tasks/1360.md) 的 Forge 锁竞争已修复，仍保留 handoff 与真实模型/缓存验收；0580/1120/1230 的主要功能已实现，残余可靠性协议与外部验收分别保留。完整状态见 [任务索引](tasks/README.md#corrective-delivery-2026-11-06)。
+
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。

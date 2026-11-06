@@ -938,6 +938,8 @@ describe('reference full deconstruction backend', () => {
       globalConfigDir,
       providerConfig: providerConfig(),
       runReferenceQuestion: async (input) => {
+        expect(input.sourceText).toContain('雨夜里有人敲门。');
+        expect(input.sourceText).toContain('他留下一个尚未解释的选择，然后离开。');
         seen.push({
           question: input.question,
           windows: input.windows.length,

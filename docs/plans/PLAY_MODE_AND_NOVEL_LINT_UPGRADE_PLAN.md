@@ -1,6 +1,6 @@
 # Play 模式与小说去 AI 味反套话质检升级计划
 
-> 状态：Needs Review（代码与单测已全部落地，见 [`docs/tasks/1360.md`](../tasks/1360.md)；PR #16 / PR #17）
+> 状态：Needs Review（P1–P5 主链路已落地，Forge 锁竞争已修复并补回归；所属 task 的 handoff 复核及真实模型质量、缓存收益验收仍未关闭，见 [`docs/tasks/1360.md`](../tasks/1360.md)）
 >
 > 交付记录：2026-10-23（PR #16 `feat(workbench): guided Forge, Play archives and scoped LINT`、PR #17 `fix(workbench): close Forge, Play cache, archive and stage gaps against the 1360 plans`）
 >

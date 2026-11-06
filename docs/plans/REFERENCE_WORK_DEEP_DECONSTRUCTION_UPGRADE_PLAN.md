@@ -10,6 +10,8 @@
 
 > 计划状态：Completed。D0 / D1 已于 2026-07-22 落地，D2 / D3 已于 2026-07-23 落地，D4 / D5 已于 2026-07-26 落地。
 >
+> 2026-11-06 后续代码复核与修复：[1370](../tasks/1370.md) 的独立 chunk / 最多 4 单元并行已完成；[1380](../tasks/1380.md) 的只读探索、提问入口、非对齐/跨分块 80 字 copy-risk 核验及 reference 切换回归均已闭环，两项为 Completed。下文单 unit / 无工具的早期设计由这两个 task 的明确范围覆盖；真实 provider 质量/账单不属于本轮软件回归的证据。
+>
 > 关联任务：`docs/tasks/0900.md`（已完成，不另建重复领域任务）。
 >
 > 分析日期：2026-07-21。
@@ -59,7 +61,7 @@
 | D4 | Completed | 五类 typed distilled entries、deterministic candidate、最终质量门、reference-scoped 多文件 PendingAction、Accept / Reject / crash reconcile 与 Git 配置继承 |
 | D5 | Completed | strict published context index、entry-level matching / hard budgets / omission trace、request-local recall、normal Writing context assembly 与 Desktop explanation / approval handoff |
 
-`fullApproved` 仍只记录显式计算授权；第一次 full `advance` 才进入 `fullRunning`，之后每个请求最多处理一个确定 unit，用户未继续时没有后台任务。D3 的 `reviewReady` 只表示分析质量门通过，可以进入 D4，并不会把 Preview 或 provisional analysis 写入 published reference bundle。Desktop 重开后通过 `GET /api/workspace/references/:referenceId/deconstruction-runs/active` 找回权威 run。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
+`fullApproved` 仍只记录显式计算授权；第一次 full `advance` 才进入 `fullRunning`。当前每个请求持有一个 reservation，最多并行处理 4 个 ready units，quality gate 单独执行；用户未继续时没有后台任务。D3 的 `reviewReady` 只表示分析质量门通过，可以进入 D4，并不会把 Preview 或 provisional analysis 写入 published reference bundle。Desktop 重开后通过 `GET /api/workspace/references/:referenceId/deconstruction-runs/active` 找回权威 run。低置信章节边界在默认范围 Preview 前必须显式二次确认；确认事实和结构置信度保存在 shadow `request.yaml` 并纳入幂等 fingerprint。
 
 D4 的 `reviewReady -> publishing -> completed | reviewReady` 通过一个全局 PendingAction 审批面完成；Accept 前候选、private draft 与事务 journal 都位于 `.workspace`。D5 的普通写作路径只在当前请求明确要求参考作品时激活，只读取顶层发布状态、`context/index.yaml`、bounded summary 与 index 指向的 distilled outputs；不打开 `sources/`、published deconstruction evidence 或 provisional run artifact。完整控制面检查仍负责读取原文并验证实际 checksum。
 
@@ -673,7 +675,7 @@ Trace 只记录选择、遗漏、工具/阶段结果和错误分类，不记录�
 Reference 文本中出现“忽略规则”“调用工具”“写入文件”“输出秘密”等内容时，只能被视为作品文本。测试必须包含中英文 prompt-injection fixtures，并证明：
 
 - 不改变输出 schema。
-- 不触发工具。
+- 不获得写入、shell、网络或任意 filesystem 工具；1380 的 Technique aggregate / 问题 runner 仅允许宿主授予的两个内存只读工具，其可见 source windows 不受原文指令扩张。
 - 不改变 allowed output category。
 - 不读取 workspace 其它文件。
 - 不泄露 provider config、路径外内容或其他 reference。
@@ -753,7 +755,7 @@ Source bundle 内的原始文件或 manifest checksum 被手工修改后，分�
 
 ### 12.1 建议 API
 
-保持现有 import/list/enable/context API，新功能只增加 typed routes。全书拆解采用 **request-bounded advance**：一次 `advance` 最多处理一个确定的 chapter/chunk 或 aggregate unit；Backend 不在请求结束后继续运行，也不为此建立后台 job framework。Desktop 可以在用户保持“继续运行”状态时顺序发起下一次 `advance`，暂停后停止发新请求。
+保持现有 import/list/enable/context API，新功能只增加 typed routes。全书拆解采用 **request-bounded advance**：1370 已把一次 `advance` 扩为一个最多 4 个 ready units 的 reservation，quality gate 独占；Backend 不在请求结束后继续运行，也不为此建立后台 job framework。Desktop 可以在用户保持“继续运行”状态时顺序发起下一次 `advance`，暂停后停止发新请求。
 
 ```text
 POST /api/workspace/references/:referenceId/deconstruction-runs
@@ -770,7 +772,7 @@ POST /api/workspace/references/:referenceId/deconstruction-runs/:runId/publish
 
 建议 run create 第一版只接受 `mode: quickPreview`；full run 必须从同一 run 的 `awaitingFullApproval` 进入，不能绕过 preview gate。
 
-`advance` 在持锁状态下 reservation 下一 unit、释放锁执行 provider、再次持锁校验 revision / source / input fingerprint 后提交 provisional attempt。两个并发 `advance` 只能有一个获得同一 unit；失败请求不能覆盖已完成 attempt。
+`advance` 在持锁状态下 reservation 下一批 ready units、释放锁并行执行 provider、再次持锁校验 revision / source / input fingerprint 后整批结算。两个并发 `advance` 不能取得同一 active reservation；一项失败保留已完成的兄弟单元，retry 仅重排未完成项。
 
 所有 identifier 都从 path segment / typed body 校验；workspace root 只来自 Backend active workspace。
 
@@ -876,8 +878,8 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 交付：
 
-- chapter/chunk work units 与 rolling context。
-- 每次 request-bounded `advance` 只处理一个 unit，用户未继续请求时没有后台工作。
+- chapter/chunk work units；原 D2 的 rolling context 串行链已由 1370 的独立 chunk 覆盖，旧产物仍按原 fingerprint 校验。
+- 每次 request-bounded `advance` 处理一个最多 4 单元的 reservation，用户未继续请求时没有后台工作。
 - stage attempt artifact、selected attempt、partial progress。
 - Pause / Resume / Cancel / Retry unit。
 - application restart reconciliation。
@@ -948,7 +950,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 
 - Preview 只收到 bounded selected chunks。
 - Full chapter call 只收到当前 chunk 和 protected rules；不同 chunk 可以并行。
-- Reference 中的 prompt injection 不改变 schema 或触发 tools。
+- Reference 中的 prompt injection 不改变 schema 或扩张工具权限；1380 允许的只读检索仍受宿主 source windows 和实际访问 pointer 限制。
 - 无证据 finding 被拒绝或明确降级为 general inference。
 - Aggregate 只使用 verified chapter findings 和宿主提供的 evidence windows。
 - Distill 不含专有名词密集段落、直接引语或可识别长表达。
@@ -960,7 +962,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 - one-active-run-per-reference。
 - base revision CAS 与双 start / 双 approve / 双 publish。
 - Preview -> awaitingFullApproval -> repeated bounded advance -> reviewReady 的纵向 lifecycle。
-- 每个 `advance` 只 reservation / 处理一个 unit；没有请求时不会后台推进。
+- 每个 `advance` 只持有一个 reservation，最多并行 4 个 ready units，quality gate 独占；没有请求时不会后台推进。
 - SSE lifecycle 与 GET reconcile。
 - cancel before publish 零目标写入。
 - restart 后 running -> interrupted/resumable。
@@ -1001,7 +1003,7 @@ Selector 不自动对每章启用 reference；仍只在用户显式选择 refere
 | 长文本 token / 时间成本失控 | Quick Preview gate、bounded chunks、显式 full approval、无隐藏 retry |
 | Provider 中断造成重复或丢失 | stage attempts、fingerprint、idempotency、resume artifacts |
 | AI 幻觉和错误归因 | opaque source pointers、Core revalidation、confidence / uncertainty、quality gate |
-| Reference prompt injection | source 视为不可信数据、无 tools、严格 delimiter 和 schema |
+| Reference prompt injection | source 视为不可信数据、仅对明确探索阶段授予有界内存只读 tools、严格 delimiter 和 schema |
 | Canon 污染 | reference / shadow / novel truth 三层隔离，不做自动 adoption |
 | 原文泄漏或过度模仿 | 无 quotation 字段、overlap 检测、do-not-copy、人工审阅、原文不进普通 prompt |
 | Source 手改后继续使用旧分析 | checksum / structure / pipeline fingerprint，stale fail closed |

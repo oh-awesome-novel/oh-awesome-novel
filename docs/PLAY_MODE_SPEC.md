@@ -157,7 +157,7 @@ Play turn transport 使用专用 typed SSE，而不是把 Play transcript 伪装
 - `play.event.occurred` 只会在包含该事件与 schedule 状态的 staged snapshot 已持久化成功后发布；cancel、provider error、schema failure 或写入失败都不得发布。它提供逐事件 committed 通知，但 `play.turn.committed.session` 仍是 transcript、world state、schedule、observation 和 event feed 的权威 UI 刷新载荷。
 - `POST /api/workspace/play-sessions/:id/turns/:artifactId/retry/stream` 复用同一 lifecycle、run registry、Stop / reconcile 与 commit barrier；SSE `turnId` / 响应头表示 execution run id，source artifact 与新 sibling artifact 使用独立字段。Desktop 在生成期间展示 before-turn projection、原始 action 和明确的 provisional / variant 保留提示，只有 authoritative committed session 才切换分支。
 
-当前该协议保证单 backend 进程内的 stop / commit 一致性；跨进程锁、fsync、可重启 terminal registry、graceful shutdown、SSE backpressure 和逐故障点耐久性仍由 task 1120 后续范围追踪。provisional narrative 仍依赖 referee 遵守 hidden-information 叙事约束；响应隔离能阻止缺失 / 变体 fence 下的结构化结算外泄，但不能证明模型没有在 narrative 自然语言中写出隐藏事实。
+该协议提供单 backend 内的 stop / commit 一致性；协作式跨进程锁、staged snapshot fsync、durable run receipt 与重启 artifact 对账、graceful shutdown、deadline 和 SSE 队列上界也已由 [1120](tasks/1120.md) 接通并有进程故障回归。剩余是安全离线 tombstone 清理、设备断电/更多跨平台故障矩阵及真实 provider 资源边界验收，不能把进程中断测试当作断电证明。provisional narrative 仍依赖 referee 遵守 hidden-information 叙事约束；响应隔离能阻止缺失 / 变体 fence 下的结构化结算外泄，但不能证明模型没有在 narrative 自然语言中写出隐藏事实。
 
 ## Activated Sources
 

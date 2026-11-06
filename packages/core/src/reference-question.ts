@@ -16,6 +16,8 @@ export const REFERENCE_QUESTION_COPY_WINDOW_CHARS = 80 as const;
 export interface ReferenceQuestionSource {
   referenceId: string;
   title: string;
+  /** Host-only copy-risk evidence, including text across tool-window boundaries. */
+  sourceText: string;
   windows: ReferenceChapterWorkUnitWindow[];
 }
 
@@ -58,6 +60,7 @@ export async function prepareReferenceQuestionSource(
   return {
     referenceId: source.metadata.id,
     title: source.metadata.title,
+    sourceText: source.sourceText,
     windows: plan.units
       .filter((unit) => unit.kind === 'chapterChunk')
       .map((unit) => resolveReferenceChapterWorkUnitWindow(source.sourceText, unit)),
@@ -80,6 +83,7 @@ export function normalizeReferenceQuestionAnswer(
     question: string;
     allowedPointers: ReferenceEvidencePointerMap;
     windows: readonly ReferenceChapterWorkUnitWindow[];
+    sourceText?: string;
   },
 ): ReferenceQuestionAnswer {
   if (!isRecord(value)) throw new Error('Reference question answer must be an object.');
@@ -130,26 +134,48 @@ export function normalizeReferenceQuestionAnswer(
         lineEnd: pointer.lineEnd,
       };
     }),
-    copyRisk: texts.some((text) => containsSourceRun(text, options.windows)),
+    copyRisk: containsSourceRun(texts, options.sourceText === undefined
+      ? options.windows.map(window => window.content)
+      : [options.sourceText]),
   };
 }
 
 /**
- * Probe aligned windows of the text against the source. Any copied run of at
- * least 1.5x the window length contains one aligned probe, which keeps the
- * check linear in the source size.
+ * Index every 80-character answer span, then scan each supplied source once.
+ * Rolling hashes only select candidates; literal comparison prevents hash
+ * collisions from flagging unrelated text. No start positions are sampled.
  */
 function containsSourceRun(
-  text: string,
-  windows: readonly ReferenceChapterWorkUnitWindow[],
+  texts: readonly string[],
+  sources: readonly string[],
 ): boolean {
   const size = REFERENCE_QUESTION_COPY_WINDOW_CHARS;
-  const step = Math.floor(size / 2);
-  for (let index = 0; index + size <= text.length; index += step) {
-    const probe = text.slice(index, index + size);
-    if (windows.some((window) => window.content.includes(probe))) return true;
+  const base = 31;
+  let leadingFactor = 1;
+  for (let index = 1; index < size; index++) leadingFactor = Math.imul(leadingFactor, base);
+
+  function scan(text: string, visit: (hash: number, start: number) => boolean): boolean {
+    if (text.length < size) return false;
+    let hash = 0;
+    for (let index = 0; index < size; index++) hash = (Math.imul(hash, base) + text.charCodeAt(index)) >>> 0;
+    for (let start = 0; ; start++) {
+      if (visit(hash, start)) return true;
+      if (start + size === text.length) return false;
+      hash = (Math.imul(hash - Math.imul(text.charCodeAt(start), leadingFactor), base)
+        + text.charCodeAt(start + size)) >>> 0;
+    }
   }
-  return false;
+
+  const spans = new Map<number, Set<string>>();
+  for (const text of texts) scan(text, (hash, start) => {
+    let bucket = spans.get(hash);
+    if (!bucket) { bucket = new Set(); spans.set(hash, bucket); }
+    bucket.add(text.slice(start, start + size));
+    return false;
+  });
+  if (!spans.size) return false;
+  return sources.some(content => scan(content, (hash, start) =>
+    spans.get(hash)?.has(content.slice(start, start + size)) ?? false));
 }
 
 function requireText(value: unknown, label: string, maximum: number): string {

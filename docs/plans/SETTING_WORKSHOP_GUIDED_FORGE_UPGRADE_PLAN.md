@@ -1,8 +1,10 @@
 # 设定工坊引导式共创向导升级计划 (Setting Workshop Guided Forge)
 
-> 状态：Needs Review（代码与单测已全部落地，见 [`docs/tasks/1360.md`](../tasks/1360.md)；PR #16 / PR #17）
+> 状态：Needs Review（主要功能已落地；2026-11-06 已修复 Forge 活跃锁 TTL 抢占/删除竞争并补回归，handoff 漂移后校验及真实模型验收仍见 [`docs/tasks/1360.md`](../tasks/1360.md)）
 >
 > 交付记录：2026-10-23（PR #16 `feat(workbench): guided Forge, Play archives and scoped LINT`、PR #17 `fix(workbench): close Forge, Play cache, archive and stage gaps against the 1360 plans`）
+>
+> 后续交付：2026-10-30 `db5340d` 增加多问题批量选择、文学方案卡片、分块手工编辑、T03/T04 持久化、草稿删除和锁回收。2026-11-06 将回收收紧为 owner 确定退出后执行，并用 recovery mutex/owner fence 保护迟到竞争者；删除纳入同锁，覆盖同/跨进程回归。
 >
 > 关联任务：[`docs/tasks/1360.md`](../tasks/1360.md)
 >

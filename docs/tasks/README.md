@@ -85,12 +85,12 @@
 - [1330 Core Writing Loop Closure](1330.md)
 - [1340 Proportionate Review And Memory Hygiene](1340.md)
 - [1350 Steer, Follow-up And Model Reasoning Visibility](1350.md)
+- [1370 Parallel Reference Deconstruction](1370.md)
+- [1380 Reference Source Exploration](1380.md)
 
 ## Needs Review Tasks
 
 - [1360 Guided Forge, Play Presentation And Novel LINT](1360.md)
-- [1370 Parallel Reference Deconstruction](1370.md)
-- [1380 Reference Source Exploration](1380.md)
 
 - [0580 Git History And Sync Page](0580.md)
 - [1120 Play World Events And Turn Settlement](1120.md)
@@ -102,10 +102,53 @@
 
 其余剩余工作按 Needs Review tasks 内的未完成 scope 推进；历史计划中的未勾选项需先与这些任务核对。
 
+## Corrective Delivery (2026-11-06)
+
+按作者要求修复状态审计发现的两处实现缺口并补回归后，当前共 **60 Completed、4 Needs Review、0 Planned**：
+
+- [1360](1360.md)：Forge 不再按 TTL 抢占活跃锁；只回收确定退出的 owner，串行化回收并保留 owner fence，删除与生成/编辑共用锁。覆盖同/跨进程竞争、owner 退出、迟到回收者和未知 owner 的回归已补齐。该任务仍需 handoff 漂移后校验复核与真实模型质量/缓存验收，保留 Needs Review。
+- [1380](1380.md)：80 字检测覆盖所有起点和跨工具分块，hash 命中后逐字比较；完整原文只用于宿主核验。另补提问期间切换 reference 的状态复位与迟到响应隔离。范围内缺口关闭，更新为 Completed。
+- 0580/1120/1230 的原验收边界保持不变，具体见各 task；本轮没有以软件测试替代真实远端凭据、provider 账单或设备断电证据。
+
+新增原故障用例先在旧实现失败、修复后通过。最终 `NX_DAEMON=false NX_NO_CLOUD=true NX_ISOLATE_PLUGINS=false npm run quality` 通过：9 个构建任务、lint、10 个生产 workspace 严格类型检查及 renderer-smoke 类型检查、七个测试 workspace 共 **248 文件 / 1,923 项测试**（较修复前新增 18 项）、172 份 Markdown 架构术语检查、64 项 task/index 状态检查与 Wiki 构建。测试分布：Core 596、Runtime 28、Tools 311、Agent 150、Backend 283、Client 201、Desktop UI 354；`git diff --check` 通过。
+
+验证使用 macOS / Node 24.22.1、临时工作区、真实子进程和可控模型。未重新执行原生跨平台/Electron 打包、真实 provider 缓存账单或设备断电验收；这些仍按 1360/1120/1230 的边界保留。
+
+## Code Review (2026-11-06)
+
+以下是本日修复前的状态审计记录，后续修复结果以上方 Corrective Delivery 为准。对原 6 个 `Needs Review` task 的关联计划、当时生产代码和根目录测试复核后，共 **59 Completed、5 Needs Review、0 Planned**。`Needs Review` 不代表整项功能未实现：
+
+| Task | 实现情况 | 当前未关闭项 |
+| --- | --- | --- |
+| [0580](0580.md) | Git history、reviewed commit、自动提交配置、同步 preflight/错误反馈和外部编辑器已接通 | HTTPS/SSH 真实鉴权、商业 Git 托管与发行环境同步验收；bundled Git / 完整 Git GUI 仍暂缓 |
+| [1120](1120.md) | M1–M5、协作锁/CAS、进程恢复、durable receipt、显式升级、ISO 时间与状态引用已实现 | 安全离线 tombstone 清理、设备/跨平台/provider 验收；完整 mutation 成本和进一步因果强制仍按独立设计推进 |
+| [1230](1230.md) | A01–A09 已有对应软件交付，缺失 receipt 的同进程恢复和提示已补齐 | 1120 的残余可靠性范围、仍线性的完整 mutation/CAS/copy、外部环境验收 |
+| [1360](1360.md) | Forge、冻结前缀、剧情存档、VN、名册、LINT 主链路及 10 月 30 日 Forge 增强已实现 | 已复现活跃草稿锁被 TTL 抢占并覆盖编辑；handoff 漂移后校验边界需复核；真实模型质量/缓存收益未验收 |
+| [1370](1370.md) | 独立 chunk、按窗口分块、最多 4 单元并行、整批结算/部分失败/重启恢复已实现 | 范围内无未关闭项，本轮改为 Completed；未宣称实测真实 provider 吞吐/成本 |
+| [1380](1380.md) | 原文只读探索、aggregate 回查、问题 API 与 UI 已实现 | 80 字 copy-risk 检测的固定步长会漏掉非对齐复制，已独立复现，需补实现与边界回归 |
+
+审计代码基线为 `e71b76b`（包含 Forge `db5340d`）。该阶段仅更新文档，两个缺口通过公开包入口和临时 workspace 复现；后续经作者授权补实现与回归，见上方 Corrective Delivery。下方记录的是修复前验证，不能以既有测试通过掩盖当时未覆盖的复现案例。
+
+验证环境：macOS、Node 24.22.1；`NX_DAEMON=false NX_NO_CLOUD=true npm run build` 的 9 个任务通过，随后 `npm run test:ci` 顺序执行既有七个测试 workspace，全量 **247 文件 / 1,905 项测试通过**：
+
+| Workspace | Files | Tests |
+| --- | ---: | ---: |
+| Core | 63 | 590 |
+| Runtime | 4 | 28 |
+| Tools | 32 | 311 |
+| Agent | 25 | 149 |
+| Backend | 32 | 273 |
+| Client | 19 | 201 |
+| Desktop UI | 72 | 353 |
+
+测试使用临时文件系统/Git 与可控模型，包含现有进程恢复和 HTTP/SSE 旅程；本轮未重新执行 Electron 打包、原生跨平台/安装器、真实 provider/账单、远端凭据或设备断电验收。上述构建和测试不等同于运行完整 `npm run quality`。
+
+文档更新后，`npm run docs:check` 通过 172 份 Markdown 的架构术语检查及 64 项 task/index 状态检查，`git diff --check` 通过。
+
 
 ## Priority And Deferred Development (2026-10-15)
 
-2026-10-24 记录：已交付 1350（Steer 运行中插话、Follow-up 排队、推理过程 Thinking 可见性与 Play 消息日志）、1360（设定工坊 Forge 引导共创、Play Prompt Cache 冻结前缀、Play 剧情存档 Compaction、视觉小说视窗与名册一致性、Novel LINT 11 类套话质检与微创审批）、1370（参考作品上下文窗口并行拆解）以及 1380（参考作品源文本只读探索与提问面板）。相关核心功能已全部合入 main 并具备端到端测试覆盖；各 Needs Review task 的剩余外部实机/长尾验证（真实 provider 鉴权、商业网络、断电设备矩阵等）见各自 Remaining。
+2026-10-24 交付记录：1350（Steer 运行中插话、Follow-up 排队、推理过程 Thinking 可见性与 Play 消息日志）、1360（Forge、Play Prompt Cache、剧情存档、视觉小说视窗、名册与 Novel LINT）、1370（并行拆解）和 1380（原文只读探索与提问面板）的主要功能已合入 main，并有分层/旅程测试。2026-11-06 复核进一步区分已完成功能、实际代码缺口与外部验收，见上表；不能把全部 Needs Review 都归为外部验证。
 
 2026-10-15 重新定位（见 [PROJECT_VISION](../PROJECT_VISION.md)）：1330/1340 写作闭环已交付，Play 保持高优先级，新的 Play 体验需求按作者使用反馈直接立项，不再受 2026-10-01 “更多 Director 扩展暂缓”约束。Extension manifest 与动态 Tool/prompt/workflow registration 继续暂缓。
 

@@ -1,7 +1,7 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vite-plus/test';
+import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import {
   importReferenceWork,
@@ -11,13 +11,18 @@ import {
 } from '@oh-awesome-novel/core';
 
 const OPENING = 'A short opening applies pressure and then changes direction while a visible consequence keeps the reader-facing question active.';
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
 
-async function prepare() {
+async function prepare(opening = OPENING) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'oan-reference-question-'));
+  roots.push(workspaceRoot);
   const imported = await importReferenceWork({
     workspaceRoot,
     title: 'Question Fixture',
-    sourceText: ['Chapter 1', OPENING, '', 'Chapter 2', 'A second movement resolves one question while opening another.'].join('\n'),
+    sourceText: ['Chapter 1', opening, '', 'Chapter 2', 'A second movement resolves one question while opening another.'].join('\n'),
     rights: 'owned',
   });
   return prepareReferenceQuestionSource(workspaceRoot, imported.reference.id);
@@ -65,6 +70,60 @@ describe('reference question', () => {
       uncertainties: ['Only two chapters exist.'],
     }, { question: 'q', allowedPointers: {}, windows: source.windows });
     expect(answer.copyRisk).toBe(true);
+  });
+
+  it('flags exactly 80 copied characters at every offset of the former 40-character stride', async () => {
+    const excerpt = Array.from({ length: 80 }, (_, index) => String.fromCharCode(0x4e00 + index)).join('');
+    const source = await prepare(`原文前缀：${excerpt}原文后缀。`);
+    for (let offset = 0; offset < 40; offset++) {
+      const result = normalizeReferenceQuestionAnswer({
+        answer: `${'说'.repeat(offset)}${excerpt}。`, findings: [], uncertainties: [],
+      }, { question: 'q', allowedPointers: {}, windows: source.windows });
+      expect(result.copyRisk, `copied run starts at ${offset}`).toBe(true);
+    }
+  });
+
+  it.each(['observation', 'technique'] as const)('checks unaligned copied runs in finding %s', async field => {
+    const excerpt = Array.from({ length: 80 }, (_, index) => String.fromCharCode(0x4e00 + index)).join('');
+    const source = await prepare(excerpt);
+    const pointer = source.windows[0]!;
+    const result = normalizeReferenceQuestionAnswer({
+      answer: '分析结果',
+      findings: [{ observation: '手法说明', technique: '分析', [field]: `说明：${excerpt}。`, evidenceRefs: [pointer.pointerId] }],
+      uncertainties: [],
+    }, { question: 'q', allowedPointers: { [pointer.pointerId]: pointer.pointer }, windows: source.windows });
+    expect(result.copyRisk).toBe(true);
+  });
+
+  it('does not flag 79 copied characters, a changed character, or unrelated text', async () => {
+    const excerpt = Array.from({ length: 80 }, (_, index) => String.fromCharCode(0x4e00 + index)).join('');
+    const source = await prepare(excerpt);
+    for (const answer of [
+      `说明：${excerpt.slice(0, 79)}。`,
+      `说明：${excerpt.slice(0, 40)}！${excerpt.slice(41)}。`,
+      '说明：全新表达。'.repeat(30),
+    ]) {
+      expect(normalizeReferenceQuestionAnswer({ answer, findings: [], uncertainties: [] }, {
+        question: 'q', allowedPointers: {}, windows: source.windows,
+      }).copyRisk).toBe(false);
+    }
+  });
+
+  it('requires literal equality even when two 80-character spans share a rolling hash', async () => {
+    // Aa and BB have the same base-31 hash, including after a common prefix.
+    const source = await prepare(`${'x'.repeat(78)}Aa`);
+    expect(normalizeReferenceQuestionAnswer({
+      answer: `${'x'.repeat(78)}BB`, findings: [], uncertainties: [],
+    }, { question: 'q', allowedPointers: {}, windows: source.windows }).copyRisk).toBe(false);
+  });
+
+  it('checks a copied run across a tool-window boundary against the original source', async () => {
+    const excerpt = Array.from({ length: 80 }, (_, index) => String.fromCharCode(0x4e00 + index)).join('');
+    const source = await prepare(`${'前'.repeat(11_960)}${excerpt}${'后'.repeat(100)}`);
+    expect(source.windows.every(window => !window.content.includes(excerpt))).toBe(true);
+    expect(normalizeReferenceQuestionAnswer({
+      answer: `说明：${excerpt}。`, findings: [], uncertainties: [],
+    }, { question: 'q', allowedPointers: {}, windows: source.windows, sourceText: source.sourceText }).copyRisk).toBe(true);
   });
 
   it('bounds the question', () => {

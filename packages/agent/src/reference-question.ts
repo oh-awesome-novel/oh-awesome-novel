@@ -71,6 +71,8 @@ export interface GenerateReferenceQuestionAnswerInput {
   readonly title: string;
   readonly question: string;
   readonly windows: readonly ReferenceChapterWorkUnitWindow[];
+  /** Host-only overlap evidence; never included in the prompt or explorer tools. */
+  readonly sourceText?: string;
   readonly providerConfig: LlmProviderConfig;
   readonly resolveModel: ReferenceDeconstructionModelResolver;
   readonly abortSignal?: AbortSignal;
@@ -123,6 +125,7 @@ export async function generateReferenceQuestionAnswer(
                 .filter((pointerId) => pointers[pointerId])
                 .map((pointerId) => [pointerId, pointers[pointerId]!])),
               windows: input.windows,
+              sourceText: input.sourceText,
             }),
           };
         } catch (error) {

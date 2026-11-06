@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hono } from 'hono';
@@ -292,5 +292,49 @@ describe('Forge approval and persistence boundary', () => {
     const res = await h.op('edit', { edits: [{ key: 'stage', value: '新舞台', locked: true }] });
     expect(res.response.status).toBe(200);
     expect(h.getDraft().brief.items.find(i => i.key === 'stage')?.value).toBe('新舞台');
+  });
+  it.each(['edit', 'delete'])('keeps a slow live generation exclusive against %s even when the lock is old', async operation => {
+    let calls = 0;
+    let entered!: () => void;
+    let release!: () => void;
+    const generating = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const h = await setup(async () => {
+      if (++calls > 1) { entered(); await gate; }
+      return discussion();
+    });
+    const id = h.getDraft().id;
+    const pending = h.op('discuss', { message: '继续讨论' });
+    try {
+      await generating;
+      const lock = join(h.root, '.workspace/forge/drafts', `${id}.lock`);
+      const owner = await readFile(lock, 'utf8');
+      const old = new Date(Date.now() - 4 * 60 * 1000);
+      await utimes(lock, old, old);
+      const response = operation === 'delete'
+        ? await h.app.request(`/drafts/${id}`, { method: 'DELETE' })
+        : (await h.op('edit', { edits: [{ key: 'stage', value: '作者的新舞台', locked: true }] })).response;
+      expect(response.status).toBe(409);
+      expect(await readFile(lock, 'utf8')).toBe(owner);
+    } finally {
+      release();
+      expect((await pending).response.status).toBe(200);
+    }
+    const edit = await h.op('edit', { edits: [{ key: 'stage', value: '作者的新舞台', locked: true }] });
+    expect(edit.response.status).toBe(200);
+    await h.reload();
+    expect(h.getDraft().revision).toBe(2);
+    expect(h.getDraft().brief.items.find(item => item.key === 'stage')?.value).toBe('作者的新舞台');
+  });
+  it.each(['', '{', '{"pid":-1}', '{"pid":"99999999"}'])('preserves a lock whose owner cannot be verified: %s', async owner => {
+    const h = await setup();
+    const lock = join(h.root, '.workspace/forge/drafts', `${h.getDraft().id}.lock`);
+    await writeFile(lock, owner);
+    const old = new Date(Date.now() - 4 * 60 * 1000);
+    await utimes(lock, old, old);
+    expect((await h.op('edit', { edits: [{ key: 'stage', value: '不应写入' }] })).response.status).toBe(409);
+    expect(await readFile(lock, 'utf8')).toBe(owner);
+    await h.reload();
+    expect(h.getDraft().revision).toBe(0);
   });
 });
