@@ -1,3 +1,5 @@
+import { createSpecializedUsageTracker } from './specialized-usage-tracker.js';
+import type { UsageOperation } from '@oh-awesome-novel/core/agent-usage';
 import {
   NoObjectGeneratedError,
   NoOutputGeneratedError,
@@ -16,7 +18,7 @@ import type {
   ReferenceQuickPreviewSelection,
 } from '@oh-awesome-novel/core';
 import type { FinishReason, JSONSchema7, LanguageModel } from 'ai';
-import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
+import { extractAiSdkUsageFields } from './usage-governance.js';
 
 export const REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT = [
   'You are the bounded reference-work analysis module for OAN.',
@@ -46,6 +48,7 @@ export interface GenerateReferenceQuickPreviewInput {
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface ReferenceQuickPreviewGenerationError {
@@ -293,8 +296,11 @@ export async function generateReferenceQuickPreview(
     }),
   });
 
+  const usageTracker = createSpecializedUsageTracker({ workspaceRoot: input.workspaceRoot, sessionId: input.usageSessionId ?? runId, provider: input.providerConfig, usageOperation: input.usageOperation, systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT, userPrompt: prompt, sourceId: `reference:${input.selection.referenceId}:quickPreview`, sourceKind: 'referenceQuickPreview', sourceHash: input.selection.sourceChecksumSha256 });
   try {
     const result = await generateText({
+      onStepStart: usageTracker.onStepStart,
+      onStepEnd: usageTracker.onStepEnd,
       model,
       instructions: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
       prompt,
@@ -305,36 +311,20 @@ export async function generateReferenceQuickPreview(
     });
 
     if (input.abortSignal?.aborted) {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId: input.usageSessionId ?? runId,
-        provider: input.providerConfig,
-        systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
-        userPrompt: prompt,
-        sourceId: `reference:${input.selection.referenceId}:quickPreview`,
-        sourceKind: 'referenceQuickPreview',
-        sourceHash: input.selection.sourceChecksumSha256,
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'aborted',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'aborted',
+    });
       return createAbortResult(input.abortSignal.reason);
     }
 
     if (result.finishReason !== 'stop') {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId: input.usageSessionId ?? runId,
-        provider: input.providerConfig,
-        systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
-        userPrompt: prompt,
-        sourceId: `reference:${input.selection.referenceId}:quickPreview`,
-        sourceKind: 'referenceQuickPreview',
-        sourceHash: input.selection.sourceChecksumSha256,
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'failed',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'failed',
+    });
       return createFailureResult(
         'invalid_output',
         new Error('Reference quick preview ended without a valid structured result.'),
@@ -342,15 +332,7 @@ export async function generateReferenceQuickPreview(
       );
     }
 
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId: input.usageSessionId ?? runId,
-      provider: input.providerConfig,
-      systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      sourceId: `reference:${input.selection.referenceId}:quickPreview`,
-      sourceKind: 'referenceQuickPreview',
-      sourceHash: input.selection.sourceChecksumSha256,
+    await usageTracker.finish({
       rawUsage: extractAiSdkUsageFields(result.usage),
       finishReason: result.finishReason,
       outcome: 'completed',
@@ -362,15 +344,7 @@ export async function generateReferenceQuickPreview(
       finishReason: result.finishReason,
     };
   } catch (error) {
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId: input.usageSessionId ?? runId,
-      provider: input.providerConfig,
-      systemPrompt: REFERENCE_QUICK_PREVIEW_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      sourceId: `reference:${input.selection.referenceId}:quickPreview`,
-      sourceKind: 'referenceQuickPreview',
-      sourceHash: input.selection.sourceChecksumSha256,
+    await usageTracker.finish({
       rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
       finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
       outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',

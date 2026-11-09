@@ -7,7 +7,9 @@ export function playContextHistory(session: PlaySession, throughTurnId?: string)
   const boundary = isPlayCompactionActive(session) ? session.metadataExtensions.playCompactionStartRevision : undefined;
   const turns = session.turnArtifacts.filter(turn => ids.has(turn.id) && (typeof boundary !== 'number' || turn.revision > boundary));
   const messages = turns.flatMap(turn => turn.messages.map(message => ({ role: message.speaker === 'user' ? 'user' as const : 'assistant' as const, content: message.content })));
-  return stablePlayHistoryWindow(messages);
+  const window = stablePlayHistoryWindow(messages);
+  const protectedCount = turns.slice(-2).reduce((count, turn) => count + turn.messages.length, 0);
+  return window.length < protectedCount ? messages.slice(-protectedCount) : window;
 }
 
 /** Messages per window step; the window start only moves on these boundaries. */

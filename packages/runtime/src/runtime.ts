@@ -1,6 +1,6 @@
 import { aggregateModelUsage, normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
-import type { ModelRequestUsageRecord, ModelStepUsageRecord, TurnUsageSummary } from '@oh-awesome-novel/core/agent-usage';
-import { estimateRuntimeModelRequest } from './usage';
+import type { ModelRequestUsageRecord, ModelStepUsageRecord, TurnUsageSummary, UsageCallTiming } from '@oh-awesome-novel/core/agent-usage';
+import { estimateRuntimeModelRequest, fingerprintRuntimeModelRequest } from './usage';
 import { PriorityRuntimeContextBuilder } from './context-builder';
 import type { ModelMessage, ToolExecutionOptions, ToolResultPart, ToolSet } from 'ai';
 import { createHash, randomUUID } from 'node:crypto';
@@ -107,6 +107,7 @@ export class RuntimeSession {
         const stats = await estimateRuntimeModelRequest(request);
         const requestRecord: ModelRequestUsageRecord = {
           ...this.usageBase(), recordType: 'request', stepIndex: loop, request: stats,
+          fingerprint: await fingerprintRuntimeModelRequest(request),
           ...(prepared?.metadata ?? {
             sources: request.messages.flatMap((message) => message.provenance ?? []),
             budget: { status: 'unknown' as const, estimatedRequestTokens: stats.estimatedRequestTokens },
@@ -115,6 +116,8 @@ export class RuntimeSession {
         this.usageRequests.push(requestRecord);
         await this.emit({ type: 'model_request_stats', record: requestRecord });
         let response: RuntimeModelResponse;
+        let startedAt: string | undefined;
+        let firstResponseAt: string | undefined;
         try {
           if (requestRecord.budget.status === 'overflow') {
             throw Object.assign(new Error(`CONTEXT_PROTECTED_OVERFLOW: Required input estimate ${stats.estimatedRequestTokens} exceeds budget ${requestRecord.budget.inputTokens}. Narrow the context or conversation, or adjust model limits.`), {
@@ -123,11 +126,14 @@ export class RuntimeSession {
               protectedSources: requestRecord.sources.filter((source) => source.semanticBoundary === 'protected'),
             });
           }
-          response = await this.generateModelResponse(request);
-          await this.recordUsageStep(loop, response.usage, input.abortSignal?.aborted ? 'aborted' : 'completed', response.finishReason);
+          startedAt = new Date().toISOString();
+          response = await this.generateModelResponse(request, at => { firstResponseAt ??= at; });
+          await this.recordUsageStep(loop, response.usage, input.abortSignal?.aborted ? 'aborted' : 'completed', response.finishReason,
+            { startedAt, completedAt: new Date().toISOString(), ...(firstResponseAt ? { firstResponseAt } : {}) });
         } catch (error) {
           const failure = error as { modelUsage?: RuntimeModelResponse['usage']; modelFinishReason?: string } | undefined;
-          await this.recordUsageStep(loop, failure?.modelUsage, input.abortSignal?.aborted || isAbortError(error) ? 'aborted' : 'failed', failure?.modelFinishReason);
+          await this.recordUsageStep(loop, failure?.modelUsage, input.abortSignal?.aborted || isAbortError(error) ? 'aborted' : 'failed', failure?.modelFinishReason,
+            startedAt ? { startedAt, completedAt: new Date().toISOString(), ...(firstResponseAt ? { firstResponseAt } : {}) } : undefined);
           throw error;
         }
         const auditedMessage = response.message
@@ -222,6 +228,7 @@ export class RuntimeSession {
 
   private async generateModelResponse(
     request: Parameters<RuntimeModelAdapter['generate']>[0],
+    onFirstResponse: (at: string) => void,
   ): Promise<RuntimeModelResponse> {
     if (!this.options.model.stream) {
       return this.options.model.generate(request);
@@ -230,12 +237,16 @@ export class RuntimeSession {
     let response: RuntimeModelResponse | undefined;
 
     for await (const event of this.options.model.stream(request)) {
-      if (event.type === 'text_delta') {
+      if (event.type === 'first_response') {
+        onFirstResponse(event.at);
+      } else if (event.type === 'text_delta') {
+        onFirstResponse(new Date().toISOString());
         await this.emit({
           type: 'message_delta',
           text: event.text,
         });
       } else if (event.type === 'reasoning_delta') {
+        onFirstResponse(new Date().toISOString());
         await this.emit({ type: 'reasoning_delta', text: event.text });
       } else {
         response = event.response;
@@ -401,10 +412,11 @@ export class RuntimeSession {
       ...(this.options.usageSessionId ? { sessionId: this.options.usageSessionId } : {}) };
   }
 
-  private async recordUsageStep(stepIndex: number, usage: RuntimeModelResponse['usage'], outcome: ModelStepUsageRecord['outcome'], finishReason?: string) {
+  private async recordUsageStep(stepIndex: number, usage: RuntimeModelResponse['usage'], outcome: ModelStepUsageRecord['outcome'], finishReason?: string, timing?: UsageCallTiming) {
     const record: ModelStepUsageRecord = { ...this.usageBase(), recordType: 'step', stepIndex,
       actualUsage: normalizeModelUsage(usage), outcome,
       ...(finishReason && /^[a-z_-]{1,40}$/u.test(finishReason) ? { finishReason } : {}),
+      ...(timing ? { timing } : {}),
     };
     this.usageSteps.push(record);
     await this.emit({ type: 'usage_stats', record });

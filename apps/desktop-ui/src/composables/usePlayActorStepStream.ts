@@ -5,6 +5,7 @@ import {
   readonly,
   shallowRef,
 } from 'vue';
+import type { UsagePresentationRun } from './useUsagePresentation';
 
 export type PlayActorStepStatus = 'draft' | 'selected' | 'superseded' | 'discarded';
 
@@ -231,6 +232,7 @@ export function usePlayActorStepStream(
   options: UsePlayActorStepStreamOptions,
 ) {
   const currentRun = shallowRef<PlayActorStepRun>();
+  const usagePresentation = shallowRef<UsagePresentationRun>();
   const announcement = shallowRef('');
   const activeConnection = shallowRef<{
     localId: string;
@@ -260,6 +262,7 @@ export function usePlayActorStepStream(
     clearTerminalRun();
     seenEvents.clear();
     const localId = createLocalRunId();
+    usagePresentation.value = { localId, scope: { domain: 'play', sessionId: input.sessionId }, attemptId: input.attemptId, startedAtMs: performance.now(), finished: false, responseIds: [localId] };
     currentRun.value = {
       localId,
       sessionId: input.sessionId,
@@ -377,6 +380,7 @@ export function usePlayActorStepStream(
         outcome = 'failed';
       }
     } finally {
+      if (usagePresentation.value?.localId === localId && outcome && outcome !== 'unknown') usagePresentation.value = { ...usagePresentation.value, finished: true };
       if (activeConnection.value?.localId === localId) {
         activeConnection.value = undefined;
       }
@@ -783,6 +787,12 @@ export function usePlayActorStepStream(
       ...(typeof patch === 'function' ? patch(run) : patch),
     };
     currentRun.value = next;
+    if (usagePresentation.value?.localId === localId && next.runId) {
+      usagePresentation.value = { ...usagePresentation.value, operationId: next.runId,
+        finished: usagePresentation.value.finished || ['prepared', 'aborted', 'failed'].includes(next.phase),
+        responseIds: next.preparedStepRef ? [localId, next.preparedStepRef] : [localId],
+      };
+    }
     if (next.statusMessage !== run.statusMessage) {
       announcement.value = next.statusMessage;
     }
@@ -820,6 +830,7 @@ export function usePlayActorStepStream(
 
   return {
     run: readonly(currentRun),
+    usagePresentation: readonly(usagePresentation),
     announcement: readonly(announcement),
     busy,
     canStop,

@@ -116,6 +116,7 @@ export function usePlayWorkspace(
   });
   const {
     run: provisionalTurn,
+    usagePresentation,
     announcement: turnAnnouncement,
     busy: sending,
     canStop,
@@ -777,6 +778,7 @@ export function usePlayWorkspace(
     canSteer,
     followUpControls,
     provisionalTurn,
+    usagePresentation,
     turnAnnouncement,
     timeAdvance,
     showSpoilers,

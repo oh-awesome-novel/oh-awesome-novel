@@ -76,6 +76,7 @@ describe('AI SDK RuntimeModelAdapter bridge', () => {
     const modelVisibleTools = streamText.mock.calls[0][0].tools;
     expect(modelVisibleTools['character.get'].execute).toBeUndefined();
     expect(events).toEqual([
+      { type: 'first_response', at: expect.any(String) },
       { type: 'text_delta', text: '你' },
       { type: 'text_delta', text: '好' },
       {

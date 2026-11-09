@@ -23,6 +23,8 @@ export interface PlayCompactionPreview {
   sourceHash: string;
   data: PlayCompactionData;
   recentText: string;
+  omittedHistoryTurns?: number;
+  activationHash?: string;
 }
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown): string => { if (typeof v !== 'string' || !v.trim()) throw new Error('Archive fields require nonempty text.'); return v; };
@@ -47,12 +49,13 @@ export function parsePlayCompaction(response: string): PlayCompactionData {
     voiceAndStyle: { pov: text(v.voiceAndStyle.pov), rhythm: text(v.voiceAndStyle.rhythm), tonePoints: list(v.voiceAndStyle.tonePoints) }, resourceState: v.resourceState,
   };
 }
-export function playCompactionSource(session: PlaySession): string {
-  return JSON.stringify({ ids: session.selectedTurnIds, state: session.playLocalState, events: session.events.filter(e => session.turnArtifacts.filter(t => session.selectedTurnIds.includes(t.id)).some(t => t.eventIds.includes(e.id))), messages: session.transcript });
+function selectedEvents(session: PlaySession) {
+  const selected = new Set(session.selectedTurnIds);
+  const ids = new Set(session.turnArtifacts.filter(turn => selected.has(turn.id)).flatMap(turn => turn.eventIds));
+  return session.events.filter(event => ids.has(event.id));
 }
-/** The archive prompt's branch facts; the messages travel once as conversation history. */
-function playCompactionPromptSource(session: PlaySession): string {
-  return JSON.stringify({ ids: session.selectedTurnIds, events: session.events.filter(e => session.turnArtifacts.filter(t => session.selectedTurnIds.includes(t.id)).some(t => t.eventIds.includes(e.id))) });
+export function playCompactionSource(session: PlaySession): string {
+  return JSON.stringify({ ids: session.selectedTurnIds, state: session.playLocalState, events: selectedEvents(session), messages: session.transcript });
 }
 /** Current claims are field-bound to the selected state, never validated by old prose. */
 function currentCompactionEvidence(session: PlaySession) {
@@ -82,7 +85,7 @@ function currentCompactionEvidence(session: PlaySession) {
     unresolvedThreads: names(state.unresolvedThreads),
   };
 }
-export function buildPlayCompactionPrompt(session: PlaySession): string {
+export function buildPlayCompactionPrompt(session: PlaySession, evidenceTurnIds = session.selectedTurnIds): string {
   return ['暂停推演，生成五维剧情存档，不续写。输出 <剧情存档>JSON</剧情存档>。',
     'JSON: {version:1, turnsCovered:number, characters:[{name,identity,relationshipChange,currentSituation,quote?}], chronicle:[{fact,quote}], unresolvedThreads:string[], currentScene:{timeAndPlace,presentCharacters:string[],atmosphere,immediateCrisis,quote?}, voiceAndStyle:{pov,rhythm,tonePoints:string[]}, resourceState:object}.',
     '提炼而不是摘抄：chronicle 按时间顺序写关键事实 fact（保留地点、道具、数字、约定和关键台词），每条附 quote：能在上面历史里逐字找到的一小段原文（30字以内），作为这条事实的依据。',
@@ -91,7 +94,8 @@ export function buildPlayCompactionPrompt(session: PlaySession): string {
     `当前字段证据白名单: ${JSON.stringify(currentCompactionEvidence(session))}`,
     `turnsCovered 必须为 ${session.selectedTurnIds.length}.`,
     `resourceState: ${JSON.stringify(session.playLocalState)}`,
-    `选中分支事件: ${playCompactionPromptSource(session)}`].join('\n');
+    `当前待触发事件: ${JSON.stringify(session.scheduledEvents.filter(event => event.status === 'scheduled'))}`,
+    `窗口内分支事件: ${JSON.stringify({ ids: evidenceTurnIds, events: selectedEvents({ ...session, selectedTurnIds: evidenceTurnIds }) })}`].join('\n');
 }
 const NEGATED_PREFIX = /(?:不|没有?|未曾?|非|无|别|莫|勿|否|\bnot|\bnever|\bno|n't)\s*$/iu;
 /** A quote only counts when some occurrence is not the tail of a negated clause ("他没有服下毒药" cannot vouch for "服下毒药"). */
@@ -149,6 +153,9 @@ export function createPlayCompactionPreview(session: PlaySession, response: stri
 }
 export function createCompactedPlaySession(session: PlaySession, preview: PlayCompactionPreview, id: string): PlaySession {
   if (preview.sourceSessionId !== session.id || preview.sourceRevision !== session.revision || preview.sourceTurnId !== session.selectedTurnIds.at(-1) || preview.sourceHash !== createHash('sha256').update(playCompactionSource(session)).digest('hex')) throw new Error('Archive preview is stale; generate it again.');
+  const recent = session.turnArtifacts.filter(turn => session.selectedTurnIds.slice(-2).includes(turn.id))
+    .flatMap(turn => turn.messages.map(message => `【${message.speaker}】${message.content}`)).join('\n');
+  if (preview.recentText !== recent) throw new Error('Archive recent text differs from the selected branch.');
   const errors = auditPlayCompaction(session, preview.data); if (errors.length) throw new Error(errors.join('\n'));
   // Keep the immutable graph: event IDs, hidden knowledge and schedules refer to it.
   // Only model-visible history is compacted; the new session is independently writable.

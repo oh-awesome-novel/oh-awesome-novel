@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
 import { jsonSchema, tool } from 'ai';
-import { createRuntime } from '@oh-awesome-novel/runtime';
+import { createRuntime, fingerprintRuntimeModelRequest } from '@oh-awesome-novel/runtime';
 import type { RuntimeEvent } from '@oh-awesome-novel/runtime';
 describe('Runtime request and usage boundaries', () => {
   it('counts each real model step once and preserves partial per-field coverage', async () => {
@@ -41,5 +41,36 @@ describe('Runtime request and usage boundaries', () => {
     const result = await runtime.runTurn({ message: 'go', abortSignal: abort.signal });
     expect(result.usage).toMatchObject({ outcome: 'aborted', actualCoverage: 'unavailable', actualUsage: { availability: 'unavailable' } });
     expect(events.filter((e) => e.type === 'usage_stats')).toHaveLength(2);
+  });
+  it('records non-streaming start/completion without manufacturing a first response timestamp', async () => {
+    const events: RuntimeEvent[] = [];
+    const runtime = createRuntime({ model: { generate: async () => ({ message: { role: 'assistant', content: 'done' } }) }, onEvent: event => { events.push(event); } });
+    await runtime.runTurn({ message: 'go' });
+    const step = events.find(event => event.type === 'usage_stats' && event.record.recordType === 'step');
+    expect(step).toMatchObject({ record: { timing: { startedAt: expect.any(String), completedAt: expect.any(String) } } });
+    if (step?.type !== 'usage_stats' || step.record.recordType !== 'step') throw new Error('Step missing');
+    expect(step.record.timing?.firstResponseAt).toBeUndefined();
+    const request = events.find(event => event.type === 'model_request_stats');
+    expect(request).toMatchObject({ record: { fingerprint: { prefixKind: 'system-messages', prefixHash: expect.stringMatching(/^[a-f0-9]{64}$/u), toolSchemaHash: expect.stringMatching(/^[a-f0-9]{64}$/u) } } });
+  });
+  it('keeps observed first-response time on streaming failure without inventing actual tokens', async () => {
+    const events: RuntimeEvent[] = [];
+    const runtime = createRuntime({ model: { generate: async () => ({}), async *stream() {
+      yield { type: 'text_delta', text: 'partial' };
+      throw new Error('interrupted provider');
+    } }, onEvent: event => { events.push(event); } });
+    await expect(runtime.runTurn({ message: 'go' })).rejects.toThrow('interrupted provider');
+    const step = events.find(event => event.type === 'usage_stats' && event.record.recordType === 'step');
+    expect(step).toMatchObject({ record: { outcome: 'failed', actualUsage: { availability: 'unavailable' }, timing: { startedAt: expect.any(String), firstResponseAt: expect.any(String), completedAt: expect.any(String) } } });
+  });
+  it('fingerprints the fixed prefix and resolved schema without depending on the user tail or tool function', async () => {
+    const tools = { read: tool({ description: 'read', inputSchema: jsonSchema({ type: 'object', properties: {} }), execute: async () => 'one' }) };
+    const request = { messages: [{ role: 'system' as const, content: 'prefix' }, { role: 'user' as const, content: 'first tail' }], tools };
+    const first = await fingerprintRuntimeModelRequest(request, 'prefix');
+    const second = await fingerprintRuntimeModelRequest({ ...request, messages: [{ role: 'user', content: 'second tail' }], tools: { read: { ...tools.read, execute: async () => 'different implementation' } } }, 'prefix');
+    expect(second).toEqual(first);
+    const changed = await fingerprintRuntimeModelRequest({ ...request, tools: { read: { ...tools.read, description: 'different schema description' } } }, 'prefix');
+    expect(changed.prefixHash).toBe(first.prefixHash);
+    expect(changed.toolSchemaHash).not.toBe(first.toolSchemaHash);
   });
 });

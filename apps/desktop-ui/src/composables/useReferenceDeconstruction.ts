@@ -7,6 +7,7 @@ import {
 } from 'vue';
 
 import { useWorkspaceApi } from './useWorkspaceApi';
+import type { UsagePresentationRun } from './useUsagePresentation';
 import type {
   MutateReferenceDeconstructionRunInput,
   ReferenceDeconstructionPublication,
@@ -107,6 +108,7 @@ export function useReferenceDeconstruction(
   const client = options.client ?? useWorkspaceApi();
   const selectedReference = shallowRef<ReferenceWorkSummary>();
   const currentRun = shallowRef<ReferenceDeconstructionRun>();
+  const usagePresentation = shallowRef<UsagePresentationRun>();
   const loadingActiveRun = shallowRef(false);
   const creating = shallowRef(false);
   const advancing = shallowRef(false);
@@ -351,6 +353,10 @@ export function useReferenceDeconstruction(
     indeterminate.value = false;
     const controller = new AbortController();
     activeAdvanceConnection.value = { runId: run.id, controller };
+    usagePresentation.value = { localId: input.idempotencyKey, operationId: input.idempotencyKey,
+      scope: { domain: 'reference', referenceId: reference.id, runId: run.id },
+      startedAtMs: performance.now(), finished: false, responseIds: [],
+    };
 
     try {
       const result = await client.advanceReferenceDeconstructionRun(
@@ -360,6 +366,9 @@ export function useReferenceDeconstruction(
         { signal: controller.signal },
       );
       applyRun(result.run);
+      if (result.receipt?.idempotencyKey === input.idempotencyKey && usagePresentation.value?.localId === input.idempotencyKey) {
+        usagePresentation.value = { ...usagePresentation.value, finished: true };
+      }
       pendingAdvance = undefined;
     } catch (caught) {
       if (!disposed) await recoverAfterUnknownMutation(caught);
@@ -899,6 +908,7 @@ export function useReferenceDeconstruction(
   return {
     selectedReference: selectedReferenceView,
     run: currentRunView,
+    usagePresentation: readonly(usagePresentation),
     loadingActiveRun: readonly(loadingActiveRun),
     creating: readonly(creating),
     advancing: readonly(advancing),

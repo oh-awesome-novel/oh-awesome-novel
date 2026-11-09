@@ -8,6 +8,8 @@ import ReferenceDeconstructionPanel from './reference/ReferenceDeconstructionPan
 import ReferenceImportResultCard from './reference/ReferenceImportResultCard.vue';
 import ReferenceMaterialAdoptionPanel from './reference/ReferenceMaterialAdoptionPanel.vue';
 import ReferenceQuestionPanel from './reference/ReferenceQuestionPanel.vue';
+import DomainUsageInspector from '../usage/DomainUsageInspector.vue';
+import { useUsagePresentation } from '../../composables/useUsagePresentation';
 import { useReferenceDeconstruction } from '../../composables/useReferenceDeconstruction';
 import { useReferenceMaterialAdoption } from '../../composables/useReferenceMaterialAdoption';
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
@@ -21,6 +23,7 @@ import type {
 
 const props = defineProps<{
   writingProfileState?: WritingProfileState;
+  workspaceKey?: string;
 }>();
 
 const emit = defineEmits<{
@@ -37,6 +40,17 @@ const updatingId = shallowRef('');
 const error = shallowRef('');
 const deconstruction = useReferenceDeconstruction({ client: api });
 const adoption = useReferenceMaterialAdoption({ client: api });
+const usageStage = shallowRef<HTMLElement>();
+const usagePresentation = computed(() => {
+  const value = deconstruction.usagePresentation.value;
+  return value?.scope.domain === 'reference' && value.scope.referenceId === deconstruction.selectedReference.value?.id
+    && value.scope.runId === deconstruction.run.value?.id ? value : undefined;
+});
+const usageObservation = useUsagePresentation({
+  identity: () => `${props.workspaceKey ?? ''}:${deconstruction.selectedReference.value?.id}:${deconstruction.run.value?.id}`,
+  run: () => usagePresentation.value,
+  element: () => usageStage.value,
+});
 
 const enabledCount = computed(() =>
   references.value.filter((reference) => reference.enabled).length,
@@ -141,6 +155,8 @@ async function createPublishPendingAction(): Promise<void> {
     <ReferenceImportResultCard v-if="lastImport" :result="lastImport" />
     <ReferenceContextSelectionPanel :selection="selection" />
 
+    <div ref="usageStage">
+    <div :data-usage-result-operation="usagePresentation?.finished ? usagePresentation.operationId : undefined">
     <ReferenceDeconstructionPanel
       :reference="deconstruction.selectedReference.value"
       :run="deconstruction.run.value"
@@ -179,6 +195,15 @@ async function createPublishPendingAction(): Promise<void> {
       @retry-failed-unit="deconstruction.retryFailedUnit($event)"
       @publish="createPublishPendingAction"
       @review-pending-action="emit('reviewPendingAction', $event)"
+    />
+    </div>
+    </div>
+
+    <DomainUsageInspector v-if="deconstruction.selectedReference.value && deconstruction.run.value"
+      :workspace-key="workspaceKey ?? ''"
+      :scope="{ domain: 'reference', referenceId: deconstruction.selectedReference.value.id, runId: deconstruction.run.value.id }"
+      :operation-id="usagePresentation?.operationId"
+      :refresh-key="`${deconstruction.run.value.runRevision}:${usageObservation.revision.value}`"
     />
 
     <ReferenceQuestionPanel

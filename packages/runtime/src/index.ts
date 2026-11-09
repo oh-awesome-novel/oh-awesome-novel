@@ -35,4 +35,4 @@ export type {
   RunTurnResult,
 } from './types';
 
-export { estimateRuntimeModelRequest } from './usage';
+export { estimateRuntimeModelRequest, fingerprintRuntimeModelRequest } from './usage';

@@ -93,6 +93,7 @@ export interface RuntimeModelResponse {
 }
 
 export type RuntimeModelStreamEvent =
+  | { type: 'first_response'; at: string }
   | {
       type: 'text_delta';
       text: string;

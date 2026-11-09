@@ -56,6 +56,32 @@ export interface UsageRequestMetadata {
   sources: UsageSourceEvidence[];
   budget: UsageBudget;
   egress?: ProviderEgressSummary;
+  operation?: UsageOperation;
+  fingerprint?: UsageRequestFingerprint;
+}
+/** Host-assigned correlation only. Never derive these ids from model output. */
+export interface UsageOperation {
+  domain: 'play' | 'reference';
+  operationId: string;
+  stage: string;
+  sessionId?: string;
+  referenceId?: string;
+  runId?: string;
+  unitId?: string;
+  attemptId?: string;
+  stepId?: string;
+  contextTraceId?: string;
+}
+export interface UsageRequestFingerprint {
+  prefixHash: string;
+  prefixKind: 'frozen-system' | 'system-messages';
+  toolSchemaHash: string;
+}
+export interface UsageCallTiming {
+  startedAt: string;
+  completedAt: string;
+  /** First streaming payload observed by the adapter, not UI paint or a guessed TTFT. */
+  firstResponseAt?: string;
 }
 interface UsageRecordBase {
   schemaVersion: 1;
@@ -74,6 +100,7 @@ export interface ModelStepUsageRecord extends UsageRecordBase {
   actualUsage: NormalizedModelUsage;
   outcome: 'completed' | 'failed' | 'aborted';
   finishReason?: string;
+  timing?: UsageCallTiming;
 }
 export interface TurnUsageSummary extends UsageRecordBase {
   recordType: 'turn';
@@ -143,9 +170,11 @@ export function parseAgentUsageRecord(value: unknown): AgentUsageRecord {
   if (v.sessionId !== undefined) assertUsageSessionId(v.sessionId);
   timestamp(v.createdAt);
   if (v.recordType === 'request') {
-    keys(v, [...base, 'stepIndex', 'request', 'sources', 'budget'], ['sessionId', 'contextPackageId', 'egress']);
+    keys(v, [...base, 'stepIndex', 'request', 'sources', 'budget'], ['sessionId', 'contextPackageId', 'egress', 'operation', 'fingerprint']);
     integer(v.stepIndex); parseRequest(v.request); array(v.sources, USAGE_MAX_SOURCES).forEach(parseSource);
     if (v.contextPackageId !== undefined) assertUsageSessionId(v.contextPackageId);
+    if (v.operation !== undefined) parseUsageOperation(v.operation);
+    if (v.fingerprint !== undefined) parseUsageRequestFingerprint(v.fingerprint);
     const b = record(v.budget); keys(b, ['status', 'estimatedRequestTokens'], ['inputTokens']);
     enumeration(b.status, ['unknown', 'within', 'overflow']); integer(b.estimatedRequestTokens);
     if (b.status === 'unknown') { if (b.inputTokens !== undefined) fail(); } else {
@@ -162,9 +191,10 @@ export function parseAgentUsageRecord(value: unknown): AgentUsageRecord {
       if (e.endpointOrigin !== undefined && (typeof e.endpointOrigin !== 'string' || safeEndpointOrigin(e.endpointOrigin) !== e.endpointOrigin)) fail();
     }
   } else if (v.recordType === 'step') {
-    keys(v, [...base, 'stepIndex', 'actualUsage', 'outcome'], ['sessionId', 'finishReason']);
+    keys(v, [...base, 'stepIndex', 'actualUsage', 'outcome'], ['sessionId', 'finishReason', 'timing']);
     integer(v.stepIndex); parseUsage(v.actualUsage); enumeration(v.outcome, ['completed', 'failed', 'aborted']);
     if (v.finishReason !== undefined) label(v.finishReason);
+    if (v.timing !== undefined) parseUsageCallTiming(v.timing);
   } else if (v.recordType === 'turn') {
     keys(v, [...base, 'stepCount', 'estimatedMessageTokens', 'estimatedRequestTokens', 'actualUsage', 'actualCoverage', 'fieldCoverage', 'outcome'], ['sessionId']);
     integer(v.stepCount); integer(v.estimatedMessageTokens); integer(v.estimatedRequestTokens);
@@ -189,6 +219,181 @@ export function parseAgentGovernanceHistory(value: unknown): AgentGovernanceHist
   if (records.some((r) => r.sessionId !== v.sessionId)) fail();
   array(v.diagnostics, 8).forEach((d) => enumeration(d, ['missing', 'truncated-tail', 'invalid-record', 'read-failed', 'size-limit']));
   return { schemaVersion: 1, sessionId: v.sessionId, records, truncated: v.truncated, diagnostics: v.diagnostics as AgentGovernanceHistory['diagnostics'] };
+}
+export function parseUsageOperation(value: unknown): UsageOperation {
+  const v = record(value);
+  const optional = ['sessionId', 'referenceId', 'runId', 'unitId', 'attemptId', 'stepId', 'contextTraceId'];
+  keys(v, ['domain', 'operationId', 'stage'], optional);
+  enumeration(v.domain, ['play', 'reference']); assertUsageSessionId(v.operationId); label(v.stage);
+  for (const key of optional) if (v[key] !== undefined) assertUsageSessionId(v[key]);
+  if (v.domain === 'play') {
+    if (v.sessionId === undefined || v.referenceId !== undefined) fail();
+  } else if (v.referenceId === undefined || v.runId === undefined || v.sessionId !== undefined) fail();
+  return cloneValidatedContract(v) as UsageOperation;
+}
+export function parseUsageRequestFingerprint(value: unknown): UsageRequestFingerprint {
+  const v = record(value); keys(v, ['prefixHash', 'prefixKind', 'toolSchemaHash']);
+  for (const key of ['prefixHash', 'toolSchemaHash']) if (typeof v[key] !== 'string' || !/^[a-f0-9]{64}$/u.test(v[key] as string)) fail();
+  enumeration(v.prefixKind, ['frozen-system', 'system-messages']);
+  return cloneValidatedContract(v) as UsageRequestFingerprint;
+}
+export function parseUsageCallTiming(value: unknown): UsageCallTiming {
+  const v = record(value); keys(v, ['startedAt', 'completedAt'], ['firstResponseAt']);
+  timestamp(v.startedAt); timestamp(v.completedAt);
+  if (Date.parse(v.completedAt as string) < Date.parse(v.startedAt as string)) fail();
+  if (v.firstResponseAt !== undefined) {
+    timestamp(v.firstResponseAt);
+    if (Date.parse(v.firstResponseAt as string) < Date.parse(v.startedAt as string)
+      || Date.parse(v.firstResponseAt as string) > Date.parse(v.completedAt as string)) fail();
+  }
+  return cloneValidatedContract(v) as UsageCallTiming;
+}
+export function parseUsageSourceEvidence(value: unknown): UsageSourceEvidence {
+  parseSource(value);
+  return cloneValidatedContract(value) as UsageSourceEvidence;
+}
+
+export interface UsageInspectorCall {
+  id: string;
+  turnId: string;
+  stepIndex: number;
+  status: 'pending' | 'completed' | 'failed' | 'aborted' | 'conflict';
+  request?: ModelRequestUsageRecord;
+  step?: ModelStepUsageRecord;
+  fingerprintChange: {
+    status: 'first-observed' | 'unchanged' | 'changed' | 'unavailable';
+    reasons: Array<'prefix' | 'tools' | 'prefix-kind'>;
+    comparedWith?: string;
+  };
+}
+export type UsageCallFilter = Partial<Pick<UsageOperation, 'domain' | 'operationId' | 'sessionId' | 'referenceId' | 'runId' | 'unitId' | 'attemptId' | 'stepId'>>;
+export const USAGE_PROJECTION_DIAGNOSTICS = ['missing', 'truncated-tail', 'invalid-record', 'read-failed', 'size-limit', 'duplicate-records', 'conflicting-records', 'unmatched-records'] as const;
+export interface UsageCallsProjection {
+  schemaVersion: 1;
+  calls: UsageInspectorCall[];
+  totals: ReturnType<typeof aggregateModelUsage> & { callCount: number; reportedCalls: number };
+  truncated: boolean;
+  diagnostics: Array<typeof USAGE_PROJECTION_DIAGNOSTICS[number]>;
+}
+
+/** Sum each physical step once. Turn summaries are deliberately never added again. */
+export function projectUsageCalls(value: AgentGovernanceHistory, filter: UsageCallFilter = {}): UsageCallsProjection {
+  const history = parseAgentGovernanceHistory(value);
+  const filterRecord = record(filter);
+  keys(filterRecord, [], ['domain', 'operationId', 'sessionId', 'referenceId', 'runId', 'unitId', 'attemptId', 'stepId']);
+  for (const [key, expected] of Object.entries(filterRecord)) if (expected !== undefined) {
+    if (key === 'domain') enumeration(expected, ['play', 'reference']); else assertUsageSessionId(expected);
+  }
+  const groups = new Map<string, { requests: ModelRequestUsageRecord[]; steps: ModelStepUsageRecord[] }>();
+  const diagnostics = new Set<UsageCallsProjection['diagnostics'][number]>(history.diagnostics);
+  for (const item of history.records) {
+    if (item.recordType === 'turn') continue;
+    const id = `${item.turnId}.${item.stepIndex}`;
+    const group = groups.get(id) ?? { requests: [], steps: [] };
+    if (item.recordType === 'request') group.requests.push(item); else group.steps.push(item);
+    groups.set(id, group);
+  }
+  const calls: UsageInspectorCall[] = [];
+  const matchingIds = new Set<string>();
+  for (const [id, group] of groups) {
+    const matches = !Object.keys(filter).length || group.requests.some(request => matchesUsageOperation(request.operation, filter));
+    if (!matches) {
+      if (!group.requests.some(request => request.operation)) diagnostics.add('unmatched-records');
+    } else matchingIds.add(id);
+    const requestConflict = new Set(group.requests.map(stableUsageJson)).size > 1;
+    const stepConflict = new Set(group.steps.map(stableUsageJson)).size > 1;
+    const conflict = requestConflict || stepConflict;
+    if (group.requests.length > 1 || group.steps.length > 1) diagnostics.add(conflict ? 'conflicting-records' : 'duplicate-records');
+    const identity = group.requests[0] ?? group.steps[0]!;
+    const request = requestConflict ? undefined : group.requests[0];
+    const step = conflict ? undefined : group.steps[0];
+    calls.push({ id, turnId: identity.turnId, stepIndex: identity.stepIndex,
+      status: conflict ? 'conflict' : step?.outcome ?? 'pending',
+      ...(request ? { request } : {}), ...(step ? { step } : {}),
+      fingerprintChange: { status: 'unavailable', reasons: [] },
+    });
+  }
+  calls.sort((a, b) => usageCallTime(a).localeCompare(usageCallTime(b)) || a.turnId.localeCompare(b.turnId) || a.stepIndex - b.stepIndex);
+  const prior = new Map<string, UsageInspectorCall>();
+  for (const call of calls) {
+    const request = call.request;
+    if (!request?.fingerprint || call.status === 'conflict') continue;
+    const operation = request.operation;
+    const scope = operation ? [operation.domain, operation.sessionId ?? operation.referenceId, operation.domain === 'reference' ? operation.runId : '', operation.stage].join(':') : history.sessionId;
+    const previous = prior.get(scope);
+    if (!previous?.request?.fingerprint) call.fingerprintChange = { status: 'first-observed', reasons: [] };
+    else {
+      const before = previous.request.fingerprint;
+      const after = request.fingerprint;
+      const reasons: UsageInspectorCall['fingerprintChange']['reasons'] = [];
+      if (before.prefixHash !== after.prefixHash) reasons.push('prefix');
+      if (before.toolSchemaHash !== after.toolSchemaHash) reasons.push('tools');
+      if (before.prefixKind !== after.prefixKind) reasons.push('prefix-kind');
+      call.fingerprintChange = { status: reasons.length ? 'changed' : 'unchanged', reasons, comparedWith: previous.id };
+    }
+    prior.set(scope, call);
+  }
+  const selected = calls.filter(call => matchingIds.has(call.id));
+  return { schemaVersion: 1, calls: selected, totals: usageCallTotals(selected, incompleteUsageHistory(history.truncated, [...diagnostics])), truncated: history.truncated, diagnostics: [...diagnostics] };
+}
+/** Filter an already validated host projection without reinterpreting conflicts after Player redaction. */
+export function selectUsageOperation(projection: UsageCallsProjection, history: AgentGovernanceHistory, operationId: string): UsageCallsProjection {
+  const ids = new Set(history.records.flatMap(record => record.recordType === 'request' && record.operation?.operationId === operationId
+    ? [`${record.turnId}.${record.stepIndex}`] : []));
+  const calls = projection.calls.filter(call => ids.has(call.id));
+  return { ...projection, calls, totals: usageCallTotals(calls, incompleteUsageHistory(projection.truncated, projection.diagnostics)) };
+}
+export function parseUsageCallsProjection(value: unknown): UsageCallsProjection {
+  const v = record(value); keys(v, ['schemaVersion', 'calls', 'totals', 'truncated', 'diagnostics']);
+  if (v.schemaVersion !== 1 || typeof v.truncated !== 'boolean') fail();
+  const calls = array(v.calls, USAGE_MAX_RECORDS).map(raw => {
+    const call = record(raw); keys(call, ['id', 'turnId', 'stepIndex', 'status', 'fingerprintChange'], ['request', 'step']);
+    assertUsageSessionId(call.turnId); integer(call.stepIndex);
+    if (call.id !== `${call.turnId}.${call.stepIndex}`) fail();
+    enumeration(call.status, ['pending', 'completed', 'failed', 'aborted', 'conflict']);
+    for (const kind of ['request', 'step'] as const) if (call[kind] !== undefined) {
+      const parsed = parseAgentUsageRecord(call[kind]);
+      if (parsed.recordType !== kind || parsed.turnId !== call.turnId || parsed.stepIndex !== call.stepIndex) fail();
+    }
+    const step = call.step as ModelStepUsageRecord | undefined;
+    if (call.status === 'conflict' ? step !== undefined : call.status !== (step?.outcome ?? 'pending')) fail();
+    const change = record(call.fingerprintChange); keys(change, ['status', 'reasons'], ['comparedWith']);
+    enumeration(change.status, ['first-observed', 'unchanged', 'changed', 'unavailable']);
+    const reasons = array(change.reasons, 3); reasons.forEach(reason => enumeration(reason, ['prefix', 'tools', 'prefix-kind']));
+    if (new Set(reasons).size !== reasons.length || (change.status === 'changed') !== (reasons.length > 0)) fail();
+    if (change.comparedWith !== undefined && (typeof change.comparedWith !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u.test(change.comparedWith) || change.comparedWith.includes('..'))) fail();
+    if (['changed', 'unchanged'].includes(change.status as string) !== (change.comparedWith !== undefined)) fail();
+    if (!call.request && !call.step && call.status !== 'conflict') fail();
+    return cloneValidatedContract(call) as UsageInspectorCall;
+  });
+  if (new Set(calls.map(call => call.id)).size !== calls.length) fail();
+  const diagnostics = array(v.diagnostics, USAGE_PROJECTION_DIAGNOSTICS.length);
+  diagnostics.forEach(d => enumeration(d, [...USAGE_PROJECTION_DIAGNOSTICS]));
+  const totals = usageCallTotals(calls, incompleteUsageHistory(v.truncated, diagnostics));
+  if (stableUsageJson(v.totals) !== stableUsageJson(totals)) fail();
+  return { schemaVersion: 1, calls, totals, truncated: v.truncated, diagnostics: diagnostics as UsageCallsProjection['diagnostics'] };
+}
+function usageCallTotals(calls: UsageInspectorCall[], incomplete = false): UsageCallsProjection['totals'] {
+  const usages = calls.map(call => call.status === 'conflict' ? normalizeModelUsage() : call.step?.actualUsage ?? normalizeModelUsage());
+  const totals = aggregateModelUsage(usages);
+  if (incomplete && totals.actualCoverage === 'complete') {
+    totals.actualCoverage = 'partial'; totals.actualUsage.availability = 'partial';
+  }
+  return { callCount: calls.length, reportedCalls: calls.filter(call => call.step).length, ...totals };
+}
+function incompleteUsageHistory(truncated: boolean, diagnostics: readonly unknown[]): boolean {
+  return truncated || diagnostics.some(diagnostic => ['truncated-tail', 'invalid-record', 'read-failed', 'size-limit', 'unmatched-records'].includes(diagnostic as string));
+}
+function matchesUsageOperation(operation: UsageOperation | undefined, filter: UsageCallFilter): boolean {
+  return operation !== undefined && Object.entries(filter).every(([key, expected]) => expected === undefined || operation[key as keyof UsageOperation] === expected);
+}
+function usageCallTime(call: UsageInspectorCall): string { return call.step?.timing?.startedAt ?? call.request?.createdAt ?? call.step?.createdAt ?? ''; }
+function stableUsageJson(value: unknown): string { return JSON.stringify(sortUsageValue(value)); }
+function sortUsageValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortUsageValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sortUsageValue(item)]));
+  return value;
 }
 function parseRequest(value: unknown): void {
   const v = record(value); keys(v, ['messageCount', 'messages', 'estimatedMessageTokens', 'estimatedRequestTokens', 'toolCount', 'estimator', 'estimationScope']);

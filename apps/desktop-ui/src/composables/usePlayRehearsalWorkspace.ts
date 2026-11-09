@@ -338,6 +338,7 @@ export function usePlayRehearsalWorkspace(
     queue,
     steps,
     stepRun,
+    usagePresentation: rehearsal.usagePresentation,
     perception,
     visibleEvents,
     result,

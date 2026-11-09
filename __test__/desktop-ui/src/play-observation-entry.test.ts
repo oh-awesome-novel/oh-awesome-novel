@@ -139,7 +139,7 @@ function advanceRevision() {
   detail.snapshot.worldClock.revision++;
 }
 async function mountWorkspace() {
-  wrapper = mount(PlayWorkspace, { attachTo: document.body, props: {
+  wrapper = mount(PlayWorkspace, { attachTo: document.body, global: { stubs: { PlayPhaseMemory: true } }, props: {
     workspace: { name: 'notes', path: '/novels/notes', valid: true }, providerConfigured: true,
   } });
   await flushPromises();

@@ -95,7 +95,7 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
               <span>{{ block.speakerName || blockKindLabel(block.kind) }}</span>
               <small>{{ blockKindLabel(block.kind) }}<template v-if="block.projection === 'directorOnly'"> · Director only</template></small>
             </header>
-            <p>{{ block.content }}</p>
+            <p :data-usage-step="step.id">{{ block.content }}</p>
           </section>
         </div>
         <p v-else class="play-rehearsal-step-empty">No narrative block prepared yet.</p>

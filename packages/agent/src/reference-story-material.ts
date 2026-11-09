@@ -1,3 +1,5 @@
+import { createSpecializedUsageTracker } from './specialized-usage-tracker.js';
+import type { UsageOperation } from '@oh-awesome-novel/core/agent-usage';
 import {
   NoObjectGeneratedError,
   NoOutputGeneratedError,
@@ -39,7 +41,7 @@ import type {
 import type {
   ReferenceDeconstructionModelResolver,
 } from './reference-deconstruction.js';
-import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
+import { extractAiSdkUsageFields } from './usage-governance.js';
 
 export const MAX_REFERENCE_MATERIAL_COVERAGE_OUTPUT_TOKENS = 2_048 as const;
 export const MAX_REFERENCE_MATERIAL_CHAPTER_OUTPUT_TOKENS = 8_192 as const;
@@ -96,6 +98,7 @@ export interface GenerateReferenceMaterialCoverageInput
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface ReferenceMaterialChapterPromptInput {
@@ -112,6 +115,7 @@ export interface GenerateReferenceMaterialChapterInput
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface ReferenceMaterialReductionPromptInput {
@@ -130,6 +134,7 @@ export interface GenerateReferenceMaterialAggregateInput
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface GenerateReferenceMaterialProjectionInput
@@ -139,6 +144,7 @@ export interface GenerateReferenceMaterialProjectionInput
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface ReferenceStoryMaterialGenerationError {
@@ -372,6 +378,7 @@ export async function generateReferenceMaterialCoverage(
     abortSignal: input.abortSignal,
     workspaceRoot: input.workspaceRoot,
     usageSessionId: input.usageSessionId ?? normalized.runId,
+    usageOperation: input.usageOperation,
     sourceId: `reference:${input.selection.referenceId}:materialCoverage`,
     system: REFERENCE_MATERIAL_COVERAGE_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialCoveragePrompt(input),
@@ -415,6 +422,7 @@ export async function generateReferenceMaterialChapter(
     abortSignal: input.abortSignal,
     workspaceRoot: input.workspaceRoot,
     usageSessionId: input.usageSessionId ?? normalized.runId,
+    usageOperation: input.usageOperation,
     sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_CHAPTER_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialChapterPrompt(input),
@@ -460,6 +468,7 @@ export async function generateReferenceMaterialAggregate(
     abortSignal: input.abortSignal,
     workspaceRoot: input.workspaceRoot,
     usageSessionId: input.usageSessionId ?? normalized.runId,
+    usageOperation: input.usageOperation,
     sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_AGGREGATE_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialAggregatePrompt(input),
@@ -505,6 +514,7 @@ export async function generateReferenceMaterialProjection(
     abortSignal: input.abortSignal,
     workspaceRoot: input.workspaceRoot,
     usageSessionId: input.usageSessionId ?? normalized.runId,
+    usageOperation: input.usageOperation,
     sourceId: `reference:${normalized.unit.id}`,
     system: REFERENCE_MATERIAL_PROJECTION_SYSTEM_PROMPT,
     prompt: formatReferenceMaterialProjectionPrompt(input),
@@ -680,6 +690,7 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
   readonly sourceId?: string;
   readonly system: string;
   readonly prompt: string;
@@ -697,8 +708,11 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
       : failureResult('provider_error', error, true, input.stageLabel);
   }
   if (input.abortSignal?.aborted) return abortResult(input.abortSignal.reason);
+  const usageTracker = createSpecializedUsageTracker({ workspaceRoot: input.workspaceRoot, sessionId: input.usageSessionId, provider: input.providerConfig, usageOperation: input.usageOperation, systemPrompt: input.system, userPrompt: input.prompt, sourceId: input.sourceId ?? input.stageLabel, sourceKind: 'referenceStoryMaterial' });
   try {
     const result = await generateText({
+      onStepStart: usageTracker.onStepStart,
+      onStepEnd: usageTracker.onStepEnd,
       model,
       instructions: input.system,
       prompt: input.prompt,
@@ -708,33 +722,19 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
       maxRetries: 0,
     });
     if (input.abortSignal?.aborted) {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId: input.usageSessionId,
-        provider: input.providerConfig,
-        systemPrompt: input.system,
-        userPrompt: input.prompt,
-        sourceId: input.sourceId ?? input.stageLabel,
-        sourceKind: 'referenceStoryMaterial',
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'aborted',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'aborted',
+    });
       return abortResult(input.abortSignal.reason);
     }
     if (result.finishReason !== 'stop') {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId: input.usageSessionId,
-        provider: input.providerConfig,
-        systemPrompt: input.system,
-        userPrompt: input.prompt,
-        sourceId: input.sourceId ?? input.stageLabel,
-        sourceKind: 'referenceStoryMaterial',
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'failed',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'failed',
+    });
       return failureResult(
         'invalid_output',
         new Error(`${input.stageLabel} ended without a valid structured result.`),
@@ -742,14 +742,7 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
         input.stageLabel,
       );
     }
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId: input.usageSessionId,
-      provider: input.providerConfig,
-      systemPrompt: input.system,
-      userPrompt: input.prompt,
-      sourceId: input.sourceId ?? input.stageLabel,
-      sourceKind: 'referenceStoryMaterial',
+    await usageTracker.finish({
       rawUsage: extractAiSdkUsageFields(result.usage),
       finishReason: result.finishReason,
       outcome: 'completed',
@@ -760,14 +753,7 @@ async function generateStructured<OUTPUT, PARTIAL>(input: {
       finishReason: result.finishReason,
     };
   } catch (error) {
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId: input.usageSessionId,
-      provider: input.providerConfig,
-      systemPrompt: input.system,
-      userPrompt: input.prompt,
-      sourceId: input.sourceId ?? input.stageLabel,
-      sourceKind: 'referenceStoryMaterial',
+    await usageTracker.finish({
       rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
       finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
       outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',

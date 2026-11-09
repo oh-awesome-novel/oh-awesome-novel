@@ -12,10 +12,12 @@ import PlaySessionMigration from './PlaySessionMigration.vue';
 import TavernImportPanel from './TavernImportPanel.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import VisualNovelStage from './VisualNovelStage.vue';
-import PlayCompactionModal from './PlayCompactionModal.vue';
+import PlayPhaseMemory from './PlayPhaseMemory.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
 import PlayContextInspector from './context/PlayContextInspector.vue';
 import PlayMessageLog from './message-log/PlayMessageLog.vue';
+import DomainUsageInspector from '../usage/DomainUsageInspector.vue';
+import { useUsagePresentation } from '../../composables/useUsagePresentation';
 import PlayOutcomePanel from './outcome/PlayOutcomePanel.vue';
 import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
 import PlayRehearsalWorkspace from './rehearsal/PlayRehearsalWorkspace.vue';
@@ -84,6 +86,7 @@ const {
   canSteer,
   followUpControls,
   provisionalTurn,
+  usagePresentation,
   turnAnnouncement,
   timeAdvance,
   showSpoilers,
@@ -142,6 +145,7 @@ const {
   queue: rehearsalQueue,
   steps: rehearsalSteps,
   stepRun: rehearsalStepRun,
+  usagePresentation: rehearsalUsagePresentation,
   perception: rehearsalPerception,
   visibleEvents: rehearsalVisibleEvents,
   result: rehearsalResult,
@@ -172,6 +176,20 @@ const {
   rebuildMemory: rebuildRehearsalMemory,
   reconcileStep: reconcileRehearsalStep,
 } = rehearsalWorkspace;
+
+const usageStage = shallowRef<HTMLElement>();
+const usageLens = computed(() => selectedSession.value?.schemaVersion === 5
+  ? rehearsalLens.value : showSpoilers.value ? 'director' as const : 'player' as const);
+const activeUsagePresentation = computed(() => {
+  const value = selectedSession.value?.schemaVersion === 5 ? rehearsalUsagePresentation.value : usagePresentation.value;
+  return value?.scope.domain === 'play' && value.scope.sessionId === selectedSessionId.value ? value : undefined;
+});
+const usageObservation = useUsagePresentation({
+  identity: () => `${props.workspace.path}:${selectedSessionId.value}:${usageLens.value}`,
+  run: () => activeUsagePresentation.value,
+  element: () => usageStage.value,
+});
+const usageRefreshKey = computed(() => `${selectedSession.value?.revision}:${activeUsagePresentation.value?.localId}:${activeUsagePresentation.value?.finished}:${usageObservation.revision.value}`);
 
 const rehearsalOutcomeBlocked = computed(() => Boolean(
   selectedSession.value?.schemaVersion === 5 &&
@@ -344,6 +362,7 @@ function acceptGuidedSession(session: PlaySession): void {
 
       <div
         v-else-if="selectedSession?.schemaVersion === 5"
+        ref="usageStage"
         class="play-rehearsal-stage"
       >
         <button type="button" @click="visualNovelOpen = !visualNovelOpen">{{ visualNovelOpen ? '隐藏演出回放' : '视觉小说回放' }}</button>
@@ -396,7 +415,9 @@ function acceptGuidedSession(session: PlaySession): void {
           @refresh="refreshContext"
           @decide="decideSourceDrift"
         />
+        <p v-if="selectedSession.schemaVersion === 5">排演沿用场景记忆与上下文窗口。阶段归档适用于沉浸式推演。</p>
         <PlayMessageLog :session-id="selectedSession.id" />
+        <DomainUsageInspector :workspace-key="workspace.path" :scope="{ domain: 'play', sessionId: selectedSession.id }" :lens="usageLens" :operation-id="activeUsagePresentation?.operationId" :refresh-key="usageRefreshKey" />
         <PlayOutcomePanel
           :session="selectedSession"
           :show-spoilers="showSpoilers"
@@ -422,9 +443,9 @@ function acceptGuidedSession(session: PlaySession): void {
         />
       </div>
 
-      <section v-else-if="selectedSession" class="play-stage-center" aria-label="Play stage">
+      <section v-else-if="selectedSession" ref="usageStage" class="play-stage-center" aria-label="Play stage">
+        <PlayPhaseMemory :workspace-key="workspace.path" :session="selectedSession" :lens="usageLens" :disabled="interactionBlocked" @director="showSpoilers = true" @continued="registerCreatedSession" />
         <div class="play-stage-actions">
-        <PlayCompactionModal :session="selectedSession" :disabled="interactionBlocked" @continued="registerCreatedSession" />
         <button v-if="!visualNovelOpen" type="button" @click="visualNovelOpen = true">视觉小说演出</button>
         </div>
         <VisualNovelStage v-if="visualNovelOpen"
@@ -436,6 +457,7 @@ function acceptGuidedSession(session: PlaySession): void {
           :turns="displaySession?.transcript ?? selectedSession.transcript"
           :choices="suggestedActions.map(action => action.userText)"
           :draft="provisionalTurn?.provisionalText"
+          :usage-operation-id="provisionalTurn?.turnId"
           :has-more-before="transcriptWindow?.hasMoreBefore"
           :loading-earlier="loadingEarlierTranscript"
           @load-earlier="loadEarlierTranscript"
@@ -504,6 +526,7 @@ function acceptGuidedSession(session: PlaySession): void {
           @decide="decideSourceDrift"
         />
         <PlayMessageLog :session-id="selectedSession.id" />
+        <DomainUsageInspector :workspace-key="workspace.path" :scope="{ domain: 'play', sessionId: selectedSession.id }" :lens="usageLens" :operation-id="activeUsagePresentation?.operationId" :refresh-key="usageRefreshKey" />
         <PlayHistoryControls
           :checkpoints="historyCheckpoints"
           :session-revision="selectedSession.revision"

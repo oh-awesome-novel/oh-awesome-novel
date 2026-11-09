@@ -25,6 +25,7 @@
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^21.0.4",
     "typescript": "~6.0.3",
+    "undici": "^7.29.0",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
     "vite-plus": "1.4.0",
     "vue-tsc": "^3.3.13"

@@ -15,6 +15,7 @@ import type {
   PlayTurnStreamEvent,
   PlayTurnStreamOptions,
 } from './useWorkspaceApi';
+import type { UsagePresentationRun } from './useUsagePresentation';
 
 export type PlayTurnRunPhase =
   | 'starting'
@@ -105,6 +106,7 @@ const busyPhases: ReadonlySet<PlayTurnRunPhase> = new Set([
 
 export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
   const currentRun = shallowRef<PlayProvisionalTurn>();
+  const usagePresentation = shallowRef<UsagePresentationRun>();
   const announcement = shallowRef('');
   const activeConnection = shallowRef<{
     localId: string;
@@ -169,6 +171,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     clearTerminalRun();
     seenEventIds.clear();
     const localId = createLocalRunId();
+    usagePresentation.value = { localId, scope: { domain: 'play', sessionId: input.sessionId }, startedAtMs: performance.now(), finished: false, responseIds: [] };
     currentRun.value = {
       localId,
       sessionId: input.sessionId,
@@ -268,6 +271,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         }
       }
     } finally {
+      if (usagePresentation.value?.localId === localId && outcome && outcome !== 'unknown') {
+        usagePresentation.value = { ...usagePresentation.value, finished: true };
+      }
       if (
         activeConnection.value?.localId === localId
         && activeConnection.value.controller === controller
@@ -385,6 +391,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       ...(typeof patch === 'function' ? patch(run) : patch),
     };
     currentRun.value = nextRun;
+    if (usagePresentation.value?.localId === localId && nextRun.turnId) {
+      usagePresentation.value = { ...usagePresentation.value, operationId: nextRun.turnId };
+    }
     if (nextRun.statusMessage !== run.statusMessage) {
       announcement.value = nextRun.statusMessage;
     }
@@ -590,6 +599,12 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       return;
     }
     appliedCommitTurnIds.add(turnId);
+    if (usagePresentation.value?.operationId === turnId) {
+      const head = session.turnArtifacts.find(artifact => artifact.id === session.selectedTurnIds.at(-1));
+      usagePresentation.value = { ...usagePresentation.value, finished: true,
+        responseIds: (head?.messages ?? []).flatMap(message => message.id && !['user', 'player'].includes(message.speaker.toLowerCase()) ? [message.id] : []),
+      };
+    }
     options.onCommitted(session);
   }
 
@@ -612,6 +627,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
 
   return {
     run: readonly(currentRun),
+    usagePresentation: readonly(usagePresentation),
     announcement: readonly(announcement),
     busy,
     canStop,

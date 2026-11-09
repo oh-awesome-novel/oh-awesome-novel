@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { TextBeat } from '@oh-awesome-novel/core/text-speaker-parser';
-const props = defineProps<{ beat?: TextBeat }>();
+const props = defineProps<{ beat?: TextBeat; usageOperationId?: string; usageMessageId?: string }>();
 const emit = defineEmits<{ next: [] }>();
 const count = ref(0);
 const speakerColor = computed(() => { let hue = 0; for (const char of props.beat?.speaker ?? '') hue = (hue * 31 + char.charCodeAt(0)) % 360; return `hsl(${hue} 65% 76%)`; });
@@ -16,7 +16,7 @@ defineExpose({ advance });
 <template>
   <button type="button" class="vn-textbox" aria-label="显示全文或下一句" @click="advance">
     <strong v-if="beat?.speaker" class="vn-name" :style="{ color: speakerColor }">{{ beat.speaker }}</strong>
-    <span :class="{ narration: !beat?.isDialogue }">{{ text || '…' }}</span>
+    <span :class="{ narration: !beat?.isDialogue }" :data-usage-operation="text ? usageOperationId : undefined" :data-usage-message="text ? usageMessageId : undefined">{{ text || '…' }}</span>
     <small>空格 / Enter · 显示全文 / 下一句</small>
   </button>
 </template>

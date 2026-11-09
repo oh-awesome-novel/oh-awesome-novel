@@ -87,6 +87,8 @@
 - [1350 Steer, Follow-up And Model Reasoning Visibility](1350.md)
 - [1370 Parallel Reference Deconstruction](1370.md)
 - [1380 Reference Source Exploration](1380.md)
+- [1390 Play And Reference Usage Inspector](1390.md)
+- [1400 Play Phase Memory And Recall](1400.md)
 
 ## Needs Review Tasks
 
@@ -98,14 +100,12 @@
 
 ## Planned Tasks
 
-- [1390 Play And Reference Usage Inspector](1390.md)
-- [1400 Play Phase Memory And Recall](1400.md)
 - [1410 Reference Material Adoption Workbench](1410.md)
 - [1420 Play To Chapter Writing Flow](1420.md)
 - [1430 Evidence-backed Chapter Review Workbench](1430.md)
 - [1440 Revision Impact Review](1440.md)
 
-当前共 **60 Completed、4 Needs Review、6 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。首轮优先 1390/1400/1410，第二轮 1420/1430/1440 按作者使用反馈排序；1360 handoff 的来源漂移收口仍留在原任务。
+当前共 **62 Completed、4 Needs Review、4 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400 已交付，首轮余下 1410，第二轮 1420/1430/1440 按作者使用反馈排序；1360 handoff 的来源漂移收口仍留在原任务。
 
 Planned 表示本次已规划但尚未实现。其余剩余工作按 Needs Review tasks 的具体 scope 推进；研究材料和历史计划中的未勾选项不能直接视为待办。
 

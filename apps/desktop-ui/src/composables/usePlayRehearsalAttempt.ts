@@ -690,6 +690,7 @@ export function usePlayRehearsalAttempt<
     currentStep,
     selectedSteps,
     stepRun: actorStep.run,
+    usagePresentation: actorStep.usagePresentation,
     committedResult: readonly(committedResult),
     loading: readonly(loading),
     mutating: readonly(mutating),

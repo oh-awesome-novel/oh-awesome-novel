@@ -79,6 +79,21 @@ describe('standard Agent usage governance', () => {
     expect(result.stoppedReason).toBe('completed'); expect(events).toContainEqual({ type: 'usage_warning', code: 'persistence-unavailable' });
   });
 
+  it('records a host-correlated frozen Play request and derived source evidence without double allocating tokens', async () => {
+    const root = await workspace();
+    await runNovelAgentTurn({ workspaceRoot: root, workspace: { workspaceRoot: root }, request: '继续当前场景', capability: 'novel.play_scene',
+      frozenSystemPrompt: 'Frozen Play rules', usageSessionId: 'play-session-1',
+      usageOperation: { domain: 'play', operationId: 'world-run-1', sessionId: 'session-1', runId: 'world-run-1', stage: 'world', contextTraceId: 'turn-1' },
+      usageContextSources: [{ sourceId: 'play-source-1', kind: 'world', path: 'world/rules.md', sourceHash: 'a'.repeat(64), budgetLayer: 'L2', semanticBoundary: 'compressible', outcome: 'selected', reason: 'selected', originalChars: 25, modelVisibleChars: 20, estimatedTokens: 7, estimator: 'utf8-bytes-div-3-v1' }],
+      providerConfig: { ...provider, models: [{ id: 'test', contextWindow: 64_000, maxOutputTokens: 1000 }] }, resolveModel: () => model(),
+    });
+    const history = await readAgentGovernanceHistory(root, 'play-session-1');
+    expect(history.diagnostics).toEqual([]);
+    expect(history.records.find(record => record.recordType === 'request')).toMatchObject({ operation: { operationId: 'world-run-1', contextTraceId: 'turn-1' }, fingerprint: { prefixKind: 'frozen-system' },
+      sources: expect.arrayContaining([expect.objectContaining({ sourceId: 'play-source-1', attribution: 'derived', estimatedTokens: 0, modelVisibleChars: 20 })]) });
+    expect(history.records.find(record => record.recordType === 'step')).toMatchObject({ timing: { startedAt: expect.any(String), completedAt: expect.any(String), firstResponseAt: expect.any(String) } });
+  });
+
   it('records content-free usage and egress across Reference Quick Preview and Play Rehearsal pipelines (G7)', async () => {
     const root = await workspace();
     const previewJson = JSON.stringify({

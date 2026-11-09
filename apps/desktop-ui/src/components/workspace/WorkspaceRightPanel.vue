@@ -113,6 +113,8 @@ const emit = defineEmits<{
     />
     <ReferenceImportTab
       v-else-if="activeTab === 'references'"
+      :key="workspacePath"
+      :workspace-key="workspacePath"
       :writing-profile-state="writingProfileState"
       @review-pending-action="emit('reviewPendingActionId', $event)"
     />

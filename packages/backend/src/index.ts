@@ -1,3 +1,7 @@
+import { selectPlayPhaseEvidence } from '@oh-awesome-novel/agent';
+import { playArchiveQuestion, playPhaseOverview } from './play-phase-memory.js';
+import { buildPlayPhaseCatalog, recallPlayPhase } from '@oh-awesome-novel/core';
+import type { PlayPhaseQuery, PlayCompactionPreview } from '@oh-awesome-novel/core';
 import { playContextHistory } from './play-context-history.js';
 export { playContextHistory, stablePlayHistoryWindow } from './play-context-history.js';
 import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
@@ -10,12 +14,13 @@ import { loadCanonicalWritingContext } from './canonical-writing-context.js';
 import type { CanonicalWritingContext } from './canonical-writing-context.js';
 export { loadCanonicalWritingContext } from './canonical-writing-context.js';
 import { createForgeHandlers } from './forge.js';
+import { createUsageInspectorHandlers, playUsageSources } from './usage-inspector.js';
 export { createForgeHandlers, forgeCanonicalFiles, forgeCanonicalPaths, assertForgePreviewFresh, assertForgeActionFresh } from './forge.js';
 import { assertForgeActionFresh, assertForgePreviewFresh } from './forge';
 import { attachPlayCharacterRoster } from '@oh-awesome-novel/core';
 import { createNovelLintHandlers } from './novel-lint';
 import { generateNovelLintReview } from '@oh-awesome-novel/agent';
-import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereeTurnContext, buildPlayCompactionPrompt, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
+import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereeTurnContext, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
 import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import { assertManuscriptImportPreview, assertTavernImportPreviewFresh } from '@oh-awesome-novel/tools';
@@ -651,6 +656,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       : {}),
   });
   state.referenceMaterialAdoption = referenceMaterialAdoption;
+  const usageInspector = createUsageInspectorHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    async getModelRuntime() {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('Configure a provider before starting the comparison.');
+      return { providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
+    },
+  });
 
   const guardOptions = {
     authToken: options.authToken,
@@ -925,6 +939,42 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleListPlaySessionSummaries(options, state, context));
   app.post('/api/workspace/play-sessions', (context) =>
     handleCreatePlaySession(options, state, context));
+  app.get('/api/workspace/play-sessions/:id/phases', async context => {
+    const root = requireActiveWorkspaceRoot(options, state);
+    const session = await readPlaySessionFiles(root, context.req.param('id'));
+    if (session.schemaVersion !== 4) return jsonResponse(context, 409, { error: '排演使用场景记忆。' });
+    await ensureProviderConfigLoaded(options, state);
+    return context.json(await playPhaseOverview(root, session, options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState)));
+  });
+  app.post('/api/workspace/play-sessions/:id/phases/recall', async context => {
+    const root = requireActiveWorkspaceRoot(options, state);
+    const session = await readPlaySessionFiles(root, context.req.param('id'));
+    const input = await readJsonBody(context);
+    if (session.schemaVersion !== 4 || session.revision !== input.revision || session.selectedTurnIds.at(-1) !== input.headId) {
+      return jsonResponse(context, 409, { error: '当前分支已改变或不支持阶段检索。' });
+    }
+    if (Object.keys(input).some(key => !['sessionId', 'revision', 'headId', 'phaseSessionId', 'lens', 'query', 'firstTurn', 'lastTurn', 'selectEvidence'].includes(key))) {
+      return jsonResponse(context, 400, { error: '未知检索参数。' });
+    }
+    const catalog = await buildPlayPhaseCatalog(session, id => readPlaySessionFiles(root, id));
+    let window;
+    try { window = recallPlayPhase(session, catalog, input as unknown as PlayPhaseQuery); }
+    catch (error) { return jsonResponse(context, 400, { error: error instanceof Error ? error.message : '阶段范围无效。' }); }
+    if (window.scope.selectEvidence) {
+      await ensureProviderConfigLoaded(options, state);
+      const provider = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!provider) return jsonResponse(context, 409, { error: '请先配置模型。' });
+      try {
+        window.selectedMessageIds = await selectPlayPhaseEvidence({ window, workspaceRoot: root, provider,
+          resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), signal: context.req.raw.signal });
+      } catch { return jsonResponse(context, 422, { error: '模型未能从本次窗口选择证据。' }); }
+      const current = await readPlaySessionFiles(root, session.id);
+      if (requireActiveWorkspaceRoot(options, state) !== root || current.revision !== session.revision || current.selectedTurnIds.at(-1) !== window.scope.headId) {
+        return jsonResponse(context, 409, { error: '检索期间分支已改变，请重新选择。' });
+      }
+    }
+    return context.json(window);
+  });
   app.post('/api/workspace/play-sessions/:id/compact', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, false));
   app.post('/api/workspace/play-sessions/:id/compact/continue', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, true));
   app.post('/api/workspace/play-sessions/:id/attempts', (context) =>
@@ -1194,6 +1244,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return jsonResponse(context, 400, { error: 'Usage limit must be 1–100.' });
     return jsonResponse(context, 200, await readAgentGovernanceHistory(workspaceRoot, id, limit));
   });
+  app.get('/api/workspace/play-sessions/:id/usage', context => usageInspector.inspect(context, { domain: 'play', sessionId: context.req.param('id') }));
+  app.post('/api/workspace/play-sessions/:id/usage/presentation', context => usageInspector.presentation(context, { domain: 'play', sessionId: context.req.param('id') }));
+  app.get('/api/workspace/references/:referenceId/deconstruction-runs/:runId/usage', context => usageInspector.inspect(context, { domain: 'reference', referenceId: context.req.param('referenceId'), runId: context.req.param('runId') }));
+  app.post('/api/workspace/references/:referenceId/deconstruction-runs/:runId/usage/presentation', context => usageInspector.presentation(context, { domain: 'reference', referenceId: context.req.param('referenceId'), runId: context.req.param('runId') }));
+  app.get('/api/workspace/usage-probes/options', context => usageInspector.probeOptions(context));
+  app.post('/api/workspace/usage-probes', context => usageInspector.createProbe(context));
+  app.get('/api/workspace/usage-probes/:id', context => usageInspector.getProbe(context, context.req.param('id')));
+  app.post('/api/workspace/usage-probes/:id/run', context => usageInspector.runProbe(context, context.req.param('id')));
+  app.post('/api/workspace/usage-probes/:id/cancel', context => usageInspector.cancelProbe(context, context.req.param('id')));
   app.post('/api/agent/chat', (context) => handleAgentChat(options, state, context));
   app.post('/api/agent/chat/:sessionId/steer', (context) =>
     handleSteerAgentTurn(options, state, context.req.param('sessionId') ?? '', context));
@@ -4509,6 +4568,8 @@ async function createPlayWorldRefereeTurnStreamResponse(
               actionKind,
               ...(timeAdvance ? { timeAdvance } : {}),
               abortSignal: run.abortController.signal,
+              usageOperation: { domain: 'play', operationId: run.turnId, sessionId: id, runId: run.turnId, stage: 'world', contextTraceId: execution.expectedArtifactId },
+              usageContextSources: playUsageSources(activatedSourceContext.sources),
               onNarrativeDelta: (delta) => emit('play.narrative.delta', {
                 delta,
                 provisional: true,
@@ -4772,6 +4833,8 @@ interface StreamPlayRefereeTextInput {
   actionKind: PlayActionKind;
   timeAdvance?: PlayRelativeTimeAdvance;
   abortSignal: AbortSignal;
+  usageOperation: import('@oh-awesome-novel/core/agent-usage').UsageOperation;
+  usageContextSources: import('@oh-awesome-novel/core/agent-usage').UsageSourceEvidence[];
   onNarrativeDelta(delta: string): void;
   onNarrativeReset(): void;
   /** Model thinking; only the debug message log consumes it. */
@@ -4857,6 +4920,8 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     // capability keyword inference would pick a canonical write capability.
     capability: 'novel.play_scene',
     usageSessionId: `play-${input.session.id}`,
+    usageOperation: input.usageOperation,
+    usageContextSources: input.usageContextSources,
     abortSignal: input.abortSignal,
   })) {
     if (event.type === 'message_delta') {
@@ -5053,6 +5118,8 @@ async function handlePlayWorldRefereeTurn(
         priorMessages: playContinuationMessages(session),
         capability: 'novel.play_scene',
         usageSessionId: `play-${session.id}`,
+        usageOperation: { domain: 'play', operationId: `world-${randomUUID()}`, sessionId: session.id, stage: 'world' },
+        usageContextSources: playUsageSources(activatedSourceContext.sources),
         session: { metadata: { title: `Play ${session.id}` } },
       });
       refereeText = result.assistantMessage?.content?.trim() ?? '';
@@ -9048,6 +9115,10 @@ export type {
 } from './reference-material-adoption-preview.js';
 export { BACKEND_AUTH_TOKEN_HEADER } from './request-guard.js';
 
+function archiveReviewId(preview: unknown) {
+  return `play-archive-${createHash('sha256').update(JSON.stringify(preview)).digest('hex').slice(0, 24)}`;
+}
+
 /** Read-only model request; continuation writes only Play-local snapshots through the existing staged writer. */
 async function handlePlayCompaction(options: NovelBackendOptions, state: BackendState, id: string, context: NovelBackendContext, continueSession: boolean): Promise<Response> {
   const workspaceRoot = requireActiveWorkspaceRoot(options, state);
@@ -9059,43 +9130,72 @@ async function handlePlayCompaction(options: NovelBackendOptions, state: Backend
     const session = await readPlaySessionFiles(workspaceRoot, id);
     if (session.schemaVersion !== 4 || !session.selectedTurnIds.length) return jsonResponse(context, 409, { error: 'Archive requires a committed immersive session.' });
     if (body.baseRevision !== session.revision) return jsonResponse(context, 409, { error: 'Play revision changed; reload and retry.' });
+    const activationFingerprint = async (current: PlaySession) => {
+      const drift = await inspectPlaySourceDriftStatus(workspaceRoot, current);
+      if (drift.overall !== 'current' && !drift.activeResolution) throw new Error('归档来源已改变，请先处理来源漂移。');
+      return createHash('sha256').update(JSON.stringify(drift.sources)).digest('hex');
+    };
+    const activationHash = await activationFingerprint(session);
     if (continueSession) {
       const stored = session.metadataExtensions.playCompactionPreview;
       if (!stored || typeof stored !== 'object') return jsonResponse(context, 409, { error: 'Generate and review an archive first.' });
       return await withPlaySessionFileTransaction(workspaceRoot, id, async transaction => {
         const current = await transaction.read();
         if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive continuation cancelled or workspace changed.' });
-        const continuationId = `play-archive-${createHash('sha256').update(JSON.stringify(stored)).digest('hex').slice(0, 24)}`;
-        const next = createCompactedPlaySession(current, stored as import('@oh-awesome-novel/core').PlayCompactionPreview, continuationId);
-        try {
-          const existing = await readPlaySessionFiles(workspaceRoot, continuationId);
-          if (JSON.stringify(existing.metadataExtensions.playCompaction) !== JSON.stringify(stored)) throw new Error('Archive continuation identity conflict.');
-          return jsonResponse(context, 200, { session: existing });
-        } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-        await writePlaySessionFiles(workspaceRoot, next, { expectedAbsent: true });
-        return jsonResponse(context, 200, { session: next });
+        if (!isDeepStrictEqual(current.metadataExtensions.playCompactionPreview, stored)) return jsonResponse(context, 409, { error: '归档预览已改变，请重新审阅。' });
+        const continuationId = archiveReviewId(stored);
+        const preview = stored as PlayCompactionPreview;
+        if (body.reviewedHash !== undefined && body.reviewedHash !== continuationId) throw new Error('已审阅的归档被替换，请重新审阅。');
+        const next = createCompactedPlaySession(current, preview, continuationId);
+        return withPlaySessionFileTransaction(workspaceRoot, continuationId, async target => {
+          if (preview.activationHash && preview.activationHash !== await activationFingerprint(current)) throw new Error('归档来源已改变，请重新生成。');
+          if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive continuation cancelled or workspace changed.' });
+          try {
+            const existing = await target.read();
+            if (!isDeepStrictEqual(existing.metadataExtensions.playCompaction, stored)) throw new Error('Archive continuation identity conflict.');
+            return jsonResponse(context, 200, { session: existing });
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          context.req.raw.signal.throwIfAborted();
+          await target.write(next, { expectedAbsent: true });
+          return jsonResponse(context, 200, { session: next });
+        });
       });
     }
-    const ask = async (instruction: string): Promise<string> => askInPlayContext(session, session.selectedTurnIds.at(-1)!, instruction, async question => {
-      if (options.runPlayTurn) return options.runPlayTurn({ workspaceRoot, session, request: question.request, userText: instruction, actionKind: 'do', abortSignal: context.req.raw.signal });
-      await ensureProviderConfigLoaded(options, state);
-      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+    const usageOperation = { domain: 'play' as const, operationId: `compact-${randomUUID()}`, sessionId: session.id, stage: 'compaction', contextTraceId: session.selectedTurnIds.at(-1)! };
+    // One immutable preview per source snapshot, including simultaneous reviewers.
+    const stored = session.metadataExtensions.playCompactionPreview as PlayCompactionPreview | undefined;
+    if (stored && stored.sourceRevision === session.revision && stored.activationHash === activationHash) {
+      createCompactedPlaySession(session, stored, session.id);
+      return jsonResponse(context, 200, { preview: stored, reviewedHash: archiveReviewId(stored) });
+    }
+    await ensureProviderConfigLoaded(options, state);
+    const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+    let omitted = 0;
+    const ask = async (repair = ''): Promise<string> => {
+      context.req.raw.signal.throwIfAborted();
+      const question = playArchiveQuestion(session, providerConfig, repair);
+      omitted = question.omittedHistoryTurns;
+      if (options.runPlayTurn) return options.runPlayTurn({ workspaceRoot, session, request: question.request, userText: question.request, actionKind: 'do', abortSignal: context.req.raw.signal });
       if (!providerConfig) throw new Error('Configure a provider before generating an archive.');
-      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, priorMessages: question.priorMessages, request: question.request, usageSessionId: `play-${session.id}`, abortSignal: context.req.raw.signal });
+      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, priorMessages: question.priorMessages, request: question.request, usageSessionId: `play-${session.id}`, usageOperation, abortSignal: context.req.raw.signal });
       return result.assistantMessage?.content ?? '';
-    });
-    const instruction = buildPlayCompactionPrompt(session);
-    let response = await ask(instruction);
-    let preview: ReturnType<typeof createPlayCompactionPreview>;
+    };
+    let response = await ask();
+    let preview: PlayCompactionPreview;
     try { preview = createPlayCompactionPreview(session, response); }
     catch (error) {
-      response = await ask(`${instruction}\n修正一次：${error instanceof Error ? error.message : String(error)}\n上次输出：${response}`);
+      response = await ask(`\n修正一次：${error instanceof Error ? error.message : String(error)}\n上次输出：${response}`);
       preview = createPlayCompactionPreview(session, response);
     }
-    if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive request cancelled or workspace changed.' });
-    const next = { ...session, metadataExtensions: { ...session.metadataExtensions, playCompactionPreview: preview } };
-    await writePlaySessionFiles(workspaceRoot, next, { expectedCurrentSession: session });
-    return jsonResponse(context, 200, { preview });
+    preview.activationHash = activationHash;
+    preview.omittedHistoryTurns = omitted;
+    return await withPlaySessionFileTransaction(workspaceRoot, id, async transaction => {
+      if (activationHash !== await activationFingerprint(session)) throw new Error('归档过程中来源已改变，请重新生成。');
+      if (context.req.raw.signal.aborted || requireActiveWorkspaceRoot(options, state) !== workspaceRoot) return jsonResponse(context, 409, { error: 'Archive request cancelled or workspace changed.' });
+      const next = { ...session, metadataExtensions: { ...session.metadataExtensions, playCompactionPreview: preview } };
+      await transaction.write(next, { expectedCurrentSession: session });
+      return jsonResponse(context, 200, { preview, reviewedHash: archiveReviewId(preview) });
+    });
   } catch (error) {
     return jsonResponse(context, error instanceof PlaySessionWriteConflictError ? 409 : 422, { error: error instanceof Error ? error.message : String(error) });
   } finally { state.activePlayTurns.delete(lockKey); }

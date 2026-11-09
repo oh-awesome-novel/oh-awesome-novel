@@ -1,3 +1,6 @@
+import { parsePhaseOverview, parsePhaseRecall } from './play-phase-memory';
+import type { PlayPhaseOverview, PlayPhaseQuery, PlayPhaseRecall } from './play-phase-memory';
+export type { PlayPhaseOverview, PlayPhaseQuery, PlayPhaseRecall } from './play-phase-memory';
 import { parseNovelLintScan, parseNovelLintReview } from './novel-lint';
 import type { NovelLintScan, LintReplacement } from '@oh-awesome-novel/core';
 import type { PlayCompactionPreview } from '@oh-awesome-novel/core';
@@ -6,6 +9,9 @@ import { normalizeStageSnapshot, type StageSnapshot } from '@oh-awesome-novel/co
 import { createForgeClientMethods } from './forge.js';
 import type { ForgeClientMethods } from './forge.js';
 export * from './forge.js';
+import { createUsageInspectorClientMethods } from './usage-inspector.js';
+import type { UsageInspectorClientMethods } from './usage-inspector.js';
+export * from './usage-inspector.js';
 import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs, comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
 export { resolveSummarySelection } from '@oh-awesome-novel/core/novel-copilot-contract';
 export { comparePlayIsoWorldTime, normalizePlayIsoWorldTime } from '@oh-awesome-novel/core/play-event-evidence';
@@ -1854,7 +1860,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethods {
+export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2037,8 +2043,10 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
   ): Promise<{ session: PlaySession; files: string[] }>;
   listPlaySessions(): Promise<{ sessions: PlaySession[] }>;
   listPlaySessionSummaries(): Promise<{ summaries: PlaySessionSummary[] }>;
-  compactPlaySession(id: string, baseRevision: number): Promise<{ preview: PlayCompactionPreview }>;
-  continueCompactedPlaySession(id: string, baseRevision: number): Promise<{ session: PlaySession }>;
+  getPlayPhases(id: string, signal?: AbortSignal): Promise<PlayPhaseOverview>;
+  recallPlayPhase(query: PlayPhaseQuery, signal?: AbortSignal): Promise<PlayPhaseRecall>;
+  compactPlaySession(id: string, baseRevision: number, signal?: AbortSignal): Promise<{ preview: PlayCompactionPreview; reviewedHash: string }>;
+  continueCompactedPlaySession(id: string, baseRevision: number, reviewedHash?: string, signal?: AbortSignal): Promise<{ session: PlaySession }>;
   createPlaySession(input: {
     id?: string;
     title: string;
@@ -2296,6 +2304,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   return {
     ...playRehearsalClient,
     ...createForgeClientMethods(requestJson),
+    ...createUsageInspectorClientMethods(requestJson),
     backendBaseUrl,
     listAgentUsageSessions: async () => {
       const value = await requestJson<unknown>('/api/workspace/agent-sessions');
@@ -2832,14 +2841,24 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     listPlaySessionSummaries: () =>
       requestJson<unknown>('/api/workspace/play-session-summaries')
         .then(parsePlaySessionSummaryListResponse),
-    compactPlaySession: (id, baseRevision) => requestJson<{ preview: PlayCompactionPreview }>(
+    getPlayPhases: (id, signal) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/phases`, { signal },
+    ).then(value => parsePhaseOverview(value, id)),
+    recallPlayPhase: (query, signal) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(query.sessionId, 'Play session id'))}/phases/recall`,
+      { method: 'POST', body: query, signal },
+    ).then(value => parsePhaseRecall(value, query)),
+    compactPlaySession: (id, baseRevision, signal) => requestJson<{ preview: PlayCompactionPreview; reviewedHash: string }>(
       `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/compact`,
-      { method: 'POST', body: { baseRevision } },
-    ),
-    continueCompactedPlaySession: (id, baseRevision) => requestJson<unknown>(
+      { method: 'POST', body: { baseRevision }, signal },
+    ).then(result => {
+      if (result.preview?.sourceSessionId !== id || result.preview.sourceRevision !== baseRevision || !/^play-archive-[a-f0-9]{24}$/u.test(result.reviewedHash)) throw new Error('归档预览与请求不一致。');
+      return result;
+    }),
+    continueCompactedPlaySession: (id, baseRevision, reviewedHash, signal) => requestJson<unknown>(
       `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/compact/continue`,
-      { method: 'POST', body: { baseRevision } },
-    ).then(value => { if (!isRecord(value) || !isRecord(value.session) || typeof value.session.id !== 'string') throw new Error('Invalid continuation response.'); return parsePlaySessionResponse(value, value.session.id); }),
+      { method: 'POST', body: { baseRevision, reviewedHash }, signal },
+    ).then(value => { if (!isRecord(value) || !isRecord(value.session) || typeof value.session.id !== 'string' || reviewedHash && value.session.id !== reviewedHash) throw new Error('Invalid continuation response.'); return parsePlaySessionResponse(value, value.session.id); }),
     createPlaySession: (input) => {
       const normalized = normalizePlaySessionCreateRequest(input);
       return requestJson<unknown>('/api/workspace/play-sessions', {

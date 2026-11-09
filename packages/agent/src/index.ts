@@ -1,9 +1,13 @@
+export { selectPlayPhaseEvidence } from './play-phase-recall.js';
 export { generateForgeText } from './forge-generation.js';
+export { runUsageCacheProbeCall } from './usage-cache-probe.js';
+export type { UsageCacheProbeCallInput } from './usage-cache-probe.js';
 import { createHash } from 'node:crypto';
 import { createContextEvidence, createProviderEgressSummary, createUsageGovernance, extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
 export { createContextEvidence, createProviderEgressSummary, recordSpecializedModelUsageTurn } from './usage-governance';
 export type { RecordSpecializedModelUsageTurnInput } from './usage-governance';
 import { normalizeModelUsage } from '@oh-awesome-novel/core/agent-usage';
+import type { UsageOperation, UsageSourceEvidence } from '@oh-awesome-novel/core/agent-usage';
 import type { CopilotRuntimeOptions } from '@oh-awesome-novel/runtime';
 import { assertModelRequestBudget, resolveContextBudget } from './context-budget';
 import type { ContextBudgetOptions } from './context-budget';
@@ -294,6 +298,8 @@ export interface AiSdkModelAdapterInput extends ContextBudgetOptions {
 
 export interface NovelAgentRuntimeInput extends AiSdkModelAdapterInput {
   usageSessionId?: string;
+  usageOperation?: UsageOperation;
+  usageContextSources?: UsageSourceEvidence[];
   prepareModelRequest?: CopilotRuntimeOptions['prepareModelRequest'];
   toolResultProvenance?: CopilotRuntimeOptions['toolResultProvenance'];
   workspaceRoot: string;
@@ -440,6 +446,7 @@ async function* streamAiSdkModelResponse(
   let reasoning = '';
   let observedUsage: ReturnType<typeof normalizeSdkUsage> | undefined;
   let observedFinishReason: string | undefined;
+  let firstResponseObserved = false;
   const modelFailure = (error: unknown) => {
     const failure = error instanceof Error ? error : new Error('Model generation failed.');
     return Object.assign(failure, { modelUsage: observedUsage, modelFinishReason: observedFinishReason });
@@ -448,6 +455,10 @@ async function* streamAiSdkModelResponse(
   // v7's textStream omits error parts. Observe the complete stream so a
   // provider failure still aborts the Runtime turn and discards its candidate.
   for await (const part of result.stream) {
+    if (!firstResponseObserved && ['text-start', 'text-delta', 'reasoning-start', 'reasoning-delta', 'tool-input-start', 'tool-call', 'finish-step'].includes(part.type)) {
+      firstResponseObserved = true;
+      yield { type: 'first_response', at: new Date().toISOString() };
+    }
     if (part.type === 'finish-step') { observedUsage = normalizeSdkUsage(part.usage); observedFinishReason = part.finishReason; }
     if (part.type === 'finish') { observedUsage = normalizeSdkUsage(part.totalUsage); observedFinishReason = part.finishReason; }
     if (part.type === 'error') throw modelFailure(part.error);
@@ -829,6 +840,8 @@ export const runNovelAgentTurn = async (
       provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
       budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
       sessionId: usageSessionId, contextPackage,
+      usageOperation: input.usageOperation, frozenSystemPrompt: input.frozenSystemPrompt,
+      usageContextSources: input.usageContextSources,
       drainReadSources: environment.drainReadSources,
     });
     const runtime = createNovelAgentRuntime({
@@ -901,6 +914,8 @@ export async function* streamNovelAgentTurn(
       provider: input.providerConfig, workspaceRoot: input.workspaceRoot,
       budgetOptions: { maxEstimatedInputTokens: input.maxEstimatedInputTokens, outputReserveTokens: input.outputReserveTokens },
       sessionId: usageSessionId, contextPackage,
+      usageOperation: input.usageOperation, frozenSystemPrompt: input.frozenSystemPrompt,
+      usageContextSources: input.usageContextSources,
       drainReadSources: environment.drainReadSources,
     });
     const runtime = createNovelAgentRuntime({

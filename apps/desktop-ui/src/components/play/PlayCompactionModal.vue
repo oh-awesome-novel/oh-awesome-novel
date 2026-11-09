@@ -9,16 +9,19 @@ const busy = shallowRef(false);
 const error = shallowRef('');
 const preview = shallowRef<PlayCompactionPreview>();
 let requestVersion = 0;
-onBeforeUnmount(() => { requestVersion++; });
+let controller: AbortController | undefined;
+let reviewedHash: string | undefined;
+onBeforeUnmount(close);
 watch(() => [props.session.id, props.session.revision], () => {
-  requestVersion++; busy.value = false; error.value = ''; preview.value = undefined; open.value = false;
+  close(); error.value = ''; preview.value = undefined; open.value = false;
 });
 async function generate() {
   const version = ++requestVersion;
+  controller?.abort(); controller = new AbortController();
   open.value = true; busy.value = true; error.value = ''; preview.value = undefined;
   try {
-    const result = await oanClient.compactPlaySession(props.session.id, props.session.revision);
-    if (version === requestVersion) preview.value = result.preview;
+    const result = await oanClient.compactPlaySession(props.session.id, props.session.revision, controller.signal);
+    if (version === requestVersion) { preview.value = result.preview; reviewedHash = result.reviewedHash; }
   } catch (e) { if (version === requestVersion) error.value = e instanceof Error ? e.message : String(e); }
   finally { if (version === requestVersion) busy.value = false; }
 }
@@ -27,12 +30,12 @@ async function continueStory() {
   const version = ++requestVersion;
   busy.value = true; error.value = '';
   try {
-    const result = await oanClient.continueCompactedPlaySession(props.session.id, preview.value.sourceRevision);
+    const result = await oanClient.continueCompactedPlaySession(props.session.id, preview.value.sourceRevision, reviewedHash, controller?.signal);
     if (version === requestVersion) { open.value = false; emit('continued', result.session); }
   } catch (e) { if (version === requestVersion) error.value = e instanceof Error ? e.message : String(e); }
   finally { if (version === requestVersion) busy.value = false; }
 }
-function close() { requestVersion++; busy.value = false; open.value = false; }
+function close() { controller?.abort(); requestVersion++; busy.value = false; open.value = false; }
 </script>
 <template>
   <button type="button" :disabled="disabled || busy || !session.selectedTurnIds.length" @click="generate">剧情归档</button>
@@ -42,6 +45,7 @@ function close() { requestVersion++; busy.value = false; open.value = false; }
     <p v-if="busy" role="status">正在核验与保存…</p>
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="preview">
+      <p v-if="preview.omittedHistoryTurns">本次摘要窗口省略本阶段较早的 {{ preview.omittedHistoryTurns }} 轮，原文可通过阶段检索查回。</p>
       <h3>人物</h3><p v-for="character in preview.data.characters" :key="character.name">{{ character.name }}：{{ character.currentSituation }} · {{ character.relationshipChange }}</p>
       <h3>经过</h3><ol><li v-for="(fact, index) in preview.data.chronicle" :key="index">{{ typeof fact === 'string' ? fact : fact.fact }}<q v-if="typeof fact !== 'string' && fact.quote !== fact.fact" class="evidence">{{ fact.quote }}</q></li></ol>
       <h3>未完的线</h3><ul><li v-for="(fact, index) in preview.data.unresolvedThreads" :key="index">{{ fact }}</li></ul>

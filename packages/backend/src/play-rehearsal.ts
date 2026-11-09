@@ -798,6 +798,7 @@ async function performPlayRedirectIntervention(input: {
     },
   };
   const abortController = new AbortController();
+  const redirectOperationId = `redirect-${randomUUID()}`;
   const logTarget = {
     workspaceRoot: input.workspaceRoot,
     sessionId: input.sessionId,
@@ -840,6 +841,7 @@ async function performPlayRedirectIntervention(input: {
         resolveModel: runtime.resolveModel,
         workspaceRoot: input.workspaceRoot,
         usageSessionId: `play-${input.sessionId}`,
+        usageOperation: { domain: 'play', operationId: redirectOperationId, sessionId: input.sessionId, attemptId: input.attemptId, stepId: input.stepRef, stage: 'actor' },
         abortSignal: abortController.signal,
       })) {
         if (event.type === 'text_delta') {
@@ -895,6 +897,7 @@ async function performPlayRedirectIntervention(input: {
       prompt: refereePrompt,
       workspaceRoot: input.workspaceRoot,
       usageSessionId: `play-${input.sessionId}`,
+      usageOperation: { domain: 'play', operationId: redirectOperationId, sessionId: input.sessionId, attemptId: input.attemptId, stepId: input.stepRef, stage: 'referee' },
       abortSignal: abortController.signal,
     });
     log.reasoning = result.reasoning ?? '';
@@ -985,6 +988,7 @@ function createStepStreamResponse(input: {
   };
 }): Response {
   let sequence = 0;
+  const generatedStepId = `step-${randomUUID()}`;
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -1137,6 +1141,7 @@ function createStepStreamResponse(input: {
               resolveModel: runtime.resolveModel,
               workspaceRoot: input.run.workspaceRoot,
               usageSessionId: `play-${input.run.sessionId}`,
+              usageOperation: { domain: 'play', operationId: input.run.stepRunId, runId: input.run.stepRunId, sessionId: input.run.sessionId, attemptId: input.run.attemptId, stepId: generatedStepId, stage: 'actor' },
               abortSignal: input.run.abortController.signal,
             })) {
               if (event.type === 'text_delta') {
@@ -1197,6 +1202,7 @@ function createStepStreamResponse(input: {
             prompt: refereePrompt,
             workspaceRoot: input.run.workspaceRoot,
             usageSessionId: `play-${input.run.sessionId}`,
+            usageOperation: { domain: 'play', operationId: input.run.stepRunId, runId: input.run.stepRunId, sessionId: input.run.sessionId, attemptId: input.run.attemptId, stepId: generatedStepId, stage: 'referee' },
             abortSignal: input.run.abortController.signal,
           });
           log.reasoning = result.reasoning ?? '';
@@ -1223,7 +1229,7 @@ function createStepStreamResponse(input: {
           settlementContribution,
         );
         throwIfAborted(input.run.abortController.signal);
-        const stepId = `step-${randomUUID()}`;
+        const stepId = generatedStepId;
         const block: NarrativeBlock = {
           id: `block-${randomUUID()}`,
           kind: 'characterAction',

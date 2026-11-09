@@ -1807,6 +1807,12 @@ async function runReferenceQuickPreviewProvider(
     assertReferenceWorkspaceUnchanged(options, reservation.active.workspaceRoot);
     const shared = {
       runId: reservation.active.runId,
+      usageOperation: {
+        domain: 'reference' as const, operationId: reservation.active.idempotencyKey,
+        referenceId: reservation.active.referenceId, runId: reservation.active.runId,
+        attemptId: reservation.active.reservationId,
+        stage: reservation.track === 'storyMaterial' ? 'materialCoverage' : 'quickPreview',
+      },
       providerConfig: runtime.providerConfig,
       resolveModel: runtime.resolveModel,
       selection: reservation.request.selection,
@@ -1897,6 +1903,13 @@ async function runReferenceFullUnitProvider(
     assertReferenceWorkspaceUnchanged(options, prepared.active.workspaceRoot);
     const shared = {
       runId: prepared.active.runId,
+      usageOperation: {
+        domain: 'reference' as const, operationId: prepared.active.idempotencyKey,
+        referenceId: prepared.active.referenceId, runId: prepared.active.runId,
+        unitId: execution.unit.id,
+        attemptId: [prepared.reservation, ...(prepared.reservation.batchUnits ?? [])].find(unit => unit.unitId === execution.unit.id)!.attemptId,
+        stage: execution.unit.stageId,
+      },
       providerConfig: runtime.providerConfig,
       resolveModel: runtime.resolveModel,
       unit: execution.unit,

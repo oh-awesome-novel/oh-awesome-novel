@@ -1,3 +1,5 @@
+import { createSpecializedUsageTracker } from './specialized-usage-tracker.js';
+import type { UsageOperation } from '@oh-awesome-novel/core/agent-usage';
 import {
   NoObjectGeneratedError,
   NoOutputGeneratedError,
@@ -15,7 +17,7 @@ import type {
 } from '@oh-awesome-novel/core';
 
 import type { ReferenceDeconstructionModelResolver } from './reference-deconstruction.js';
-import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance.js';
+import { extractAiSdkUsageFields } from './usage-governance.js';
 
 export const MAX_REFERENCE_MATERIAL_ADOPTION_INPUT_CHARACTERS = 160_000 as const;
 export const MAX_REFERENCE_MATERIAL_ADOPTION_OUTPUT_TOKENS = 12_288 as const;
@@ -40,6 +42,7 @@ export interface GenerateReferenceMaterialAdoptionInput {
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface ReferenceMaterialAdoptionGenerationError {
@@ -153,8 +156,11 @@ export async function generateReferenceMaterialAdoption(
   }
   const prompt = formatReferenceMaterialAdoptionPrompt(input.context);
   const sessionId = input.usageSessionId ?? `reference-adopt-${input.context.referenceId}`;
+  const usageTracker = createSpecializedUsageTracker({ workspaceRoot: input.workspaceRoot, sessionId, provider: input.providerConfig, usageOperation: input.usageOperation, systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT, userPrompt: prompt, sourceId: `reference:${input.context.referenceId}:materialAdoption`, sourceKind: 'referenceMaterialAdoption' });
   try {
     const result = await generateText({
+      onStepStart: usageTracker.onStepStart,
+      onStepEnd: usageTracker.onStepEnd,
       model,
       instructions: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
       prompt,
@@ -166,33 +172,19 @@ export async function generateReferenceMaterialAdoption(
       maxRetries: 0,
     });
     if (input.abortSignal?.aborted) {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId,
-        provider: input.providerConfig,
-        systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
-        userPrompt: prompt,
-        sourceId: `reference:${input.context.referenceId}:materialAdoption`,
-        sourceKind: 'referenceMaterialAdoption',
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'aborted',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'aborted',
+    });
       return aborted(input.abortSignal.reason);
     }
     if (result.finishReason !== 'stop') {
-      await recordSpecializedModelUsageTurn({
-        workspaceRoot: input.workspaceRoot,
-        sessionId,
-        provider: input.providerConfig,
-        systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
-        userPrompt: prompt,
-        sourceId: `reference:${input.context.referenceId}:materialAdoption`,
-        sourceKind: 'referenceMaterialAdoption',
-        rawUsage: extractAiSdkUsageFields(result.usage),
-        finishReason: result.finishReason,
-        outcome: 'failed',
-      });
+      await usageTracker.finish({
+      rawUsage: extractAiSdkUsageFields(result.usage),
+      finishReason: result.finishReason,
+      outcome: 'failed',
+    });
       return failed(
         'invalid_output',
         new Error('Reference Material adoption ended without a valid structured result.'),
@@ -200,14 +192,7 @@ export async function generateReferenceMaterialAdoption(
       );
     }
     const plan = createReferenceMaterialAdoptionPlan(input.context, result.output);
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId,
-      provider: input.providerConfig,
-      systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      sourceId: `reference:${input.context.referenceId}:materialAdoption`,
-      sourceKind: 'referenceMaterialAdoption',
+    await usageTracker.finish({
       rawUsage: extractAiSdkUsageFields(result.usage),
       finishReason: result.finishReason,
       outcome: 'completed',
@@ -218,14 +203,7 @@ export async function generateReferenceMaterialAdoption(
       finishReason: result.finishReason,
     };
   } catch (error) {
-    await recordSpecializedModelUsageTurn({
-      workspaceRoot: input.workspaceRoot,
-      sessionId,
-      provider: input.providerConfig,
-      systemPrompt: REFERENCE_MATERIAL_ADOPTION_SYSTEM_PROMPT,
-      userPrompt: prompt,
-      sourceId: `reference:${input.context.referenceId}:materialAdoption`,
-      sourceKind: 'referenceMaterialAdoption',
+    await usageTracker.finish({
       rawUsage: NoObjectGeneratedError.isInstance(error) ? extractAiSdkUsageFields(error.usage) : undefined,
       finishReason: NoObjectGeneratedError.isInstance(error) ? error.finishReason : undefined,
       outcome: input.abortSignal?.aborted ? 'aborted' : 'failed',

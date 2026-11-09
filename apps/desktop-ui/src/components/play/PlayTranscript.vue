@@ -85,7 +85,7 @@ function formatTime(value: string): string {
           <span v-if="turn.actionKind" class="play-action-pill">{{ turn.actionKind }}</span>
           <time :datetime="turn.createdAt">{{ formatTime(turn.createdAt) }}</time>
         </header>
-        <p>{{ turn.content }}</p>
+        <p :data-usage-message="turn.id">{{ turn.content }}</p>
       </article>
 
       <article
@@ -104,7 +104,7 @@ function formatTime(value: string): string {
           <p>{{ provisional.userText }}</p>
           <small>Old result preserved as a variant.</small>
         </div>
-        <p>{{ provisional.provisionalText || provisional.statusMessage }}</p>
+        <p :data-usage-operation="provisional.provisionalText ? provisional.turnId : undefined">{{ provisional.provisionalText || provisional.statusMessage }}</p>
         <footer class="play-provisional-status">
           <span>{{ provisional.statusMessage }}</span>
           <span v-if="provisional.error">{{ provisional.error }}</span>

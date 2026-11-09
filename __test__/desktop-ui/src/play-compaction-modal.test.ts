@@ -7,14 +7,14 @@ const api = vi.hoisted(() => ({ compactPlaySession: vi.fn(), continueCompactedPl
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
 const session = { id: 'play-one', revision: 2, selectedTurnIds: ['one', 'two'] } as PlaySession;
 const preview = { sourceRevision: 2, data: { characters: [], chronicle: ['停在门外。'], unresolvedThreads: [], currentScene: { timeAndPlace: '门外', immediateCrisis: '未记录' }, voiceAndStyle: { pov: '第三人称', rhythm: '慢', tonePoints: [] }, resourceState: { medicine: 0 } } };
-beforeEach(() => { vi.resetAllMocks(); api.compactPlaySession.mockResolvedValue({ preview }); api.continueCompactedPlaySession.mockResolvedValue({ session: { ...session, id: 'continued' } }); });
+beforeEach(() => { vi.resetAllMocks(); api.compactPlaySession.mockResolvedValue({ preview, reviewedHash: 'review-id' }); api.continueCompactedPlaySession.mockResolvedValue({ session: { ...session, id: 'continued' } }); });
 describe('Play archive review', () => {
   it('previews before explicit continuation and sends the reviewed revision', async () => {
     const wrapper = mount(PlayCompactionModal, { props: { session } });
     await wrapper.findAll('button')[0].trigger('click'); await flushPromises();
     expect(wrapper.text()).toContain('停在门外。'); expect(api.continueCompactedPlaySession).not.toHaveBeenCalled();
     await wrapper.findAll('button').find(b => b.text() === '确认存档并开启新阶段')!.trigger('click'); await flushPromises();
-    expect(api.continueCompactedPlaySession).toHaveBeenCalledWith('play-one', 2); expect(wrapper.emitted('continued')?.[0]?.[0]).toEqual(expect.objectContaining({ id: 'continued' })); wrapper.unmount();
+    expect(api.continueCompactedPlaySession).toHaveBeenCalledWith('play-one', 2, 'review-id', expect.any(AbortSignal)); expect(wrapper.emitted('continued')?.[0]?.[0]).toEqual(expect.objectContaining({ id: 'continued' })); wrapper.unmount();
   });
   it('closes with Escape without creating a continuation', async () => {
     const wrapper = mount(PlayCompactionModal, { props: { session } }); await wrapper.findAll('button')[0].trigger('click'); await flushPromises();

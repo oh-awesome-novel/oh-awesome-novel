@@ -1,3 +1,4 @@
+import type { UsageOperation } from '@oh-awesome-novel/core/agent-usage';
 import { streamText } from 'ai';
 
 import type { LlmProviderConfig } from '@oh-awesome-novel/core';
@@ -108,6 +109,7 @@ export interface StreamPlayRehearsalActorGenerationInput
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface CompletePlayRehearsalRefereeInput {
@@ -118,6 +120,7 @@ export interface CompletePlayRehearsalRefereeInput {
   readonly maxOutputCharacters?: number;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export interface PlayRehearsalActorGenerationError {
@@ -376,12 +379,19 @@ export async function* streamPlayRehearsalActorGeneration(
     return;
   }
 
+  const startedAt = new Date().toISOString();
+  let firstResponseAt: string | undefined;
+  let usageRecorded = false;
   const recordActorUsage = async (
     outcome: 'completed' | 'failed' | 'aborted',
     rawUsage?: ReturnType<typeof extractAiSdkUsageFields>,
     finishReason?: string,
   ) => {
+    if (usageRecorded) return;
+    usageRecorded = true;
     await recordSpecializedModelUsageTurn({
+      usageOperation: input.usageOperation,
+      timing: { startedAt, completedAt: new Date().toISOString(), ...(firstResponseAt ? { firstResponseAt } : {}) },
       workspaceRoot: input.workspaceRoot,
       sessionId: input.usageSessionId,
       provider: input.providerConfig,
@@ -406,6 +416,7 @@ export async function* streamPlayRehearsalActorGeneration(
     });
 
     for await (const part of result.stream) {
+      if (!firstResponseAt && ['text-start', 'text-delta', 'reasoning-start', 'reasoning-delta', 'tool-input-start', 'tool-call', 'finish-step'].includes(part.type)) firstResponseAt = new Date().toISOString();
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         await recordActorUsage('aborted');
         yield withReasoning(createAbortEvent(partialText, input.abortSignal.reason), reasoning);
@@ -508,12 +519,19 @@ export async function completePlayRehearsalReferee(
     return withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning);
   }
 
+  const startedAt = new Date().toISOString();
+  let firstResponseAt: string | undefined;
+  let usageRecorded = false;
   const recordRefereeUsage = async (
     outcome: 'completed' | 'failed' | 'aborted',
     rawUsage?: ReturnType<typeof extractAiSdkUsageFields>,
     finishReason?: string,
   ) => {
+    if (usageRecorded) return;
+    usageRecorded = true;
     await recordSpecializedModelUsageTurn({
+      usageOperation: input.usageOperation,
+      timing: { startedAt, completedAt: new Date().toISOString(), ...(firstResponseAt ? { firstResponseAt } : {}) },
       workspaceRoot: input.workspaceRoot,
       sessionId: input.usageSessionId,
       provider: input.providerConfig,
@@ -538,6 +556,7 @@ export async function completePlayRehearsalReferee(
     });
 
     for await (const part of result.stream) {
+      if (!firstResponseAt && ['text-start', 'text-delta', 'reasoning-start', 'reasoning-delta', 'tool-input-start', 'tool-call', 'finish-step'].includes(part.type)) firstResponseAt = new Date().toISOString();
       if (input.abortSignal?.aborted && part.type !== 'abort') {
         await recordRefereeUsage('aborted');
         return withReasoning(createRefereeAbortResult(partialText, input.abortSignal.reason), reasoning);

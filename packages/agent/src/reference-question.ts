@@ -1,3 +1,4 @@
+import type { UsageOperation } from '@oh-awesome-novel/core/agent-usage';
 import { Output, jsonSchema } from 'ai';
 import type { JSONSchema7 } from 'ai';
 
@@ -78,6 +79,7 @@ export interface GenerateReferenceQuestionAnswerInput {
   readonly abortSignal?: AbortSignal;
   readonly workspaceRoot?: string;
   readonly usageSessionId?: string;
+  readonly usageOperation?: UsageOperation;
 }
 
 export function formatReferenceQuestionPrompt(input: {
@@ -144,6 +146,7 @@ export async function generateReferenceQuestionAnswer(
     abortSignal: input.abortSignal,
     workspaceRoot: input.workspaceRoot,
     usageSessionId: input.usageSessionId,
+    usageOperation: input.usageOperation,
     sourceId: `reference:${input.referenceId}:question`,
     system: REFERENCE_QUESTION_SYSTEM_PROMPT,
     prompt: formatReferenceQuestionPrompt({ title: input.title, question, windows: input.windows }),
