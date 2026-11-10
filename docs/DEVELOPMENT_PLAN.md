@@ -62,7 +62,8 @@ M11  Extension System
 M12  Polish, Tests, Import / Export
 M13  Sandbox Change Engine And Unified Producers
 M14  Core Writing Loop And Proportionate Review
-M15  Long-session Play And Author Review Workflows (Planned)
+M15  Long-session Play And Author Review Workflows (In progress)
+M16  Play Canon Rewrite And Crossover Experience (Planned)
 ```
 
 ## M0. Documentation Foundation
@@ -229,6 +230,12 @@ Done criteria:
 Status: In progress（1390、1400 已交付）。Tasks：[1390](tasks/1390.md)–[1440](tasks/1440.md)，范围与先后关系见 [下一阶段功能路线图](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。
 
 目标：长局 Play 有可解释预算与可追溯回忆，大批参考材料可方便采用，推演转写、审稿和修改影响形成作者可控的正文维护闭环。先交付 1390/1400/1410，再按实际使用推进 1420/1430/1440；每项以自身的生产旅程、来源绑定与验收为准，不扩大 Runtime 或正式写入架构。
+
+## M16. Play Canon Rewrite And Crossover Experience
+
+Status: Planned。Tasks：[1450](tasks/1450.md)–[1510](tasks/1510.md)，范围、顺序与默认决定见 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)。
+
+目标：补上定位中“改写原作剧情”与“综漫”的一等支持，并消除 Play 日常使用的摩擦。先交付 1450（带要求的重演）与 1460（采纳表单、中文界面），再交付 1480（原作节点表与偏离账本）；1490 世界线比较、1500 综漫融合契约、1510 角色贴合度检查与 1470 按使用反馈排序。新增状态全部属于 Play 会话，正式写入仍只走既有审批链路；涉及结算协议、artifact 或 Launch Package 字段的变更先更新 [PLAY_MODE_SPEC](PLAY_MODE_SPEC.md)。
 
 ## MVP Vertical Slice
 

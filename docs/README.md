@@ -72,6 +72,7 @@ docs/
 ## 专题计划
 
 - [plans/NEXT_FEATURE_ROADMAP_2026-11-06.md](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)：下一阶段功能路线图，逐项去重参考项目建议，规划 1390–1440 的长局 Play、素材采纳、转写、审稿与修改影响分析。
+- [plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)：Play 模式强化规划（已立项为 1450–1510，均为 Planned）：五项体验改进与四项新功能设计，包括原作节点表与偏离账本、世界线比较、综漫融合契约和角色贴合度检查。
 - [plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md)：Play 世界事件（M1–M5）。
 - [plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md](plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md)：Play 引导入场与角色推演（F1–F4）。
 - [plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md](plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)：参考作品深度拆解（D0–D5）。
@@ -123,5 +124,7 @@ docs/
 2026-11-06 代码复核与修复：原 6 个 Needs Review 中，[1370](tasks/1370.md) 已闭环；[1380](tasks/1380.md) 的非对齐/跨分块 80 字复制漏报和提问状态已修复并补回归，两项均为 Completed。[1360](tasks/1360.md) 的 Forge 锁竞争已修复，仍保留 handoff 与真实模型/缓存验收；0580/1120/1230 的主要功能已实现，残余可靠性协议与外部验收分别保留。完整状态见 [任务索引](tasks/README.md#corrective-delivery-2026-11-06)。
 
 同日后续规划新增 [1390–1440](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md) 六项 Planned，当前任务统计为 60 Completed、4 Needs Review、6 Planned。规划保留既有写入/审批边界，不把参考项目的完整功能表移入 OAN。
+
+2026-11-10 按 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md) 新增 [1450–1510](tasks/README.md#planned-tasks) 七项 Planned；1390、1400 已于 2026-11-09 交付，当前任务统计为 62 Completed、4 Needs Review、11 Planned。
 
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。

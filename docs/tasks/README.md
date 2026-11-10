@@ -104,8 +104,17 @@
 - [1420 Play To Chapter Writing Flow](1420.md)
 - [1430 Evidence-backed Chapter Review Workbench](1430.md)
 - [1440 Revision Impact Review](1440.md)
+- [1450 Guided Retry And Extra Action Suggestions](1450.md)
+- [1460 Play Adoption Forms And Chinese Author Language](1460.md)
+- [1470 Play Launch Reuse And Relationship Panel](1470.md)
+- [1480 Canon Beats And Divergence Ledger](1480.md)
+- [1490 Worldline Compare](1490.md)
+- [1500 Crossover Fusion Contract](1500.md)
+- [1510 In-character Check](1510.md)
 
-当前共 **62 Completed、4 Needs Review、4 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400 已交付，首轮余下 1410，第二轮 1420/1430/1440 按作者使用反馈排序；1360 handoff 的来源漂移收口仍留在原任务。
+当前共 **62 Completed、4 Needs Review、11 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400 已交付，首轮余下 1410，第二轮 1420/1430/1440 按作者使用反馈排序；1360 handoff 的来源漂移收口仍留在原任务。
+
+2026-11-10 新增 1450–1510 七项 Play 强化任务（九项建议，其中 1460、1470 各合并两项），范围、顺序与依赖见 [Play 模式强化规划](../plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)：先做 1450/1460，再做 1480，其余按使用反馈排序。
 
 Planned 表示本次已规划但尚未实现。其余剩余工作按 Needs Review tasks 的具体 scope 推进；研究材料和历史计划中的未勾选项不能直接视为待办。
 
