@@ -640,11 +640,13 @@ export type {
 } from './play-world-momentum.js';
 export {
   LEGACY_PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+  MAX_PLAY_RETRY_GUIDANCE_LENGTH,
   PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION,
   PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
   assertSafePlayTurnArtifactId,
   createLegacyPlayTurnArtifacts,
   createPlayTurnArtifactId,
+  normalizePlayRetryGuidanceText,
   normalizePlayTurnArtifact,
   projectPlayTranscript,
   selectDefaultPlayTurnPath,
@@ -654,6 +656,7 @@ export type {
   PlayTurnArtifactKind,
   PlayTurnArtifactSchemaVersion,
   PlayTurnArtifact,
+  PlayTurnRetryGuidance,
 } from './play-turn-artifact.js';
 export {
   PlayWorldSettlementRetryError,
@@ -663,6 +666,7 @@ export {
 export type {
   PlayWorldSettlementRetryErrorCode,
   PlayWorldSettlementRetryPreparation,
+  PreparePlayWorldSettlementRetryOptions,
   SettlePlayWorldSettlementRetryInput,
   SettledPlayWorldSettlementRetry,
 } from './play-turn-retry.js';
@@ -1214,6 +1218,7 @@ export { TAVERN_PLAY_IMPORT_METADATA_KEY, prepareTavernCardPlaySession, resolveT
 export * from './play-turn-prompt.js';
 export * from './play-referee-protocol.js';
 export * from './play-turn-choices.js';
+export * from './play-extra-suggestions.js';
 export * from './play-compaction.js';
 
 export * from './novel-lint.js';

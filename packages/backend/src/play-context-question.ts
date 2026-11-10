@@ -9,13 +9,21 @@ export interface PlayContextQuestion {
 /** A read-only throwaway question scoped to an exact selected-branch turn. */
 export async function askInPlayContext(
   session: PlaySession,
-  turnId: string,
+  turnId: string | undefined,
   instruction: string,
   generate: (question: PlayContextQuestion) => Promise<string>,
 ): Promise<string> {
+  if (!instruction.trim()) throw new Error('Auxiliary instruction is required.');
+  if (turnId === undefined) {
+    // The virtual initial world has no committed prose yet; only the opening scene is player-visible.
+    if (session.selectedTurnIds.length) throw new Error('Auxiliary question turn must belong to the selected branch.');
+    return generate({ priorMessages: [], frozenSystemPrompt: getPlayFrozenSystemPrompt(session), request: [
+      `<开场>${session.sceneStart}</开场>`,
+      `<暂停推演：只读辅助请求>\n${instruction}\n</暂停推演：只读辅助请求>`,
+    ].join('\n') });
+  }
   const index = session.selectedTurnIds.indexOf(turnId);
   if (index < 0) throw new Error('Auxiliary question turn must belong to the selected branch.');
-  if (!instruction.trim()) throw new Error('Auxiliary instruction is required.');
   const ids = new Set(session.selectedTurnIds.slice(0, index + 1));
   const messages = session.turnArtifacts.filter(turn => ids.has(turn.id))
     .flatMap(turn => turn.messages.map(message => `【${message.speaker}】${message.content}`));

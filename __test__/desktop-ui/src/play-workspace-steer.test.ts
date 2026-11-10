@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   listPlayCheckpoints: vi.fn(),
   streamPlayWorldRefereeTurn: vi.fn(),
   cancelPlayWorldRefereeTurn: vi.fn(),
+  requestPlayExtraSuggestions: vi.fn(),
 }));
 
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
@@ -195,6 +196,76 @@ describe('PlayWorkspace steer and follow-up', () => {
     await flushPromises();
     expect(calls[2]).toMatchObject({ userText: '翻窗离开', baseRevision: 3 });
     expect(calls).toHaveLength(3);
+    wrapper.unmount();
+  });
+
+  it('generates temporary options when none exist, then "换一批" replaces them without touching the session', async () => {
+    const calls: TurnInput[] = [];
+    session = createSession(1);
+    const gate = deferred<void>();
+    api.requestPlayExtraSuggestions
+      .mockImplementationOnce(async () => {
+        await gate.promise;
+        return { suggestions: ['[look] 看看窗外', '[say] 问她要不要伞'], baseRevision: 1 };
+      })
+      .mockResolvedValueOnce({ suggestions: ['[move] 走向门口'], baseRevision: 1 });
+    api.streamPlayWorldRefereeTurn.mockImplementation(async function* (
+      _id: string,
+      input: TurnInput,
+      streamOptions?: PlayTurnStreamOptions,
+    ) {
+      calls.push(input);
+      streamOptions?.onTurnId?.('run-1');
+      yield startedEvent('run-1', input.baseRevision ?? 0);
+      session = createSession((input.baseRevision ?? 0) + 1);
+      yield committedEvent('run-1', session);
+    });
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    expect(wrapper.find('.play-choices').exists()).toBe(false);
+    const more = () => wrapper.get('.play-choice-more');
+    expect(more().text()).toBe('生成候选项');
+    await more().trigger('click');
+    await flushPromises();
+    // While the read-only call runs, the entry and the composer are locked.
+    expect(more().attributes('disabled')).toBeDefined();
+    expect(more().text()).toBe('正在生成…');
+    expect(api.requestPlayExtraSuggestions).toHaveBeenCalledWith('play-1', { baseRevision: 1 }, expect.any(AbortSignal));
+    gate.resolve();
+    await flushPromises();
+
+    expect(wrapper.findAll('.play-choice-text').map((choice) => choice.text())).toEqual(['看看窗外', '问她要不要伞']);
+    expect(wrapper.text()).toContain('临时建议，只在这里显示，不会保存。');
+    expect(more().text()).toBe('换一批');
+    await more().trigger('click');
+    await flushPromises();
+    expect(api.requestPlayExtraSuggestions).toHaveBeenLastCalledWith('play-1', {
+      baseRevision: 1,
+      existing: ['[look] 看看窗外', '[say] 问她要不要伞'],
+    }, expect.any(AbortSignal));
+    expect(wrapper.findAll('.play-choice-text').map((choice) => choice.text())).toEqual(['走向门口']);
+    expect(api.streamPlayWorldRefereeTurn).not.toHaveBeenCalled();
+
+    // A temporary option submits like any other option, then disappears with the new head.
+    await wrapper.findAll('.play-choice-pick')[0]!.trigger('click');
+    await flushPromises();
+    expect(calls[0]).toMatchObject({ userText: '走向门口', actionKind: 'move', baseRevision: 1 });
+    expect(wrapper.find('.play-choices').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('临时建议');
+    wrapper.unmount();
+  });
+
+  it('keeps the session usable when extra suggestions fail', async () => {
+    session = createSession(1);
+    api.requestPlayExtraSuggestions.mockRejectedValueOnce(new Error('模型没有给出新的行动建议。'));
+    const wrapper = mountWorkspace();
+    await flushPromises();
+    await wrapper.get('.play-choice-more').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('.play-choices-more-error').text()).toContain('模型没有给出新的行动建议。');
+    expect(wrapper.get('.play-choice-more').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get<HTMLTextAreaElement>('.play-composer textarea').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
 

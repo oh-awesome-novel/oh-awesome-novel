@@ -41,12 +41,12 @@ function updateText(
 <template>
   <form class="play-rehearsal-cast" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 2 / 3</span>
-      <h2 :id="`${prefix}-heading`">Cast</h2>
-      <p>The list order is the fixed actor queue. Initial knowledge is author-provided Play-local evidence.</p>
+      <span>第 2 / 3 步</span>
+      <h2 :id="`${prefix}-heading`">人物</h2>
+      <p>列表顺序就是固定的角色行动顺序。初始认知是作者提供的推演内依据。</p>
     </header>
 
-    <ol aria-label="Fixed actor order">
+    <ol aria-label="固定的角色顺序">
       <li v-for="(participant, index) in participants" :key="participant.participantRef">
         <header class="play-rehearsal-actor-heading">
           <strong>Actor {{ index + 1 }}</strong>
@@ -54,27 +54,27 @@ function updateText(
             <button
               type="button"
               :disabled="disabled || index === 0"
-              :aria-label="`Move actor ${index + 1} up`"
+              :aria-label="`把第 ${index + 1} 个角色上移`"
               @click="emit('moveParticipant', participant.participantRef, 'up')"
             >↑</button>
             <button
               type="button"
               :disabled="disabled || index === participants.length - 1"
-              :aria-label="`Move actor ${index + 1} down`"
+              :aria-label="`把第 ${index + 1} 个角色下移`"
               @click="emit('moveParticipant', participant.participantRef, 'down')"
             >↓</button>
             <button
               type="button"
               :disabled="disabled || participants.length === 1"
-              :aria-label="`Remove actor ${index + 1}`"
+              :aria-label="`移除第 ${index + 1} 个角色`"
               @click="emit('removeParticipant', participant.participantRef)"
-            >Remove</button>
+            >移除</button>
           </div>
         </header>
 
         <div class="play-rehearsal-cast-fields">
           <label>
-            <span>Name</span>
+            <span>名字</span>
             <input
               :id="fieldId(index, 'name')"
               :name="`actor-${index + 1}-name`"
@@ -94,7 +94,7 @@ function updateText(
           </label>
 
           <label>
-            <span>Position</span>
+            <span>位置</span>
             <input
               :id="fieldId(index, 'position')"
               :name="`actor-${index + 1}-position`"
@@ -106,7 +106,7 @@ function updateText(
           </label>
 
           <label>
-            <span>Current goal</span>
+            <span>当前目标</span>
             <input
               :id="fieldId(index, 'goal')"
               :name="`actor-${index + 1}-goal`"
@@ -126,14 +126,14 @@ function updateText(
           </label>
 
           <label class="play-rehearsal-cast-wide">
-            <span>Initial knowledge</span>
+            <span>初始认知</span>
             <textarea
               :id="fieldId(index, 'knowledge')"
               :name="`actor-${index + 1}-knowledge`"
               rows="2"
               :value="participant.initialKnowledge"
               :disabled="disabled"
-              placeholder="Only facts this actor may use"
+              placeholder="只写这个角色可以使用的事实"
               @input="updateText(participant.participantRef, 'initialKnowledge', $event)"
             ></textarea>
           </label>
@@ -142,14 +142,14 @@ function updateText(
     </ol>
 
     <button class="play-rehearsal-add-actor" type="button" :disabled="disabled" @click="emit('addParticipant')">
-      <span aria-hidden="true">[+]</span> Add actor
+      <span aria-hidden="true">[+]</span> 添加角色
     </button>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled" @click="emit('back')">Back to Scene</button>
-        <button class="play-rehearsal-primary" type="submit" :disabled="disabled">Continue to Review</button>
+        <button type="button" :disabled="disabled" @click="emit('back')">返回场景</button>
+        <button class="play-rehearsal-primary" type="submit" :disabled="disabled">下一步：确认</button>
       </div>
     </footer>
   </form>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_SOURCE_DRIFT_STATE_LABELS } from '../../../composables/playTerms';
 import { computed, nextTick, shallowRef, useId, useTemplateRef } from 'vue';
 
 import type {
@@ -76,10 +77,10 @@ function focusReturnTarget(): void {
 </script>
 
 <template>
-  <section class="play-source-drift-controls" aria-label="Canonical source status">
+  <section class="play-source-drift-controls" aria-label="正式来源状态">
     <header>
-      <h3>Canonical sources</h3>
-      <button ref="checkButton" type="button" :disabled="busy" @click="emit('refresh')">Check</button>
+      <h3>正式来源</h3>
+      <button ref="checkButton" type="button" :disabled="busy" @click="emit('refresh')">检查</button>
     </header>
 
     <p v-if="drift?.activeResolution" class="play-source-resolution">
@@ -88,11 +89,11 @@ function focusReturnTarget(): void {
     <ul v-if="drift?.items.length">
       <li v-for="item in drift.items" :key="item.id">
         <strong>{{ item.label }}</strong>
-        <span>{{ item.state }}</span>
+        <span>{{ PLAY_SOURCE_DRIFT_STATE_LABELS[item.state] ?? item.state }}</span>
         <small v-if="item.evidence">{{ item.evidence }}</small>
       </li>
     </ul>
-    <p v-else>No source drift has been detected.</p>
+    <p v-else>没有发现来源变化。</p>
 
     <div
       v-if="drift && drift.overall !== 'current' && !pendingDecision"
@@ -105,19 +106,19 @@ function focusReturnTarget(): void {
         type="button"
         :disabled="busy || !drift.availableDecisions.includes('continueFrozen')"
         @click="openDecision('continueFrozen')"
-      >Continue frozen</button>
+      >沿用开局时的内容</button>
       <button
         ref="reassembleButton"
         type="button"
         :disabled="busy || !drift.availableDecisions.includes('reassemble')"
         @click="openDecision('reassemble')"
-      >Reassemble</button>
+      >按当前文件重组</button>
       <button
         ref="forkButton"
         type="button"
         :disabled="busy || !drift.availableDecisions.includes('fork')"
         @click="openDecision('fork')"
-      >Fork session</button>
+      >另开会话</button>
     </div>
 
     <div
@@ -128,28 +129,28 @@ function focusReturnTarget(): void {
       @keydown.esc.stop.prevent="closeDecision"
     >
       <p v-if="pendingDecision === 'continueFrozen'">
-        Continue with Play-local truth while changed canonical sources remain omitted from new context.
+        沿用推演内的状态继续；已变化的正式来源不再进入新的上下文。
       </p>
       <p v-else-if="pendingDecision === 'reassemble'">
-        Reassemble this session from current canonical source bytes as a revisioned Play-local decision.
+        按正式来源的当前内容重组这个会话，并作为一次推演内决定记录下来。
       </p>
       <template v-else>
-        <label>New session id <input v-model.trim="forkSessionId" /></label>
-        <label>Title <input v-model.trim="forkTitle" /></label>
+        <label>新会话编号 <input v-model.trim="forkSessionId" /></label>
+        <label>标题 <input v-model.trim="forkTitle" /></label>
       </template>
       <div>
-        <button type="button" @click="closeDecision">Back</button>
+        <button type="button" @click="closeDecision">返回</button>
         <button
           ref="confirmButton"
           type="button"
           :disabled="busy || !canConfirm"
           @click="confirmDecision"
-        >Confirm</button>
+        >确认</button>
       </div>
     </div>
 
     <p :id="helpId" class="play-source-drift-help">
-      Source decisions change Play-local context only. Canonical files remain untouched.
+      来源处理只影响推演内的上下文，正式文件不会改变。
     </p>
   </section>
 </template>

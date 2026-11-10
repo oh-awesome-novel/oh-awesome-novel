@@ -37,8 +37,8 @@ describe('Play long-session renderer controls', () => {
       PLAY_WINDOW_CONTROL_NAMES[0],
     );
 
-    expect(wrapper.get('.play-transcript-count').text()).toContain('120 messages');
-    expect(wrapper.get('.play-transcript-count').text()).toContain('showing 12');
+    expect(wrapper.get('.play-transcript-count').text()).toContain('120 条消息');
+    expect(wrapper.get('.play-transcript-count').text()).toContain('显示 12 条');
     expect(loadEarlier.button.getAttribute('aria-controls')).toBe(
       wrapper.get('.play-transcript-scroll').attributes('id'),
     );
@@ -91,20 +91,20 @@ describe('Play long-session renderer controls', () => {
     );
 
     expect(controls.every(({ describedBy }) => describedBy?.textContent?.includes(
-      'Canonical files remain untouched',
+      '正式文件不会改变',
     ))).toBe(true);
 
     activateFocusedControl(controls[1]!);
     await flushPromises();
 
-    const confirm = getNativeButtonContract(wrapper.element, 'Confirm');
+    const confirm = getNativeButtonContract(wrapper.element, '确认');
     expect(document.activeElement).toBe(confirm.button);
     activateFocusedControl(confirm);
     await flushPromises();
 
     expect(wrapper.emitted('decide')).toEqual([[{ kind: 'reassemble' }]]);
     expect(document.activeElement).toBe(
-      getNativeButtonContract(wrapper.element, 'Reassemble').button,
+      getNativeButtonContract(wrapper.element, '按当前文件重组').button,
     );
     expect(getPlayStatusRegions(wrapper.element)).toHaveLength(1);
     wrapper.unmount();
@@ -121,7 +121,7 @@ describe('Play long-session renderer controls', () => {
       },
     });
 
-    activateFocusedControl(getNativeButtonContract(wrapper.element, 'Continue frozen'));
+    activateFocusedControl(getNativeButtonContract(wrapper.element, '沿用开局时的内容'));
     await flushPromises();
     await wrapper.get('.play-source-decision-confirmation').trigger('keydown', {
       key: 'Escape',
@@ -130,7 +130,7 @@ describe('Play long-session renderer controls', () => {
 
     expect(wrapper.find('.play-source-decision-confirmation').exists()).toBe(false);
     expect(document.activeElement).toBe(
-      getNativeButtonContract(wrapper.element, 'Continue frozen').button,
+      getNativeButtonContract(wrapper.element, '沿用开局时的内容').button,
     );
     expect(wrapper.emitted('decide')).toBeUndefined();
     wrapper.unmount();
@@ -147,9 +147,9 @@ describe('Play long-session renderer controls', () => {
       },
     });
 
-    activateFocusedControl(getNativeButtonContract(wrapper.element, 'Fork session'));
+    activateFocusedControl(getNativeButtonContract(wrapper.element, '另开会话'));
     await flushPromises();
-    const confirm = getNativeButtonContract(wrapper.element, 'Confirm');
+    const confirm = getNativeButtonContract(wrapper.element, '确认');
     expect(confirm.button.disabled).toBe(true);
 
     const [sessionId, title] = wrapper.findAll('input');

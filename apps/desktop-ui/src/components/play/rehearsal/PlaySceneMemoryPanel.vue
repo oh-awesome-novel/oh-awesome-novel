@@ -17,42 +17,42 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="play-scene-memory-panel" aria-label="Scene memory" :aria-busy="loading || rebuilding">
+  <section class="play-scene-memory-panel" aria-label="场景记忆" :aria-busy="loading || rebuilding">
     <header>
       <div>
-        <span>Rebuildable projection</span>
-        <h2>Scene Memory</h2>
+        <span>可重建的投影</span>
+        <h2>场景记忆</h2>
       </div>
       <div class="play-scene-memory-actions">
-        <div role="group" aria-label="Scene Memory lens">
+        <div role="group" aria-label="场景记忆视角">
           <button
             type="button"
             :aria-pressed="lens === 'player'"
             :disabled="loading || rebuilding"
             @click="emit('updateLens', 'player')"
-          >Player</button>
+          >参与者</button>
           <button
             type="button"
             :aria-pressed="lens === 'director'"
             :disabled="loading || rebuilding"
             @click="emit('updateLens', 'director')"
-          >Director</button>
+          >导演</button>
         </div>
-        <button type="button" :disabled="loading || rebuilding" @click="emit('refresh')">Refresh</button>
+        <button type="button" :disabled="loading || rebuilding" @click="emit('refresh')">刷新</button>
         <button type="button" :disabled="loading || rebuilding" @click="emit('rebuild')">
-          {{ rebuilding ? 'Rebuilding…' : 'Rebuild' }}
+          {{ rebuilding ? '正在重建…' : '重建' }}
         </button>
       </div>
     </header>
 
     <p v-if="error" class="play-scene-memory-error" role="alert">{{ error }}</p>
     <p v-if="memory?.status === 'stale'" class="play-scene-memory-stale" role="status">
-      Memory is stale: {{ memory.staleReasons.join(', ') || 'selected branch context changed' }}.
+      记忆已过期：{{ memory.staleReasons.join('、') || '选中分支的上下文已改变' }}。
     </p>
     <dl v-if="memory" class="play-scene-memory-meta">
-      <div><dt>Lens</dt><dd>{{ memory.lens }}</dd></div>
+      <div><dt>视角</dt><dd>{{ memory.lens }}</dd></div>
       <div><dt>Revision</dt><dd>{{ memory.revision }}</dd></div>
-      <div><dt>Built</dt><dd><time :datetime="memory.builtAt">{{ memory.builtAt }}</time></dd></div>
+      <div><dt>生成于</dt><dd><time :datetime="memory.builtAt">{{ memory.builtAt }}</time></dd></div>
     </dl>
     <ul v-if="memory?.items.length">
       <li v-for="item in memory.items" :key="item.id">
@@ -62,10 +62,10 @@ const emit = defineEmits<{
       </li>
     </ul>
     <p v-else-if="!loading" class="play-scene-memory-empty">
-      No Scene Memory is stored for this selected branch and lens.
+      当前分支和视角下还没有场景记忆。
     </p>
     <p class="play-scene-memory-announcement" role="status" aria-live="polite">
-      {{ loading ? 'Loading Scene Memory…' : rebuilding ? 'Rebuilding Scene Memory…' : '' }}
+      {{ loading ? '正在载入场景记忆…' : rebuilding ? '正在重建场景记忆…' : '' }}
     </p>
   </section>
 </template>

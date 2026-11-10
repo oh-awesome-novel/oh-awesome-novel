@@ -21,20 +21,20 @@ function updateLimit(event: Event): void {
 
 <template>
   <details class="play-event-settings">
-    <summary>Event settings · optional</summary>
+    <summary>事件设置 · 可选</summary>
     <fieldset class="play-event-settings-fields" :disabled="disabled">
-      <legend class="visually-hidden">World event settings</legend>
+      <legend class="visually-hidden">世界事件设置</legend>
       <label class="play-event-toggle">
         <input name="play-allow-offscreen" type="checkbox" :checked="value.allowOffscreen" @change="toggle('allowOffscreen', $event)">
-        <span>Allow offscreen events</span>
+        <span>允许幕后事件</span>
       </label>
       <label class="play-event-toggle">
         <input name="play-allow-hidden" type="checkbox" :checked="value.allowHidden" @change="toggle('allowHidden', $event)">
-        <span>Allow hidden events</span>
+        <span>允许隐藏事件</span>
       </label>
-      <p class="play-event-hint">Hidden events require both options. Turning either off prevents new hidden events.</p>
+      <p class="play-event-hint">隐藏事件需要同时开启两项；关闭任一项都不会再产生新的隐藏事件。</p>
       <label class="play-event-limit">
-        <span>External events per turn</span>
+        <span>每回合外部事件上限</span>
         <input
           name="play-event-limit" type="number" min="0" max="6" step="1" required
           :value="value.maxExternalEventsPerTurn" :aria-invalid="Boolean(error)"
@@ -42,7 +42,7 @@ function updateLimit(event: Event): void {
           @input="updateLimit"
         >
       </label>
-      <p :id="`${prefix}-hint`" class="play-event-hint">0–6 spontaneous events. Due scheduled events are still settled when the limit is 0.</p>
+      <p :id="`${prefix}-hint`" class="play-event-hint">0–6 条自发事件。上限为 0 时，到期的计划事件仍会结算。</p>
       <p v-if="error" :id="`${prefix}-error`" class="play-event-error" role="alert">{{ error }}</p>
     </fieldset>
   </details>

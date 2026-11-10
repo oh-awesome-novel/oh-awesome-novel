@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPlayWorldActivity } from '../../composables/playTerms';
 import { computed, shallowRef, toRef, watch } from 'vue';
 
 import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
@@ -95,6 +96,7 @@ const {
   eventCards,
   stateEntries,
   suggestedActions,
+  extraSuggestions,
   userText,
   visibleCandidates,
   visibleObservations,
@@ -203,7 +205,7 @@ const outcomeDisabled = computed(() =>
 );
 const outcomeDisabledReason = computed(() =>
   rehearsalOutcomeBlocked.value
-    ? 'Finish or cancel the active rehearsal attempt before generating or using an Outcome Report.'
+    ? '请先完成或取消当前试演，再生成或使用结果报告。'
     : '',
 );
 const adoptionProjection = computed<PlayAdoptionProjection>(() =>
@@ -290,29 +292,29 @@ function acceptGuidedSession(session: PlaySession): void {
 </script>
 
 <template>
-  <section id="play-workspace" class="play-workspace" aria-label="Play workspace">
+  <section id="play-workspace" class="play-workspace" aria-label="推演工作区">
     <header class="play-workspace-bar">
       <div class="play-workspace-identity">
-        <span><span aria-hidden="true">[play]</span> Interactive world</span>
+        <span><span aria-hidden="true">[play]</span> 互动世界</span>
         <strong>{{ workspace.novelName || workspace.name }}</strong>
-        <small>Play-local rehearsal · canonical truth remains protected</small>
+        <small>推演内容独立保存 · 正式文件不受影响</small>
       </div>
       <div class="play-workspace-status">
-        <button type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; launchOpen = false">Import character</button>
+        <button class="play-import-button" type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; launchOpen = false">导入角色卡</button>
         <span v-if="selectedSession && !launchOpen">
-          {{ selectedSession.eventPolicy.simulationMode }} · {{ selectedSession.eventPolicy.density }}
+          {{ formatPlayWorldActivity(selectedSession.eventPolicy) }}
         </span>
         <span :class="{ 'play-status-live': sending || rehearsalBusy }">
           {{ launchOpen
-            ? 'Preparing a new Play entry'
+            ? '正在准备新的推演入口'
             : selectedSession?.schemaVersion === 5
-            ? rehearsalAnnouncement || 'Rehearsal ready'
-            : provisionalTurn?.statusMessage || turnAnnouncement || 'Ready' }}
+            ? rehearsalAnnouncement || '试演已就绪'
+            : provisionalTurn?.statusMessage || turnAnnouncement || '就绪' }}
         </span>
         <button
           type="button"
           :disabled="loading || refreshBlocked || importBusy"
-          aria-label="刷新 Play workspace"
+          aria-label="刷新推演工作区"
           @click="refreshSessions"
         >
           <span aria-hidden="true">↻</span>
@@ -369,7 +371,7 @@ function acceptGuidedSession(session: PlaySession): void {
         @confirm="migration.confirm"
       >
         <details v-if="selectedSession">
-          <summary>Read saved transcript without upgrading</summary>
+          <summary>不升级，只读查看已保存的记录</summary>
           <PlayTranscript
             :title="selectedSession.title"
             :scene-start="selectedSession.sceneStart"
@@ -466,7 +468,7 @@ function acceptGuidedSession(session: PlaySession): void {
         />
       </div>
 
-      <section v-else-if="selectedSession" ref="usageStage" class="play-stage-center" aria-label="Play stage">
+      <section v-else-if="selectedSession" ref="usageStage" class="play-stage-center" aria-label="推演舞台">
         <PlayPhaseMemory :workspace-key="workspace.path" :session="selectedSession" :lens="usageLens" :disabled="interactionBlocked" @director="showSpoilers = true" @continued="registerCreatedSession" />
         <div class="play-stage-actions">
         <button v-if="!visualNovelOpen" type="button" @click="visualNovelOpen = true">视觉小说演出</button>
@@ -503,11 +505,11 @@ function acceptGuidedSession(session: PlaySession): void {
 
         <div v-if="!providerConfigured" class="play-provider-gate">
           <div>
-            <strong>World referee 暂不可用</strong>
-            <p>配置 provider 后才能提交真实 Play 回合；现有 session 和 Play-local 内容仍可浏览。</p>
+            <strong>裁判暂不可用</strong>
+            <p>配置模型后才能推进回合；现有会话和推演内容仍可浏览。</p>
           </div>
           <button class="primary-button tight-button" type="button" @click="emit('configureProvider')">
-            配置 Provider
+            配置模型
           </button>
         </div>
 
@@ -525,6 +527,11 @@ function acceptGuidedSession(session: PlaySession): void {
           :follow-ups="followUpControls"
           :suppress-choice-hotkeys="visualNovelOpen"
           :show-empty-choices="(displaySession?.transcript ?? selectedSession.transcript).length > 0"
+          :can-request-more="providerConfigured && selectedSession.schemaVersion === 4 && !historyRetryingArtifactId"
+          :more-loading="extraSuggestions.loading.value"
+          :more-active="Boolean(extraSuggestions.items.value)"
+          :more-error="extraSuggestions.error.value"
+          @more="extraSuggestions.request()"
           @choose="sendChoice"
           @stop="stopTurn"
           @steer="steerTurn"
@@ -532,16 +539,16 @@ function acceptGuidedSession(session: PlaySession): void {
         />
       </section>
 
-      <section v-else class="play-stage-empty" aria-label="Play stage">
+      <section v-else class="play-stage-empty" aria-label="推演舞台">
         <span class="play-empty-marker" aria-hidden="true">[ ]</span>
-        <h1>{{ loading ? 'Loading Play sessions…' : 'Open the stage' }}</h1>
-        <p>从左侧创建或选择 session。Play 会在独立世界状态中推进，不会直接改写小说文件。</p>
+        <h1>{{ loading ? '正在载入推演会话…' : '打开舞台' }}</h1>
+        <p>从左侧创建或选择会话。推演在独立的世界状态中进行，不会直接改写小说文件。</p>
       </section>
 
       <aside
         v-if="!importOpen && !launchOpen && !migration.preview.value && selectedSession?.schemaVersion === 4"
         class="play-world-inspector"
-        aria-label="Play world inspector"
+        aria-label="世界检查器"
       >
         <PlayContextInspector
           :traces="contextTraces"
@@ -562,8 +569,9 @@ function acceptGuidedSession(session: PlaySession): void {
           :retrying-artifact-id="historyRetryingArtifactId"
           :naming-checkpoint-id="historyNamingCheckpointId"
           :retry-disabled="!providerConfigured"
-          retry-disabled-reason="Configure a provider to Retry this settlement."
+          retry-disabled-reason="配置模型后才能重演这一回合。"
           :blocked="interactionBlocked"
+          :director-lens="showSpoilers"
           :notice="historyNotice"
           @restore="restoreCheckpoint"
           @retry="retryCheckpoint"
@@ -642,7 +650,7 @@ function acceptGuidedSession(session: PlaySession): void {
       </aside>
 
       <aside v-else-if="!importOpen && !launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
-        World HUD will appear after a session is selected.
+        选择会话后会显示世界面板。
       </aside>
     </div>
   </section>
@@ -659,6 +667,8 @@ function acceptGuidedSession(session: PlaySession): void {
 
 .play-rehearsal-stage {
   display: grid;
+  /* The stage scrolls; rows must keep their content height instead of shrinking to fit. */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 12px;
   padding: 0 12px 16px;

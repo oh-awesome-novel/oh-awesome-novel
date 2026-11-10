@@ -145,7 +145,7 @@ export function buildPlayEventCardViews(
         title: event.title,
         impact: event.summary,
         kindLabel: humanizeIdentifier(event.kind),
-        originLabel: `Origin · ${humanizeIdentifier(event.origin)}`,
+        originLabel: `来源 · ${humanizeIdentifier(event.origin)}`,
         visibility: event.visibility,
         worldTimeLabel: formatWorldTime(event),
         causeLabels,
@@ -184,11 +184,11 @@ function buildBoundedEventCard(
   const reveal = evidence.reveal
     ? {
         statusLabel: evidence.reveal.status === 'rumorSurfaced'
-          ? 'Rumor surfaced'
-          : 'Information confirmed',
+          ? '传闻浮现'
+          : '信息得到证实',
         explanation: evidence.reveal.status === 'rumorSurfaced'
-          ? 'This event carries a rumor about an earlier unseen development.'
-          : 'This event confirms information about an earlier unseen development.',
+          ? '这条事件带出了一条关于此前未见变化的传闻。'
+          : '这条事件证实了此前未见变化的信息。',
         ...(showSpoilers && evidence.author.reveal
           ? {
               author: {
@@ -219,14 +219,14 @@ function buildBoundedEventCard(
     title: event.title,
     impact: event.summary,
     kindLabel: humanizeIdentifier(event.kind),
-    originLabel: `Origin · ${humanizeIdentifier(event.origin)}`,
+    originLabel: `来源 · ${humanizeIdentifier(event.origin)}`,
     visibility: event.visibility,
     worldTimeLabel: formatWorldTime(event),
     causeLabels,
     stateImpacts: [
       ...impacts.map((impact) => ({ ...impact })),
       ...(omittedCount > 0
-        ? [{ path: 'Additional changes', value: `${omittedCount} omitted` }]
+        ? [{ path: '其他变化', value: `省略 ${omittedCount} 项` }]
         : []),
     ],
     technicalRefs: showSpoilers
@@ -267,35 +267,35 @@ function buildPresentationCauseLabels(
   causes.actions.forEach((action, index) => {
     labels.push({
       kind: 'action',
-      label: `${action.actionKind ? humanizeIdentifier(action.actionKind) : 'Action'} · ${action.contentExcerpt}`,
+      label: `${action.actionKind ? humanizeIdentifier(action.actionKind) : '行动'} · ${action.contentExcerpt}`,
       ref: `${eventId}:action:${index}`,
     });
   });
   if (causes.scheduled) {
     labels.push({
       kind: 'trigger',
-      label: `Scheduled · ${causes.scheduled.label} (${formatPresentationTrigger(causes.scheduled.trigger)})`,
+      label: `计划 · ${causes.scheduled.label}（${formatPresentationTrigger(causes.scheduled.trigger)}）`,
       ref: `${eventId}:scheduled`,
     });
   }
   causes.sourceEvents.forEach((sourceEvent, index) => {
     labels.push({
       kind: 'sourceEvent',
-      label: `Earlier event · ${sourceEvent.title}`,
+      label: `先前事件 · ${sourceEvent.title}`,
       ref: `${eventId}:source-event:${index}`,
     });
   });
   if (causes.pressure) {
     labels.push({
       kind: 'pressure',
-      label: `Pressure · ${causes.pressure.label}`,
+      label: `压力 · ${causes.pressure.label}`,
       ref: `${eventId}:pressure`,
     });
   }
   if (causes.agenda) {
     labels.push({
       kind: 'agenda',
-      label: `Agenda · ${causes.agenda.ownerEntityId}: ${causes.agenda.summary}`,
+      label: `动向 · ${causes.agenda.ownerEntityId}：${causes.agenda.summary}`,
       ref: `${eventId}:agenda`,
     });
   }
@@ -307,15 +307,15 @@ function buildPresentationTechnicalRefs(
   refs: Readonly<PlayEventPresentationEvidence['author']['technicalRefs']>,
 ): PlayEventTechnicalRefView[] {
   return dedupeTechnicalRefs([
-    { label: 'Event', value: eventId },
-    { label: 'Turn message', value: refs.turnId },
-    { label: 'Artifact', value: refs.artifactId },
-    { label: 'Artifact revision', value: String(refs.artifactRevision) },
-    ...refs.sourceTurnIds.map((value) => ({ label: 'Source turn ref', value })),
-    ...refs.sourceEventIds.map((value) => ({ label: 'Source event ref', value })),
-    ...(refs.triggerId ? [{ label: 'Trigger ref', value: refs.triggerId }] : []),
-    ...(refs.pressureId ? [{ label: 'Pressure ref', value: refs.pressureId }] : []),
-    ...(refs.agendaId ? [{ label: 'Agenda ref', value: refs.agendaId }] : []),
+    { label: '事件', value: eventId },
+    { label: '回合消息', value: refs.turnId },
+    { label: '回合记录', value: refs.artifactId },
+    { label: '回合 revision', value: String(refs.artifactRevision) },
+    ...refs.sourceTurnIds.map((value) => ({ label: '来源回合引用', value })),
+    ...refs.sourceEventIds.map((value) => ({ label: '来源事件引用', value })),
+    ...(refs.triggerId ? [{ label: '触发引用', value: refs.triggerId }] : []),
+    ...(refs.pressureId ? [{ label: '压力引用', value: refs.pressureId }] : []),
+    ...(refs.agendaId ? [{ label: '动向引用', value: refs.agendaId }] : []),
   ]);
 }
 
@@ -393,11 +393,11 @@ function buildRevealChain(
 
   const chain: PlayEventRevealChainView = {
     statusLabel: record.playerProjection === 'rumor'
-      ? 'Rumor surfaced'
-      : 'Information confirmed',
+      ? '传闻浮现'
+      : '信息得到证实',
     explanation: record.playerProjection === 'rumor'
-      ? 'This event carries a rumor about an earlier unseen development.'
-      : 'This event confirms information about an earlier unseen development.',
+      ? '这条事件带出了一条关于此前未见变化的传闻。'
+      : '这条事件证实了此前未见变化的信息。',
   };
   if (!input.showSpoilers) return chain;
 
@@ -530,7 +530,7 @@ function buildCauseLabels(input: BuildCauseLabelsInput): PlayEventCauseLabelView
     if (!message || !isPlayerMessage(message)) continue;
     const actionKind = message.actionKind
       ? humanizeIdentifier(message.actionKind)
-      : 'Action';
+      : '行动';
     labels.push({
       kind: 'action',
       label: `${actionKind} · ${truncateText(message.content)}`,
@@ -542,7 +542,7 @@ function buildCauseLabels(input: BuildCauseLabelsInput): PlayEventCauseLabelView
   if (scheduledEvent && isVisible(scheduledEvent.template.visibility, input.showSpoilers)) {
     labels.push({
       kind: 'trigger',
-      label: `Scheduled · ${scheduledEvent.label} (${formatTrigger(scheduledEvent)})`,
+      label: `计划 · ${scheduledEvent.label}（${formatTrigger(scheduledEvent)}）`,
       ref: scheduledEvent.id,
     });
   }
@@ -552,7 +552,7 @@ function buildCauseLabels(input: BuildCauseLabelsInput): PlayEventCauseLabelView
     if (!sourceEvent || !isVisible(sourceEvent.visibility, input.showSpoilers)) continue;
     labels.push({
       kind: 'sourceEvent',
-      label: `Earlier event · ${sourceEvent.title}`,
+      label: `先前事件 · ${sourceEvent.title}`,
       ref: sourceEvent.id,
     });
   }
@@ -566,7 +566,7 @@ function buildCauseLabels(input: BuildCauseLabelsInput): PlayEventCauseLabelView
   ) {
     labels.push({
       kind: 'pressure',
-      label: `Pressure · ${pressure.label}`,
+      label: `压力 · ${pressure.label}`,
       ref: pressure.id,
     });
   }
@@ -580,7 +580,7 @@ function buildCauseLabels(input: BuildCauseLabelsInput): PlayEventCauseLabelView
   ) {
     labels.push({
       kind: 'agenda',
-      label: `Agenda · ${agenda.ownerEntityId}: ${agenda.nextMove ?? agenda.goal}`,
+      label: `动向 · ${agenda.ownerEntityId}：${agenda.nextMove ?? agenda.goal}`,
       ref: agenda.id,
     });
   }
@@ -610,7 +610,7 @@ function buildStateImpacts(
       if (hasSafeMomentumImpactEvidence(event, momentum, showSpoilers)) {
         impacts.push({
           path: PLAY_WORLD_MOMENTUM_STATE_KEY,
-          value: 'Pressure / agenda state updated',
+          value: '压力 / 动向已更新',
         });
       }
       continue;
@@ -645,13 +645,13 @@ function buildTechnicalRefs(
   scheduledEvent: PlayScheduledEvent | undefined,
 ): PlayEventTechnicalRefView[] {
   const refs: PlayEventTechnicalRefView[] = [
-    { label: 'Event', value: event.id },
-    { label: 'Turn message', value: event.turnId },
+    { label: '事件', value: event.id },
+    { label: '回合消息', value: event.turnId },
   ];
   if (artifact) {
     refs.push(
-      { label: 'Artifact', value: artifact.id },
-      { label: 'Artifact revision', value: String(artifact.revision) },
+      { label: '回合记录', value: artifact.id },
+      { label: '回合 revision', value: String(artifact.revision) },
     );
   }
   for (const cause of causeLabels) {
@@ -659,7 +659,7 @@ function buildTechnicalRefs(
   }
   if (scheduledEvent?.trigger.type === 'flagEquals') {
     refs.push({
-      label: 'Trigger condition',
+      label: '触发条件',
       value: `${scheduledEvent.trigger.path} = ${String(scheduledEvent.trigger.value)}`,
     });
   }
@@ -802,7 +802,7 @@ function formatWorldTime(event: PlayWorldEvent): string {
 function formatClock(clock: Readonly<PlayWorldEvent['worldClock']>): string {
   const parts = [
     clock.anchor?.trim(),
-    `Turn ${clock.turn}`,
+    `第 ${clock.turn} 回合`,
     clock.elapsed ? `+ ${clock.elapsed}` : undefined,
   ].filter((value): value is string => Boolean(value));
   return parts.join(' · ');
@@ -812,23 +812,23 @@ function formatPresentationTrigger(
   trigger: NonNullable<PlayEventPresentationEvidence['causes']['scheduled']>['trigger'],
 ): string {
   switch (trigger.type) {
-    case 'nextTurn': return 'next turn';
+    case 'nextTurn': return '下一回合';
     case 'afterTurns':
-      return `after ${trigger.turns} turn${trigger.turns === 1 ? '' : 's'}`;
-    case 'flagEquals': return 'tracked world condition matched';
-    case 'atWorldTime': return `at ${trigger.value}`;
-    case 'manual': return 'manual';
+      return `${trigger.turns} 回合后`;
+    case 'flagEquals': return '追踪的世界状态满足条件';
+    case 'atWorldTime': return `于 ${trigger.value}`;
+    case 'manual': return '手动';
   }
 }
 
 function formatTrigger(event: PlayScheduledEvent): string {
   switch (event.trigger.type) {
-    case 'nextTurn': return 'next turn';
+    case 'nextTurn': return '下一回合';
     case 'afterTurns':
-      return `after ${event.trigger.turns} turn${event.trigger.turns === 1 ? '' : 's'}`;
-    case 'flagEquals': return 'tracked world condition matched';
-    case 'atWorldTime': return `at ${event.trigger.value}`;
-    case 'manual': return 'manual';
+      return `${event.trigger.turns} 回合后`;
+    case 'flagEquals': return '追踪的世界状态满足条件';
+    case 'atWorldTime': return `于 ${event.trigger.value}`;
+    case 'manual': return '手动';
   }
 }
 
@@ -948,12 +948,12 @@ function dedupeTechnicalRefs(
 
 function causeLabelKind(kind: PlayEventCauseLabelKind): string {
   switch (kind) {
-    case 'action': return 'Action';
-    case 'trigger': return 'Trigger';
-    case 'sourceEvent': return 'Source event';
-    case 'pressure': return 'Pressure';
-    case 'agenda': return 'Agenda';
-    case 'related': return 'Related cause';
+    case 'action': return '行动';
+    case 'trigger': return '触发';
+    case 'sourceEvent': return '来源事件';
+    case 'pressure': return '压力';
+    case 'agenda': return '动向';
+    case 'related': return '相关起因';
   }
 }
 

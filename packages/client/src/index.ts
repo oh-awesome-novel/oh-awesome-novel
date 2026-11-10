@@ -1204,6 +1204,8 @@ export interface PlayTurnArtifact {
   rehearsalEvidenceRefs?: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
+  /** Director-only note from a guided Retry; absent on every other turn. */
+  retryGuidance?: { sourceArtifactId: string; text: string };
   committedAt: string;
   canonical: false;
 }
@@ -1625,10 +1627,26 @@ export interface PlayCheckpointSummary {
   committedAt: string;
   preview: string;
   name?: string;
+  /** Director-only guided Retry note; player-facing views must not render it. */
+  retryGuidance?: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
   retryable: boolean;
   canonical: false;
+}
+
+export interface PlayExtraSuggestionsInput {
+  baseRevision: number;
+  /** Selected head the suggestions are for; omit at the initial world. */
+  headId?: string;
+  /** Suggestions already on screen, so the new batch differs from them. */
+  existing?: string[];
+}
+
+export interface PlayExtraSuggestionsResult {
+  suggestions: string[];
+  baseRevision: number;
+  headId?: string;
 }
 
 export interface PlayCheckpointRestoreResult {
@@ -2177,9 +2195,15 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
   retryPlayWorldRefereeTurn(
     id: string,
     artifactId: string,
-    input: { baseRevision: number },
+    input: { baseRevision: number; guidance?: string },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
+  /** Read-only extra action suggestions; never changes the session. */
+  requestPlayExtraSuggestions(
+    id: string,
+    input: PlayExtraSuggestionsInput,
+    signal?: AbortSignal,
+  ): Promise<PlayExtraSuggestionsResult>;
   cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
   appendPlayTranscript(id: string, turn: {
     speaker: string;
@@ -3087,6 +3111,18 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         streamOptions,
         artifactId,
       ),
+    requestPlayExtraSuggestions: (id, input, signal) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/suggestions`,
+      {
+        method: 'POST',
+        body: {
+          baseRevision: input.baseRevision,
+          ...(input.headId ? { headId: input.headId } : {}),
+          ...(input.existing?.length ? { existing: input.existing } : {}),
+        },
+        signal,
+      },
+    ).then(value => parsePlayExtraSuggestionsResult(value, input)),
     cancelPlayWorldRefereeTurn: (id, turnId) =>
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/cancel`,
@@ -3190,7 +3226,7 @@ async function* streamPlayWorldRefereeTurnWith(
     baseRevision?: number;
     timeAdvance?: PlayRelativeTimeAdvance;
     delivery?: PlayTurnDelivery;
-  } | { baseRevision: number },
+  } | { baseRevision: number; guidance?: string },
   options: PlayTurnStreamOptions = {},
   retrySourceArtifactId?: string,
 ): AsyncIterable<PlayTurnStreamEvent> {
@@ -3759,6 +3795,7 @@ function isPlayCheckpointSummaryEnvelope(
       'committedAt',
       'preview',
       'name',
+      'retryGuidance',
       'status',
       'restorable',
       'retryable',
@@ -3776,6 +3813,8 @@ function isPlayCheckpointSummaryEnvelope(
     !isNonEmptyString(value.committedAt) ||
     !isNonEmptyString(value.preview) ||
     (value.name !== undefined && !isValidPlayCheckpointName(value.name)) ||
+    (value.retryGuidance !== undefined &&
+      (!isNonEmptyString(value.retryGuidance) || [...value.retryGuidance].length > 500 || value.kind !== 'turn')) ||
     (
       value.status !== 'current' &&
       value.status !== 'selectedAncestor' &&
@@ -3830,6 +3869,29 @@ function doesCheckpointMatchSession(
   return checkpoint.revision === artifact.revision &&
     checkpoint.parentCheckpointId === expectedParentCheckpointId &&
     checkpoint.committedAt === artifact.committedAt;
+}
+
+function parsePlayExtraSuggestionsResult(
+  value: unknown,
+  input: PlayExtraSuggestionsInput,
+): PlayExtraSuggestionsResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['suggestions', 'baseRevision', 'headId']) ||
+    value.baseRevision !== input.baseRevision ||
+    value.headId !== input.headId ||
+    !Array.isArray(value.suggestions) ||
+    value.suggestions.length === 0 ||
+    value.suggestions.length > 4 ||
+    !value.suggestions.every(isNonEmptyString)
+  ) {
+    throw new Error('补充行动建议的响应与请求不一致。');
+  }
+  return {
+    suggestions: [...value.suggestions],
+    baseRevision: value.baseRevision,
+    ...(input.headId ? { headId: input.headId } : {}),
+  };
 }
 
 function isSafePlayCheckpointId(value: unknown): value is string {
@@ -4245,9 +4307,15 @@ function isPlayAdoptionPreviewEnvelope(
     || (request.body.target !== undefined
       ? value.target !== request.body.target
       : value.target !== recommended.target)
-    || (request.body.payload !== undefined
-      ? !isDeepEqualJson(value.payload, request.body.payload)
-      : !isDeepEqualJson(value.payload, selectedSuggestion.defaultPayload))
+    // The host normalizes payloads before compiling them (a chapter draft gains a
+    // heading, a timeline event a title/time), so the returned payload may differ
+    // from what was sent. It must still write to the same destination; the exact
+    // bytes are bound by the preview fingerprint and the diff the author reviews.
+    || !isSamePlayAdoptionDestination(
+      value.target,
+      value.payload,
+      request.body.payload ?? selectedSuggestion.defaultPayload,
+    )
   ) {
     return false;
   }
@@ -4264,6 +4332,24 @@ function isPlayAdoptionPreviewEnvelope(
       && closure.sourceSnapshots.length === 0;
   }
   return true;
+}
+
+function isSamePlayAdoptionDestination(
+  target: PlayAdoptionTarget,
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
+): boolean {
+  if (target === 'chapterDraft') {
+    return actual.chapterId === expected.chapterId && actual.mode === expected.mode;
+  }
+  const defaults = target === 'timeline'
+    ? { file: 'events.yaml', path: 'events' }
+    : target === 'foreshadow'
+      ? { file: 'active.yaml', path: 'active' }
+      : { file: undefined, path: undefined };
+  return (actual.file ?? defaults.file) === (expected.file ?? defaults.file)
+    && (actual.path ?? defaults.path) === (expected.path ?? defaults.path)
+    && (target !== 'state' || isDeepEqualJson(actual.value, expected.value));
 }
 
 function isPlayAdoptionSeedEnvelope(value: unknown): value is PlayAdoptionSeed {
@@ -6889,6 +6975,7 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
       'rehearsalEvidenceRefs',
       'stateDelta',
       'suggestedActions',
+      'retryGuidance',
       'committedAt',
       'canonical',
     ])
@@ -6946,8 +7033,24 @@ function isPlayTurnArtifactEnvelope(value: unknown): value is PlayTurnArtifact {
     && isRecord(value.stateDelta)
     && hasValidPlayReservedStateDelta(value.stateDelta)
     && isUniqueNonEmptyStringArray(value.suggestedActions)
+    && (value.retryGuidance === undefined || (
+      value.schemaVersion === 2
+      && value.artifactKind === 'worldSettlement'
+      && isPlayTurnRetryGuidance(value.retryGuidance, value.id)
+    ))
     && isNonEmptyString(value.committedAt)
     && value.canonical === false;
+}
+
+function isPlayTurnRetryGuidance(value: unknown, artifactId: string): boolean {
+  return isRecord(value)
+    && hasOnlyKnownFields(value, ['sourceArtifactId', 'text'])
+    && isSafePlayFactId(value.sourceArtifactId)
+    && value.sourceArtifactId !== artifactId
+    && typeof value.text === 'string'
+    && value.text === value.text.trim()
+    && value.text.length > 0
+    && [...value.text].length <= 500;
 }
 
 function isPlayTurnArtifactMessage(value: unknown): value is PlayTranscriptTurn & { id: string } {

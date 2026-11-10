@@ -70,13 +70,13 @@ export function usePlayObservation(options: {
       persisted = true;
       if (current !== epoch) return;
       reset();
-      notice.value = 'Observation saved as your Play-local note. Bring it to writing to review a proposed change.';
+      notice.value = '观察笔记已保存在推演内。需要写回小说时，用“带回写作”审阅改动。';
       await options.onSaved();
     } catch (caught) {
       if (current !== epoch) return;
       const detail = caught instanceof Error ? caught.message : String(caught);
       error.value = persisted
-        ? `The observation was saved, but the session could not be refreshed: ${detail}`
+        ? `观察笔记已保存，但无法刷新会话：${detail}`
         : detail;
     } finally {
       if (current === epoch) saving.value = false;

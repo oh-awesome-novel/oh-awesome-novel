@@ -30,8 +30,8 @@ const emit = defineEmits<{
 
       <h3>{{ card.title }}</h3>
 
-      <section class="play-event-impact" aria-label="Event impact">
-        <span>Impact</span>
+      <section class="play-event-impact" aria-label="事件影响">
+        <span>影响</span>
         <p>{{ card.impact }}</p>
       </section>
 
@@ -42,7 +42,7 @@ const emit = defineEmits<{
       />
 
       <div v-if="card.causeLabels.length" class="play-event-cause">
-        <span>Caused by</span>
+        <span>起因</span>
         <ul>
           <li
             v-for="cause in card.causeLabels"
@@ -56,9 +56,9 @@ const emit = defineEmits<{
       <section
         v-if="card.stateImpacts.length"
         class="play-event-state"
-        aria-label="Turn state changes"
+        aria-label="本回合状态变化"
       >
-        <span>Turn state changes</span>
+        <span>本回合状态变化</span>
         <dl>
           <template
             v-for="impact in card.stateImpacts"
@@ -74,15 +74,15 @@ const emit = defineEmits<{
         v-if="showAuthorDetails && (card.authorReason || card.technicalRefs.length)"
         class="play-event-author-details"
       >
-        <summary>Author details</summary>
+        <summary>导演视角详情</summary>
 
-        <section v-if="card.authorReason" aria-label="Author cause">
-          <span>Author cause</span>
+        <section v-if="card.authorReason" aria-label="导演视角起因">
+          <span>导演视角起因</span>
           <p>{{ card.authorReason }}</p>
         </section>
 
-        <section v-if="card.technicalRefs.length" aria-label="Technical references">
-          <span>Technical references</span>
+        <section v-if="card.technicalRefs.length" aria-label="技术引用">
+          <span>技术引用</span>
           <dl>
             <template
               v-for="reference in card.technicalRefs"
@@ -99,9 +99,9 @@ const emit = defineEmits<{
         class="ghost-button tight-button play-event-adopt"
         type="button"
         :disabled="adoptionDisabled"
-        :aria-label="`Bring event to writing: ${card.title}`"
+        :aria-label="`带回写作：${card.title}`"
         @click="emit('prepareAdoption', { kind: 'event', eventId: card.id })"
-      >Bring to writing</button>
+      >带回写作</button>
     </div>
   </article>
 </template>

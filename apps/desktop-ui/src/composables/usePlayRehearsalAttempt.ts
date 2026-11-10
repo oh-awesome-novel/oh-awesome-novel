@@ -246,17 +246,17 @@ export function usePlayRehearsalAttempt<
           throw new Error('Active-attempt lookup returned a terminal attempt.');
         }
         applySnapshot({ attempt: loaded.attempt }, sessionId, loaded.attempt.id, true);
-        localAnnouncement.value = 'Active rehearsal attempt restored · not committed';
+        localAnnouncement.value = '已恢复进行中的试演 · 尚未提交';
       } else {
         clearAttemptState();
-        localAnnouncement.value = 'No active rehearsal attempt.';
+        localAnnouncement.value = '没有进行中的试演。';
       }
       activeLookupIndeterminate.value = false;
       return 'applied';
     } catch (caught) {
       if (generation === loadGeneration && !disposed) {
         activeLookupIndeterminate.value = true;
-        setFailure(caught, 'Could not load the active rehearsal attempt.');
+        setFailure(caught, '无法载入进行中的试演。');
       }
       return 'failed';
     } finally {
@@ -286,11 +286,11 @@ export function usePlayRehearsalAttempt<
         return 'ignored';
       }
       applySnapshot(loaded, sessionId, attemptId, true);
-      localAnnouncement.value = 'Rehearsal attempt refreshed from attempt truth.';
+      localAnnouncement.value = '试演已按保存的状态刷新。';
       return 'applied';
     } catch (caught) {
       if (generation === loadGeneration && !disposed) {
-        setFailure(caught, 'Could not refresh the rehearsal attempt.');
+        setFailure(caught, '无法刷新试演。');
       }
       return 'failed';
     } finally {
@@ -323,7 +323,7 @@ export function usePlayRehearsalAttempt<
       }
       applySnapshot(created, context.sessionId, created.attempt.id, true);
       activeLookupIndeterminate.value = false;
-      localAnnouncement.value = 'Rehearsal attempt started · no committed turn yet';
+      localAnnouncement.value = '试演已开始 · 还没有提交回合';
       return 'applied';
     } catch (caught) {
       if (options.sessionId.value !== context.sessionId || disposed) return 'ignored';
@@ -343,19 +343,19 @@ export function usePlayRehearsalAttempt<
             true,
           );
           activeLookupIndeterminate.value = false;
-          localAnnouncement.value = 'Rehearsal attempt recovered after Start lost its response.';
+          localAnnouncement.value = '开始试演的响应丢失，已恢复试演。';
           return 'applied';
         }
       } catch (reconcileError) {
         activeLookupIndeterminate.value = true;
         setFailure(
           new Error(`${toErrorMessage(caught)}; reconciliation failed: ${toErrorMessage(reconcileError)}`),
-          'Rehearsal attempt Start could not be confirmed.',
+          '无法确认试演是否已开始。',
         );
         return 'failed';
       }
       activeLookupIndeterminate.value = false;
-      setFailure(caught, 'Rehearsal attempt was not started.');
+      setFailure(caught, '试演没有开始。');
       return 'failed';
     } finally {
       mutating.value = false;
@@ -412,7 +412,7 @@ export function usePlayRehearsalAttempt<
       ).then((result) => snapshotFromMutation(result, mutationKey)),
       current.attempt.sessionId,
       current.attempt.id,
-      'Actor step selected · attempt-local, still not committed',
+      '已采用角色步骤 · 仅限本次试演，尚未提交',
       {
         expectedAttemptRevision: current.attempt.attemptRevision,
         expectedResultRef: stepRef,
@@ -450,7 +450,7 @@ export function usePlayRehearsalAttempt<
       ).then((result) => snapshotFromMutation(result, mutationKey)),
       current.attempt.sessionId,
       current.attempt.id,
-      `${formatInterventionKind(action.kind)} applied · attempt-local, still not committed`,
+      `已应用${formatInterventionKind(action.kind)} · 仅限本次试演，尚未提交`,
       {
         expectedAttemptRevision: current.attempt.attemptRevision,
         validate(candidate) {
@@ -475,8 +475,8 @@ export function usePlayRehearsalAttempt<
     ) {
       if (current && sessionRevision !== current.attempt.baseRevision) {
         setFailure(
-          new Error('Session revision changed while the rehearsal attempt was active.'),
-          'Finish requires reconciliation with the current session revision.',
+          new Error('试演进行期间会话发生了变化。'),
+          '完成试演前需要先与当前会话核对。',
         );
       }
       return 'ignored';
@@ -525,8 +525,8 @@ export function usePlayRehearsalAttempt<
       pendingMutationRecovery.value = undefined;
       clearLocalFeedback();
       localAnnouncement.value = recovered
-        ? 'Rehearsal committed as one Play turn · recovered by idempotent Finish replay'
-        : 'Rehearsal committed as one Play turn.';
+        ? '试演已作为一个回合提交 · 已通过重放恢复'
+        : '试演已作为一个回合提交。';
       options.onFinished?.(cloneFinishResult(committed));
     };
     mutating.value = true;
@@ -538,7 +538,7 @@ export function usePlayRehearsalAttempt<
       if (isDefinitiveMutationRejection(caught)) {
         releaseIdempotencyKey(fingerprint);
         pendingMutationRecovery.value = undefined;
-        setFailure(caught, 'Finish was rejected; no rehearsal turn was committed.');
+        setFailure(caught, '完成试演被拒绝，没有提交回合。');
         return 'failed';
       }
       const recover = async () => {
@@ -551,11 +551,11 @@ export function usePlayRehearsalAttempt<
         if (isDefinitiveMutationRejection(reconcileError)) {
           releaseIdempotencyKey(fingerprint);
           pendingMutationRecovery.value = undefined;
-          setFailure(reconcileError, 'Finish was rejected; no rehearsal turn was committed.');
+          setFailure(reconcileError, '完成试演被拒绝，没有提交回合。');
           return 'failed';
         }
         const failureAnnouncement =
-          'Finish truth could not be confirmed. Recover committed truth before continuing.';
+          '无法确认试演是否已完成。请先恢复再继续。';
         pendingMutationRecovery.value = {
           failureAnnouncement,
           recover,
@@ -601,7 +601,7 @@ export function usePlayRehearsalAttempt<
       }),
       current.attempt.sessionId,
       current.attempt.id,
-      'Rehearsal attempt cancelled · no committed turn was created',
+      '试演已取消 · 没有提交回合',
       {
         expectedAttemptRevision: current.attempt.attemptRevision,
         expectedResultRef: current.attempt.id,
@@ -647,7 +647,7 @@ export function usePlayRehearsalAttempt<
     } catch (caught) {
       if (isDefinitiveMutationRejection(caught)) {
         pending.abandon();
-        setFailure(caught, 'Recovery replay was rejected; the requested mutation was not applied.');
+        setFailure(caught, '恢复被拒绝，这次操作没有生效。');
         return 'failed';
       }
       setFailure(caught, pending.failureAnnouncement);
@@ -745,7 +745,7 @@ export function usePlayRehearsalAttempt<
         ...(retryStepRef ? { sourceStepRef: retryStepRef } : {}),
       });
     } catch (caught) {
-      setFailure(caught, 'Actor step was not started.');
+      setFailure(caught, '角色步骤没有开始。');
       return 'failed';
     }
     if (outcome === 'prepared' || outcome === 'aborted' || outcome === 'failed') {
@@ -779,7 +779,7 @@ export function usePlayRehearsalAttempt<
       if (isDefinitiveMutationRejection(caught)) {
         releaseIdempotencyKey(fingerprint);
         pendingMutationRecovery.value = undefined;
-        setFailure(caught, 'Rehearsal mutation was rejected; attempt truth was not changed.');
+        setFailure(caught, '操作被拒绝，试演状态没有改变。');
         return 'failed';
       }
       const recover = async () => {
@@ -806,7 +806,7 @@ export function usePlayRehearsalAttempt<
         releaseIdempotencyKey(fingerprint);
         pendingMutationRecovery.value = undefined;
         clearLocalFeedback();
-        localAnnouncement.value = `${successMessage} · recovered from attempt truth`;
+        localAnnouncement.value = `${successMessage} · 已从试演状态恢复`;
       };
       try {
         await recover();
@@ -817,12 +817,12 @@ export function usePlayRehearsalAttempt<
           pendingMutationRecovery.value = undefined;
           setFailure(
             reconcileError,
-            'Rehearsal mutation was rejected; attempt truth was not changed.',
+            '操作被拒绝，试演状态没有改变。',
           );
           return 'failed';
         }
         const failureAnnouncement =
-          'Rehearsal mutation truth could not be confirmed. Recover attempt truth before continuing.';
+          '无法确认操作是否生效。请先恢复试演状态再继续。';
         pendingMutationRecovery.value = {
           failureAnnouncement,
           recover,
@@ -1063,10 +1063,10 @@ function cloneFinishResult<TSession, TArtifact, TEvidence>(
 function formatInterventionKind(
   kind: PlayDirectorInterventionAction['kind'],
 ): string {
-  if (kind === 'reviseProjection') return 'Projection revision';
-  if (kind === 'redirectStep') return 'Step redirect';
-  if (kind === 'insertActor') return 'Actor insertion';
-  return 'Participant knowledge grant';
+  if (kind === 'reviseProjection') return '修改呈现';
+  if (kind === 'redirectStep') return '改变走向';
+  if (kind === 'insertActor') return '插入角色';
+  return '授予参与者认知';
 }
 
 function stableJson(value: unknown): string {

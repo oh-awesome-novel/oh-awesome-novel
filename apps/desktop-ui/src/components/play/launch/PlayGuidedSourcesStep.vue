@@ -26,9 +26,9 @@ function toggle(sourceId: string, event: Event): void {
 <template>
   <form class="guided-step" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 1 / 5</span>
-      <h2 :id="`${prefix}-heading`">Sources</h2>
-      <p>Select real files from this workspace. Their domain determines the launch role.</p>
+      <span>第 1 / 5 步</span>
+      <h2 :id="`${prefix}-heading`">来源</h2>
+      <p>从这个工作区选择真实文件，文件所在领域决定它在开局中的作用。</p>
     </header>
 
     <p v-if="error" :id="`${prefix}-error`" class="field-error" role="alert">{{ error }}</p>
@@ -52,11 +52,11 @@ function toggle(sourceId: string, event: Event): void {
         </label>
       </li>
     </ul>
-    <p v-else class="empty-state">No selectable workspace files are available.</p>
+    <p v-else class="empty-state">没有可选择的工作区文件。</p>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
-      <button class="primary" type="submit" :disabled="disabled">Continue to Entry</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
+      <button class="primary" type="submit" :disabled="disabled">下一步：入场</button>
     </footer>
   </form>
 </template>

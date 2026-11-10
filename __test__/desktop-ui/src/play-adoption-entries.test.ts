@@ -19,9 +19,9 @@ describe('Play adoption entry seeds', () => {
       title: 'The public gate closes',
       impact: 'Travelers can no longer use the east gate.',
       kindLabel: 'Environment changed',
-      originLabel: 'Origin · Environment',
+      originLabel: '来源 · Environment',
       visibility: 'playerVisible',
-      worldTimeLabel: 'Turn 3',
+      worldTimeLabel: '第 3 回合',
       projection: 'player',
       causeLabels: [],
       stateImpacts: [],
@@ -35,7 +35,7 @@ describe('Play adoption entry seeds', () => {
       },
     });
 
-    await event.get('button[aria-label^="Bring event to writing"]').trigger('click');
+    await event.get('button[aria-label^="带回写作"]').trigger('click');
     expect(event.emitted('prepareAdoption')).toEqual([[
       { kind: 'event', eventId: 'event-visible-1' },
     ]]);
@@ -58,7 +58,7 @@ describe('Play adoption entry seeds', () => {
       },
     });
 
-    await observation.get('button[aria-label^="Bring observation to writing"]').trigger('click');
+    await observation.get('button[aria-label^="带回写作"]').trigger('click');
     expect(observation.emitted('prepareAdoption')).toEqual([[
       { kind: 'observation', observationId: 'observation-visible-1' },
     ]]);
@@ -87,7 +87,7 @@ describe('Play adoption entry seeds', () => {
       },
     });
 
-    await outcome.get('button[aria-label^="Bring outcome to writing"]').trigger('click');
+    await outcome.get('button[aria-label^="带回写作"]').trigger('click');
     expect(outcome.emitted('prepareAdoption')).toEqual([[
       {
         kind: 'outcome',

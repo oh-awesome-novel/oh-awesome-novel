@@ -71,7 +71,7 @@ describe('usePlaySessionHistory rename', () => {
     expect(onRenamed).toHaveBeenCalledWith(renamedSession);
     expect(history?.checkpoints.value).toEqual([renamedCheckpoint]);
     expect(history?.namingCheckpointId.value).toBe('');
-    expect(history?.notice.value).toBe('Worldline point named.');
+    expect(history?.notice.value).toBe('存档点已命名。');
     scope.stop();
   });
 });

@@ -145,7 +145,7 @@ describe('usePlayRehearsalAttempt', () => {
       evidence: { id: 'evidence-1' },
     });
     expect(onFinished).toHaveBeenCalledOnce();
-    expect(rehearsal.announcement.value).toBe('Rehearsal committed as one Play turn.');
+    expect(rehearsal.announcement.value).toBe('试演已作为一个回合提交。');
   });
 
   it('reuses the same idempotency key when an unknown Retry is retried', async () => {
@@ -287,7 +287,7 @@ describe('usePlayRehearsalAttempt', () => {
 
     expect(rehearsal.error.value).toContain('Cancel endpoint failed.');
     expect(rehearsal.error.value).not.toContain('Retry provider failed.');
-    expect(rehearsal.announcement.value).toContain('Recover attempt truth');
+    expect(rehearsal.announcement.value).toContain('恢复试演状态');
   });
 
   it('GET-recovers a Cancel response lost after the terminal attempt was written', async () => {
@@ -323,7 +323,7 @@ describe('usePlayRehearsalAttempt', () => {
     expect(rehearsal.attempt.value?.status).toBe('cancelled');
     expect(rehearsal.canGenerateStep.value).toBe(false);
     expect(rehearsal.mutationIndeterminate.value).toBe(false);
-    expect(rehearsal.announcement.value).toContain('recovered from attempt truth');
+    expect(rehearsal.announcement.value).toContain('已从试演状态恢复');
   });
 
   it('GET-recovers an Accept response from its stored receipt', async () => {
@@ -401,7 +401,7 @@ describe('usePlayRehearsalAttempt', () => {
     expect(rehearsal.committedResult.value).toMatchObject({
       artifact: { id: 'turn-finish-recovered' },
     });
-    expect(rehearsal.announcement.value).toContain('recovered');
+    expect(rehearsal.announcement.value).toContain('恢复');
     expect(rehearsal.announcement.value).not.toContain('not committed');
   });
 
@@ -467,7 +467,7 @@ describe('usePlayRehearsalAttempt', () => {
     expect(finish).toHaveBeenCalledOnce();
     expect(rehearsal.mutationIndeterminate.value).toBe(false);
     expect(rehearsal.canCancelAttempt.value).toBe(true);
-    expect(rehearsal.announcement.value).toContain('Finish was rejected');
+    expect(rehearsal.announcement.value).toContain('完成试演被拒绝');
     expect(rehearsal.announcement.value).not.toContain('Recover');
   });
 
@@ -597,7 +597,7 @@ describe('usePlayRehearsalAttempt', () => {
       status: 'running',
       attemptRevision: 0,
     });
-    expect(rehearsal.announcement.value).toContain('recovered');
+    expect(rehearsal.announcement.value).toContain('恢复');
   });
 
   it('keeps Cancel attempt-local and never creates committed result truth', async () => {
@@ -632,7 +632,7 @@ describe('usePlayRehearsalAttempt', () => {
     });
     expect(rehearsal.attempt.value?.status).toBe('cancelled');
     expect(rehearsal.committedResult.value).toBeUndefined();
-    expect(rehearsal.announcement.value).toContain('no committed turn');
+    expect(rehearsal.announcement.value).toContain('没有提交回合');
     expect(rehearsal.canStartAttempt.value).toBe(true);
   });
 

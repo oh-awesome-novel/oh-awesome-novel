@@ -38,7 +38,7 @@ describe('PlayComposer time advance', () => {
 
     expect(wrapper.find('[aria-label="推进世界时间"]').exists()).toBe(false);
     const wait = wrapper.findAll('.play-action-kinds button').find(
-      (button) => button.text().includes('Wait'),
+      (button) => button.text().includes('等'),
     );
     await wait!.trigger('click');
 

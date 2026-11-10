@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, shallowRef, useId, useTemplateRef, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, shallowRef, useId, useTemplateRef, watch } from 'vue';
 
+import {
+  PLAY_ADOPTION_TARGET_LABELS,
+  formFromPayload,
+  payloadFromForm,
+} from '../../composables/playAdoptionForm';
+import type { PlayAdoptionForm, StateRow } from '../../composables/playAdoptionForm';
 import type {
   PlayAdoptionPendingActionView,
   PlayAdoptionPreviewRequest,
@@ -26,82 +32,81 @@ const emit = defineEmits<{
   review: [pendingActionId: string];
 }>();
 
-const TARGETS: Array<{ value: PlayAdoptionTarget; label: string }> = [
-  { value: 'chapterDraft', label: 'Chapter draft' },
-  { value: 'state', label: 'State' },
-  { value: 'timeline', label: 'Timeline' },
-  { value: 'foreshadow', label: 'Foreshadow' },
-];
+const TARGETS = (Object.keys(PLAY_ADOPTION_TARGET_LABELS) as PlayAdoptionTarget[])
+  .map((value) => ({ value, label: PLAY_ADOPTION_TARGET_LABELS[value] }));
+
+const TARGET_REASONS: Record<PlayAdoptionTarget, string> = {
+  chapterDraft: '把这条推演结果写成可编辑的章节正文。',
+  state: '把这条推演结果记为一个明确的状态值。',
+  timeline: '把这条推演结果追加为一条时间线事件。',
+  foreshadow: '把这条推演结果保存为一条进行中的伏笔或后续回收点。',
+};
 
 const formRegion = useTemplateRef<HTMLElement>('formRegion');
 const target = shallowRef<PlayAdoptionTarget>('chapterDraft');
-const payloadText = shallowRef('{}');
-const targetId = `${useId()}-adoption-target`;
-const payloadId = `${useId()}-adoption-payload`;
+/** Payload the form edits on top of; hidden fields (ids, fingerprints) ride along unchanged. */
+const basePayload = shallowRef<Record<string, unknown>>({});
+const form = ref<PlayAdoptionForm>(formFromPayload('chapterDraft', {}));
+const uid = useId();
+const fieldId = (name: string) => `${uid}-adoption-${name}`;
+const targetId = fieldId('target');
 
 const sourceKindLabel = computed(() => {
-  if (props.seed.kind === 'event') return 'World event';
-  if (props.seed.kind === 'observation') return 'Observation';
-  return 'Outcome item';
+  if (props.seed.kind === 'event') return '世界事件';
+  if (props.seed.kind === 'observation') return '观察笔记';
+  return '结果报告条目';
 });
 const selectedSuggestion = computed(() =>
   props.preview?.suggestions.find((suggestion) => suggestion.target === target.value),
 );
 const selectedBusinessTargetLabel = computed(() => {
   const selectedTarget = selectedSuggestion.value?.target;
-  if (selectedTarget === 'chapterDraft') return 'Chapter Markdown';
-  if (selectedTarget === 'state') return 'Canonical state YAML';
-  if (selectedTarget === 'timeline') return 'Timeline event YAML';
-  if (selectedTarget === 'foreshadow') return 'Foreshadow YAML';
+  if (selectedTarget === 'chapterDraft') return '写入章节 Markdown';
+  if (selectedTarget === 'state') return '写入状态 YAML';
+  if (selectedTarget === 'timeline') return '追加到时间线 YAML';
+  if (selectedTarget === 'foreshadow') return '追加到伏笔 YAML';
   return '';
 });
-const parsedPayload = computed<{
-  value?: Record<string, unknown>;
-  error?: string;
-}>(() => {
-  try {
-    const value: unknown = JSON.parse(payloadText.value);
-    if (!isRecord(value)) {
-      return { error: 'Payload must be a JSON object.' };
-    }
-    return { value: { ...value } };
-  } catch {
-    return { error: 'Payload must be valid JSON.' };
-  }
-});
+const built = computed(() => payloadFromForm(form.value, basePayload.value));
+const errors = computed(() => built.value.errors);
+const payloadJson = computed(() => built.value.payload
+  ? JSON.stringify(built.value.payload, null, 2)
+  : '');
 const previewMatchesEdits = computed(() => Boolean(
   props.preview &&
-  parsedPayload.value.value &&
+  built.value.payload &&
   props.preview.target === target.value &&
-  stableStringify(props.preview.payload) === stableStringify(parsedPayload.value.value),
+  stableStringify(props.preview.payload) === stableStringify(built.value.payload),
 ));
 const busy = computed(() => props.previewing || props.confirming);
+const locked = computed(() => props.disabled || busy.value || Boolean(props.pendingAction));
 const canPreview = computed(() => Boolean(
-  !props.disabled && !busy.value && parsedPayload.value.value,
+  !props.disabled && !busy.value && built.value.payload,
 ));
 const canConfirm = computed(() => Boolean(
   !props.disabled && !busy.value && previewMatchesEdits.value && !props.pendingAction,
 ));
 const statusMessage = computed(() => {
   if (props.error) return props.error;
-  if (props.previewing) return 'Preparing a canonical diff preview.';
-  if (props.confirming) return 'Creating a PendingAction for human review.';
+  if (props.previewing) return '正在生成改动预览。';
+  if (props.confirming) return '正在创建待确认改动。';
   if (props.pendingAction) {
-    return `PendingAction ${props.pendingAction.id} created. Canonical files remain unchanged.`;
+    return `已创建待确认改动 ${props.pendingAction.id}，正式文件仍未改变。`;
   }
   if (props.preview) {
     return previewMatchesEdits.value
-      ? 'Preview current. No PendingAction has been created.'
-      : 'Target or payload changed. Generate a fresh preview before confirming.';
+      ? '预览是最新的。还没有创建待确认改动。'
+      : '目标或内容已修改，请重新预览后再确认。';
   }
-  return 'Loading the server suggestion. No PendingAction has been created.';
+  return '正在读取建议内容。还没有创建待确认改动。';
 });
 
 watch(
   () => props.seed,
   async () => {
     target.value = 'chapterDraft';
-    payloadText.value = '{}';
+    basePayload.value = {};
+    form.value = formFromPayload('chapterDraft', {});
     await nextTick();
     formRegion.value?.focus();
   },
@@ -112,8 +117,7 @@ watch(
   () => props.preview?.id,
   () => {
     if (!props.preview) return;
-    target.value = props.preview.target;
-    payloadText.value = formatPayload(props.preview.payload);
+    loadPayload(props.preview.target, props.preview.payload);
   },
   { immediate: true },
 );
@@ -122,23 +126,36 @@ onMounted(() => {
   formRegion.value?.focus();
 });
 
+function loadPayload(nextTarget: PlayAdoptionTarget, payload: Readonly<Record<string, unknown>>): void {
+  target.value = nextTarget;
+  // Props are reactive proxies; a JSON copy is enough for JSON payloads.
+  basePayload.value = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  form.value = formFromPayload(nextTarget, payload);
+}
+
 function selectTarget(): void {
-  const suggestion = selectedSuggestion.value;
-  payloadText.value = formatPayload(suggestion?.defaultPayload ?? {});
+  loadPayload(target.value, selectedSuggestion.value?.defaultPayload ?? {});
+}
+
+function addStateRow(): void {
+  if (form.value.target !== 'state' || locked.value) return;
+  form.value.rows.push({ key: '', value: '', json: false });
+}
+
+function removeStateRow(row: StateRow): void {
+  if (form.value.target !== 'state' || locked.value) return;
+  form.value.rows = form.value.rows.filter((item) => item !== row);
+  if (!form.value.rows.length) form.value.rows.push({ key: '', value: '', json: false });
 }
 
 function requestPreview(): void {
-  const payload = parsedPayload.value.value;
+  const payload = built.value.payload;
   if (!canPreview.value || !payload) return;
   emit('preview', { target: target.value, payload });
 }
 
 function close(): void {
   if (!busy.value) emit('close');
-}
-
-function formatPayload(payload: Readonly<Record<string, unknown>>): string {
-  return JSON.stringify(payload, null, 2);
 }
 
 function stableStringify(value: unknown): string {
@@ -162,19 +179,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     ref="formRegion"
     class="play-adoption-draft"
     tabindex="-1"
-    aria-label="Play adoption preview"
+    aria-label="带回写作"
     :aria-busy="busy"
     @keydown.esc.stop="close"
   >
     <header class="play-adoption-draft-header">
       <div class="play-adoption-draft-heading">
         <span>{{ sourceKindLabel }}</span>
-        <h3>Bring to writing</h3>
+        <h3>带回写作</h3>
       </div>
       <button
         class="play-adoption-close"
         type="button"
-        aria-label="Close adoption preview"
+        aria-label="关闭带回写作"
         :disabled="busy"
         @click="close"
       >×</button>
@@ -185,16 +202,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
       <p>{{ preview.evidence }}</p>
     </div>
     <p v-else class="play-adoption-source-loading">
-      The server is rebuilding a safe evidence closure from the current selected branch.
+      正在从当前分支重新整理可用的依据。
     </p>
 
-    <form class="play-adoption-editor" @submit.prevent="requestPreview">
+    <form class="play-adoption-editor" novalidate @submit.prevent="requestPreview">
       <label :for="targetId">
-        <span>Canonical target</span>
+        <span>写到哪里</span>
         <select
           :id="targetId"
           v-model="target"
-          :disabled="disabled || busy || Boolean(pendingAction)"
+          :disabled="locked"
           @change="selectTarget"
         >
           <option v-for="option in TARGETS" :key="option.value" :value="option.value">
@@ -205,55 +222,142 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
       <div v-if="selectedSuggestion" class="play-adoption-suggestion">
         <span>
-          Server suggestion
-          <template v-if="selectedSuggestion.recommended"> · recommended</template>
+          建议
+          <template v-if="selectedSuggestion.recommended"> · 推荐</template>
         </span>
         <strong>{{ selectedBusinessTargetLabel }}</strong>
-        <p>{{ selectedSuggestion.reason }}</p>
+        <p>{{ TARGET_REASONS[selectedSuggestion.target] }}</p>
       </div>
 
-      <label class="play-adoption-payload" :for="payloadId">
-        <span>Editable JSON payload</span>
-        <textarea
-          :id="payloadId"
-          v-model="payloadText"
-          rows="9"
-          spellcheck="false"
-          :aria-invalid="Boolean(parsedPayload.error)"
-          :aria-describedby="parsedPayload.error ? `${payloadId}-error` : undefined"
-          :disabled="disabled || busy || Boolean(pendingAction)"
-        ></textarea>
-      </label>
-      <p
-        v-if="parsedPayload.error"
-        :id="`${payloadId}-error`"
-        class="play-adoption-validation"
-        role="alert"
-      >{{ parsedPayload.error }}</p>
+      <template v-if="form.target === 'chapterDraft'">
+        <div class="play-adoption-readonly">
+          <span>目标章节</span>
+          <strong>{{ form.chapterId || '—' }}</strong>
+          <small v-if="errors.chapterId" class="play-adoption-validation" role="alert">{{ errors.chapterId }}</small>
+        </div>
+        <label :for="fieldId('title')">
+          <span>标题（可选）</span>
+          <input :id="fieldId('title')" v-model="form.title" type="text" :disabled="locked" :aria-invalid="Boolean(errors.title)" :aria-describedby="errors.title ? fieldId('title-error') : undefined" />
+        </label>
+        <p v-if="errors.title" :id="fieldId('title-error')" class="play-adoption-validation" role="alert">{{ errors.title }}</p>
+        <label :for="fieldId('content')">
+          <span>正文</span>
+          <textarea :id="fieldId('content')" v-model="form.content" rows="9" :disabled="locked" :aria-invalid="Boolean(errors.content)" :aria-describedby="errors.content ? fieldId('content-error') : undefined"></textarea>
+        </label>
+        <p v-if="errors.content" :id="fieldId('content-error')" class="play-adoption-validation" role="alert">{{ errors.content }}</p>
+        <label :for="fieldId('mode')">
+          <span>写入方式</span>
+          <select :id="fieldId('mode')" v-model="form.mode" :disabled="locked">
+            <option value="replace">替换章节内容</option>
+            <option value="create">新建章节</option>
+            <option value="">默认</option>
+          </select>
+        </label>
+      </template>
+
+      <template v-else-if="form.target === 'state'">
+        <label :for="fieldId('file')">
+          <span>状态文件（state/ 下）</span>
+          <input :id="fieldId('file')" v-model="form.file" type="text" :disabled="locked" :aria-invalid="Boolean(errors.file)" :aria-describedby="errors.file ? fieldId('file-error') : undefined" />
+        </label>
+        <p v-if="errors.file" :id="fieldId('file-error')" class="play-adoption-validation" role="alert">{{ errors.file }}</p>
+        <label :for="fieldId('path')">
+          <span>对象</span>
+          <input :id="fieldId('path')" v-model="form.path" type="text" :disabled="locked" :aria-invalid="Boolean(errors.path)" :aria-describedby="errors.path ? fieldId('path-error') : undefined" />
+        </label>
+        <p v-if="errors.path" :id="fieldId('path-error')" class="play-adoption-validation" role="alert">{{ errors.path }}</p>
+        <fieldset v-if="form.shape === 'rows'" class="play-adoption-rows">
+          <legend>字段与新值</legend>
+          <div v-for="(row, index) in form.rows" :key="index" class="play-adoption-row">
+            <label :for="fieldId(`row-${index}-key`)">
+              <span>字段</span>
+              <input :id="fieldId(`row-${index}-key`)" v-model="row.key" type="text" :disabled="locked" :aria-invalid="Boolean(errors[`rows.${index}.key`])" />
+            </label>
+            <label :for="fieldId(`row-${index}-value`)">
+              <span>{{ row.json ? '新值（JSON）' : '新值' }}</span>
+              <input :id="fieldId(`row-${index}-value`)" v-model="row.value" type="text" :disabled="locked" :aria-invalid="Boolean(errors[`rows.${index}.value`])" />
+            </label>
+            <button type="button" class="ghost-button tight-button" :disabled="locked" :aria-label="`删除第 ${index + 1} 行`" @click="removeStateRow(row)">删除</button>
+            <p v-if="errors[`rows.${index}.key`]" class="play-adoption-validation" role="alert">{{ errors[`rows.${index}.key`] }}</p>
+            <p v-if="errors[`rows.${index}.value`]" class="play-adoption-validation" role="alert">{{ errors[`rows.${index}.value`] }}</p>
+          </div>
+          <p v-if="errors.rows" class="play-adoption-validation" role="alert">{{ errors.rows }}</p>
+          <button type="button" class="ghost-button tight-button" :disabled="locked" @click="addStateRow">添加一行</button>
+        </fieldset>
+        <template v-else>
+          <label :for="fieldId('scalar')">
+            <span>{{ form.scalar.json ? '新值（JSON）' : '新值' }}</span>
+            <input :id="fieldId('scalar')" v-model="form.scalar.value" type="text" :disabled="locked" :aria-invalid="Boolean(errors.scalar)" />
+          </label>
+          <p v-if="errors.scalar" class="play-adoption-validation" role="alert">{{ errors.scalar }}</p>
+        </template>
+      </template>
+
+      <template v-else-if="form.target === 'timeline'">
+        <label :for="fieldId('date')">
+          <span>世界内时间</span>
+          <input :id="fieldId('date')" v-model="form.date" type="text" placeholder="例如：七月十七日夜" :disabled="locked" />
+        </label>
+        <label :for="fieldId('summary')">
+          <span>事件</span>
+          <textarea :id="fieldId('summary')" v-model="form.summary" rows="4" :disabled="locked" :aria-invalid="Boolean(errors.summary)" :aria-describedby="errors.summary ? fieldId('summary-error') : undefined"></textarea>
+        </label>
+        <p v-if="errors.summary" :id="fieldId('summary-error')" class="play-adoption-validation" role="alert">{{ errors.summary }}</p>
+        <label :for="fieldId('participants')">
+          <span>参与者（用顿号或逗号分隔）</span>
+          <input :id="fieldId('participants')" v-model="form.participants" type="text" :disabled="locked" />
+        </label>
+        <label :for="fieldId('location')">
+          <span>地点</span>
+          <input :id="fieldId('location')" v-model="form.location" type="text" :disabled="locked" />
+        </label>
+      </template>
+
+      <template v-else>
+        <label :for="fieldId('summary')">
+          <span>伏笔描述</span>
+          <textarea :id="fieldId('summary')" v-model="form.summary" rows="4" :disabled="locked" :aria-invalid="Boolean(errors.summary)" :aria-describedby="errors.summary ? fieldId('summary-error') : undefined"></textarea>
+        </label>
+        <p v-if="errors.summary" :id="fieldId('summary-error')" class="play-adoption-validation" role="alert">{{ errors.summary }}</p>
+        <label :for="fieldId('first-chapter')">
+          <span>埋设位置</span>
+          <input :id="fieldId('first-chapter')" v-model="form.firstChapter" type="text" placeholder="例如：0001/0003 或某个场景" :disabled="locked" />
+        </label>
+        <label :for="fieldId('expected-resolution')">
+          <span>预期回收条件</span>
+          <input :id="fieldId('expected-resolution')" v-model="form.expectedResolution" type="text" :disabled="locked" />
+        </label>
+      </template>
+
+      <details class="play-adoption-json">
+        <summary>查看 JSON</summary>
+        <pre v-if="payloadJson" aria-label="将提交的 JSON（只读）">{{ payloadJson }}</pre>
+        <p v-else>表单还有需要修正的地方。</p>
+      </details>
 
       <button
         class="ghost-button tight-button"
         type="submit"
         :disabled="!canPreview || Boolean(pendingAction)"
-      >{{ previewing ? 'Preparing preview…' : 'Preview canonical diff' }}</button>
+      >{{ previewing ? '正在生成预览…' : '预览改动' }}</button>
     </form>
 
-    <section v-if="preview" class="play-adoption-preview" aria-label="Canonical adoption preview">
+    <section v-if="preview" class="play-adoption-preview" aria-label="改动预览">
       <div class="play-adoption-target-files">
-        <span>Target files</span>
+        <span>目标文件</span>
         <ul v-if="preview.changes.length">
           <li v-for="change in preview.changes" :key="change.path">
             {{ change.operation }} · {{ change.path }}
           </li>
         </ul>
-        <p v-else>No canonical target file was returned.</p>
+        <p v-else>没有返回目标文件。</p>
       </div>
       <div class="play-adoption-diff">
-        <span>Actual diff</span>
-        <pre aria-label="Canonical diff preview">{{ preview.diff }}</pre>
+        <span>实际 diff</span>
+        <pre aria-label="改动 diff 预览">{{ preview.diff }}</pre>
       </div>
       <p class="play-adoption-boundary">
-        Preview only · no PendingAction has been created · canonical files are unchanged.
+        仅预览 · 还没有创建待确认改动 · 正式文件没有变化。
       </p>
       <button
         v-if="!pendingAction"
@@ -261,24 +365,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
         type="button"
         :disabled="!canConfirm"
         @click="emit('confirm')"
-      >{{ confirming ? 'Creating PendingAction…' : 'Confirm and create PendingAction' }}</button>
+      >{{ confirming ? '正在创建…' : '确认并创建待确认改动' }}</button>
     </section>
 
     <section
       v-if="pendingAction"
       class="play-adoption-created"
-      aria-label="Created PendingAction"
+      aria-label="已创建的待确认改动"
     >
       <div>
-        <span>PendingAction created</span>
+        <span>已创建待确认改动</span>
         <strong>{{ pendingAction.id }}</strong>
-        <p>Canonical files remain unchanged until Review accepts this action.</p>
+        <p>在审阅中接受之前，正式文件不会改变。</p>
       </div>
       <button
         class="primary-button tight-button"
         type="button"
         @click="emit('review', pendingAction.id)"
-      >Review PendingAction</button>
+      >去审阅</button>
     </section>
 
     <p
@@ -392,6 +496,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .play-adoption-editor select,
+.play-adoption-editor input,
 .play-adoption-editor textarea {
   min-width: 0;
   border: 1px solid var(--play-line, var(--editor-hairline));
@@ -407,6 +512,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .play-adoption-validation,
 .play-adoption-status-error {
   color: var(--play-danger, var(--editor-danger));
+}
+
+.play-adoption-readonly {
+  display: grid;
+  gap: 2px;
+}
+
+.play-adoption-readonly span,
+.play-adoption-rows legend,
+.play-adoption-json summary {
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.play-adoption-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+}
+
+.play-adoption-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  align-items: end;
+  gap: 6px;
+}
+
+.play-adoption-row > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.play-adoption-json pre {
+  max-height: 200px;
+  margin: 4px 0 0;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  white-space: pre-wrap;
+}
+
+.play-adoption-json p {
+  margin: 4px 0 0;
+  font-size: 9px;
+}
+
+.play-adoption-validation {
+  margin: 0;
+  font-size: 10px;
 }
 
 .play-adoption-target-files ul {

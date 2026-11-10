@@ -22,10 +22,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="play-context-inspector" aria-label="Play context inspector" :aria-busy="loading || busy">
+  <section class="play-context-inspector" aria-label="上下文检查器" :aria-busy="loading || busy">
     <header>
-      <span>Context evidence</span>
-      <h2>Sources &amp; windows</h2>
+      <span>上下文依据</span>
+      <h2>来源与窗口</h2>
     </header>
     <p v-if="error" class="play-context-inspector-error" role="alert">{{ error }}</p>
     <PlaySourceDriftControls
@@ -36,7 +36,7 @@ const emit = defineEmits<{
     />
     <PlayContextTraceList :traces="traces" />
     <p class="play-context-inspector-status" role="status" aria-live="polite">
-      {{ loading ? 'Refreshing Play context evidence…' : '' }}
+      {{ loading ? '正在刷新上下文依据…' : '' }}
     </p>
   </section>
 </template>

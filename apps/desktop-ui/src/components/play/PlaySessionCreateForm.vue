@@ -141,39 +141,39 @@ function splitCharacters(value: string): string[] {
       <label>
         <span>世界模式</span>
         <select v-model="simulationMode" class="text-input">
-          <option value="conversation">Conversation</option>
-          <option value="reactiveWorld">Reactive world</option>
-          <option value="activeWorld">Active world</option>
+          <option value="conversation">对话为主</option>
+          <option value="reactiveWorld">世界会回应</option>
+          <option value="activeWorld">世界主动推进</option>
         </select>
       </label>
       <label>
         <span>事件密度</span>
         <select v-model="density" class="text-input">
-          <option value="quiet">Quiet</option>
-          <option value="balanced">Balanced</option>
-          <option value="volatile">Volatile</option>
+          <option value="quiet">平静</option>
+          <option value="balanced">适中</option>
+          <option value="volatile">多变</option>
         </select>
       </label>
     </div>
     <PlayEventPolicyFields :value="eventSettings" :disabled="creating" @update="eventSettings = $event" />
     <fieldset class="play-world-seed-fields">
-      <legend>World motion seeds <small>可选</small></legend>
+      <legend>世界动向种子 <small>可选</small></legend>
       <p>为新世界提供一个正在逼近的压力，或一个 NPC / 组织的下一步。</p>
 
       <div class="play-world-seed-grid">
         <label>
-          <span>Pressure 类型</span>
+          <span>压力类型</span>
           <select v-model="pressureKind" class="text-input">
-            <option value="deadline">Deadline</option>
-            <option value="pursuit">Pursuit</option>
-            <option value="factionProject">Faction project</option>
-            <option value="environment">Environment</option>
-            <option value="rumor">Rumor</option>
-            <option value="relationship">Relationship</option>
+            <option value="deadline">期限</option>
+            <option value="pursuit">追逐</option>
+            <option value="factionProject">势力计划</option>
+            <option value="environment">环境</option>
+            <option value="rumor">传闻</option>
+            <option value="relationship">关系</option>
           </select>
         </label>
         <label>
-          <span>Pressure</span>
+          <span>压力</span>
           <input
             v-model="pressureLabel"
             class="text-input"
@@ -197,11 +197,11 @@ function splitCharacters(value: string): string[] {
           class="play-world-seed-error"
           role="alert"
         >
-          Pressure seed 需要名称和下一后果。
+          压力种子需要名称和下一步后果。
         </p>
 
         <label>
-          <span>Agenda 所有者</span>
+          <span>动向所属</span>
           <input
             v-model="agendaOwner"
             class="text-input"
@@ -211,7 +211,7 @@ function splitCharacters(value: string): string[] {
           >
         </label>
         <label>
-          <span>Agenda 目标</span>
+          <span>动向目标</span>
           <input
             v-model="agendaGoal"
             class="text-input"
@@ -234,16 +234,16 @@ function splitCharacters(value: string): string[] {
           class="play-world-seed-error"
           role="alert"
         >
-          Agenda seed 需要所有者和目标。
+          动向种子需要所属者和目标。
         </p>
       </div>
     </fieldset>
     <div class="play-create-actions">
       <button class="ghost-button tight-button" type="button" :disabled="creating" @click="emit('cancel')">
-        Cancel
+        取消
       </button>
       <button class="primary-button tight-button" type="submit" :disabled="creating || !canCreate">
-        {{ creating ? 'Creating…' : 'Create session' }}
+        {{ creating ? 'Creating…' : '创建会话' }}
       </button>
     </div>
   </form>

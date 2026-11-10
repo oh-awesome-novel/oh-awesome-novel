@@ -8,16 +8,16 @@ defineProps<{
 </script>
 
 <template>
-  <section class="play-event-reveal-chain" aria-label="Information reveal chain">
+  <section class="play-event-reveal-chain" aria-label="信息揭示链">
     <header class="play-event-reveal-header">
-      <span>Reveal chain</span>
+      <span>揭示链</span>
       <strong>{{ chain.statusLabel }}</strong>
     </header>
     <p class="play-event-reveal-explanation">{{ chain.explanation }}</p>
 
     <ol v-if="showAuthorDetails && chain.author" class="play-event-reveal-steps">
       <li>
-        <span>Hidden source</span>
+        <span>隐藏来源</span>
         <strong>{{ chain.author.subjectTitle }}</strong>
         <p>{{ chain.author.subjectSummary }}</p>
         <small>
@@ -28,21 +28,21 @@ defineProps<{
         </p>
       </li>
       <li>
-        <span>Revealed by</span>
+        <span>揭示于</span>
         <strong>{{ chain.author.revealedByTitle }}</strong>
         <small>{{ chain.author.revealedByEventId }}</small>
       </li>
     </ol>
 
     <dl v-if="showAuthorDetails && chain.author" class="play-event-reveal-technical">
-      <dt>Knowledge record</dt>
+      <dt>认知记录</dt>
       <dd>{{ chain.author.recordId }}</dd>
-      <dt>Projection</dt>
+      <dt>呈现方式</dt>
       <dd>
         {{ chain.author.previousPlayerProjection }} → {{ chain.author.playerProjection }}
       </dd>
       <template v-if="chain.author.knownByParticipantRefs.length">
-        <dt>Known by</dt>
+        <dt>知情者</dt>
         <dd>{{ chain.author.knownByParticipantRefs.join(', ') }}</dd>
       </template>
     </dl>

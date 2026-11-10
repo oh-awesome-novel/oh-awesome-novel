@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPlayWorldActivity } from '../../../composables/playTerms';
 import type { DeepReadonly } from 'vue';
 
 import type { PlaySessionPurpose } from '../../../composables/useWorkspaceApi';
@@ -24,56 +25,56 @@ const emit = defineEmits<{
 function sourceStatus(
   source: DeepReadonly<PlayLaunchPackage['sourceBase']['activatedSources'][number]>,
 ): string {
-  if (source.status === 'ready') return 'Ready';
-  if (source.status === 'missing') return 'Missing — select or restore this file';
-  return 'Invalid — replace this source';
+  if (source.status === 'ready') return '就绪';
+  if (source.status === 'missing') return '缺失 — 请重新选择或恢复这个文件';
+  return '无效 — 请替换这个来源';
 }
 </script>
 
 <template>
   <section class="guided-review" aria-labelledby="guided-review-heading">
     <header>
-      <span>Step 5 / 5</span>
-      <h2 id="guided-review-heading">Review</h2>
-      <p>Inspect the source evidence before creating any Play truth.</p>
+      <span>第 5 / 5 步</span>
+      <h2 id="guided-review-heading">确认</h2>
+      <p>创建推演之前先核对来源依据。</p>
     </header>
 
-    <p class="not-created"><strong>Nothing has been created yet.</strong> This is a read-only Launch Package preview.</p>
+    <p class="not-created"><strong>还没有创建任何内容。</strong> 这是开局包的只读预览。</p>
     <p v-if="requestError" class="request-error" role="alert">{{ requestError }}</p>
 
     <dl class="summary-grid">
       <div>
-        <dt>Title</dt>
+        <dt>标题</dt>
         <dd>{{ preview.title }}</dd>
       </div>
       <div>
-        <dt>Purpose</dt>
-        <dd>{{ purpose === 'sceneRehearsal' ? 'Scene Rehearsal' : 'Immersive Journey' }}</dd>
+        <dt>用途</dt>
+        <dd>{{ purpose === 'sceneRehearsal' ? '场景试演' : '沉浸推演' }}</dd>
       </div>
       <div>
-        <dt>Entry</dt>
+        <dt>入场</dt>
         <dd>{{ preview.entryPoint.label }}</dd>
       </div>
       <div>
-        <dt>Identity</dt>
-        <dd>{{ preview.identity.kind === 'director' ? 'Director Lens' : 'Player Lens' }}</dd>
+        <dt>身份</dt>
+        <dd>{{ preview.identity.kind === 'director' ? '导演视角' : '参与者视角' }}</dd>
       </div>
       <div>
-        <dt>World activity</dt>
-        <dd>{{ preview.eventPolicy.simulationMode }} · {{ preview.eventPolicy.density }}</dd>
+        <dt>世界活跃度</dt>
+        <dd>{{ formatPlayWorldActivity(preview.eventPolicy) }}</dd>
       </div>
       <div v-if="preview.entryPoint.worldTime">
-        <dt>Initial world time</dt>
+        <dt>初始世界时间</dt>
         <dd>{{ preview.entryPoint.worldTime.value }}</dd>
       </div>
       <div>
-        <dt>Participants</dt>
+        <dt>参与者</dt>
         <dd>{{ preview.participantRoles.length }}</dd>
       </div>
     </dl>
 
     <section class="source-evidence" aria-labelledby="guided-review-sources-heading">
-      <h3 id="guided-review-sources-heading">Source evidence</h3>
+      <h3 id="guided-review-sources-heading">来源依据</h3>
       <ul>
         <li v-for="source in preview.sourceBase.activatedSources" :key="source.sourceId">
           <details :open="source.status !== 'ready'">
@@ -85,7 +86,7 @@ function sourceStatus(
             </summary>
             <dl>
               <template v-if="source.objectId">
-                <dt>Object</dt>
+                <dt>对象</dt>
                 <dd>{{ source.objectId }}</dd>
               </template>
               <template v-if="source.contentHash">
@@ -93,7 +94,7 @@ function sourceStatus(
                 <dd class="source-hash">{{ source.contentHash }}</dd>
               </template>
               <template v-if="source.excerpt !== undefined">
-                <dt>Excerpt</dt>
+                <dt>摘录</dt>
                 <dd><pre>{{ source.excerpt }}</pre></dd>
               </template>
             </dl>
@@ -105,20 +106,20 @@ function sourceStatus(
     <PlayLaunchDiagnostics :diagnostics="preview.diagnostics" />
 
     <p v-if="!canStart" class="blocked-notice">
-      Start is blocked until every source is ready and all error diagnostics are resolved.
+      所有来源就绪、错误诊断全部处理后才能开始。
     </p>
 
     <footer>
-      <button type="button" :disabled="disabled || creating" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled || creating" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled || creating" @click="emit('back')">Back to Cast</button>
+        <button type="button" :disabled="disabled || creating" @click="emit('back')">返回人物</button>
         <button
           class="primary"
           type="button"
           :disabled="disabled || creating || !canStart"
           @click="emit('confirm')"
         >
-          {{ creating ? 'Starting…' : purpose === 'sceneRehearsal' ? 'Start Scene Rehearsal' : 'Start Immersive Journey' }}
+          {{ creating ? 'Starting…' : purpose === 'sceneRehearsal' ? '开始场景试演' : '开始沉浸推演' }}
         </button>
       </div>
     </footer>

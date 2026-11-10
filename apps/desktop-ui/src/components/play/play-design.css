@@ -134,6 +134,13 @@
   font-size: 15px;
 }
 
+#play-workspace .play-workspace-status .play-import-button {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 #play-workspace .play-workspace-status button:hover,
 #play-workspace .play-icon-button:hover {
   border-color: var(--play-line-strong);
@@ -738,6 +745,39 @@
   color: var(--play-body);
   font-size: 11px;
   opacity: 0.7;
+}
+
+#play-workspace .play-choices-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+}
+
+#play-workspace .play-choice-more {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px dashed var(--play-line-strong);
+  border-radius: 4px;
+  background: var(--play-canvas);
+  color: var(--play-body);
+  font-size: 11px;
+}
+
+#play-workspace .play-choice-more:disabled {
+  opacity: 0.5;
+}
+
+#play-workspace .play-choices-more-note,
+#play-workspace .play-choices-more-error {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+#play-workspace .play-choices-more-error {
+  color: var(--play-danger, #b42318);
+  opacity: 1;
 }
 
 #play-workspace .play-action-kinds button {

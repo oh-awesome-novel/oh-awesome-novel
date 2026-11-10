@@ -107,7 +107,7 @@ describe('usePlaySessionHistory', () => {
     expect(onRestored).toHaveBeenCalledWith(restoredSession);
     expect(history?.checkpoints.value).toEqual([restoredCurrent]);
     expect(history?.busyArtifactId.value).toBe('');
-    expect(history?.notice.value).toContain('Later turns remain available as variants');
+    expect(history?.notice.value).toContain('之后的回合会保留为其他结果');
 
     selected.value = createSession(4);
     await nextTick();

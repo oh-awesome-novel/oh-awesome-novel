@@ -42,19 +42,19 @@ const isBusy = computed(() => Boolean(run && busyPhases.has(run.phase)));
 
 function statusLabel(status: PlayRehearsalStepStatus): string {
   switch (status) {
-    case 'provisional': return 'provisional · not committed';
-    case 'selected': return 'selected · attempt-local';
-    case 'committed': return 'committed';
-    case 'superseded': return 'superseded variant';
+    case 'provisional': return '临时 · 尚未提交';
+    case 'selected': return '已采用 · 仅限本次试演';
+    case 'committed': return '已提交';
+    case 'superseded': return '已被替换的结果';
   }
 }
 
 function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
   switch (kind) {
-    case 'narrator': return 'Narrator';
-    case 'characterSpeech': return 'Speech';
-    case 'characterAction': return 'Action';
-    case 'worldNotice': return 'World';
+    case 'narrator': return '旁白';
+    case 'characterSpeech': return '台词';
+    case 'characterAction': return '动作';
+    case 'worldNotice': return '世界';
   }
 }
 </script>
@@ -67,10 +67,10 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
   >
     <header>
       <div>
-        <span>Narrative / attempt</span>
-        <h2 :id="headingId">Actor Steps</h2>
+        <span>叙述 / 本次试演</span>
+        <h2 :id="headingId">角色步骤</h2>
       </div>
-      <span>{{ run?.statusMessage || 'Ready' }}</span>
+      <span>{{ run?.statusMessage || '就绪' }}</span>
     </header>
 
     <div class="play-rehearsal-step-scroll">
@@ -93,22 +93,22 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
           <section v-for="block in step.blocks" :key="block.id">
             <header>
               <span>{{ block.speakerName || blockKindLabel(block.kind) }}</span>
-              <small>{{ blockKindLabel(block.kind) }}<template v-if="block.projection === 'directorOnly'"> · Director only</template></small>
+              <small>{{ blockKindLabel(block.kind) }}<template v-if="block.projection === 'directorOnly'"> · 仅导演可见</template></small>
             </header>
             <p :data-usage-step="step.id">{{ block.content }}</p>
           </section>
         </div>
-        <p v-else class="play-rehearsal-step-empty">No narrative block prepared yet.</p>
+        <p v-else class="play-rehearsal-step-empty">还没有准备叙述段落。</p>
 
         <small v-if="step.variantOf" class="play-rehearsal-variant-ref">
-          Variant of {{ step.variantOf }}
+          {{ step.variantOf }} 的另一结果
         </small>
       </article>
 
       <div v-if="steps.length === 0" class="play-rehearsal-step-placeholder">
         <span aria-hidden="true">[ ]</span>
-        <strong>No actor step yet</strong>
-        <p>Generate the current actor's reaction, then Accept or Retry it inside this attempt.</p>
+        <strong>还没有角色步骤</strong>
+        <p>生成当前角色的反应，然后在这次试演中采用或重演。</p>
       </div>
     </div>
 
@@ -121,19 +121,19 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
         v-if="isBusy"
         type="button"
         :disabled="!canStop"
-        aria-label="Stop current actor step generation; keep the rehearsal attempt"
+        aria-label="停止生成当前角色步骤，保留这次试演"
         @click="emit('stopStep')"
       >
-        {{ run.phase === 'stopping' ? 'Stopping step…' : 'Stop step' }}
+        {{ run.phase === 'stopping' ? '正在停止…' : '停止步骤' }}
       </button>
     </footer>
     <form
       v-if="run && isBusy && canStop"
       class="play-rehearsal-steer"
-      aria-label="Director 插话"
+      aria-label="导演插话"
       @submit.prevent="steer"
     >
-      <label class="visually-hidden" for="play-rehearsal-steer-input">Director 插话</label>
+      <label class="visually-hidden" for="play-rehearsal-steer-input">导演插话</label>
       <input
         id="play-rehearsal-steer-input"
         v-model="steerText"

@@ -44,11 +44,11 @@ describe('PlaySessionRail', () => {
 
     expect(wrapper.get('.play-create-trigger').attributes('disabled')).toBeDefined();
     expect(wrapper.get('.play-session-card').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('[aria-label="刷新 Play sessions"]').attributes('disabled'))
+    expect(wrapper.get('[aria-label="刷新推演会话"]').attributes('disabled'))
       .toBeDefined();
 
     await wrapper.setProps({ busy: false, refreshDisabled: false });
-    await wrapper.get('[aria-label="刷新 Play sessions"]').trigger('click');
+    await wrapper.get('[aria-label="刷新推演会话"]').trigger('click');
 
     expect(wrapper.emitted('refresh')).toEqual([[]]);
   });

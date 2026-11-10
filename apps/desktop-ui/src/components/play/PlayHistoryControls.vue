@@ -24,16 +24,19 @@ const props = withDefaults(defineProps<{
   retryDisabledReason?: string;
   blocked: boolean;
   notice: string;
+  /** Director view: guided Retry notes may be shown. */
+  directorLens?: boolean;
 }>(), {
   retryingArtifactId: '',
   namingCheckpointId: '',
   retryDisabled: false,
-  retryDisabledReason: 'Configure a provider to Retry this settlement.',
+  retryDisabledReason: '配置模型后才能重演这一回合。',
+  directorLens: false,
 });
 
 const emit = defineEmits<{
   restore: [checkpointId: string];
-  retry: [checkpointId: string];
+  retry: [checkpointId: string, guidance?: string];
   name: [checkpointId: string, name: string];
 }>();
 
@@ -43,16 +46,16 @@ const worldline = computed(() => orderWorldline(
 ));
 const statusMessage = computed(() => {
   if (props.loading) {
-    return 'Loading worldline…';
+    return '正在载入世界线…';
   }
   if (props.retryingArtifactId) {
-    return 'Retrying from before the original turn… The existing result remains a variant.';
+    return '正在从原回合开始前重演…现有结果会保留为另一个结果。';
   }
   if (props.busyArtifactId) {
-    return 'Restoring worldline…';
+    return '正在回到这里…';
   }
   if (props.namingCheckpointId) {
-    return 'Saving worldline point name…';
+    return '正在保存存档点名称…';
   }
   const retryNotice = props.retryDisabled && props.checkpoints.some(
     (checkpoint) => checkpoint.retryable,
@@ -64,6 +67,11 @@ const statusMessage = computed(() => {
 
 function forwardName(checkpointId: string, name: string): void {
   emit('name', checkpointId, name);
+}
+
+function forwardRetry(checkpointId: string, guidance?: string): void {
+  if (guidance) emit('retry', checkpointId, guidance);
+  else emit('retry', checkpointId);
 }
 
 function orderWorldline(
@@ -161,8 +169,8 @@ function checkpointDepthOf(checkpoint: HistoryCheckpoint): number {
     :aria-busy="loading || Boolean(busyArtifactId) || Boolean(retryingArtifactId) || Boolean(namingCheckpointId)"
   >
     <header class="play-history-heading">
-      <h3 :id="headingId">Worldline</h3>
-      <span>Current path and retained outcomes</span>
+      <h3 :id="headingId">世界线</h3>
+      <span>当前路径与保留的其他结果</span>
     </header>
 
     <ol v-if="worldline.length" class="play-history-list play-worldline-list">
@@ -178,13 +186,14 @@ function checkpointDepthOf(checkpoint: HistoryCheckpoint): number {
         :retry-disabled="retryDisabled"
         :retry-disabled-reason="retryDisabledReason"
         :blocked="blocked"
+        :director-lens="directorLens"
         @restore="emit('restore', $event)"
-        @retry="emit('retry', $event)"
+        @retry="forwardRetry"
         @name="forwardName"
       />
     </ol>
     <p v-else class="play-history-empty">
-      No worldline points are available yet.
+      还没有可用的存档点。
     </p>
 
     <p

@@ -17,7 +17,7 @@ defineExpose({ advance });
   <button type="button" class="vn-textbox" aria-label="显示全文或下一句" @click="advance">
     <strong v-if="beat?.speaker" class="vn-name" :style="{ color: speakerColor }">{{ beat.speaker }}</strong>
     <span :class="{ narration: !beat?.isDialogue }" :data-usage-operation="text ? usageOperationId : undefined" :data-usage-message="text ? usageMessageId : undefined">{{ text || '…' }}</span>
-    <small>空格 / Enter · 显示全文 / 下一句</small>
+    <small>空格 / 回车 · 显示全文 / 下一句</small>
   </button>
 </template>
 <style scoped>

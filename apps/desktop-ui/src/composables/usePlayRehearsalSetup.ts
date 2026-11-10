@@ -28,7 +28,7 @@ export function usePlayRehearsalSetup(
   ]);
   const sceneValidationVisible = shallowRef(false);
   const castValidationVisible = shallowRef(false);
-  const announcement = shallowRef('Scene setup. Step 1 of 3.');
+  const announcement = shallowRef('场景设置。第 1 / 3 步。');
 
   const rawSceneErrors = computed(() => validateScene(sceneDraft.value));
   const rawCastErrors = computed(() => validateCast(participants.value));
@@ -69,7 +69,7 @@ export function usePlayRehearsalSetup(
 
   function addParticipant(): void {
     participants.value = [...participants.value, createParticipantDraft()];
-    announcement.value = `Actor added. ${participants.value.length} actors in the fixed queue.`;
+    announcement.value = `已添加角色，固定顺序中共 ${participants.value.length} 个角色。`;
   }
 
   function removeParticipant(participantRef: string): void {
@@ -79,7 +79,7 @@ export function usePlayRehearsalSetup(
     participants.value = participants.value.filter(
       (participant) => participant.participantRef !== participantRef,
     );
-    announcement.value = `Actor removed. ${participants.value.length} actors remain.`;
+    announcement.value = `已移除角色，还剩 ${participants.value.length} 个角色。`;
   }
 
   function moveParticipant(
@@ -104,22 +104,22 @@ export function usePlayRehearsalSetup(
     if (currentStep.value === 'scene') {
       sceneValidationVisible.value = true;
       if (Object.keys(rawSceneErrors.value).length > 0) {
-        announcement.value = 'Complete the required Scene fields before continuing.';
+        announcement.value = '请先填写场景的必填项。';
         return false;
       }
       currentStep.value = 'cast';
-      announcement.value = 'Cast setup. Step 2 of 3.';
+      announcement.value = '人物设置。第 2 / 3 步。';
       return true;
     }
 
     if (currentStep.value === 'cast') {
       castValidationVisible.value = true;
       if (Object.keys(rawCastErrors.value).length > 0) {
-        announcement.value = 'Complete every actor name and current goal before continuing.';
+        announcement.value = '请先填写每个角色的名字和当前目标。';
         return false;
       }
       currentStep.value = 'review';
-      announcement.value = 'Review setup. Step 3 of 3. No session has been created yet.';
+      announcement.value = '确认设置。第 3 / 3 步。还没有创建会话。';
       return true;
     }
 
@@ -129,12 +129,12 @@ export function usePlayRehearsalSetup(
   function previousStep(): boolean {
     if (currentStep.value === 'review') {
       currentStep.value = 'cast';
-      announcement.value = 'Cast setup. Step 2 of 3.';
+      announcement.value = '人物设置。第 2 / 3 步。';
       return true;
     }
     if (currentStep.value === 'cast') {
       currentStep.value = 'scene';
-      announcement.value = 'Scene setup. Step 1 of 3.';
+      announcement.value = '场景设置。第 1 / 3 步。';
       return true;
     }
     return false;
@@ -147,7 +147,7 @@ export function usePlayRehearsalSetup(
       Object.keys(rawSceneErrors.value).length > 0 ||
       Object.keys(rawCastErrors.value).length > 0
     ) {
-      announcement.value = 'Setup validation failed. Review Scene and Cast fields.';
+      announcement.value = '设置校验失败，请检查场景和人物。';
       return undefined;
     }
 
@@ -175,7 +175,7 @@ export function usePlayRehearsalSetup(
     participants.value = [createParticipantDraft()];
     sceneValidationVisible.value = false;
     castValidationVisible.value = false;
-    announcement.value = 'Scene setup. Step 1 of 3.';
+    announcement.value = '场景设置。第 1 / 3 步。';
   }
 
   return {
@@ -214,10 +214,10 @@ function createSceneDraft(): PlayRehearsalSceneDraft {
 
 function validateScene(scene: PlayRehearsalSceneDraft): PlayRehearsalSceneErrors {
   const errors: PlayRehearsalSceneErrors = {};
-  if (!scene.title.trim()) errors.title = 'Scene title is required.';
-  if (!scene.opening.trim()) errors.opening = 'Opening situation is required.';
-  if (!scene.location.trim()) errors.location = 'Location is required.';
-  if (!scene.objective.trim()) errors.objective = 'Rehearsal objective is required.';
+  if (!scene.title.trim()) errors.title = '请填写场景标题。';
+  if (!scene.opening.trim()) errors.opening = '请填写开场情境。';
+  if (!scene.location.trim()) errors.location = '请填写地点。';
+  if (!scene.objective.trim()) errors.objective = '请填写试演目标。';
   if (scene.eventSettings) errors.eventSettings = playEventSettingsError(scene.eventSettings);
   if (!errors.eventSettings) delete errors.eventSettings;
   return errors;
@@ -229,10 +229,10 @@ function validateCast(
   return Object.fromEntries(participants.flatMap((participant) => {
     const errors = {
       ...(!participant.displayName.trim()
-        ? { displayName: 'Actor name is required.' }
+        ? { displayName: '请填写角色名字。' }
         : {}),
       ...(!participant.currentGoal.trim()
-        ? { currentGoal: 'Current goal is required.' }
+        ? { currentGoal: '请填写当前目标。' }
         : {}),
     };
     return Object.keys(errors).length > 0

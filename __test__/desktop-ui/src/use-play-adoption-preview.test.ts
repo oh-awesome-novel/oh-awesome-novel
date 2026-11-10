@@ -119,7 +119,7 @@ describe('usePlayAdoptionPreview', () => {
 
     expect(harness.flow.preview.value).toBeUndefined();
     expect(harness.flow.error.value).toBe(
-      'Adoption preview could not be prepared for the Player lens.',
+      '无法在参与者视角下生成采纳预览。',
     );
     expect(harness.flow.error.value).not.toContain('poison');
     harness.stop();

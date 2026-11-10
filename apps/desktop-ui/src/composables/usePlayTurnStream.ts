@@ -60,7 +60,7 @@ export interface PlayTurnStreamClient {
   retryPlayWorldRefereeTurn(
     id: string,
     artifactId: string,
-    input: { baseRevision: number },
+    input: { baseRevision: number; guidance?: string },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
@@ -89,6 +89,8 @@ export interface PlayTurnSubmitInput {
 
 export interface PlayTurnRetryInput extends PlayTurnSubmitInput {
   artifactId: string;
+  /** Optional author guidance for this one Retry; the action itself never changes. */
+  guidance?: string;
 }
 
 interface PlayTurnInvocation extends PlayTurnSubmitInput {
@@ -154,7 +156,10 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       (streamOptions) => options.client.retryPlayWorldRefereeTurn(
         input.sessionId,
         input.artifactId,
-        { baseRevision: input.baseRevision },
+        {
+          baseRevision: input.baseRevision,
+          ...(input.guidance?.trim() ? { guidance: input.guidance.trim() } : {}),
+        },
         streamOptions,
       ),
     );
@@ -184,12 +189,12 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       phase: 'starting',
       provisionalText: '',
       statusMessage: input.intent === 'retry'
-        ? 'Starting Retry from before turn…'
-        : 'Starting world referee…',
+        ? '正在从回合开始前重演…'
+        : '正在启动裁判…',
     };
     announcement.value = input.intent === 'retry'
-      ? 'Starting Play retry from before the original turn.'
-      : 'Starting Play turn.';
+      ? '正在从原回合开始前重演。'
+      : '正在推进回合。';
     const controller = new AbortController();
     activeConnection.value = { localId, controller };
     let outcome: PlayTurnSubmitOutcome | undefined;
@@ -256,15 +261,15 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         if (knownTurnId) {
           updateRun(localId, {
             phase: 'indeterminate',
-            statusMessage: 'Server outcome unknown · refresh before continuing',
-            error: `The final status of this turn could not be confirmed: ${message}`,
+            statusMessage: '结果未知 · 请刷新后再继续',
+            error: `无法确认这一回合的最终状态：${message}`,
           });
           outcome = 'unknown';
         } else {
           updateRun(localId, {
             phase: /revision conflict/iu.test(message) ? 'conflict' : 'failed',
             provisionalText: '',
-            statusMessage: 'Turn not committed',
+            statusMessage: '回合未提交',
             error: message,
           });
           outcome = 'failed';
@@ -298,7 +303,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     const previousPhase = run.phase;
     updateRun(run.localId, {
       phase: 'stopping',
-      statusMessage: 'Stopping before commit…',
+      statusMessage: '正在提交前停止…',
       error: undefined,
     });
 
@@ -324,12 +329,12 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         phase: previousPhase,
         statusMessage: previousPhase === 'prepared'
           ? run.intent === 'retry'
-            ? 'Retry validated · waiting to commit'
-            : 'Validated · waiting to commit'
+            ? '重演已校验 · 等待提交'
+            : '已校验 · 等待提交'
           : run.intent === 'retry'
-            ? 'World referee is replaying from before turn…'
-            : 'World referee is responding…',
-        error: `Stop request failed: ${toErrorMessage(caught)}`,
+            ? '裁判正在从回合开始前重演…'
+            : '裁判正在回应…',
+        error: `停止请求失败：${toErrorMessage(caught)}`,
       });
     }
   }
@@ -359,7 +364,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       if (!outcome) {
         updateRun(run.localId, {
           phase: 'indeterminate',
-          statusMessage: 'Server outcome still unknown · refresh again before continuing',
+          statusMessage: '结果仍然未知 · 请再次刷新后继续',
         });
         outcome = 'unknown';
       }
@@ -419,8 +424,8 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
             : {
                 phase: 'streaming' as const,
                 statusMessage: run.intent === 'retry'
-                  ? 'World referee is replaying from before turn…'
-                  : 'World referee is responding…',
+                  ? '裁判正在从回合开始前重演…'
+                  : '裁判正在回应…',
               }),
         }));
         return undefined;
@@ -434,8 +439,8 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
             : {
                 phase: 'streaming' as const,
                 statusMessage: run.intent === 'retry'
-                  ? 'Retry streaming · not committed'
-                  : 'Streaming · not committed',
+                  ? '重演生成中 · 尚未提交'
+                  : '生成中 · 尚未提交',
               }),
         }));
         return undefined;
@@ -446,7 +451,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
             ? {}
             : {
                 phase: 'streaming' as const,
-                statusMessage: 'Context read complete · restarting provisional response',
+                statusMessage: '上下文读取完毕 · 重新开始生成',
               }),
         }));
         return undefined;
@@ -456,8 +461,8 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
           : {
               phase: 'prepared',
               statusMessage: run.intent === 'retry'
-                ? 'Retry validated · waiting to commit'
-                : 'Validated · waiting to commit',
+                ? '重演已校验 · 等待提交'
+                : '已校验 · 等待提交',
             });
         return undefined;
       case 'play.event.occurred':
@@ -467,13 +472,13 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         applyCommittedSession(event.turnId, event.session);
         terminalOutcomes.set(event.turnId, 'committed');
         currentRun.value = undefined;
-        announcement.value = 'Play turn committed.';
+        announcement.value = '回合已提交。';
         abortConnection(localId, controller, 'server-confirmed-committed');
         return 'committed';
       case 'play.turn.cancelled':
         updateRun(localId, {
           phase: 'cancelled',
-          statusMessage: 'Cancelled · provisional text was not committed',
+          statusMessage: '已停止 · 生成的内容没有提交',
         });
         terminalOutcomes.set(event.turnId, 'cancelled');
         abortConnection(localId, controller, 'server-confirmed-cancelled');
@@ -482,7 +487,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         updateRun(localId, {
           phase: event.error.code === 'revision_conflict' ? 'conflict' : 'failed',
           provisionalText: '',
-          statusMessage: 'Turn not committed',
+          statusMessage: '回合未提交',
           error: event.error.message,
         });
         terminalOutcomes.set(event.turnId, 'failed');
@@ -504,21 +509,21 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       applyCommittedSession(result.turnId, result.session);
       terminalOutcomes.set(result.turnId, 'committed');
       currentRun.value = undefined;
-      announcement.value = 'Play turn committed.';
+      announcement.value = '回合已提交。';
       abortConnection(localId, controller, 'server-already-committed');
       return 'committed';
     }
     if (result.status === 'cancelling') {
       updateRun(localId, {
         phase: 'stopping',
-        statusMessage: 'Server is cancelling this turn…',
+        statusMessage: '正在停止本回合…',
       });
       return undefined;
     }
     if (result.status === 'committing') {
       updateRun(localId, {
         phase: 'committing',
-        statusMessage: 'Commit already started · waiting for server truth',
+        statusMessage: '已开始提交 · 正在等待结果',
       });
       return undefined;
     }
@@ -526,7 +531,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       terminalOutcomes.set(result.turnId, 'cancelled');
       updateRun(localId, {
         phase: 'cancelled',
-        statusMessage: 'Cancelled · provisional text was not committed',
+        statusMessage: '已停止 · 生成的内容没有提交',
       });
       abortConnection(localId, controller, 'server-confirmed-cancelled');
       return 'cancelled';
@@ -536,7 +541,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     updateRun(localId, {
       phase: 'failed',
       provisionalText: '',
-      statusMessage: 'Turn not committed',
+      statusMessage: '回合未提交',
       error: result.error,
     });
     abortConnection(localId, controller, 'server-confirmed-failure');

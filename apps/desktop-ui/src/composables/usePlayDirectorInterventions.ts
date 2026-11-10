@@ -62,7 +62,7 @@ export function usePlayDirectorInterventions(
       revision: artifact.throughRevision,
       builtAt: artifact.builtAt,
       staleReasons: artifact.status === 'superseded'
-        ? ['memory was superseded']
+        ? ['场景记忆已被替换']
         : [...(artifact.staleReasons ?? [])],
       items: artifact.items.map((item) => ({
         id: item.id,
@@ -205,7 +205,7 @@ export function buildInterventionAction(
   attempt: DeepReadonly<PlayRehearsalAttemptRecord> | undefined,
 ): PlayDirectorInterventionAction {
   if (!attempt || (attempt.status !== 'running' && attempt.status !== 'prepared')) {
-    throw new Error('A live rehearsal attempt is required for Director intervention.');
+    throw new Error('需要一场进行中的试演才能进行导演干预。');
   }
   if (draft.kind === 'reviseProjection') {
     const step = requireLiveStep(attempt, draft.stepRef);
@@ -252,7 +252,7 @@ export function buildInterventionAction(
   }
   if (draft.kind === 'redirectStep') {
     requireLiveStep(attempt, draft.stepRef);
-    if (!draft.directorIntent.trim()) throw new Error('Redirect requires Director intent.');
+    if (!draft.directorIntent.trim()) throw new Error('改变走向需要填写导演意图。');
     return {
       kind: 'redirectStep',
       stepRef: draft.stepRef,
@@ -263,12 +263,12 @@ export function buildInterventionAction(
   }
   if (draft.kind === 'insertActor') {
     if (!(attempt.participantRefs ?? attempt.actorOrder).includes(draft.participantRef)) {
-      throw new Error('Insert actor must reference a Scene Contract participant.');
+      throw new Error('插入的角色必须是场景约定中的参与者。');
     }
     if (draft.anchor === 'next') {
       return { kind: 'insertActor', participantRef: draft.participantRef };
     }
-    if (!draft.anchorStepRef) throw new Error('Insert actor requires a live anchor step.');
+    if (!draft.anchorStepRef) throw new Error('插入角色需要一个参照步骤。');
     requireLiveStep(attempt, draft.anchorStepRef);
     return {
       kind: 'insertActor',
@@ -280,7 +280,7 @@ export function buildInterventionAction(
   }
   requireLiveStep(attempt, draft.effectiveFromStepRef);
   if (!(attempt.participantRefs ?? attempt.actorOrder).includes(draft.participantRef)) {
-    throw new Error('Knowledge grant must reference a Scene Contract participant.');
+    throw new Error('授予认知的对象必须是场景约定中的参与者。');
   }
   return {
     kind: 'grantKnowledge',

@@ -5,12 +5,12 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="play-rehearsal-provider-gate" aria-label="Provider required">
+  <section class="play-rehearsal-provider-gate" aria-label="需要配置模型">
     <div>
-      <strong>Actor-step generation is unavailable</strong>
-      <p>The setup and committed result remain readable. Configure a provider to begin or continue an attempt.</p>
+      <strong>暂时无法生成角色步骤</strong>
+      <p>设置和已提交的结果仍可查看。配置模型后才能开始或继续试演。</p>
     </div>
-    <button type="button" @click="emit('configure')">Configure Provider</button>
+    <button type="button" @click="emit('configure')">配置模型</button>
   </section>
 </template>
 

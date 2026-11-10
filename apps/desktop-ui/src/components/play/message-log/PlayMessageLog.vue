@@ -64,9 +64,9 @@ function metaLine(entry: PlayMessageLogEntry): string {
 </script>
 
 <template>
-  <section class="play-message-log-entry" aria-label="Play message log">
+  <section class="play-message-log-entry" aria-label="消息日志">
     <header>
-      <span>Debug</span>
+      <span>调试</span>
       <h2>消息日志</h2>
     </header>
     <p>按时间查看本会话发给模型和模型返回的全部内容，包括思考过程。</p>
@@ -80,7 +80,7 @@ function metaLine(entry: PlayMessageLogEntry): string {
     class="play-message-log-overlay"
     role="dialog"
     aria-modal="true"
-    aria-label="Play 消息日志"
+    aria-label="消息日志"
     @keydown.esc="open = false"
   >
     <div class="play-message-log-panel">
@@ -100,7 +100,7 @@ function metaLine(entry: PlayMessageLogEntry): string {
             <select v-model="participantFilter">
               <option value="">全部</option>
               <option v-for="participant in participants" :key="participant" :value="participant">
-                {{ participant === 'world_referee' ? 'World referee' : participant }}
+                {{ participant === 'world_referee' ? '裁判' : participant }}
               </option>
             </select>
           </label>
@@ -136,7 +136,7 @@ function metaLine(entry: PlayMessageLogEntry): string {
       </ol>
 
       <p v-if="!loading && visibleEntries.length === 0" class="play-message-log-empty">
-        还没有日志。提交一个 Play 回合或生成一个 rehearsal step 后会出现在这里。
+        还没有日志。推进一个回合或生成一个试演步骤后会出现在这里。
       </p>
       <footer class="play-message-log-footer">
         <span role="status" aria-live="polite">{{ loading ? '读取中…' : '' }}</span>

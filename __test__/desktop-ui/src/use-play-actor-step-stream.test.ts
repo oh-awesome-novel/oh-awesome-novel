@@ -75,7 +75,7 @@ describe('usePlayActorStepStream', () => {
     expect(applied).toEqual([{ attempt: preparedAttempt }]);
     expect(getAttempt).not.toHaveBeenCalled();
     expect(streamSignal?.aborted).toBe(true);
-    expect(actorStep.announcement.value).toContain('still not committed');
+    expect(actorStep.announcement.value).toContain('尚未提交');
   });
 
   it('reconciles a disconnected stream from GET attempt truth', async () => {
@@ -254,7 +254,7 @@ describe('usePlayActorStepStream', () => {
     expect(actorStep.run.value).toMatchObject({
       phase: 'prepared',
       preparedStepRef: 'step-1',
-      statusMessage: 'Actor-step receipt reconciled against newer attempt truth',
+      statusMessage: '角色步骤已按最新试演状态核对',
     });
   });
 

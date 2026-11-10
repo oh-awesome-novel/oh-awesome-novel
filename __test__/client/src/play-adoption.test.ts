@@ -144,6 +144,39 @@ describe('Play adoption client contract', () => {
     }
   });
 
+  it('accepts host-normalized payloads but rejects a different destination', async () => {
+    const input: CreatePlayAdoptionPreviewInput = {
+      baseRevision: 7,
+      projection: 'director',
+      seed: { kind: 'event', eventId: 'event-1' },
+      target: 'chapterDraft',
+      payload: { chapterId: '0001/0002', content: '门开了。', mode: 'replace' },
+    };
+    // The host adds a heading before compiling the draft.
+    const normalized = createPreviewResponse(input, 'chapters/0001/0002.md');
+    normalized.preview.payload = { chapterId: '0001/0002', content: '# Play Adoption Draft\n\n门开了。\n', mode: 'replace' };
+    await expect(createClient(async () => jsonResponse(normalized)).createPlayAdoptionPreview('play-1', input))
+      .resolves.toEqual(normalized);
+
+    const timelineInput: CreatePlayAdoptionPreviewInput = { ...input, target: 'timeline', payload: targetPayload('timeline') };
+    const timeline = createPreviewResponse(timelineInput, 'timeline/events.yaml');
+    timeline.preview.payload = { ...targetPayload('timeline'), event: { id: 'event-adopted', summary: 'The gate opened.', title: 'The gate opened.', time: 'play-session-revision-7' } };
+    await expect(createClient(async () => jsonResponse(timeline)).createPlayAdoptionPreview('play-1', timelineInput))
+      .resolves.toEqual(timeline);
+
+    const moved = mutate(normalized, (value) => {
+      value.preview.payload = { ...value.preview.payload, chapterId: '0001/0003' };
+      value.preview.changes[0]!.path = 'chapters/0001/0003.md';
+      value.preview.diff = 'diff --git a/chapters/0001/0003.md b/chapters/0001/0003.md\n';
+    });
+    await expect(createClient(async () => jsonResponse(moved)).createPlayAdoptionPreview('play-1', input))
+      .rejects.toThrow('invalid payload');
+    const otherState = createPreviewResponse({ ...input, target: 'state', payload: targetPayload('state') }, 'state/play-adoption.yaml');
+    otherState.preview.payload = { ...targetPayload('state'), value: { summary: 'Something else.' } };
+    await expect(createClient(async () => jsonResponse(otherState)).createPlayAdoptionPreview('play-1', { ...input, target: 'state', payload: targetPayload('state') }))
+      .rejects.toThrow('invalid payload');
+  });
+
   it('accepts a Director preview whose selected branch exceeds the evidence-ref cap', async () => {
     const input: CreatePlayAdoptionPreviewInput = {
       baseRevision: 7,

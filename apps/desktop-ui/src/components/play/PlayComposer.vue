@@ -31,6 +31,13 @@ const props = defineProps<{
   suppressChoiceHotkeys?: boolean;
   /** The session has committed turns, so missing options are worth explaining. */
   showEmptyChoices?: boolean;
+  /** "生成候选项 / 换一批" is available for the current head. */
+  canRequestMore?: boolean;
+  /** The read-only extra suggestion call is running. */
+  moreLoading?: boolean;
+  /** The options on screen are a temporary extra batch. */
+  moreActive?: boolean;
+  moreError?: string;
 }>();
 
 const emit = defineEmits<{
@@ -40,14 +47,16 @@ const emit = defineEmits<{
   choose: [suggestion: PlaySuggestedActionView];
   steer: [];
   stop: [];
+  /** Ask for a temporary batch of extra options (read-only). */
+  more: [];
 }>();
 
 const actions: Array<{ id: PlayActionKind; label: string }> = [
-  { id: 'say', label: 'Say' },
-  { id: 'look', label: 'Look' },
-  { id: 'move', label: 'Move' },
-  { id: 'do', label: 'Do' },
-  { id: 'wait', label: 'Wait' },
+  { id: 'say', label: '说' },
+  { id: 'look', label: '看' },
+  { id: 'move', label: '走' },
+  { id: 'do', label: '做' },
+  { id: 'wait', label: '等' },
 ];
 // While a turn runs only that turn holds the composer; other busy work locks it.
 const inputLocked = computed(() => props.disabled || (props.busy && !props.running));
@@ -69,30 +78,38 @@ const canSendSteer = computed(() =>
 );
 const runStatus = computed(() => {
   switch (props.phase) {
-    case 'starting': return 'starting world referee';
-    case 'streaming': return 'streaming · not committed';
-    case 'prepared': return 'validated · waiting to commit';
-    case 'stopping': return 'server is cancelling';
-    case 'committing': return 'committing Play truth';
-    case 'cancelled': return 'cancelled · draft preserved';
-    case 'failed': return 'failed · draft preserved';
-    case 'conflict': return 'revision conflict · draft preserved';
-    case 'indeterminate': return 'server outcome unknown · refresh required';
+    case 'starting': return '正在启动裁判';
+    case 'streaming': return '生成中 · 尚未提交';
+    case 'prepared': return '已校验 · 等待提交';
+    case 'stopping': return '正在停止';
+    case 'committing': return '正在提交本回合';
+    case 'cancelled': return '已停止 · 草稿保留';
+    case 'failed': return '失败 · 草稿保留';
+    case 'conflict': return '会话已变化 · 草稿保留';
+    case 'indeterminate': return '结果未知 · 需要刷新';
     default: return 'Cmd/Ctrl + Enter';
   }
 });
 const stopLabel = computed(() => {
-  if (props.phase === 'stopping') return 'Stopping…';
-  if (props.phase === 'committing') return 'Committing…';
-  if (props.phase === 'starting') return 'Starting…';
-  return 'Stop';
+  if (props.phase === 'stopping') return '正在停止…';
+  if (props.phase === 'committing') return '正在提交…';
+  if (props.phase === 'starting') return '正在启动…';
+  return '停止';
 });
 const placeholder = computed(() =>
   actionKind.value === 'wait'
     ? '可选：描述等待期间要做什么、关注什么，或防备什么…'
     : '描述你要说什么、观察什么，或采取什么行动…',
 );
-const submitLabel = computed(() => actionKind.value === 'wait' ? 'Advance' : 'Act');
+const submitLabel = computed(() => actionKind.value === 'wait' ? '推进时间' : '行动');
+const moreLocked = computed(() => !props.canRequestMore || props.busy || props.disabled || Boolean(props.moreLoading));
+const moreLabel = computed(() => props.moreLoading
+  ? '正在生成…'
+  : choices.value.length ? '换一批' : '生成候选项');
+
+function requestMore() {
+  if (!moreLocked.value) emit('more');
+}
 
 function submit() {
   if (canSubmit.value) {
@@ -246,9 +263,23 @@ function isValidTimeAdvance(
     <p v-else-if="showEmptyChoices && !busy" class="play-choices-empty">
       本回合没有候选行动，在下方写下你的行动。
     </p>
+    <div v-if="canRequestMore || moreLoading" class="play-choices-more">
+      <button
+        class="play-choice-more"
+        type="button"
+        :disabled="moreLocked"
+        :aria-busy="moreLoading"
+        title="只读请求：让裁判按参与者能知道的内容再给几条行动，不推进回合，也不会保存"
+        @click="requestMore"
+      >
+        {{ moreLabel }}
+      </button>
+      <small v-if="moreActive" class="play-choices-more-note">临时建议，只在这里显示，不会保存。</small>
+      <small v-if="moreError" class="play-choices-more-error" role="alert">{{ moreError }}</small>
+    </div>
 
     <div class="play-composer-surface">
-      <div class="play-action-kinds" aria-label="Action kind">
+      <div class="play-action-kinds" aria-label="行动类型">
         <button
           v-for="action in actions"
           :key="action.id"
@@ -269,7 +300,7 @@ function isValidTimeAdvance(
         :disabled="inputLocked"
       />
 
-      <label class="visually-hidden" for="play-action-input">Play action</label>
+      <label class="visually-hidden" for="play-action-input">本回合行动</label>
       <textarea
         id="play-action-input"
         ref="textarea"
@@ -288,14 +319,14 @@ function isValidTimeAdvance(
       />
 
       <footer>
-        <span>Play-local · {{ runStatus }}</span>
+        <span>推演内 · {{ runStatus }}</span>
         <template v-if="running">
           <button
             class="play-queue-button"
             type="submit"
             :disabled="!canSubmit"
             title="本回合提交后再发送 (Cmd/Ctrl + Enter)"
-            aria-label="排队 Play 行动"
+            aria-label="排队行动"
           >
             排队
           </button>
@@ -315,13 +346,13 @@ function isValidTimeAdvance(
           class="play-stop-button"
           type="button"
           :disabled="!canStop"
-          aria-label="停止 Play 回合"
+          aria-label="停止本回合"
           @click="emit('stop')"
         >
           <span>{{ stopLabel }}</span>
           <span aria-hidden="true">■</span>
         </button>
-        <button v-else type="submit" :disabled="!canSubmit" aria-label="提交 Play 行动">
+        <button v-else type="submit" :disabled="!canSubmit" aria-label="提交行动">
           <span>{{ submitLabel }}</span>
           <span aria-hidden="true">↵</span>
         </button>

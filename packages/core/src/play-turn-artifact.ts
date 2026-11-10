@@ -22,6 +22,19 @@ export type PlayTurnArtifactSchemaVersion =
   | typeof PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION;
 export type PlayTurnArtifactKind = 'worldSettlement' | 'transcriptAppend';
 
+/** Upper bound for one retry guidance, counted in Unicode code points. */
+export const MAX_PLAY_RETRY_GUIDANCE_LENGTH = 500;
+
+/**
+ * Director-only author note recorded on a guided Retry sibling. It explains
+ * why this branch differs from `sourceArtifactId`; it is never player-visible
+ * and never re-enters later turn prompts.
+ */
+export interface PlayTurnRetryGuidance {
+  sourceArtifactId: string;
+  text: string;
+}
+
 export interface PlayTurnArtifact {
   schemaVersion: PlayTurnArtifactSchemaVersion;
   artifactKind?: PlayTurnArtifactKind;
@@ -46,6 +59,8 @@ export interface PlayTurnArtifact {
   rehearsalEvidenceRefs?: string[];
   stateDelta: Record<string, unknown>;
   suggestedActions: string[];
+  /** Optional, v2 worldSettlement only. Absent on every unguided turn. */
+  retryGuidance?: PlayTurnRetryGuidance;
   committedAt: string;
   canonical: false;
 }
@@ -179,6 +194,7 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     'rehearsalEvidenceRefs',
     'stateDelta',
     'suggestedActions',
+    'retryGuidance',
     'committedAt',
     'canonical',
   ]);
@@ -309,6 +325,22 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
     );
   }
 
+  const retryGuidance = value.retryGuidance === undefined
+    ? undefined
+    : normalizeStoredRetryGuidance(value.retryGuidance, id);
+  if (
+    retryGuidance &&
+    (
+      schemaVersion !== PLAY_TURN_ARTIFACT_SCHEMA_VERSION ||
+      artifactKind !== 'worldSettlement' ||
+      value.input === undefined
+    )
+  ) {
+    throw new Error(
+      `Play turn artifact ${id} can carry retryGuidance only as a v2 worldSettlement.`,
+    );
+  }
+
   return {
     schemaVersion,
     ...(artifactKind ? { artifactKind } : {}),
@@ -352,9 +384,55 @@ export const normalizePlayTurnArtifact = (value: unknown): PlayTurnArtifact => {
       value.suggestedActions,
       'suggestedActions',
     ),
+    ...(retryGuidance ? { retryGuidance } : {}),
     committedAt,
     canonical: false,
   };
+};
+
+/**
+ * Validates caller-supplied retry guidance. Blank input means "no guidance";
+ * anything else must be a string within the length bound. Text is trimmed
+ * but otherwise kept verbatim.
+ */
+export const normalizePlayRetryGuidanceText = (
+  value: unknown,
+): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new Error('Play retry guidance must be a string.');
+  }
+  const text = value.trim();
+  if (!text) return undefined;
+  if ([...text].length > MAX_PLAY_RETRY_GUIDANCE_LENGTH) {
+    throw new Error(
+      `Play retry guidance must be at most ${MAX_PLAY_RETRY_GUIDANCE_LENGTH} characters.`,
+    );
+  }
+  return text;
+};
+
+const normalizeStoredRetryGuidance = (
+  value: unknown,
+  artifactId: string,
+): PlayTurnRetryGuidance => {
+  if (!isRecord(value)) {
+    throw new Error(`Play turn artifact ${artifactId} has invalid retryGuidance.`);
+  }
+  assertOnlyKnownFields(value, ['sourceArtifactId', 'text']);
+  const sourceArtifactId = assertSafePlayTurnArtifactId(value.sourceArtifactId);
+  if (sourceArtifactId === artifactId) {
+    throw new Error(`Play turn artifact ${artifactId} cannot retry itself.`);
+  }
+  // Stored guidance must already be normalized; a blank or oversized value is corrupt, not "absent".
+  if (typeof value.text !== 'string' || value.text !== value.text.trim()) {
+    throw new Error(`Play turn artifact ${artifactId} has invalid retryGuidance.text.`);
+  }
+  const text = normalizePlayRetryGuidanceText(value.text);
+  if (!text) {
+    throw new Error(`Play turn artifact ${artifactId} has invalid retryGuidance.text.`);
+  }
+  return { sourceArtifactId, text };
 };
 
 const normalizePlayTurnArtifactInput = (
@@ -688,6 +766,20 @@ const indexPlayTurnArtifacts = (
           `Play turn artifact ${artifact.id} must advance its parent revision.`,
         );
       }
+    }
+  }
+
+  for (const artifact of artifacts) {
+    if (!artifact.retryGuidance) continue;
+    const source = byId.get(artifact.retryGuidance.sourceArtifactId);
+    if (
+      !source ||
+      source.parentTurnId !== artifact.parentTurnId ||
+      source.revision >= artifact.revision
+    ) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} retryGuidance must reference an earlier sibling.`,
+      );
     }
   }
 

@@ -33,29 +33,29 @@ async function cancel() {
 
 <template>
   <div class="play-observation-entry">
-    <button v-if="!open" ref="addButton" type="button" :disabled="disabled || !sources.length" @click="start">Add observation</button>
-    <p v-if="!sources.length" class="play-observation-help">A committed message with a saved source ID is needed. Continue Play or load earlier transcript before adding an observation.</p>
-    <form v-if="open" class="play-observation-form" aria-label="Add observation" :aria-busy="busy" @submit.prevent="emit('save')">
-      <p class="play-observation-help">Record your own observation from a visible message. This is a player-visible, noncanonical Play note; saving it does not change novel files.</p>
-      <label :for="`${prefix}-source`">Source message</label>
+    <button v-if="!open" ref="addButton" type="button" :disabled="disabled || !sources.length" @click="start">记一条观察笔记</button>
+    <p v-if="!sources.length" class="play-observation-help">需要一条已提交、带来源编号的消息。请先继续推演或载入更早的记录，再记观察笔记。</p>
+    <form v-if="open" class="play-observation-form" aria-label="记一条观察笔记" :aria-busy="busy" @submit.prevent="emit('save')">
+      <p class="play-observation-help">从一条可见消息记下你的观察。观察笔记对参与者可见、不属于正式文件，保存它不会改动小说文件。</p>
+      <label :for="`${prefix}-source`">来源消息</label>
       <select :id="`${prefix}-source`" v-model="sourceTurnId" name="observation-source" :disabled="disabled" required>
-        <option value="" disabled>Select a committed message</option>
+        <option value="" disabled>选择一条已提交的消息</option>
         <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.label }}</option>
       </select>
-      <label :for="`${prefix}-summary`">Observation summary</label>
+      <label :for="`${prefix}-summary`">观察摘要</label>
       <input :id="`${prefix}-summary`" ref="summaryInput" v-model="summary" name="observation-summary" :disabled="disabled" required />
-      <label :for="`${prefix}-evidence`">Evidence from this message</label>
+      <label :for="`${prefix}-evidence`">来自这条消息的依据</label>
       <textarea :id="`${prefix}-evidence`" v-model="evidence" name="observation-evidence" :disabled="disabled" rows="3" required />
       <div class="play-observation-actions">
-        <button type="button" :disabled="busy" @click="cancel">Cancel observation</button>
-        <button type="submit" :disabled="!canSave">{{ busy ? 'Saving observation…' : 'Save observation' }}</button>
+        <button type="button" :disabled="busy" @click="cancel">取消</button>
+        <button type="submit" :disabled="!canSave">{{ busy ? '正在保存…' : '保存观察笔记' }}</button>
       </div>
     </form>
     <div v-if="error" class="play-observation-error" role="alert">
       <p>{{ error }}</p>
-      <p v-if="open">Your input is retained. Refresh the session, review the source, then try saving again.</p>
-      <p v-else>Refresh the session to load the saved observation. Do not submit it again.</p>
-      <button type="button" :disabled="disabled" @click="emit('refresh')">Refresh observation sources</button>
+      <p v-if="open">你的输入已保留。请刷新会话、确认来源后再保存。</p>
+      <p v-else>请刷新会话以载入已保存的观察笔记，不要重复提交。</p>
+      <button type="button" :disabled="disabled" @click="emit('refresh')">刷新来源消息</button>
     </div>
     <p v-if="notice" class="play-observation-help" role="status">{{ notice }}</p>
   </div>

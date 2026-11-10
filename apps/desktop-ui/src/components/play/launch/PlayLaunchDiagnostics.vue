@@ -8,7 +8,7 @@ defineProps<{
 
 <template>
   <section v-if="diagnostics.length" class="diagnostics" aria-labelledby="play-launch-diagnostics-heading">
-    <h3 id="play-launch-diagnostics-heading">Launch diagnostics</h3>
+    <h3 id="play-launch-diagnostics-heading">开局诊断</h3>
     <ul>
       <li
         v-for="diagnostic in diagnostics"
@@ -16,18 +16,18 @@ defineProps<{
         :class="`diagnostic-${diagnostic.severity}`"
         :role="diagnostic.severity === 'error' ? 'alert' : undefined"
       >
-        <strong>{{ diagnostic.severity === 'error' ? 'Blocking error' : 'Warning' }}</strong>
+        <strong>{{ diagnostic.severity === 'error' ? '阻断性错误' : 'Warning' }}</strong>
         <span>{{ diagnostic.message }}</span>
         <small v-if="diagnostic.path">{{ diagnostic.path }}</small>
         <details v-if="diagnostic.expectedContentHash || diagnostic.actualContentHash">
-          <summary>Hash comparison</summary>
+          <summary>哈希对比</summary>
           <dl>
             <template v-if="diagnostic.expectedContentHash">
-              <dt>Expected</dt>
+              <dt>预期</dt>
               <dd>{{ diagnostic.expectedContentHash }}</dd>
             </template>
             <template v-if="diagnostic.actualContentHash">
-              <dt>Actual</dt>
+              <dt>实际</dt>
               <dd>{{ diagnostic.actualContentHash }}</dd>
             </template>
           </dl>

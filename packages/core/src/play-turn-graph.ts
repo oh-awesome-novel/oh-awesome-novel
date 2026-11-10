@@ -37,6 +37,11 @@ export interface PlayCheckpointSummary {
   committedAt: string;
   preview: string;
   name?: string;
+  /**
+   * Director-only: the author's guidance when this point came from a guided
+   * Retry. Player-facing summaries and previews must never render it.
+   */
+  retryGuidance?: string;
   status: PlayCheckpointStatus;
   restorable: boolean;
   retryable: boolean;
@@ -109,6 +114,9 @@ export function listPlaySessionCheckpoints(
         }),
         ...(checkpointNames[artifact.id]
           ? { name: checkpointNames[artifact.id] }
+          : {}),
+        ...(artifact.retryGuidance
+          ? { retryGuidance: artifact.retryGuidance.text }
           : {}),
         status,
         restorable: status !== 'current' && (completeSnapshot || branchBaseHead),

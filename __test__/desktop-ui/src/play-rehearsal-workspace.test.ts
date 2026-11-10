@@ -16,31 +16,31 @@ describe('PlayRehearsalWorkspace', () => {
   it('composes queue, safe perception and provisional/selected/committed steps', async () => {
     const wrapper = mountWorkspace();
 
-    expect(wrapper.get('[aria-label="Scene rehearsal workspace"]').attributes('aria-busy')).toBe('false');
+    expect(wrapper.get('[aria-label="场景试演工作区"]').attributes('aria-busy')).toBe('false');
     expect(wrapper.get('[aria-current="step"]').text()).toContain('Ivo');
     expect(wrapper.get('.play-rehearsal-step[data-status="provisional"]').text()).toContain(
-      'provisional · not committed',
+      '临时 · 尚未提交',
     );
     expect(wrapper.get('.play-rehearsal-step[data-status="selected"]').text()).toContain(
-      'selected · attempt-local',
+      '已采用 · 仅限本次试演',
     );
-    expect(wrapper.get('.play-rehearsal-step[data-status="committed"]').text()).toContain('committed');
+    expect(wrapper.get('.play-rehearsal-step[data-status="committed"]').text()).toContain('已提交');
     expect(wrapper.get('.play-rehearsal-inspector').text()).toContain('The train leaves at midnight.');
     expect(wrapper.text()).not.toContain('Hidden command from the mayor');
     expect(wrapper.get('.play-rehearsal-workspace-announcement').text()).toBe(
       'Draft prepared for Ivo.',
     );
 
-    await button(wrapper, 'Stop step').trigger('click');
-    await button(wrapper, 'Accept').trigger('click');
-    await button(wrapper, 'Retry').trigger('click');
+    await button(wrapper, '停止步骤').trigger('click');
+    await button(wrapper, '采用').trigger('click');
+    await button(wrapper, '重演').trigger('click');
     expect(wrapper.emitted('stopStep')).toHaveLength(1);
     expect(wrapper.emitted('accept')).toEqual([['step-ivo-draft']]);
     expect(wrapper.emitted('retry')).toEqual([['step-ivo-draft']]);
 
-    await button(wrapper, 'Finish').trigger('click');
+    await button(wrapper, '完成试演').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Confirm Finish').trigger('click');
+    await button(wrapper, '确认完成').trigger('click');
     expect(wrapper.emitted('finish')).toHaveLength(1);
     wrapper.unmount();
   });
@@ -62,7 +62,7 @@ describe('PlayRehearsalWorkspace', () => {
       },
     });
 
-    await button(wrapper, 'Begin rehearsal attempt').trigger('click');
+    await button(wrapper, '开始试演').trigger('click');
     expect(wrapper.emitted('startAttempt')).toHaveLength(1);
 
     await wrapper.setProps({
@@ -86,7 +86,7 @@ describe('PlayRehearsalWorkspace', () => {
     });
 
     expect(wrapper.get('[data-status="committed"].play-rehearsal-result').text()).toContain(
-      'Rehearsal Result',
+      '试演结果',
     );
     expect(wrapper.text()).toContain('Revision 4 · turn-rehearsal-1');
     expect(wrapper.text()).toContain('Mara keeps the letter hidden.');
@@ -99,30 +99,30 @@ describe('PlayRehearsalWorkspace', () => {
     const controls = wrapper.get('.play-director-control-row');
 
     expect(controls.findAll('button').map((control) => control.text())).toEqual([
-      'Accept',
-      'Modify',
-      'Retry',
-      'Insert actor',
-      'Grant knowledge',
-      'Finish',
-      'Cancel',
+      '采用',
+      '修改',
+      '重演',
+      '插入角色',
+      '授予认知',
+      '完成试演',
+      '取消',
     ]);
 
-    await button(wrapper, 'Modify').trigger('click');
+    await button(wrapper, '修改').trigger('click');
     expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
-      'Modify actor step',
+      '修改角色步骤',
     );
-    await button(wrapper, 'Back').trigger('click');
+    await button(wrapper, '返回').trigger('click');
 
-    await button(wrapper, 'Insert actor').trigger('click');
+    await button(wrapper, '插入角色').trigger('click');
     expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
-      'Insert actor',
+      '插入角色',
     );
-    await button(wrapper, 'Back').trigger('click');
+    await button(wrapper, '返回').trigger('click');
 
-    await button(wrapper, 'Grant knowledge').trigger('click');
+    await button(wrapper, '授予认知').trigger('click');
     expect(wrapper.get('.play-director-intervention-panel h2').text()).toBe(
-      'Grant participant knowledge',
+      '授予参与者认知',
     );
     wrapper.unmount();
   });
@@ -147,10 +147,10 @@ describe('PlayRehearsalWorkspace', () => {
     const notices = wrapper.findAll('.play-rehearsal-workspace-notice');
 
     expect(notices).toHaveLength(2);
-    expect(notices[0]!.text()).toContain('2 earlier step variant(s) are superseded');
-    expect(notices[0]!.text()).toContain('current selected prefix');
-    expect(notices[1]!.text()).toContain('3 consecutive steps had no material effect');
-    expect(notices[1]!.text()).toContain('without manufacturing conflict');
+    expect(notices[0]!.text()).toContain('有 2 个较早的步骤结果已被替换');
+    expect(notices[0]!.text()).toContain('只使用当前选定的步骤');
+    expect(notices[1]!.text()).toContain('连续 3 个步骤没有实质变化');
+    expect(notices[1]!.text()).toContain('不必强行制造冲突');
     expect(wrapper.get('.play-rehearsal-step[data-status="selected"]').text()).toContain(
       'Mara hides the letter.',
     );
@@ -165,9 +165,9 @@ describe('PlayRehearsalWorkspace', () => {
     expect(memory.text()).toContain('2 turn refs · 1 event refs');
     expect(memory.find('.play-scene-memory-stale').exists()).toBe(false);
 
-    await memory.findAll('button').find((control) => control.text() === 'Player')!.trigger('click');
-    await memory.findAll('button').find((control) => control.text() === 'Refresh')!.trigger('click');
-    await memory.findAll('button').find((control) => control.text() === 'Rebuild')!.trigger('click');
+    await memory.findAll('button').find((control) => control.text() === '参与者')!.trigger('click');
+    await memory.findAll('button').find((control) => control.text() === '刷新')!.trigger('click');
+    await memory.findAll('button').find((control) => control.text() === '重建')!.trigger('click');
 
     expect(wrapper.emitted('updateLens')).toEqual([['player']]);
     expect(wrapper.emitted('refreshMemory')).toHaveLength(1);
@@ -181,7 +181,7 @@ describe('PlayRehearsalWorkspace', () => {
       },
     });
     expect(wrapper.get('.play-scene-memory-stale').text()).toContain(
-      'selected path changed, source hash changed',
+      'selected path changed、source hash changed',
     );
     wrapper.unmount();
   });
@@ -198,12 +198,12 @@ describe('PlayRehearsalWorkspace', () => {
         grantedKnowledge: [{
           id: 'grant-visible',
           summary: 'Mara carries the public timetable.',
-          provenanceLabel: 'Existing selected-branch evidence',
+          provenanceLabel: '当前分支已有的依据',
           visibility: 'playerVisible',
         }, {
           id: 'grant-hidden',
           summary: 'The stationmaster is working for the mayor.',
-          provenanceLabel: 'Author-provided Play fact',
+          provenanceLabel: '作者提供的推演事实',
           visibility: 'playerUnknown',
         }],
       },

@@ -111,8 +111,8 @@ describe('buildPlayEventCardViews', () => {
     const card = cards.find((candidate) => candidate.id === event.id)!;
 
     expect(card.impact).toBe('Guards seal the station exit.');
-    expect(card.worldTimeLabel).toBe('Nightfall · Turn 2 · + 30 minutes');
-    expect(card.originLabel).toBe('Origin · Faction');
+    expect(card.worldTimeLabel).toBe('Nightfall · 第 2 回合 · + 30 minutes');
+    expect(card.originLabel).toBe('来源 · Faction');
     expect(card.causeLabels.map((cause) => cause.kind)).toEqual([
       'action',
       'trigger',
@@ -141,12 +141,12 @@ describe('buildPlayEventCardViews', () => {
       showSpoilers: true,
     }).find((candidate) => candidate.id === event.id)!;
     expect(authorCard.technicalRefs).toContainEqual({
-      label: 'Artifact',
+      label: '回合记录',
       value: 'artifact-2',
     });
     expect(authorCard.stateImpacts).toContainEqual({
       path: 'worldMomentum',
-      value: 'Pressure / agenda state updated',
+      value: '压力 / 动向已更新',
     });
   });
 
@@ -249,7 +249,7 @@ describe('buildPlayEventCardViews', () => {
     ]);
     expect(authorCard.stateImpacts).toEqual([
       { path: 'guard.shift', value: 'night' },
-      { path: 'worldMomentum', value: 'Pressure / agenda state updated' },
+      { path: 'worldMomentum', value: '压力 / 动向已更新' },
     ]);
     expect(authorCard.technicalRefs.map((reference) => reference.value)).toContain(
       hiddenSource.id,
@@ -309,8 +309,8 @@ describe('buildPlayEventCardViews', () => {
 
     expect(playerCards.map((card) => card.id)).toEqual([revealingEvent.id]);
     expect(playerCard.revealChain).toEqual({
-      statusLabel: 'Rumor surfaced',
-      explanation: 'This event carries a rumor about an earlier unseen development.',
+      statusLabel: '传闻浮现',
+      explanation: '这条事件带出了一条关于此前未见变化的传闻。',
     });
     expect(playerCard.stateImpacts).toEqual([]);
     expect(JSON.stringify(playerCard)).not.toContain(hiddenSource.id);
@@ -554,7 +554,7 @@ describe('buildPlayEventCardViews', () => {
       artifacts: [artifact],
       showSpoilers: false,
     })[0]!;
-    expect(playerCard.causeLabels[0]!.label).toContain('tracked world condition matched');
+    expect(playerCard.causeLabels[0]!.label).toContain('追踪的世界状态满足条件');
     expect(playerCard.causeLabels[0]!.label).not.toContain('secret.commandCode');
     expect(playerCard.causeLabels[0]!.label).not.toContain('47');
     expect(playerCard.technicalRefs).toEqual([]);
@@ -564,9 +564,9 @@ describe('buildPlayEventCardViews', () => {
       artifacts: [artifact],
       showSpoilers: true,
     })[0]!;
-    expect(authorCard.causeLabels[0]!.label).toContain('tracked world condition matched');
+    expect(authorCard.causeLabels[0]!.label).toContain('追踪的世界状态满足条件');
     expect(authorCard.technicalRefs).toContainEqual({
-      label: 'Trigger condition',
+      label: '触发条件',
       value: 'secret.commandCode = 47',
     });
   });

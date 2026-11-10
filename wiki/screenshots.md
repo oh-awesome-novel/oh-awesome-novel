@@ -15,9 +15,13 @@
 | [审批入口](/screenshots/approval.jpg) | Approval 面板，当前没有待审批修改 |
 | [参考资料](/screenshots/references.jpg) | References 导入表单 |
 | [写作配置](/screenshots/writing-profiles.jpg) | 内置 Writing Profiles |
-| [Play 工作区](/screenshots/play.jpg) | 尚无会话的 Play 入口 |
-| [新建 Play 会话](/screenshots/play-new-session.jpg) | 选择 Immersive Journey 或 Scene Rehearsal |
-| [场景排演设置](/screenshots/play-scene-setup.jpg) | Scene Rehearsal 的 Scene 表单示例，未启动排演 |
+| [推演工作区](/screenshots/play.jpg) | 尚无会话的推演入口；2026-11-10 |
+| [新建推演会话](/screenshots/play-new-session.jpg) | 选择沉浸推演或场景试演；2026-11-10 |
+| [场景试演设置](/screenshots/play-scene-setup.jpg) | 快速开局的场景表单示例，未启动试演；2026-11-10 |
+| [引导开局确认](/screenshots/play-guided-review.jpg) | 开局包只读预览与来源依据，尚未创建会话；2026-11-10 |
+| [场景试演步骤](/screenshots/play-rehearsal-steps.jpg) | 角色行动顺序与一个尚未提交的角色步骤（受控演示模型）；2026-11-10 |
+| [带要求重演](/screenshots/play-retry-guidance.jpg) | 导演视角下世界线显示重演要求（受控演示模型）；2026-11-10 |
+| [带回写作表单](/screenshots/play-adoption-form.jpg) | 时间线采纳表单与实际 diff，尚未创建待确认改动；2026-11-10 |
 | [Git 面板](/screenshots/git.jpg) | 临时副本尚未初始化 Git 的提示 |
 | [正文搜索](/screenshots/search-results.jpg) | 搜索“米拉”的真实结果；2026-10-02 |
 | [正文导出](/screenshots/manuscript-export.jpg) | Markdown / TXT 下载入口和导出范围说明；2026-10-02 |
@@ -33,6 +37,8 @@
 两次采集均未请求真实模型、未点击 Accept、未修改演示小说的已提交正文。没有伪造模型回复、Actual 用量、拆书结果或 Play 回合。新的 Git 截图来自临时副本自己的初始提交，与本项目的开发历史无关。
 
 2026-10-05另行验收作者旧稿导入：从空临时小说开始，使用显式输入的两章演示文字，真实执行预览、重复章号冲突、重映射、创建PendingAction和Accept。Accept前章节目录为空，之后两章原文保留；关闭autoCommit时Git仍仅有基线提交。没有配置或调用模型，也没有修改仓库示例小说。
+
+2026-11-10 的推演截图在示例小说的临时副本上采集，界面为中文作者语言。引导开局、新建会话与场景表单不涉及模型。场景试演步骤、带要求重演和带回写作三张图中的叙述、角色步骤与候选行动来自受控演示模型（后端测试用的固定回复），不是真实模型的输出，只用于展示界面和流程；回合、存档点、结果报告与采纳预览均由真实后端按正常流程生成。采集中创建的待确认改动没有被接受，示例小说的正式文件没有改变。
 :::
 
 ![写作工作区截图](/screenshots/workspace.jpg)

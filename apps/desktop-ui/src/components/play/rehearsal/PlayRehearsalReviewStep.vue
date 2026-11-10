@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPlayWorldActivity } from '../../../composables/playTerms';
 import { useId } from 'vue';
 
 import type {
@@ -30,49 +31,49 @@ const prefix = `${useId()}-rehearsal-review`;
     @submit.prevent="emit('confirm')"
   >
     <header>
-      <span>Step 3 / 3</span>
-      <h2 :id="`${prefix}-heading`">Review</h2>
-      <p>Nothing has been created yet. Confirm once to hand this setup to the Play session adapter.</p>
+      <span>第 3 / 3 步</span>
+      <h2 :id="`${prefix}-heading`">确认</h2>
+      <p>还没有创建任何内容。确认一次即可用这些设置创建试演。</p>
     </header>
 
     <section :aria-labelledby="`${prefix}-scene-heading`">
-      <h3 :id="`${prefix}-scene-heading`">Scene Contract</h3>
+      <h3 :id="`${prefix}-scene-heading`">场景约定</h3>
       <dl>
-        <div><dt>Title</dt><dd>{{ scene.title }}</dd></div>
-        <div><dt>Location</dt><dd>{{ scene.location }}</dd></div>
-        <div><dt>Objective</dt><dd>{{ scene.objective }}</dd></div>
-        <div><dt>Risk</dt><dd>{{ scene.risk || 'Not specified' }}</dd></div>
-        <div><dt>World</dt><dd>{{ scene.simulationMode }} · {{ scene.density }}</dd></div>
-        <div v-if="scene.eventSettings"><dt>Events</dt><dd>Offscreen {{ scene.eventSettings.allowOffscreen ? 'on' : 'off' }} · Hidden {{ scene.eventSettings.allowHidden ? 'on' : 'off' }} · Limit {{ scene.eventSettings.maxExternalEventsPerTurn }}</dd></div>
+        <div><dt>标题</dt><dd>{{ scene.title }}</dd></div>
+        <div><dt>地点</dt><dd>{{ scene.location }}</dd></div>
+        <div><dt>目标</dt><dd>{{ scene.objective }}</dd></div>
+        <div><dt>风险</dt><dd>{{ scene.risk || '未指定' }}</dd></div>
+        <div><dt>世界</dt><dd>{{ formatPlayWorldActivity(scene) }}</dd></div>
+        <div v-if="scene.eventSettings"><dt>事件</dt><dd>Offscreen {{ scene.eventSettings.allowOffscreen ? 'on' : 'off' }} · Hidden {{ scene.eventSettings.allowHidden ? 'on' : 'off' }} · Limit {{ scene.eventSettings.maxExternalEventsPerTurn }}</dd></div>
       </dl>
       <p class="play-rehearsal-review-opening">{{ scene.opening }}</p>
     </section>
 
     <section :aria-labelledby="`${prefix}-cast-heading`">
-      <h3 :id="`${prefix}-cast-heading`">Fixed actor queue</h3>
+      <h3 :id="`${prefix}-cast-heading`">固定的角色顺序</h3>
       <ol>
         <li v-for="(participant, index) in participants" :key="participant.participantRef">
           <span>{{ index + 1 }}</span>
           <div>
             <strong>{{ participant.displayName }}</strong>
             <small>{{ participant.currentGoal }}<template v-if="participant.position"> · {{ participant.position }}</template></small>
-            <p>{{ participant.initialKnowledge || 'No author-provided initial knowledge.' }}</p>
+            <p>{{ participant.initialKnowledge || '没有作者提供的初始认知。' }}</p>
           </div>
         </li>
       </ol>
     </section>
 
-    <aside class="play-rehearsal-knowledge-warning" aria-label="Knowledge boundary reminder">
+    <aside class="play-rehearsal-knowledge-warning" aria-label="认知边界提醒">
       <strong>[knowledge boundary]</strong>
-      <p>Each actor step must receive only that actor's frozen perception package. Natural-language output still requires forbidden-reference checks.</p>
+      <p>每个角色步骤只能拿到这个角色的冻结感知包；自然语言输出仍需检查是否提到不该知道的内容。</p>
     </aside>
 
     <footer>
-      <button type="button" :disabled="disabled || creating" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled || creating" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled || creating" @click="emit('back')">Back to Cast</button>
+        <button type="button" :disabled="disabled || creating" @click="emit('back')">返回人物</button>
         <button class="play-rehearsal-primary" type="submit" :disabled="disabled || creating">
-          {{ creating ? 'Creating rehearsal…' : 'Start Scene Rehearsal' }}
+          {{ creating ? '正在创建试演…' : '开始场景试演' }}
         </button>
       </div>
     </footer>

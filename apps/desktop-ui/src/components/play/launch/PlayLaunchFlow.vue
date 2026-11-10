@@ -72,7 +72,7 @@ async function focusFirst(): Promise<void> {
 </script>
 
 <template>
-  <section ref="flow" class="play-launch-flow" aria-label="Create Play session">
+  <section ref="flow" class="play-launch-flow" aria-label="创建推演会话">
     <PlaySessionPurposePicker
       v-if="!purpose"
       :disabled="creating || busy"

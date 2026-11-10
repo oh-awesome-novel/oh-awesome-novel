@@ -179,7 +179,7 @@ export function usePlaySessionHistoryWindow(
           snapshot: result.detail.snapshot,
           transcript: { ...page, items: merged },
         };
-        announcement.value = `Loaded ${page.items.length} earlier messages; showing ${merged.length} of ${page.totalCount}.`;
+        announcement.value = `已载入 ${page.items.length} 条更早的消息，显示 ${merged.length} / ${page.totalCount} 条。`;
       } else {
         const page = result.detail.events;
         const seenEventIds = new Set<string>();
@@ -206,13 +206,13 @@ export function usePlaySessionHistoryWindow(
           events: { ...page, items: merged },
           eventPresentation: mergedPresentation,
         };
-        announcement.value = `Loaded ${page.items.length} earlier events; showing ${merged.length} of ${page.totalCount}.`;
+        announcement.value = `已载入 ${page.items.length} 条更早的事件，显示 ${merged.length} / ${page.totalCount} 条。`;
       }
       return true;
     } catch (caught) {
       if (!isCurrentSelection(generation, sessionId)) return false;
       if (isStaleCursorError(caught)) {
-        announcement.value = 'The selected branch changed; history was refreshed from current truth.';
+        announcement.value = '选中的分支已改变，历史已按当前状态刷新。';
         return refreshSelected();
       }
       error.value = toErrorMessage(caught);
@@ -273,8 +273,8 @@ export function usePlaySessionHistoryWindow(
       options.onDecision(result);
       rawDrift.value = result.status;
       announcement.value = draft.kind === 'fork'
-        ? `Forked Play session ${result.createdSessionId ?? draft.newSessionId}.`
-        : `Applied ${formatDecisionKind(draft.kind)} to Play-local context.`;
+        ? `已另开推演会话 ${result.createdSessionId ?? draft.newSessionId}。`
+        : `已对推演上下文应用“${formatDecisionKind(draft.kind)}”。`;
       // The callback updates the selected id synchronously for Fork. Reload
       // from the bounded read model so a source decision never leaves a full
       // mutation response as renderer state.
@@ -355,16 +355,16 @@ export function projectContextTrace(
   return {
     id: trace.artifactId,
     createdAt: trace.createdAt,
-    transcriptWindowLabel: formatTraceWindow(trace.transcriptWindow, 'messages'),
-    eventWindowLabel: formatTraceWindow(trace.eventWindow, 'events'),
+    transcriptWindowLabel: formatTraceWindow(trace.transcriptWindow, '消息'),
+    eventWindowLabel: formatTraceWindow(trace.eventWindow, '事件'),
     sources: trace.sources.map((source, index) => ({
       id: directorLens ? source.sourceId : `${trace.artifactId}:source:${index + 1}`,
       label: directorLens
         ? source.path ?? source.sourceId
-        : `Activated source ${index + 1}`,
+        : `启用的来源 ${index + 1}`,
       outcome: source.outcome,
       ...(source.omissionReason
-        ? { reason: directorLens ? source.omissionReason : 'not selected for this turn' }
+        ? { reason: directorLens ? source.omissionReason : '本回合未选用' }
         : {}),
       ...(directorLens
         ? {
@@ -390,7 +390,7 @@ export function projectSourceDrift(
       id: directorLens ? source.sourceId : `source-drift:${index + 1}`,
       label: directorLens
         ? source.path ?? source.sourceId
-        : `Activated source ${index + 1}`,
+        : `启用的来源 ${index + 1}`,
       state: source.state,
       ...(directorLens
         ? { evidence: formatHashEvidence(
@@ -401,7 +401,7 @@ export function projectSourceDrift(
     })),
     availableDecisions: [...status.availableDecisions],
     ...(status.activeResolution
-      ? { activeResolution: `Active decision: ${formatDecisionKind(status.activeResolution.kind)}` }
+      ? { activeResolution: `当前处理：${formatDecisionKind(status.activeResolution.kind)}` }
       : {}),
   };
 }
@@ -410,24 +410,24 @@ function formatTraceWindow(
   window: Readonly<PlayTurnContextTrace['transcriptWindow']>,
   noun: string,
 ): string {
-  return `${window.selectedCount} of ${window.availableCount} ${noun} selected` +
-    (window.omittedCount ? ` · ${window.omittedCount} omitted by window limit` : '');
+  return `选用 ${window.selectedCount} / ${window.availableCount} 条${noun}` +
+    (window.omittedCount ? ` · 因窗口限制省略 ${window.omittedCount} 条` : '');
 }
 
 function formatHashEvidence(expected?: string, actual?: string): string {
   if (!expected && !actual) return '';
-  const compact = (value: string | undefined) => value ? value.slice(0, 12) : 'unavailable';
+  const compact = (value: string | undefined) => value ? value.slice(0, 12) : '不可用';
   return `hash ${compact(expected)} → ${compact(actual)}`;
 }
 
 function formatDecisionKind(kind: PlaySourceDriftDecision['kind']): string {
-  if (kind === 'continueFrozen') return 'continue frozen';
-  if (kind === 'reassemble') return 'reassemble';
-  return 'fork session';
+  if (kind === 'continueFrozen') return '沿用开局时的内容';
+  if (kind === 'reassemble') return '按当前文件重组';
+  return '另开会话';
 }
 
 function formatWindowReady(detail: Readonly<PlaySessionSelectedDetail>): string {
-  return `Showing ${detail.transcript.items.length} of ${detail.transcript.totalCount} messages and ${detail.events.items.length} of ${detail.events.totalCount} events.`;
+  return `显示 ${detail.transcript.items.length} / ${detail.transcript.totalCount} 条消息、${detail.events.items.length} / ${detail.events.totalCount} 条事件。`;
 }
 
 function isStaleCursorError(error: unknown): boolean {

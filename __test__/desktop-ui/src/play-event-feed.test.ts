@@ -19,7 +19,7 @@ describe('PlayEventFeed', () => {
 
     const authorView = wrapper.get('[role="switch"]');
     expect(authorView.attributes('aria-checked')).toBe('false');
-    expect(authorView.attributes('aria-label')).toContain('玩家未知');
+    expect(authorView.attributes('aria-label')).toContain('参与者不知道');
 
     await authorView.trigger('click');
 
@@ -87,8 +87,8 @@ describe('PlayEventFeed', () => {
         }],
         causeLabelsByEventId: {
           'turn-3-event-1': [
-            'Pressure · Station lockdown',
-            'Agenda · Guard: lock the east gate',
+            '压力 · Station lockdown',
+            '动向 · Guard：lock the east gate',
           ],
         },
         hasHiddenPlayContent: true,
@@ -107,12 +107,12 @@ describe('PlayEventFeed', () => {
       title: 'A ferryman shares a rumor',
       impact: 'Travelers report unusual movement beyond the river.',
       kindLabel: 'Information spread',
-      originLabel: 'Origin · Npc',
+      originLabel: '来源 · Npc',
       visibility: 'rumor',
-      worldTimeLabel: 'Turn 2',
+      worldTimeLabel: '第 2 回合',
       causeLabels: [{
         kind: 'sourceEvent',
-        label: 'Earlier event · Hidden source title',
+        label: '先前事件 · Hidden source title',
         ref: 'event-hidden-source',
       }, {
         kind: 'related',
@@ -130,7 +130,7 @@ describe('PlayEventFeed', () => {
           subjectEventId: 'event-hidden-source',
           subjectTitle: 'Hidden source title',
           subjectSummary: 'Hidden source summary.',
-          subjectWorldTimeLabel: 'Turn 1',
+          subjectWorldTimeLabel: '第 1 回合',
           subjectReason: 'Hidden source reason.',
           revealedByEventId: 'event-rumor',
           revealedByTitle: 'A ferryman shares a rumor',
@@ -148,7 +148,7 @@ describe('PlayEventFeed', () => {
       },
     });
 
-    expect(wrapper.get('[aria-label="Information reveal chain"]').text()).toContain(
+    expect(wrapper.get('[aria-label="信息揭示链"]').text()).toContain(
       'Hidden source title',
     );
     expect(wrapper.text()).toContain('event-hidden-source');
@@ -157,8 +157,8 @@ describe('PlayEventFeed', () => {
 
     await wrapper.setProps({ showSpoilers: false });
 
-    expect(wrapper.get('[aria-label="Information reveal chain"]').text()).toContain(
-      'earlier unseen development',
+    expect(wrapper.get('[aria-label="信息揭示链"]').text()).toContain(
+      '此前未见变化',
     );
     expect(wrapper.text()).not.toContain('event-hidden-source');
     expect(wrapper.text()).not.toContain('Hidden source title');
@@ -177,9 +177,9 @@ describe('PlayEventFeed', () => {
       title: 'The east gate closes',
       impact: 'Guards seal the station exit.',
       kindLabel: 'Faction acted',
-      originLabel: 'Origin · Faction',
+      originLabel: '来源 · Faction',
       visibility: 'playerVisible',
-      worldTimeLabel: 'Nightfall · Turn 3 · + 30 minutes',
+      worldTimeLabel: 'Nightfall · 第 3 回合 · + 30 minutes',
       projection: 'player',
       causeLabels: [{
         kind: 'action',
@@ -187,16 +187,16 @@ describe('PlayEventFeed', () => {
         ref: 'turn-3-player',
       }],
       stateImpacts: [{ path: 'location.gate', value: 'closed' }],
-      technicalRefs: [{ label: 'Artifact', value: 'artifact-3' }],
+      technicalRefs: [{ label: '回合记录', value: 'artifact-3' }],
       authorReason: 'The hidden commander ordered the lockdown.',
     }, {
       id: 'event-hidden',
       title: 'A hidden patrol moves',
       impact: 'The patrol takes the northern route.',
       kindLabel: 'Npc acted',
-      originLabel: 'Origin · Npc',
+      originLabel: '来源 · Npc',
       visibility: 'playerUnknown',
-      worldTimeLabel: 'Turn 3',
+      worldTimeLabel: '第 3 回合',
       projection: 'author',
       causeLabels: [],
       stateImpacts: [],
@@ -211,12 +211,12 @@ describe('PlayEventFeed', () => {
       },
     });
 
-    expect(wrapper.get('[aria-label="Event impact"]').text()).toContain('Impact');
+    expect(wrapper.get('[aria-label="事件影响"]').text()).toContain('影响');
     expect(wrapper.text()).toContain('Guards seal the station exit.');
-    expect(wrapper.text()).toContain('Nightfall · Turn 3 · + 30 minutes');
-    expect(wrapper.text()).toContain('Origin · Faction');
+    expect(wrapper.text()).toContain('Nightfall · 第 3 回合 · + 30 minutes');
+    expect(wrapper.text()).toContain('来源 · Faction');
     expect(wrapper.get('.play-event-cause').text()).toContain('Stay beside the gate');
-    expect(wrapper.get('[aria-label="Turn state changes"]').text()).toContain('location.gate');
+    expect(wrapper.get('[aria-label="本回合状态变化"]').text()).toContain('location.gate');
     expect(wrapper.text()).not.toContain('hidden commander');
     expect(wrapper.text()).not.toContain('artifact-3');
     expect(wrapper.text()).not.toContain('A hidden patrol moves');
@@ -225,7 +225,7 @@ describe('PlayEventFeed', () => {
     await wrapper.setProps({ showSpoilers: true });
 
     expect(wrapper.text()).toContain('A hidden patrol moves');
-    expect(wrapper.get('[aria-label="Author cause"]').text()).toContain('hidden commander');
-    expect(wrapper.get('[aria-label="Technical references"]').text()).toContain('artifact-3');
+    expect(wrapper.get('[aria-label="导演视角起因"]').text()).toContain('hidden commander');
+    expect(wrapper.get('[aria-label="技术引用"]').text()).toContain('artifact-3');
   });
 });

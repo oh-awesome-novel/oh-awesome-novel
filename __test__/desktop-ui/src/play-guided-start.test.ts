@@ -76,11 +76,11 @@ describe('Play Guided Start', () => {
     });
 
     expect(wrapper.findAll('nav li').map((item) => item.text())).toEqual([
-      '1 Sources',
-      '2 Entry',
-      '3 Identity',
-      '4 Cast',
-      '5 Review',
+      '1 来源',
+      '2 入场',
+      '3 身份',
+      '4 人物',
+      '5 确认',
     ]);
     expect(wrapper.text()).toContain('chapter');
     expect(wrapper.text()).toContain('character');
@@ -95,35 +95,35 @@ describe('Play Guided Start', () => {
     await wrapper.get('.guided-step').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Entry');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('入场');
     expect(document.activeElement).toBe(wrapper.get('.step-panel').element);
     expect(calls).toEqual([]);
 
     await fillEntry(wrapper);
-    await wrapper.get('[name="guided-world-time"]').setValue('The following morning');
+    await wrapper.get('[name="guided-world-time"]').setValue('第二天早上');
     await wrapper.get('.guided-entry').trigger('submit');
     await flushPromises();
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Identity');
-    await buttonNamed(wrapper, 'Back to Entry').trigger('click');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('身份');
+    await buttonNamed(wrapper, '返回入场').trigger('click');
     await flushPromises();
     await wrapper.get('[name="guided-world-time-format"]').setValue('iso8601');
     await wrapper.get('[name="guided-world-time"]').setValue('2026-02-30T09:00:00+08:00');
     await wrapper.get('.guided-entry').trigger('submit');
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Entry');
-    expect(wrapper.text()).toContain('Enter a valid date-time with timezone');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('入场');
+    expect(wrapper.text()).toContain('请输入带时区的有效日期时间');
     await wrapper.get('[name="guided-world-time"]').setValue('2026-10-07T09:00:00');
     await wrapper.get('.guided-entry').trigger('submit');
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Entry');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('入场');
     await wrapper.get('[name="guided-world-time"]').setValue('2026-10-07T09:00:00+08:00');
     await wrapper.get('.guided-entry').trigger('submit');
     await flushPromises();
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Identity');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('身份');
     expect(calls).toEqual([]);
 
     await wrapper.get('[name="guided-director-purpose"]').setValue('Test whether Mara protects the witness.');
     await wrapper.get('.guided-identity').trigger('submit');
     await flushPromises();
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Cast');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('人物');
     expect(calls).toEqual([]);
 
     await wrapper.get('[name="guided-participant-1-name"]').setValue('Mara');
@@ -138,9 +138,9 @@ describe('Play Guided Start', () => {
     expect(calls).toEqual(['preview']);
     expect(createPlayLaunchPackage).not.toHaveBeenCalled();
     expect(startPlaySessionFromLaunchPackage).not.toHaveBeenCalled();
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Review');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('确认');
     expect(document.activeElement).toBe(wrapper.get('.step-panel').element);
-    expect(wrapper.text()).toContain('Nothing has been created yet');
+    expect(wrapper.text()).toContain('还没有创建任何内容');
     expect(wrapper.text()).toContain('chapters/chapter-01.md');
     expect(wrapper.text()).toContain('Chapter one evidence excerpt.');
     expect(wrapper.text()).toContain('a'.repeat(64));
@@ -163,7 +163,7 @@ describe('Play Guided Start', () => {
       }],
     });
 
-    await buttonNamed(wrapper, 'Start Scene Rehearsal').trigger('click');
+    await buttonNamed(wrapper, '开始场景试演').trigger('click');
     await flushPromises();
 
     expect(calls).toEqual(['preview', 'create', 'start']);
@@ -206,10 +206,10 @@ describe('Play Guided Start', () => {
     await reachReview(wrapper);
 
     expect(wrapper.text()).toContain('Source changed after preview.');
-    expect(wrapper.text()).toContain('Missing — select or restore this file');
+    expect(wrapper.text()).toContain('缺失 — 请重新选择或恢复这个文件');
     expect(wrapper.text()).toContain('a'.repeat(64));
     expect(wrapper.text()).toContain('b'.repeat(64));
-    expect(buttonNamed(wrapper, 'Start Scene Rehearsal').attributes('disabled')).toBeDefined();
+    expect(buttonNamed(wrapper, '开始场景试演').attributes('disabled')).toBeDefined();
     expect(createPlayLaunchPackage).not.toHaveBeenCalled();
     expect(startPlaySessionFromLaunchPackage).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe('Play Guided Start', () => {
     await wrapper.get('.guided-identity').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.text()).toContain('No cast is required for an immersive entry.');
+    expect(wrapper.text()).toContain('沉浸推演不需要设置人物。');
     await wrapper.get('.guided-cast').trigger('submit');
     await flushPromises();
 
@@ -266,7 +266,7 @@ describe('Play Guided Start', () => {
       participantRoles: [],
     });
 
-    await buttonNamed(wrapper, 'Start Immersive Journey').trigger('click');
+    await buttonNamed(wrapper, '开始沉浸推演').trigger('click');
     await flushPromises();
 
     expect(createPlayLaunchPackage).toHaveBeenCalledTimes(1);
@@ -289,12 +289,12 @@ describe('Play Guided Start', () => {
     });
 
     await reachCast(wrapper);
-    await wrapper.get('[aria-label="Remove participant 1"]').trigger('click');
+    await wrapper.get('[aria-label="移除第 1 名参与者"]').trigger('click');
     await wrapper.get('.guided-cast').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Cast');
-    expect(wrapper.text()).toContain('requires at least one participant');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('人物');
+    expect(wrapper.text()).toContain('场景试演至少需要一名参与者');
     expect(previewPlayLaunchPackage).not.toHaveBeenCalled();
   });
 
@@ -318,12 +318,12 @@ describe('Play Guided Start', () => {
     });
 
     await reachReview(wrapper);
-    await buttonNamed(wrapper, 'Start Scene Rehearsal').trigger('click');
+    await buttonNamed(wrapper, '开始场景试演').trigger('click');
     await flushPromises();
 
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Cast');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('人物');
     expect(wrapper.text()).toContain('Setup write failed.');
-    expect(wrapper.text()).toContain('Preview again before retrying.');
+    expect(wrapper.text()).toContain('请重新预览后再试。');
     expect(previewPlayLaunchPackage).toHaveBeenCalledTimes(1);
   });
 });

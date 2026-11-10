@@ -15,7 +15,7 @@ describe('PlayDirectorInterventionPanel', () => {
     const wrapper = mountPanel('modify');
 
     await wrapper.get('textarea').setValue('Ivo stops beside the closing door.');
-    await button(wrapper, 'Apply intervention').trigger('click');
+    await button(wrapper, '应用干预').trigger('click');
 
     expect(wrapper.emitted('submit')?.[0]).toEqual([{
       kind: 'reviseProjection',
@@ -26,13 +26,13 @@ describe('PlayDirectorInterventionPanel', () => {
       }],
     }]);
 
-    await button(wrapper, 'Redirect step').trigger('click');
+    await button(wrapper, '改变走向').trigger('click');
     await flushPromises();
     await wrapper.get('textarea').setValue('Make Ivo question Mara before moving.');
     await wrapper.get('input:not([type="radio"])').setValue(
       'constraint-dialogue, constraint-clock constraint-dialogue',
     );
-    await button(wrapper, 'Apply intervention').trigger('click');
+    await button(wrapper, '应用干预').trigger('click');
 
     expect(wrapper.emitted('submit')?.[1]).toEqual([{
       kind: 'redirectStep',
@@ -51,7 +51,7 @@ describe('PlayDirectorInterventionPanel', () => {
     await placement!.setValue('before');
     await flushPromises();
     await wrapper.findAll('select')[2]!.setValue('step-mara-selected');
-    await button(wrapper, 'Apply intervention').trigger('click');
+    await button(wrapper, '应用干预').trigger('click');
 
     expect(wrapper.emitted('submit')).toEqual([[{
       kind: 'insertActor',
@@ -71,7 +71,7 @@ describe('PlayDirectorInterventionPanel', () => {
     await wrapper.get('input:not([type="radio"])').setValue(
       'fact-platform fact-clock, fact-platform',
     );
-    await button(wrapper, 'Apply intervention').trigger('click');
+    await button(wrapper, '应用干预').trigger('click');
 
     expect(wrapper.emitted('submit')?.[0]).toEqual([{
       kind: 'grantKnowledge',
@@ -87,7 +87,7 @@ describe('PlayDirectorInterventionPanel', () => {
     await flushPromises();
     await wrapper.get('textarea').setValue('The signal code changes at midnight.');
     await wrapper.findAll('select').at(-1)!.setValue('playerUnknown');
-    await button(wrapper, 'Apply intervention').trigger('click');
+    await button(wrapper, '应用干预').trigger('click');
 
     expect(wrapper.emitted('submit')?.[1]).toEqual([{
       kind: 'grantKnowledge',

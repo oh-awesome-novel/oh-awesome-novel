@@ -76,7 +76,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     const wrapper = mountWorkspace();
     await flushPromises();
 
-    const newSession = buttonContaining(wrapper, 'New session');
+    const newSession = buttonContaining(wrapper, '新建会话');
     newSession.element.focus();
     await newSession.trigger('click');
 
@@ -84,12 +84,12 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(wrapper.find('.play-purpose-picker').exists()).toBe(true);
     expect(api.createPlaySession).not.toHaveBeenCalled();
 
-    await buttonContaining(wrapper, 'Immersive Journey').trigger('click');
+    await buttonContaining(wrapper, '以参与者身份在世界中行动').trigger('click');
     await flushPromises();
-    expect(document.activeElement).toBe(buttonContaining(wrapper, 'Quick Start').element);
+    expect(document.activeElement).toBe(buttonContaining(wrapper, '使用默认设置').element);
     expect(api.createPlaySession).not.toHaveBeenCalled();
 
-    await buttonContaining(wrapper, 'Quick Start').trigger('click');
+    await buttonContaining(wrapper, '使用默认设置').trigger('click');
     await flushPromises();
     const form = wrapper.get('.play-create-form');
     const title = form.get('input[placeholder="雨夜码头"]');
@@ -186,13 +186,13 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     const wrapper = mountWorkspace();
     await flushPromises();
-    await buttonContaining(wrapper, 'New session').trigger('click');
-    await buttonContaining(wrapper, 'Scene Rehearsal').trigger('click');
+    await buttonContaining(wrapper, '新建会话').trigger('click');
+    await buttonContaining(wrapper, '按固定顺序指挥角色行动').trigger('click');
     await flushPromises();
-    expect(document.activeElement).toBe(buttonContaining(wrapper, 'Quick Start').element);
+    expect(document.activeElement).toBe(buttonContaining(wrapper, '使用默认设置').element);
     expect(api.createPlaySession).not.toHaveBeenCalled();
 
-    await buttonContaining(wrapper, 'Quick Start').trigger('click');
+    await buttonContaining(wrapper, '使用默认设置').trigger('click');
     await flushPromises();
     expect(document.activeElement).toBe(wrapper.get('[name="scene-title"]').element);
     await wrapper.get('[name="scene-title"]').setValue('Last train');
@@ -208,8 +208,8 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     await wrapper.get('.play-rehearsal-cast').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Review');
-    await button(wrapper, 'Start Scene Rehearsal').trigger('click');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('确认');
+    await button(wrapper, '开始场景试演').trigger('click');
     await vi.waitFor(() => expect(api.createPlaySession).toHaveBeenCalledOnce());
 
     expect(api.createPlaySession).toHaveBeenCalledWith(expect.objectContaining({
@@ -230,22 +230,22 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     createGate.resolve({ session: rehearsalSession });
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-workspace').exists()).toBe(true);
-      expect(button(wrapper, 'Begin rehearsal attempt').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '开始试演').attributes('disabled')).toBeUndefined();
     });
     expect(wrapper.find('.play-launch-flow').exists()).toBe(false);
 
-    await button(wrapper, 'Begin rehearsal attempt').trigger('click');
-    await button(wrapper, 'Generate current actor step').trigger('click');
+    await button(wrapper, '开始试演').trigger('click');
+    await button(wrapper, '生成当前角色步骤').trigger('click');
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Accept').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '采用').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Accept').trigger('click');
+    await button(wrapper, '采用').trigger('click');
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Finish').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '完成试演').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Finish').trigger('click');
+    await button(wrapper, '完成试演').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Confirm Finish').trigger('click');
+    await button(wrapper, '确认完成').trigger('click');
     await vi.waitFor(() => expect(api.finishPlayRehearsalAttempt).toHaveBeenCalledOnce());
 
     expect(wrapper.get('.play-rehearsal-result').text()).toContain(
@@ -343,12 +343,12 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(wrapper.find('.play-adoption-panel').exists()).toBe(false);
     expect(api.listPlayCheckpoints).not.toHaveBeenCalled();
 
-    await button(wrapper, 'Begin rehearsal attempt').trigger('click');
+    await button(wrapper, '开始试演').trigger('click');
     await vi.waitFor(() => expect(api.createPlayRehearsalAttempt).toHaveBeenCalledWith(
       'play-rehearsal-1',
       { baseRevision: 0 },
     ));
-    await button(wrapper, 'Generate current actor step').trigger('click');
+    await button(wrapper, '生成当前角色步骤').trigger('click');
     await deltaVisible.promise;
     await flushPromises();
 
@@ -362,19 +362,19 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     streamGate.resolve();
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Accept').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '采用').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Accept').trigger('click');
+    await button(wrapper, '采用').trigger('click');
     await vi.waitFor(() => expect(api.acceptPlayRehearsalStep).toHaveBeenCalledOnce());
 
     expect(wrapper.get('.play-rehearsal-step[data-status="selected"]').text()).toContain(
-      'selected · attempt-local',
+      '已采用 · 仅限本次试演',
     );
     expect(api.finishPlayRehearsalAttempt).not.toHaveBeenCalled();
 
-    await button(wrapper, 'Finish').trigger('click');
+    await button(wrapper, '完成试演').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Confirm Finish').trigger('click');
+    await button(wrapper, '确认完成').trigger('click');
     await vi.waitFor(() => expect(api.finishPlayRehearsalAttempt).toHaveBeenCalledOnce());
     await flushPromises();
 
@@ -397,7 +397,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(document.activeElement).toBe(
       wrapper.get('.play-rehearsal-result-focus').element,
     );
-    expect(wrapper.get('.play-session-card').text()).toContain('Turn 1 · 1 messages');
+    expect(wrapper.get('.play-session-card').text()).toContain('第 1 回合 · 1 条消息');
     expect(wrapper.get<HTMLButtonElement>('.play-session-card').element.disabled).toBe(false);
 
     const restoredBranch: PlayRehearsalSessionV5 = {
@@ -411,7 +411,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
       }],
     };
     api.listPlaySessions.mockResolvedValue({ sessions: [restoredBranch] });
-    await wrapper.get('button[aria-label="刷新 Play workspace"]').trigger('click');
+    await wrapper.get('button[aria-label="刷新推演工作区"]').trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-result').exists()).toBe(false);
     });
@@ -479,9 +479,9 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     await vi.waitFor(() => {
       expect(api.getActivePlayRehearsalAttempt).toHaveBeenCalledWith('play-rehearsal-1');
     });
-    await button(wrapper, 'Begin rehearsal attempt').trigger('click');
+    await button(wrapper, '开始试演').trigger('click');
     await vi.waitFor(() => expect(api.createPlayRehearsalAttempt).toHaveBeenCalled());
-    await button(wrapper, 'Generate current actor step').trigger('click');
+    await button(wrapper, '生成当前角色步骤').trigger('click');
     await deltaVisible.promise;
     await flushPromises();
 
@@ -539,18 +539,18 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     const wrapper = mountWorkspace();
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Cancel').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '取消').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Cancel').trigger('click');
+    await button(wrapper, '取消').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Confirm Cancel attempt').trigger('click');
+    await button(wrapper, '确认取消').trigger('click');
     await vi.waitFor(() => expect(api.cancelPlayRehearsalAttempt).toHaveBeenCalledOnce());
 
     expect(api.finishPlayRehearsalAttempt).not.toHaveBeenCalled();
-    expect(wrapper.get('.play-session-card').text()).toContain('Turn 0 · 0 messages');
+    expect(wrapper.get('.play-session-card').text()).toContain('第 0 回合 · 0 条消息');
     expect(wrapper.find('.play-rehearsal-result').exists()).toBe(false);
-    expect(button(wrapper, 'Begin rehearsal attempt').exists()).toBe(true);
-    expect(document.activeElement).toBe(button(wrapper, 'Begin rehearsal attempt').element);
+    expect(button(wrapper, '开始试演').exists()).toBe(true);
+    expect(document.activeElement).toBe(button(wrapper, '开始试演').element);
     expect(wrapper.get<HTMLButtonElement>('.play-session-card').element.disabled).toBe(false);
     wrapper.unmount();
   });
@@ -569,7 +569,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     const wrapper = mountWorkspace();
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-result').exists()).toBe(true);
-      expect(button(wrapper, 'Begin next rehearsal attempt').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '开始下一次试演').attributes('disabled')).toBeUndefined();
     });
 
     expect(wrapper.get('.play-rehearsal-result').text()).toContain(
@@ -603,7 +603,7 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     expect(wrapper.text()).not.toContain('Reserved momentum leak');
     expect(wrapper.text()).not.toContain('worldMomentum');
 
-    await button(wrapper, 'Begin next rehearsal attempt').trigger('click');
+    await button(wrapper, '开始下一次试演').trigger('click');
     await vi.waitFor(() => expect(api.createPlayRehearsalAttempt).toHaveBeenCalledWith(
       'play-rehearsal-1',
       { baseRevision: 1 },
@@ -655,21 +655,21 @@ describe('PlayWorkspace scene rehearsal integration', () => {
 
     const wrapper = mountWorkspace();
     await vi.waitFor(() => {
-      expect(button(wrapper, 'Generate current actor step').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '生成当前角色步骤').attributes('disabled')).toBeUndefined();
     });
-    await button(wrapper, 'Generate current actor step').trigger('click');
+    await button(wrapper, '生成当前角色步骤').trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-recovery').exists()).toBe(true);
     });
 
-    expect(wrapper.get<HTMLButtonElement>('button[aria-label="刷新 Play workspace"]').element.disabled)
+    expect(wrapper.get<HTMLButtonElement>('button[aria-label="刷新推演工作区"]').element.disabled)
       .toBe(true);
-    expect(button(wrapper, 'Recover attempt truth').attributes('disabled')).toBeUndefined();
+    expect(button(wrapper, '恢复试演状态').attributes('disabled')).toBeUndefined();
 
-    await button(wrapper, 'Recover attempt truth').trigger('click');
+    await button(wrapper, '恢复试演状态').trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-recovery').exists()).toBe(false);
-      expect(button(wrapper, 'Accept').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '采用').attributes('disabled')).toBeUndefined();
     });
 
     expect(api.getPlayRehearsalAttempt).toHaveBeenCalledTimes(2);
@@ -692,20 +692,20 @@ describe('PlayWorkspace scene rehearsal integration', () => {
     });
 
     expect(wrapper.findAll('button').some((candidate) =>
-      candidate.text() === 'Begin rehearsal attempt')).toBe(false);
+      candidate.text() === '开始试演')).toBe(false);
     expect(wrapper.get<HTMLButtonElement>('.play-create-trigger').element.disabled).toBe(true);
     expect(wrapper.get<HTMLButtonElement>('.play-session-card').element.disabled).toBe(true);
-    expect(wrapper.get<HTMLButtonElement>('button[aria-label="刷新 Play workspace"]').element.disabled)
+    expect(wrapper.get<HTMLButtonElement>('button[aria-label="刷新推演工作区"]').element.disabled)
       .toBe(true);
     expect(wrapper.find('.play-outcome-panel').exists()).toBe(true);
-    expect(button(wrapper, 'Generate report').attributes('disabled')).toBeDefined();
+    expect(button(wrapper, '生成报告').attributes('disabled')).toBeDefined();
 
-    await button(wrapper, 'Recover attempt truth').trigger('click');
+    await button(wrapper, '恢复试演状态').trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.find('.play-rehearsal-recovery').exists()).toBe(false);
-      expect(button(wrapper, 'Begin rehearsal attempt').attributes('disabled')).toBeUndefined();
+      expect(button(wrapper, '开始试演').attributes('disabled')).toBeUndefined();
     });
-    expect(button(wrapper, 'Generate report').attributes('disabled')).toBeUndefined();
+    expect(button(wrapper, '生成报告').attributes('disabled')).toBeUndefined();
 
     expect(api.getActivePlayRehearsalAttempt).toHaveBeenCalledTimes(2);
     wrapper.unmount();

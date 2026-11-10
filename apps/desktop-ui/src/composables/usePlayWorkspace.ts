@@ -22,6 +22,7 @@ import {
   type PlayQueuedAction,
 } from './usePlayFollowUpQueue';
 import { usePlayTurnStream, type PlayTurnSubmitOutcome } from './usePlayTurnStream';
+import { usePlayExtraSuggestions } from './usePlayExtraSuggestions';
 import {
   buildPlayEventCardViews,
   PLAY_KNOWLEDGE_STATE_KEY,
@@ -246,7 +247,23 @@ export function usePlayWorkspace(
     blocked: computed(() => interactionBlocked.value),
     onSaved: () => refreshSessionIndexAndDetail(selectedSessionId.value),
   });
+  const extraSuggestions = usePlayExtraSuggestions({
+    client: api,
+    target: computed(() => {
+      const session = selectedJourneySession.value;
+      // Never during a Retry's before-turn projection: that head is not the committed one.
+      if (!session || retryProjection.value?.sessionId === session.id) return undefined;
+      return {
+        sessionId: session.id,
+        revision: session.revision,
+        ...(session.selectedTurnIds.length ? { headId: session.selectedTurnIds.at(-1)! } : {}),
+        existing: session.suggestedActions,
+      };
+    }),
+    blocked: computed(() => interactionBlocked.value || !providerConfigured.value),
+  });
   const interactionBlocked = computed<boolean>(() =>
+    extraSuggestions.loading.value ||
     observation.saving.value ||
     migration.busy.value ||
     loading.value ||
@@ -272,7 +289,7 @@ export function usePlayWorkspace(
     Boolean(historyBusyArtifactId.value) ||
     Boolean(historyRetryingArtifactId.value),
   );
-  const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
+  const storedSuggestedActions = computed<PlaySuggestedActionView[]>(() =>
     parsePlayTurnChoices(displaySession.value?.suggestedActions ?? []).map((choice, index) => ({
       id: `${displaySession.value?.id ?? 'play'}-suggestion-${index}`,
       label: choice.text,
@@ -281,6 +298,9 @@ export function usePlayWorkspace(
       ...(choice.timeAdvance ? { timeAdvance: choice.timeAdvance } : {}),
     })),
   );
+  /** A temporary extra batch replaces the stored options on screen until the head changes. */
+  const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
+    extraSuggestions.items.value ?? storedSuggestedActions.value);
   const worldMomentum = computed(() =>
     readPlayWorldMomentum(displaySession.value?.playLocalState),
   );
@@ -386,7 +406,9 @@ export function usePlayWorkspace(
       || worldMomentum.value.pressures.some((pressure) =>
         pressure.visibility === 'playerUnknown')
       || worldMomentum.value.agendas.some((agenda) =>
-        agenda.visibility === 'playerUnknown');
+        agenda.visibility === 'playerUnknown')
+      // A guided Retry note is Director information too.
+      || historyCheckpoints.value.some((checkpoint) => Boolean(checkpoint.retryGuidance));
   });
 
   onMounted(() => {
@@ -605,7 +627,7 @@ export function usePlayWorkspace(
       return;
     }
     if (outcome === 'failed' || outcome === 'unknown') {
-      error.value = provisionalTurn.value?.error ?? 'Play turn failed before commit.';
+      error.value = provisionalTurn.value?.error ?? '回合在提交前失败。';
     }
     keepUnsentAction(current, delivery === 'follow_up');
     const reason = playFollowUpPauseForOutcome(outcome, provisionalTurn.value?.phase);
@@ -680,13 +702,13 @@ export function usePlayWorkspace(
     }
   }
 
-  async function retryCheckpoint(artifactId: string) {
+  async function retryCheckpoint(artifactId: string, guidance?: string) {
     const session = selectedSession.value;
     if (!session || session.schemaVersion !== 4 || interactionBlocked.value) {
       return;
     }
     if (!providerConfigured.value) {
-      error.value = 'Configure a provider before retrying a Play settlement.';
+      error.value = '请先配置模型再重演。';
       return;
     }
 
@@ -694,7 +716,7 @@ export function usePlayWorkspace(
       (candidate) => candidate.artifactId === artifactId,
     );
     if (!checkpoint?.retryable) {
-      error.value = 'This settlement cannot be retried from its saved history.';
+      error.value = '这一回合无法从保存的历史中重演。';
       return;
     }
 
@@ -708,14 +730,14 @@ export function usePlayWorkspace(
       // Play workspace read path.
       const loaded = await api.getPlaySession(session.id);
       if (loaded.session.schemaVersion !== 4 || loaded.session.revision !== session.revision) {
-        throw new Error('Play session changed before Retry could reconstruct its checkpoint.');
+        throw new Error('重演开始前会话已改变，请刷新后再试。');
       }
       const artifact = loaded.session.turnArtifacts.find((candidate) =>
         candidate.id === artifactId);
       const projection = projectPlaySessionBeforeArtifact(loaded.session, artifactId);
       if (!artifact?.input || !projection) {
         throw new Error(
-          'The state before this turn cannot be reconstructed safely, so Retry was not started.',
+          '无法安全还原这一回合之前的状态，因此没有开始重演。',
         );
       }
       retryProjection.value = { sessionId: session.id, projection };
@@ -725,10 +747,11 @@ export function usePlayWorkspace(
         baseRevision: loaded.session.revision,
         userText: artifact.input.raw,
         actionKind: artifact.input.kind,
+        ...(guidance?.trim() ? { guidance: guidance.trim() } : {}),
       });
 
       if (retryOutcome === 'failed' || retryOutcome === 'unknown') {
-        error.value = provisionalTurn.value?.error ?? 'Play Retry failed before commit.';
+        error.value = provisionalTurn.value?.error ?? '重演在提交前失败。';
       }
     } catch (caught) {
       error.value = toErrorMessage(caught);
@@ -833,6 +856,7 @@ export function usePlayWorkspace(
     causeLabelsByEventId,
     stateEntries,
     suggestedActions,
+    extraSuggestions,
     userText,
     visibleCandidates,
     visibleObservations,
@@ -960,7 +984,7 @@ export function projectScheduledEventForView(
     ...event,
     trigger: {
       type: 'flagEquals',
-      path: 'tracked world condition',
+      path: '追踪中的世界状态',
       value: 'matched',
     },
   };

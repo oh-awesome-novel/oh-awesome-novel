@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_WRITING_REFERENCE_STATUS_LABELS } from '../../../composables/playTerms';
 import { useId } from 'vue';
 
 import type { PlayWritingReferenceAttachment } from '../../../composables/useWorkspaceApi';
@@ -21,13 +22,13 @@ const headingId = `${useId()}-writing-reference-audit`;
   <section class="play-outcome-attachments" :aria-labelledby="headingId">
     <header>
       <div>
-        <h3 :id="headingId">Writing Reference audit</h3>
+        <h3 :id="headingId">写作参考记录</h3>
         <span>{{ attachments.length }}</span>
       </div>
       <button
         type="button"
         :disabled="loading"
-        aria-label="Refresh Writing Reference attachments"
+        aria-label="刷新写作参考"
         @click="emit('refresh')"
       >↻</button>
     </header>
@@ -39,7 +40,7 @@ const headingId = `${useId()}-writing-reference-audit`;
         <span>
           <strong>{{ attachment.id }}</strong>
           <small>
-            {{ attachment.selectedOutcomeItemRefs.length }} item(s) · {{ attachment.status }}
+            {{ attachment.selectedOutcomeItemRefs.length }} 条 · {{ PLAY_WRITING_REFERENCE_STATUS_LABELS[attachment.status] ?? attachment.status }}
             <template v-if="attachment.detachedAt"> · {{ attachment.detachedAt }}</template>
           </small>
         </span>
@@ -53,7 +54,7 @@ const headingId = `${useId()}-writing-reference-audit`;
         >{{ detachingAttachmentId === attachment.id ? 'Detaching…' : 'Detach' }}</button>
       </li>
     </ul>
-    <p v-else class="play-muted-copy">暂无附件。Detach 只停用引用，不删除审计记录。</p>
+    <p v-else class="play-muted-copy">暂无写作参考。解除附加只停用引用，不删除记录。</p>
   </section>
 </template>
 

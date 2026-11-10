@@ -9,8 +9,8 @@ import type { PlayRehearsalControlCapabilities } from '../../../apps/desktop-ui/
 describe('PlayDirectorControls', () => {
   it('emits Accept and Retry for the active provisional step', async () => {
     const wrapper = mountControls();
-    await button(wrapper, 'Accept').trigger('click');
-    await button(wrapper, 'Retry').trigger('click');
+    await button(wrapper, '采用').trigger('click');
+    await button(wrapper, '重演').trigger('click');
 
     expect(wrapper.emitted('accept')).toEqual([['step-draft']]);
     expect(wrapper.emitted('retry')).toEqual([['step-draft']]);
@@ -18,52 +18,52 @@ describe('PlayDirectorControls', () => {
 
   it('confirms Finish inline and returns focus on Escape', async () => {
     const wrapper = mountControls();
-    const finish = button(wrapper, 'Finish');
+    const finish = button(wrapper, '完成试演');
 
     await finish.trigger('click');
     await flushPromises();
 
-    const confirm = button(wrapper, 'Confirm Finish');
+    const confirm = button(wrapper, '确认完成');
     expect(document.activeElement).toBe(confirm.element);
     expect(wrapper.get('.play-director-confirmation').text()).toContain(
-      'commit the selected step prefix once',
+      '一次性提交已选步骤',
     );
 
     await wrapper.get('.play-director-confirmation').trigger('keydown', { key: 'Escape' });
     await flushPromises();
 
     expect(wrapper.find('.play-director-confirmation').exists()).toBe(false);
-    expect(document.activeElement).toBe(button(wrapper, 'Finish').element);
+    expect(document.activeElement).toBe(button(wrapper, '完成试演').element);
 
-    await button(wrapper, 'Finish').trigger('click');
+    await button(wrapper, '完成试演').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Confirm Finish').trigger('click');
+    await button(wrapper, '确认完成').trigger('click');
     await flushPromises();
     expect(wrapper.emitted('finish')).toHaveLength(1);
-    expect(document.activeElement).toBe(button(wrapper, 'Finish').element);
+    expect(document.activeElement).toBe(button(wrapper, '完成试演').element);
     wrapper.unmount();
   });
 
   it('requires a separate zero-commit confirmation for Cancel', async () => {
     const wrapper = mountControls();
-    await button(wrapper, 'Cancel').trigger('click');
+    await button(wrapper, '取消').trigger('click');
     await flushPromises();
 
     expect(wrapper.emitted('cancel')).toBeUndefined();
     expect(wrapper.get('.play-director-confirmation').text()).toContain(
-      'revision, clock, state, events and transcript remain unchanged',
+      '会话、时钟、状态、事件和记录都不会改变',
     );
-    await button(wrapper, 'Confirm Cancel attempt').trigger('click');
+    await button(wrapper, '确认取消').trigger('click');
     await flushPromises();
 
     expect(wrapper.emitted('cancel')).toHaveLength(1);
-    expect(document.activeElement).toBe(button(wrapper, 'Cancel').element);
+    expect(document.activeElement).toBe(button(wrapper, '取消').element);
     wrapper.unmount();
   });
 
   it.each([
-    ['Finish', 'Confirm Finish'],
-    ['Cancel', 'Confirm Cancel attempt'],
+    ['完成试演', '确认完成'],
+    ['取消', '确认取消'],
   ] as const)('returns focus to %s after an async mutation failure', async (action, confirmation) => {
     const wrapper = mountControls();
     await button(wrapper, action).trigger('click');

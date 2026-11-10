@@ -23,15 +23,15 @@ describe('PlayWorldHud', () => {
         scheduledEvents: [{ ...scheduledEvent, trigger: { type: 'atWorldTime', value: 'Midnight' } }],
       },
     });
-    expect(wrapper.text()).toContain('Pending: this time has no explicit comparable format.');
+    expect(wrapper.text()).toContain('待定：这个时间没有可比较的明确格式。');
     await wrapper.setProps({ scheduledEvents: [{ ...scheduledEvent, trigger: {
       type: 'atWorldTime', value: '2026-10-07T01:00:00Z', format: 'iso8601',
     } }] });
-    expect(wrapper.text()).toContain('Pending: the world clock needs an ISO date-time with timezone.');
+    expect(wrapper.text()).toContain('待定：世界时钟需要带时区的 ISO 日期时间。');
     await wrapper.setProps({ clock: { turn: 0, revision: 0, anchor: '2026-10-07T08:00:00+08:00' } });
-    expect(wrapper.text()).toContain('ISO time enabled; checked against the committed clock');
+    expect(wrapper.text()).toContain('已启用 ISO 时间；每回合开始时对照已提交的时钟检查');
     await wrapper.setProps({ clock: { turn: 0, revision: 0, anchor: '2026-10-07T09:00:00+08:00' } });
-    expect(wrapper.text()).toContain('Due at the next turn settlement.');
+    expect(wrapper.text()).toContain('下一回合结算时到期。');
     wrapper.unmount();
   });
 
@@ -71,9 +71,9 @@ describe('PlayWorldHud', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('Scheduled changes');
+    expect(wrapper.text()).toContain('计划中的变化');
     expect(wrapper.text()).toContain('Patrol arrives');
-    expect(wrapper.text()).toContain('after 2 turns · priority 5');
+    expect(wrapper.text()).toContain('2 回合后 · 优先级 5');
   });
 
   it('shows active pressure and agenda momentum without forcing a numeric meter', () => {
@@ -114,7 +114,7 @@ describe('PlayWorldHud', () => {
       },
     });
 
-    expect(wrapper.get('[aria-label="World momentum"]').text()).toContain(
+    expect(wrapper.get('[aria-label="世界动向"]').text()).toContain(
       'The last train is leaving',
     );
     expect(wrapper.text()).toContain('The witness leaves the station.');

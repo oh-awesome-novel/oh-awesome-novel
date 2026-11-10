@@ -7,8 +7,8 @@ defineProps<{
 </script>
 
 <template>
-  <section class="play-context-trace-list" aria-label="Play turn context traces">
-    <h3>Turn context</h3>
+  <section class="play-context-trace-list" aria-label="回合上下文记录">
+    <h3>回合上下文</h3>
     <article v-for="trace in traces" :key="trace.id" class="play-context-trace-card">
       <header>
         <strong>{{ trace.transcriptWindowLabel }}</strong>
@@ -17,16 +17,16 @@ defineProps<{
       <p>{{ trace.eventWindowLabel }}</p>
       <ul v-if="trace.sources.length">
         <li v-for="source in trace.sources" :key="source.id">
-          <span>{{ source.outcome === 'selected' ? '[used]' : '[omitted]' }}</span>
+          <span>{{ source.outcome === 'selected' ? '[已使用]' : '[已省略]' }}</span>
           <strong>{{ source.label }}</strong>
           <small v-if="source.reason">{{ source.reason }}</small>
           <small v-if="source.evidence">{{ source.evidence }}</small>
         </li>
       </ul>
-      <p v-else>No activated source entered this turn context.</p>
+      <p v-else>这一回合的上下文没有使用启用的来源。</p>
     </article>
     <p v-if="traces.length === 0" class="play-context-trace-empty">
-      A committed M5 turn will record its selected and omitted context here.
+      提交回合后，这里会记录选用和省略的上下文。
     </p>
   </section>
 </template>

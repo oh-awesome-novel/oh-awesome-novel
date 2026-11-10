@@ -52,14 +52,14 @@ function updateDensity(event: Event): void {
 <template>
   <form class="play-rehearsal-step-form" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 1 / 3</span>
-      <h2 :id="`${prefix}-heading`">Scene</h2>
-      <p>Set the boundary for this rehearsal. These values remain Play-local.</p>
+      <span>第 1 / 3 步</span>
+      <h2 :id="`${prefix}-heading`">场景</h2>
+      <p>设定这次试演的边界。这些值只在推演内使用。</p>
     </header>
 
     <div class="play-rehearsal-field-grid">
       <label>
-        <span>Scene title</span>
+        <span>场景标题</span>
         <input
           :id="`${prefix}-title`"
           name="scene-title"
@@ -75,7 +75,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label>
-        <span>Location</span>
+        <span>地点</span>
         <input
           :id="`${prefix}-location`"
           name="scene-location"
@@ -91,7 +91,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label class="play-rehearsal-field-wide">
-        <span>Opening situation</span>
+        <span>开场情境</span>
         <textarea
           :id="`${prefix}-opening`"
           name="scene-opening"
@@ -107,7 +107,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label>
-        <span>Rehearsal objective</span>
+        <span>试演目标</span>
         <textarea
           :id="`${prefix}-objective`"
           name="scene-objective"
@@ -123,7 +123,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label>
-        <span>Risk</span>
+        <span>风险</span>
         <textarea
           :id="`${prefix}-risk`"
           name="scene-risk"
@@ -135,7 +135,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label>
-        <span>Atmosphere</span>
+        <span>氛围</span>
         <input
           :id="`${prefix}-atmosphere`"
           name="scene-atmosphere"
@@ -147,7 +147,7 @@ function updateDensity(event: Event): void {
       </label>
 
       <label>
-        <span>World activity</span>
+        <span>世界活跃度</span>
         <select
           :id="`${prefix}-simulation-mode`"
           name="scene-simulation-mode"
@@ -155,14 +155,14 @@ function updateDensity(event: Event): void {
           :disabled="disabled"
           @change="updateSimulationMode"
         >
-          <option value="conversation">Conversation</option>
-          <option value="reactiveWorld">Reactive world</option>
-          <option value="activeWorld">Active world</option>
+          <option value="conversation">对话为主</option>
+          <option value="reactiveWorld">世界会回应</option>
+          <option value="activeWorld">世界主动推进</option>
         </select>
       </label>
 
       <label>
-        <span>Event density</span>
+        <span>事件密度</span>
         <select
           :id="`${prefix}-density`"
           name="scene-density"
@@ -170,9 +170,9 @@ function updateDensity(event: Event): void {
           :disabled="disabled"
           @change="updateDensity"
         >
-          <option value="quiet">Quiet</option>
-          <option value="balanced">Balanced</option>
-          <option value="volatile">Volatile</option>
+          <option value="quiet">平静</option>
+          <option value="balanced">适中</option>
+          <option value="volatile">多变</option>
         </select>
       </label>
     </div>
@@ -183,8 +183,8 @@ function updateDensity(event: Event): void {
       @update="emit('updateDraft', { ...draft, eventSettings: $event })"
     />
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
-      <button class="play-rehearsal-primary" type="submit" :disabled="disabled">Continue to Cast</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
+      <button class="play-rehearsal-primary" type="submit" :disabled="disabled">下一步：人物</button>
     </footer>
   </form>
 </template>

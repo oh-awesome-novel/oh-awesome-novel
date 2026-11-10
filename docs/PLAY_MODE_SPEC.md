@@ -89,7 +89,27 @@ scheduled event 到期后成为 hard-due skeleton。referee 必须在 settlement
 
 恢复 checkpoint 会把 `selectedTurnIds` 切换为目标的 root-to-head path，同时恢复 transcript、world turn / anchor / elapsed、Play-local state value / visibility、schedule 与 suggested actions。session revision 和 session world-clock revision 仍单调增加，不能退回目标 artifact 的旧 revision；完整 artifact、event、observation 和 adoption ledger 均保留。旧后续回合因此成为可再次选择的 variant，恢复后提交的新回合则从目标 head 创建 sibling。
 
-原子 Retry 使用独立 SSE 路由，并且请求只能携带 mandatory `baseRevision`；行动文本与 action kind 必须从目标 `worldSettlement` artifact 的不可变 typed input 读取，调用方不能覆盖。Core 只在内存中投影到该 artifact 的 before-turn state，provider、prompt 与 hard-due evaluator 都读取这份投影；最终 settlement 直接在权威 ledger 上生成同 parent sibling，session revision 只增加一次。旧 source artifact、其 descendants、event、observation 与 adoption ledger 均保留，只有新 sibling 成为 selected head；取消、provider / schema failure 或 commit 前 revision drift 都保持 session 零写入。首回合 Retry 通过共享虚拟 branch base 的两个完整 v2 root 表达，而不是把新结果错误挂到旧回合的 after-state。
+原子 Retry 使用独立 SSE 路由，请求必须携带 `baseRevision`，可选携带重演指引 `guidance`，不接受其他字段；行动文本与 action kind 必须从目标 `worldSettlement` artifact 的不可变 typed input 读取，调用方不能覆盖。Core 只在内存中投影到该 artifact 的 before-turn state，provider、prompt 与 hard-due evaluator 都读取这份投影；最终 settlement 直接在权威 ledger 上生成同 parent sibling，session revision 只增加一次。旧 source artifact、其 descendants、event、observation 与 adoption ledger 均保留，只有新 sibling 成为 selected head；取消、provider / schema failure 或 commit 前 revision drift 都保持 session 零写入。首回合 Retry 通过共享虚拟 branch base 的两个完整 v2 root 表达，而不是把新结果错误挂到旧回合的 after-state。
+
+### 带指引的重演（Guided Retry）
+
+[1450](tasks/1450.md) 为 Retry 增加作者指引，记录方式为规划中的方案 B。
+
+- 请求：`guidance` 为可选字符串。去掉首尾空白后为空等同于没有指引；否则最多 500 个字符（按 Unicode code point 计），非字符串或超长时返回 400 `invalidGuidance`，不调用模型、不写入。
+- 提示：指引只作为 `<本次重演要求>` 块出现在这一次 Retry 请求的消息尾部，位于本轮回合要求之后、玩家输入之前。它不进入冻结前缀，也不进入任何后续回合的请求；块内说明行动不变、不得在叙述中提及重演，也不能越过隐藏信息、因果约束与结算格式。
+- 存储：新 sibling 是 v2 `worldSettlement`，带可选字段 `retryGuidance: { sourceArtifactId, text }`。`text` 已去除首尾空白且非空、不超过 500 字符；`sourceArtifactId` 必须是 ledger 中 revision 更早、`parentTurnId` 相同的 sibling，不能指向自己。源 artifact 及所有其他 ledger 事实逐字节不变。
+- 兼容：这是 artifact v2 的可选字段，不提升 artifact 或 session schema 版本。没有该字段的旧 artifact 读取结果与之前完全相同；v4 严格读取不放宽：字段只允许出现在 v2 `worldSettlement` 且带 input 的 artifact 上，结构不合法、引用不存在或不是更早 sibling 时整个 session 读取失败，不静默丢弃。不认识该字段的旧客户端会按未知字段拒绝，属于 fail closed。
+- 可见性：`retryGuidance` 是导演信息。存档点摘要通过可选 `retryGuidance` 字段携带它，Desktop 只在导演视角渲染；参与者视角的存档点、世界线预览与采纳表单不显示它。`preview` 仍只使用作者行动文本。
+- 不带指引的 Retry 与此前逐字段一致；取消、provider / schema 失败或 revision 漂移仍保持零写入。
+
+### 补充行动建议（Extra Suggestions）
+
+`POST /api/workspace/play-sessions/:id/suggestions` 接收 `{ baseRevision, headId?, existing? }`，返回 `{ suggestions, baseRevision, headId? }`。
+
+- 只读：一次请求最多一次模型调用，复用会话内只读提问通道（冻结前缀 + 选中分支的已提交叙述 + `<暂停推演：只读辅助请求>`），初始世界只带开场。指令要求只按参与者已知内容给出 3–4 条带类型前缀的行动，并避开 `existing` 中已显示的条目。不追加 `<当前状态>` 块。
+- 不写入：不改 session 快照、revision、`suggestedActions` 或选中分支；结果由界面临时显示，直接选与改一改走普通回合事务。
+- 并发：会话被回合或其他操作占用时返回 409；请求本身不占用会话锁，因此普通读取不受影响。生成结束后若 revision 或选中 head 已变化，返回 409，不交付过期建议。模型回复不是合法的 `oan-play-suggestions` JSON 或没有新条目时返回 422，不重试。
+- 与 [1520](tasks/1520.md) 的“生成候选项 / 换一批”共用这一入口。
 
 命名 checkpoint、可直接选择的初始世界、branch-local knowledge / reveal、context trace 与 source drift 已由 M2/M3/1180 交付。Retry 仍不承诺旧 activated source bytes 的精确复现；continueFrozen 表示沿用 Play-local 状态并省略漂移来源。world session/artifact 为 v4/v2，rehearsal 的 v5/v3 另有合同，不能混称统一最新版本。
 
@@ -120,7 +140,7 @@ session snapshot 采用 sibling staging directory + ready marker + directory swa
 - 每条以一个类型前缀开头：`[say]`、`[look]`、`[move]`、`[do]`，或带整数时长的 `[wait Nm]`、`[wait Nh]`、`[wait Nd]`。`play-turn-choices.ts` 的 `parsePlayTurnChoice` 是唯一把存储字符串转成行动类型、等待时长和显示文本的地方；界面不显示前缀。
 - 没有可识别前缀的字符串按原文显示，行动类型沿用措辞推断。宿主不从措辞推断等待时长：只有前缀写明且不超过一年的时长才成为 typed wait，否则由作者在输入区选择。
 - 候选项是输入辅助。直接选、修改后选和自己写提交的都是普通作者行动，走同一回合事务；候选项不足不使回合失败。
-- 结算可见性为 `playerUnknown` 的回合仍不保存候选项。按需生成候选项由 [1450](tasks/1450.md) 提供，尚未实现。
+- 结算可见性为 `playerUnknown` 的回合仍不保存候选项。候选项为空、不足或想换一批时，界面使用上文的补充行动建议，结果只临时显示。
 
 ## Core Module Seams
 
@@ -132,7 +152,8 @@ Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 
 - `play-event-schedule-history.ts`：schedule history、due evidence、transition、ancestor ownership 与 snapshot clone。
 - `play-session-facts.ts`：selected path、branch snapshot、ledger provenance、事实 projection 与严格 stored-fact codec。
 - `play-turn-graph.ts`：隐式 checkpoint 摘要、selected path 恢复与 sibling variant 语义。
-- `play-turn-retry.ts`：before-turn 投影、typed source action、原子 sibling settlement 与稳定 retry error code。
+- `play-turn-retry.ts`：before-turn 投影、typed source action、可选重演指引、原子 sibling settlement 与稳定 retry error code。
+- `play-extra-suggestions.ts`：补充行动建议的只读指令与回复解析。
 - `play-turn-choices.ts`：候选行动的回合规则与类型前缀解析，无 Play 运行时依赖。
 - `play-session.ts`：session lifecycle、referee settlement、staged snapshot、migration 与兼容 public interface。
 

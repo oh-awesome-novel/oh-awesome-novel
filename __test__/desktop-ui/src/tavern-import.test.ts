@@ -22,12 +22,12 @@ it('uploads locally, previews canonical changes, then creates an approval only a
   expect(api.previewTavernImport).toHaveBeenCalledWith(expect.objectContaining({ format: 'json', content: '{"name":"Lin"}', mode: 'create', expectedWorkspaceRoot: '/novel' }));
   expect(api.proposeTavernImport).not.toHaveBeenCalled();
   expect(wrapper.text()).toContain('characters/lin/meta.yaml');
-  await button(wrapper, 'Create changes for approval').trigger('click'); await flushPromises();
+  await button(wrapper, '生成待确认改动').trigger('click'); await flushPromises();
   expect(api.proposeTavernImport).toHaveBeenCalledWith(id, { fingerprint: hash, expectedWorkspaceRoot: '/novel' });
   expect(wrapper.emitted('pendingActionCreated')).toHaveLength(1);
-  await button(wrapper, 'Review changes').trigger('click');
+  await button(wrapper, '审阅改动').trigger('click');
   expect(wrapper.emitted('reviewPendingAction')).toEqual([[id]]);
-  await wrapper.get('select').setValue('merge'); expect(wrapper.find('[aria-label="Character import preview"]').exists()).toBe(false);
+  await wrapper.get('select').setValue('merge'); expect(wrapper.find('[aria-label="角色卡导入预览"]').exists()).toBe(false);
   wrapper.unmount();
 });
 it('creates a Play-only session after review and emits it for selection without proposing canonical changes', async () => {
@@ -38,7 +38,7 @@ it('creates a Play-only session after review and emits it for selection without 
   await upload(wrapper, 'lin.png'); await wrapper.get('form').trigger('submit'); await flushPromises();
   expect(api.previewTavernImport).toHaveBeenCalledWith(expect.objectContaining({ format: 'png', mode: 'playOnly' }));
   expect(api.createTavernPlaySession).not.toHaveBeenCalled();
-  await button(wrapper, 'Confirm and create Play session').trigger('click'); await flushPromises();
+  await button(wrapper, '确认并创建推演会话').trigger('click'); await flushPromises();
   expect(wrapper.emitted('created')).toEqual([[{ id: 'play-imported' }]]);
   expect(api.proposeTavernImport).not.toHaveBeenCalled(); wrapper.unmount();
 });

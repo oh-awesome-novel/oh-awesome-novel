@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_OUTCOME_STALE_REASON_LABELS } from '../../../composables/playTerms';
 import PlayOutcomeItem from './PlayOutcomeItem.vue';
 import type { PlayAdoptionSeed } from '../../../composables/usePlayAdoptionPreview';
 import { MAX_PLAY_OUTCOME_ATTACHMENT_ITEMS } from '../../../composables/usePlayOutcome';
@@ -22,6 +23,11 @@ defineProps<{
   attachmentCreating: boolean;
 }>();
 
+function formatStaleReasons(reasons: readonly string[]): string {
+  return reasons.map((reason) => PLAY_OUTCOME_STALE_REASON_LABELS[reason]
+    ?? (reason.startsWith('sourceContentChanged:') ? `来源已改变：${reason.slice('sourceContentChanged:'.length)}` : reason)).join('、');
+}
+
 const emit = defineEmits<{
   toggleSelection: [itemId: string];
   prepareAdoption: [seed: PlayAdoptionSeed];
@@ -38,8 +44,8 @@ const emit = defineEmits<{
       <span>{{ report.items.length }} item{{ report.items.length === 1 ? '' : 's' }}</span>
     </div>
     <div v-if="reportStatus === 'stale'" class="play-outcome-stale" role="alert">
-      <strong>Report stale · actions are disabled</strong>
-      <span>{{ staleReasons.join(', ') || 'selected branch or source evidence changed' }}</span>
+      <strong>报告已过期 · 操作已停用</strong>
+      <span>{{ formatStaleReasons(staleReasons) || '选中分支或来源依据已改变' }}</span>
     </div>
 
     <section
@@ -66,16 +72,16 @@ const emit = defineEmits<{
       />
     </section>
     <p v-if="groups.length === 0" class="play-muted-copy">
-      当前 {{ projection }} lens 没有可显示的 committed outcome。
+      当前视角下没有可显示的结果。
     </p>
 
     <div class="play-outcome-writing-action">
       <div>
-        <strong>Use as Writing Reference</strong>
+        <strong>作为写作参考</strong>
         <p role="status" aria-live="polite">
-          {{ selectedItemIds.length }} / {{ MAX_PLAY_OUTCOME_ATTACHMENT_ITEMS }} item(s) selected
-          · noncanonical and request-local
-          <template v-if="selectionLimitReached"> · selection limit reached</template>
+          已选 {{ selectedItemIds.length }} / {{ MAX_PLAY_OUTCOME_ATTACHMENT_ITEMS }} 条
+          · 不属于正式文件，仅本次写作请求使用
+          <template v-if="selectionLimitReached"> · 已达选择上限</template>
         </p>
       </div>
       <button
@@ -83,7 +89,7 @@ const emit = defineEmits<{
         type="button"
         :disabled="actionsDisabled || selectedItemIds.length === 0"
         @click="emit('createWritingReference')"
-      >{{ attachmentCreating ? 'Attaching…' : 'Create attachment' }}</button>
+      >{{ attachmentCreating ? 'Attaching…' : '附加为写作参考' }}</button>
     </div>
   </div>
 </template>

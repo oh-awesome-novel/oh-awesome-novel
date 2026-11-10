@@ -77,7 +77,7 @@ function keydown(event: KeyboardEvent): void {
 <template>
   <section ref="stage" class="vn-stage" :class="atmosphere" aria-label="视觉小说演出" tabindex="0" @keydown="keydown">
     <img v-if="background" class="vn-background" :src="background" alt="" aria-hidden="true" />
-    <header><strong>{{ snapshot.sceneId }}</strong><div><button type="button" @click="logOpen = !logOpen">Log · 历史</button><button type="button" @click="emit('close')">返回推演工作台</button></div></header>
+    <header><strong>{{ snapshot.sceneId }}</strong><div><button type="button" @click="logOpen = !logOpen">历史</button><button type="button" @click="emit('close')">返回推演工作台</button></div></header>
     <p v-if="draft && !historicalId" role="status">正在演出草稿 · 尚未保存</p>
     <div class="vn-cast" aria-label="在场角色"><span v-for="character in cast" :key="character.characterId" :class="[character.position, { speaking: beat?.speaker === character.label || beat?.speaker === character.characterId }]"><img v-if="character.portrait" :src="character.portrait" :alt="character.label" />{{ character.label }}</span></div>
     <VisualNovelChoiceOverlay v-if="isLast && !historicalId && !draft" :choices="choices" :disabled="disabled" @choose="choose" @custom="custom" />

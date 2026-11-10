@@ -18,10 +18,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="play-adoption-panel" aria-label="Play observations and adoption">
+  <section class="play-adoption-panel" aria-label="观察笔记与采纳">
     <header>
       <span class="play-section-marker" aria-hidden="true">[+]</span>
-      <h2>Observations</h2>
+      <h2>观察笔记</h2>
       <span>{{ observations.length }}</span>
     </header>
 
@@ -37,19 +37,19 @@ const emit = defineEmits<{
           class="ghost-button tight-button"
           type="button"
           :disabled="disabled"
-          :aria-label="`Bring observation to writing: ${observation.summary}`"
+          :aria-label="`带回写作：${observation.summary}`"
           @click="emit('prepareAdoption', {
             kind: 'observation',
             observationId: observation.id,
           })"
-        >Bring to writing</button>
+        >带回写作</button>
       </article>
     </div>
-    <p v-else class="play-muted-copy">值得写回小说的发现会先成为 observation。</p>
+    <p v-else class="play-muted-copy">值得写回小说的发现会先记为观察笔记。</p>
 
     <header class="play-adoption-heading">
       <span class="play-section-marker" aria-hidden="true">[+]</span>
-      <h2>Adoption history</h2>
+      <h2>采纳记录</h2>
       <span>{{ candidates.length }}</span>
     </header>
 
@@ -63,11 +63,11 @@ const emit = defineEmits<{
           <strong>{{ candidate.summary }}</strong>
           <p>{{ candidate.evidence }}</p>
         </div>
-        <span class="play-candidate-boundary">noncanonical candidate</span>
+        <span class="play-candidate-boundary">未进入正式文件</span>
       </article>
     </div>
     <p v-else class="play-muted-copy">
-      没有 adoption candidate。Play 内容不会自动进入 canonical 文件。
+      还没有采纳记录。推演内容不会自动进入正式文件。
     </p>
   </section>
 </template>

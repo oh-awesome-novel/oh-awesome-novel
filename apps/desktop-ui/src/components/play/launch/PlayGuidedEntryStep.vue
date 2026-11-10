@@ -56,14 +56,14 @@ function toggleSource(sourceId: string, event: Event): void {
 <template>
   <form class="guided-entry" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 2 / 5</span>
-      <h2 :id="`${prefix}-heading`">Entry</h2>
-      <p>Describe the opening boundary. Edited values are marked author-provided.</p>
+      <span>第 2 / 5 步</span>
+      <h2 :id="`${prefix}-heading`">入场</h2>
+      <p>描述开场边界。修改过的值会标为作者提供。</p>
     </header>
 
     <div class="field-grid">
       <label>
-        <span>Session title</span>
+        <span>会话标题</span>
         <input
           name="guided-title"
           type="text"
@@ -77,7 +77,7 @@ function toggleSource(sourceId: string, event: Event): void {
       </label>
 
       <label>
-        <span>Entry label</span>
+        <span>入场点名称</span>
         <input
           name="guided-entry-label"
           type="text"
@@ -91,7 +91,7 @@ function toggleSource(sourceId: string, event: Event): void {
       </label>
 
       <label class="wide">
-        <span>Opening situation</span>
+        <span>开场情境</span>
         <textarea
           name="guided-opening"
           rows="3"
@@ -105,7 +105,7 @@ function toggleSource(sourceId: string, event: Event): void {
       </label>
 
       <fieldset class="wide" :aria-invalid="Boolean(errors.entrySources)">
-        <legend>Entry source refs</legend>
+        <legend>入场来源</legend>
         <label v-for="source in sources" :key="source.sourceId" class="source-ref">
           <input
             type="checkbox"
@@ -120,73 +120,73 @@ function toggleSource(sourceId: string, event: Event): void {
       </fieldset>
 
       <label>
-        <span>Location</span>
+        <span>地点</span>
         <input name="guided-location" type="text" :value="draft.location" :disabled="disabled" @input="updateText('location', $event)">
       </label>
       <div class="world-time-fields">
         <label>
-          <span>World time format</span>
+          <span>世界时间格式</span>
           <select
             name="guided-world-time-format"
             :value="draft.worldTimeFormat ?? 'narrative'" :disabled="disabled"
             @change="updateWorldTimeFormat"
           >
-            <option value="narrative">Narrative / optional</option>
-            <option value="iso8601">ISO date-time with timezone</option>
+            <option value="narrative">叙述式 / 可选</option>
+            <option value="iso8601">带时区的 ISO 日期时间</option>
           </select>
         </label>
         <label>
-          <span>World time</span>
+          <span>世界时间</span>
           <input
             name="guided-world-time" type="text" :value="draft.worldTime" :disabled="disabled"
-            :placeholder="draft.worldTimeFormat === 'iso8601' ? '2026-10-07T09:00:00+08:00' : 'The following morning'"
+            :placeholder="draft.worldTimeFormat === 'iso8601' ? '2026-10-07T09:00:00+08:00' : '第二天早上'"
             :aria-invalid="Boolean(errors.worldTime)"
             :aria-describedby="`${prefix}-world-time-hint${errors.worldTime ? ` ${prefix}-world-time-error` : ''}`"
             @input="updateText('worldTime', $event)"
           >
         </label>
-        <small :id="`${prefix}-world-time-hint`">An ISO date-time sets a comparable initial clock. Absolute scheduled events also need an explicit ISO trigger; narrative times are not ordered automatically.</small>
+        <small :id="`${prefix}-world-time-hint`">ISO 日期时间会给出可比较的初始时钟。绝对时间的计划事件还需要明确的 ISO 触发时间；叙述式时间不会自动排序。</small>
         <small v-if="errors.worldTime" :id="`${prefix}-world-time-error`" class="field-error" role="alert">{{ errors.worldTime }}</small>
       </div>
       <label>
-        <span>Atmosphere</span>
+        <span>氛围</span>
         <input name="guided-atmosphere" type="text" :value="draft.atmosphere" :disabled="disabled" @input="updateText('atmosphere', $event)">
       </label>
       <label>
-        <span>Trigger</span>
+        <span>触发</span>
         <input name="guided-trigger" type="text" :value="draft.trigger" :disabled="disabled" @input="updateText('trigger', $event)">
       </label>
       <label>
-        <span>Objective</span>
+        <span>目标</span>
         <textarea name="guided-objective" rows="2" :value="draft.objective" :disabled="disabled" @input="updateText('objective', $event)"></textarea>
       </label>
       <label>
-        <span>Risk</span>
+        <span>风险</span>
         <textarea name="guided-risk" rows="2" :value="draft.risk" :disabled="disabled" @input="updateText('risk', $event)"></textarea>
       </label>
       <label>
-        <span>World activity</span>
+        <span>世界活跃度</span>
         <select name="guided-simulation-mode" :value="draft.simulationMode" :disabled="disabled" @change="updateSimulationMode">
-          <option value="conversation">Conversation</option>
-          <option value="reactiveWorld">Reactive world</option>
-          <option value="activeWorld">Active world</option>
+          <option value="conversation">对话为主</option>
+          <option value="reactiveWorld">世界会回应</option>
+          <option value="activeWorld">世界主动推进</option>
         </select>
       </label>
       <label>
-        <span>Event density</span>
+        <span>事件密度</span>
         <select name="guided-density" :value="draft.density" :disabled="disabled" @change="updateDensity">
-          <option value="quiet">Quiet</option>
-          <option value="balanced">Balanced</option>
-          <option value="volatile">Volatile</option>
+          <option value="quiet">平静</option>
+          <option value="balanced">适中</option>
+          <option value="volatile">多变</option>
         </select>
       </label>
     </div>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled" @click="emit('back')">Back to Sources</button>
-        <button class="primary" type="submit" :disabled="disabled">Continue to Identity</button>
+        <button type="button" :disabled="disabled" @click="emit('back')">返回来源</button>
+        <button class="primary" type="submit" :disabled="disabled">下一步：身份</button>
       </div>
     </footer>
   </form>

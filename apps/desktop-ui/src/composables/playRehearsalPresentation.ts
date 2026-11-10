@@ -396,7 +396,7 @@ export function projectPlayRehearsalPerception(
     session,
     record.id,
     record.grant,
-    `Committed at ${record.grantedAtTurnId}`,
+    `提交于 ${record.grantedAtTurnId}`,
   ));
   const committedInterventionRefs = new Set(
     committedGrantRecords.map((record) => record.interventionRef),
@@ -413,8 +413,8 @@ export function projectPlayRehearsalPerception(
       intervention.id,
       intervention.grant,
       intervention.grant.kind === 'existingFact'
-        ? 'Existing selected-branch evidence'
-        : `Author-provided at ${intervention.grant.providedAt}`,
+        ? '当前分支已有的依据'
+        : `作者提供于 ${intervention.grant.providedAt}`,
     )];
   });
   const grantedKnowledge = [...committedGrants, ...provisionalGrants];
@@ -489,7 +489,7 @@ function projectGrantedKnowledge(
     // A bounded event window may not include an older stable fact. Keep its
     // identity Director-only instead of guessing that it is player-visible.
     return {
-      summary: `Stable fact ${factRef}`,
+      summary: `稳定事实 ${factRef}`,
       visibility: 'playerUnknown' as const,
     };
   });
@@ -585,7 +585,7 @@ export function projectPlayRehearsalResult(
   const summary = blocks
     .map((block) => block.content)
     .join(' ')
-    .trim() || `Scene rehearsal committed with ${result.evidence.steps.length} actor steps.`;
+    .trim() || `场景试演已提交，共 ${result.evidence.steps.length} 个角色步骤。`;
 
   return {
     artifactRef: result.artifact.id,

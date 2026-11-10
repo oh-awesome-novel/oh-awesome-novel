@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_OUTCOME_CONFIDENCE_LABELS, PLAY_OUTCOME_GOAL_STATUS_LABELS, PLAY_OUTCOME_TAG_LABELS } from '../../../composables/playTerms';
 import { computed, useId } from 'vue';
 
 import type { PlayAdoptionSeed } from '../../../composables/usePlayAdoptionPreview';
@@ -28,9 +29,9 @@ const evidenceCount = computed(() =>
   ]).size,
 );
 const visibilityLabel = computed(() => {
-  if (props.item.visibility === 'playerVisible') return 'player visible';
-  if (props.item.visibility === 'rumor') return 'rumor';
-  return 'director only';
+  if (props.item.visibility === 'playerVisible') return '参与者可见';
+  if (props.item.visibility === 'rumor') return '传闻';
+  return '仅导演可见';
 });
 </script>
 
@@ -43,53 +44,53 @@ const visibilityLabel = computed(() => {
           type="checkbox"
           :checked="selected"
           :disabled="disabled"
-          :aria-label="`Select outcome item: ${item.summary}`"
+          :aria-label="`选择结果条目：${item.summary}`"
           @change="emit('toggleSelection', item.id)"
         >
-        <span>Use as Writing Reference</span>
+        <span>作为写作参考</span>
       </label>
-      <div class="play-outcome-item-badges" aria-label="Outcome evidence classification">
+      <div class="play-outcome-item-badges" aria-label="结果依据分类">
         <span>{{ visibilityLabel }}</span>
-        <span>{{ item.confidence }}</span>
-        <span v-if="item.goalStatus">{{ item.goalStatus }}</span>
+        <span>{{ PLAY_OUTCOME_CONFIDENCE_LABELS[item.confidence] ?? item.confidence }}</span>
+        <span v-if="item.goalStatus">{{ PLAY_OUTCOME_GOAL_STATUS_LABELS[item.goalStatus] ?? item.goalStatus }}</span>
       </div>
     </header>
 
     <p class="play-outcome-item-summary">{{ item.summary }}</p>
 
-    <ul v-if="item.tags.length" class="play-outcome-item-tags" aria-label="Outcome tags">
-      <li v-for="tag in item.tags" :key="tag">{{ tag }}</li>
+    <ul v-if="item.tags.length" class="play-outcome-item-tags" aria-label="结果标签">
+      <li v-for="tag in item.tags" :key="tag">{{ PLAY_OUTCOME_TAG_LABELS[tag] ?? tag }}</li>
     </ul>
 
     <details class="play-outcome-item-evidence">
-      <summary>{{ evidenceCount }} evidence reference{{ evidenceCount === 1 ? '' : 's' }}</summary>
+      <summary>{{ evidenceCount }} 条依据</summary>
       <dl>
         <div v-if="item.artifactTurnRefs.length">
-          <dt>Committed artifacts</dt>
+          <dt>已提交的回合</dt>
           <dd>{{ item.artifactTurnRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.messageRefs.length">
-          <dt>Messages</dt>
+          <dt>消息</dt>
           <dd>{{ item.messageRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.eventRefs.length">
-          <dt>Events</dt>
+          <dt>事件</dt>
           <dd>{{ item.eventRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.observationRefs.length">
-          <dt>Observations</dt>
+          <dt>观察笔记</dt>
           <dd>{{ item.observationRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.evidenceRefs.length">
-          <dt>Evidence</dt>
+          <dt>依据</dt>
           <dd>{{ item.evidenceRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.sourceRefs.length">
-          <dt>Sources</dt>
+          <dt>来源</dt>
           <dd>{{ item.sourceRefs.join(', ') }}</dd>
         </div>
         <div v-if="item.participantRefs.length">
-          <dt>Participants</dt>
+          <dt>参与者</dt>
           <dd>{{ item.participantRefs.join(', ') }}</dd>
         </div>
       </dl>
@@ -99,14 +100,14 @@ const visibilityLabel = computed(() => {
       class="ghost-button tight-button"
       type="button"
       :disabled="disabled || !outcomeReportFingerprint"
-      :aria-label="`Bring outcome to writing: ${item.summary}`"
+      :aria-label="`带回写作：${item.summary}`"
       @click="emit('prepareAdoption', {
         kind: 'outcome',
         outcomeItemId: item.id,
         outcomeReportFingerprint,
       })"
     >
-      Bring to writing
+      带回写作
     </button>
   </article>
 </template>

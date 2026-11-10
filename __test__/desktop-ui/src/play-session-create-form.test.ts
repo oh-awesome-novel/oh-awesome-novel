@@ -26,7 +26,7 @@ describe('PlaySessionCreateForm world motion seeds', () => {
     expect(wrapper.emitted('create')?.[0]?.[0]).toMatchObject({
       eventPolicy: { allowOffscreen: false, allowHidden: false, maxExternalEventsPerTurn: 0 },
     });
-    expect(wrapper.text()).toContain('Due scheduled events are still settled');
+    expect(wrapper.text()).toContain('到期的计划事件仍会结算');
     wrapper.unmount();
   });
 
@@ -35,10 +35,10 @@ describe('PlaySessionCreateForm world motion seeds', () => {
 
     await field(wrapper, '标题').setValue('Last train');
     await field(wrapper, '开场场景').setValue('Midnight at the station.');
-    await field(wrapper, 'Pressure').setValue('The last train is leaving');
+    await field(wrapper, '压力').setValue('The last train is leaving');
     await field(wrapper, '下一后果').setValue('The witness leaves.');
-    await field(wrapper, 'Agenda 所有者').setValue('Station guard');
-    await field(wrapper, 'Agenda 目标').setValue('Seal every exit');
+    await field(wrapper, '动向所属').setValue('Station guard');
+    await field(wrapper, '动向目标').setValue('Seal every exit');
     await field(wrapper, '下一步').setValue('Lock the east gate');
     expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(false);
     await wrapper.get('form').trigger('submit');

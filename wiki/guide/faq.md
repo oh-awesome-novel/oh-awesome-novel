@@ -111,17 +111,17 @@ VITE_OAN_BACKEND_PROXY_TARGET=http://127.0.0.1:3211 \
 
 结构完整性错误属于阻断问题，不能用展开提醒代替修正。发布分析与采纳素材都仍需到 Review 接受。
 
-## 在 Play 点过 Accept，为什么章节没更新？
+## 在 Play 点过“采用”，为什么章节没更新？
 
-Scene Rehearsal 的 Accept 只选择一个角色步骤，Finish 只结算到 Play 会话。写入正式小说需要走 **Bring to writing → Preview canonical diff → Confirm and create PendingAction → Review → Accept**。
+场景试演的 **采用** 只选择一个角色步骤，**完成试演** 只结算到推演会话。写入正式小说需要走 **带回写作 → 预览改动 → 确认并创建待确认改动 → 去审阅 → 接受**。
 
-如果只想把结果作为下一次创作请求的素材，可以创建 Writing Reference 附件。两条路径见[Play 指南](./play.md)。
+如果只想把结果作为下一次创作请求的素材，可以在结果报告中 **附加为写作参考**。两条路径见[Play 指南](./play.md)。
 
 ## Play 附件为什么消失了？
 
 Copilot 中勾选的 **Play Writing References** 只附到下一次请求。发送成功或切换对话会清空选择，需要使用时重新勾选。
 
-如果附件显示非 active，或 Outcome Report 已过期，先回到 Play 核对当前分支和来源，再刷新或重新生成报告。
+如果附件不是“生效”状态，或结果报告已过期，先回到 Play 核对当前分支和来源，再刷新或重新生成报告。
 
 ## 设定工坊入库会覆盖已有的世界规则吗？
 

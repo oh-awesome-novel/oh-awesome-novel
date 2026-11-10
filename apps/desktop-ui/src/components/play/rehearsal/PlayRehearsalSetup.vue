@@ -41,9 +41,9 @@ const {
 const headingId = `${useId()}-rehearsal-setup-heading`;
 const stepPanel = useTemplateRef<HTMLDivElement>('stepPanel');
 const steps: Array<{ id: PlayRehearsalSetupStep; label: string }> = [
-  { id: 'scene', label: 'Scene' },
-  { id: 'cast', label: 'Cast' },
-  { id: 'review', label: 'Review' },
+  { id: 'scene', label: '场景' },
+  { id: 'cast', label: '人物' },
+  { id: 'review', label: '确认' },
 ];
 
 async function advance(): Promise<void> {
@@ -80,13 +80,13 @@ async function focusStepPanel(): Promise<void> {
   <section class="play-rehearsal-setup" :aria-labelledby="headingId">
     <header class="play-rehearsal-setup-heading">
       <div>
-        <span>Scene Rehearsal</span>
-        <h1 :id="headingId">Prepare a playable scene</h1>
+        <span>场景试演</span>
+        <h1 :id="headingId">准备一个可以试演的场景</h1>
       </div>
-      <span>Play-local · not canonical</span>
+      <span>推演内 · 不属于正式文件</span>
     </header>
 
-    <nav aria-label="Rehearsal setup progress">
+    <nav aria-label="试演设置进度">
       <ol>
         <li
           v-for="(step, index) in steps"

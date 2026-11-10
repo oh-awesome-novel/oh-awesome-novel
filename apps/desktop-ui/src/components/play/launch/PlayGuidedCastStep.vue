@@ -50,28 +50,28 @@ function updateVisibility(participantRef: string, event: Event): void {
 <template>
   <form class="guided-cast" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 4 / 5</span>
-      <h2 :id="`${prefix}-heading`">Cast</h2>
-      <p>Confirm participant goals, positions, and initial knowledge boundaries.</p>
+      <span>第 4 / 5 步</span>
+      <h2 :id="`${prefix}-heading`">人物</h2>
+      <p>确认参与者的目标、位置和初始认知边界。</p>
     </header>
 
     <p v-if="errors.cast" class="field-error" role="alert">{{ errors.cast }}</p>
 
-    <ol v-if="participants.length" aria-label="Guided Start cast order">
+    <ol v-if="participants.length" aria-label="引导开局人物顺序">
       <li v-for="(participant, index) in participants" :key="participant.participantRef">
         <header class="participant-heading">
           <strong>Participant {{ index + 1 }}</strong>
           <button
             type="button"
             :disabled="disabled"
-            :aria-label="`Remove participant ${index + 1}`"
+            :aria-label="`移除第 ${index + 1} 名参与者`"
             @click="emit('removeParticipant', participant.participantRef)"
-          >Remove</button>
+          >移除</button>
         </header>
 
         <div class="participant-fields">
           <label>
-            <span>Name</span>
+            <span>名字</span>
             <input
               :name="`guided-participant-${index + 1}-name`"
               type="text"
@@ -87,14 +87,14 @@ function updateVisibility(participantRef: string, event: Event): void {
           </label>
 
           <label>
-            <span>Canonical character source</span>
+            <span>正式角色来源</span>
             <select
               :name="`guided-participant-${index + 1}-source`"
               :value="participant.characterSourceId"
               :disabled="disabled"
               @change="updateText(participant.participantRef, 'characterSourceId', $event)"
             >
-              <option value="">Author-provided guest</option>
+              <option value="">作者提供的临时角色</option>
               <option v-for="source in characterSources" :key="source.sourceId" :value="source.sourceId">
                 {{ source.objectId ?? source.path }}
               </option>
@@ -102,7 +102,7 @@ function updateVisibility(participantRef: string, event: Event): void {
           </label>
 
           <label>
-            <span>Position</span>
+            <span>位置</span>
             <input
               :name="`guided-participant-${index + 1}-position`"
               type="text"
@@ -113,7 +113,7 @@ function updateVisibility(participantRef: string, event: Event): void {
           </label>
 
           <label>
-            <span>Current goal</span>
+            <span>当前目标</span>
             <input
               :name="`guided-participant-${index + 1}-goal`"
               type="text"
@@ -129,28 +129,28 @@ function updateVisibility(participantRef: string, event: Event): void {
           </label>
 
           <label class="wide">
-            <span>Initial knowledge</span>
+            <span>初始认知</span>
             <textarea
               :name="`guided-participant-${index + 1}-knowledge`"
               rows="2"
               :value="participant.initialKnowledge"
               :disabled="disabled"
-              placeholder="A Play-local fact this participant may use"
+              placeholder="这个参与者可以使用的一条推演内事实"
               @input="updateText(participant.participantRef, 'initialKnowledge', $event)"
             ></textarea>
           </label>
 
           <label>
-            <span>Knowledge visibility</span>
+            <span>认知可见性</span>
             <select
               :name="`guided-participant-${index + 1}-visibility`"
               :value="participant.knowledgeVisibility"
               :disabled="disabled"
               @change="updateVisibility(participant.participantRef, $event)"
             >
-              <option value="playerVisible">Player visible</option>
-              <option value="rumor">Rumor</option>
-              <option value="playerUnknown">Player unknown</option>
+              <option value="playerVisible">参与者可见</option>
+              <option value="rumor">传闻</option>
+              <option value="playerUnknown">参与者不知道</option>
             </select>
           </label>
         </div>
@@ -158,12 +158,12 @@ function updateVisibility(participantRef: string, event: Event): void {
     </ol>
 
     <p v-else class="empty-cast">
-      {{ purpose === 'sceneRehearsal' ? 'Add at least one participant to rehearse the scene.' : 'No cast is required for an immersive entry.' }}
+      {{ purpose === 'sceneRehearsal' ? '至少添加一名参与者才能试演这个场景。' : '沉浸推演不需要设置人物。' }}
     </p>
 
     <div class="cast-actions">
       <button class="add-participant" type="button" :disabled="disabled" @click="emit('addParticipant')">
-        <span aria-hidden="true">[+]</span> Add participant
+        <span aria-hidden="true">[+]</span> 添加参与者
       </button>
       <button class="add-participant forge-entry" type="button" :disabled="disabled" @click="emit('openForge')">
         在设定工坊共创角色
@@ -171,10 +171,10 @@ function updateVisibility(participantRef: string, event: Event): void {
     </div>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled" @click="emit('back')">Back to Identity</button>
-        <button class="primary" type="submit" :disabled="disabled">Preview Launch Package</button>
+        <button type="button" :disabled="disabled" @click="emit('back')">返回身份</button>
+        <button class="primary" type="submit" :disabled="disabled">预览开局包</button>
       </div>
     </footer>
   </form>

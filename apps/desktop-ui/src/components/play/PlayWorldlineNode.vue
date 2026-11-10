@@ -30,16 +30,19 @@ const props = withDefaults(defineProps<{
   retryDisabled?: boolean;
   retryDisabledReason?: string;
   blocked: boolean;
+  /** Director view; only then may the guided Retry note be shown. */
+  directorLens?: boolean;
 }>(), {
   retryingCheckpointId: '',
   namingCheckpointId: '',
   retryDisabled: false,
-  retryDisabledReason: 'Configure a provider to Retry this settlement.',
+  retryDisabledReason: '配置模型后才能重演这一回合。',
+  directorLens: false,
 });
 
 const emit = defineEmits<{
   restore: [checkpointId: string];
-  retry: [checkpointId: string];
+  retry: [checkpointId: string, guidance?: string];
   name: [checkpointId: string, name: string];
 }>();
 
@@ -51,6 +54,12 @@ const submittedAction = shallowRef<{
 }>();
 const naming = shallowRef(false);
 const nameDraft = shallowRef('');
+const guidanceDraft = shallowRef('');
+const MAX_GUIDANCE_LENGTH = 500;
+const guidanceLength = computed(() => [...guidanceDraft.value.trim()].length);
+const guidanceTooLong = computed(() => guidanceLength.value > MAX_GUIDANCE_LENGTH);
+const retryGuidance = computed(() =>
+  props.directorLens ? props.checkpoint.retryGuidance?.trim() ?? '' : '');
 const node = useTemplateRef<HTMLLIElement>('node');
 const restoreButton = useTemplateRef<HTMLButtonElement>('restoreButton');
 const retryButton = useTemplateRef<HTMLButtonElement>('retryButton');
@@ -64,26 +73,34 @@ const checkpointKind = computed(() =>
 const checkpointDepth = computed(() =>
   props.checkpoint.depth ?? Math.max(0, props.checkpoint.selectedTurnIds.length));
 const checkpointName = computed(() => props.checkpoint.name?.trim() ?? '');
+// Host fallbacks (no author input to summarize) are fixed English identifiers; author text passes through.
+const hostPreview = computed(() => {
+  const preview = props.checkpoint.preview.trim();
+  if (checkpointKind.value === 'initialWorld' && preview === 'Initial world') return '初始世界';
+  if (preview === 'Imported starting point') return '导入的起点';
+  const turn = /^World turn (\d+)$/u.exec(preview);
+  return turn ? `第 ${turn[1]} 回合` : preview;
+});
 const checkpointLabel = computed(() =>
-  checkpointName.value || props.checkpoint.preview.trim() || (
+  checkpointName.value || hostPreview.value || (
     checkpointKind.value === 'initialWorld'
-      ? 'Initial world'
-      : `World turn ${props.checkpoint.worldTurn}`
+      ? '初始世界'
+      : `第 ${props.checkpoint.worldTurn} 回合`
   ));
 const checkpointPreview = computed(() =>
-  checkpointName.value && props.checkpoint.preview.trim() !== checkpointName.value
-    ? props.checkpoint.preview.trim()
+  checkpointName.value && hostPreview.value !== checkpointName.value
+    ? hostPreview.value
     : '');
 const checkpointStatus = computed(() => {
   switch (props.checkpoint.status) {
-    case 'current': return 'Current worldline';
-    case 'selectedAncestor': return 'On current worldline';
-    case 'variant': return 'Retained outcome';
+    case 'current': return '当前位置';
+    case 'selectedAncestor': return '当前世界线';
+    case 'variant': return '保留的另一结果';
   }
 });
 const worldMoment = computed(() => checkpointKind.value === 'initialWorld'
-  ? `Starting point · ${formatTime(props.checkpoint.committedAt)}`
-  : `World turn ${props.checkpoint.worldTurn} · ${formatTime(props.checkpoint.committedAt)}`);
+  ? `起点 · ${formatTime(props.checkpoint.committedAt)}`
+  : `第 ${props.checkpoint.worldTurn} 回合 · ${formatTime(props.checkpoint.committedAt)}`);
 const nodeStyle = computed<CSSProperties>(() => ({
   marginInlineStart: `${Math.min(checkpointDepth.value, 6) * 8}px`,
 }));
@@ -157,6 +174,7 @@ async function requestAction(kind: PendingActionKind): Promise<void> {
   if (isActionUnavailable(kind)) return;
   naming.value = false;
   pendingAction.value = kind;
+  if (kind === 'retry') guidanceDraft.value = '';
   await nextTick();
   confirmActionButton.value?.focus();
 }
@@ -172,10 +190,14 @@ async function cancelAction(): Promise<void> {
 function confirmAction(): void {
   const action = pendingAction.value;
   if (!action || isActionUnavailable(action)) return;
+  if (action === 'retry' && guidanceTooLong.value) return;
   rememberSubmittedAction(action);
   pendingAction.value = undefined;
   if (action === 'retry') {
-    emit('retry', checkpointId.value);
+    const guidance = guidanceDraft.value.trim();
+    guidanceDraft.value = '';
+    if (guidance) emit('retry', checkpointId.value, guidance);
+    else emit('retry', checkpointId.value);
   } else {
     emit('restore', checkpointId.value);
   }
@@ -238,7 +260,7 @@ function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleString([], {
+    : date.toLocaleString('zh-CN', {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -269,6 +291,10 @@ function formatTime(value: string): string {
       <p v-if="checkpointPreview" class="play-worldline-preview">
         {{ checkpointPreview }}
       </p>
+      <p v-if="retryGuidance" class="play-worldline-guidance">
+        <span>重演要求（导演视角）</span>
+        {{ retryGuidance }}
+      </p>
     </div>
 
     <div
@@ -280,12 +306,12 @@ function formatTime(value: string): string {
         class="play-worldline-name"
         type="button"
         :disabled="actionUnavailable"
-        :aria-label="`${checkpointName ? 'Rename' : 'Name'} ${checkpointLabel}`"
+        :aria-label="`${checkpointName ? '重命名' : '命名'} ${checkpointLabel}`"
         @click="startNaming"
       >
         {{ namingCheckpointId === checkpointId
-          ? 'Saving name…'
-          : checkpointName ? 'Rename' : 'Name' }}
+          ? '正在保存…'
+          : checkpointName ? '重命名' : '命名' }}
       </button>
       <button
         v-if="checkpoint.restorable"
@@ -296,13 +322,11 @@ function formatTime(value: string): string {
         :data-artifact-id="checkpointId"
         :disabled="isActionUnavailable('restore')"
         :aria-label="checkpointKind === 'initialWorld'
-          ? 'Return to the initial world'
-          : `Continue from ${checkpointLabel}`"
+          ? '回到初始世界'
+          : `回到 ${checkpointLabel}`"
         @click="requestAction('restore')"
       >
-        {{ busyCheckpointId === checkpointId
-          ? 'Restoring…'
-          : checkpointKind === 'initialWorld' ? 'Return here' : 'Continue here' }}
+        {{ busyCheckpointId === checkpointId ? '正在回到这里…' : '回到这里' }}
       </button>
       <button
         v-if="checkpoint.retryable"
@@ -313,21 +337,21 @@ function formatTime(value: string): string {
         :data-artifact-id="checkpointId"
         :disabled="isActionUnavailable('retry')"
         :title="retryDisabled ? retryDisabledReason : undefined"
-        :aria-label="`Retry ${checkpointLabel} from before the turn`"
+        :aria-label="`从回合开始前重演 ${checkpointLabel}`"
         @click="requestAction('retry')"
       >
-        {{ retryingCheckpointId === checkpointId ? 'Retrying…' : 'Retry turn' }}
+        {{ retryingCheckpointId === checkpointId ? '正在重演…' : '重演' }}
       </button>
     </div>
 
     <form
       v-if="naming"
       class="play-worldline-name-form"
-      aria-label="Name worldline point"
+      aria-label="命名存档点"
       @submit.prevent="submitName"
       @keydown.esc.stop.prevent="cancelNaming"
     >
-      <label :for="`${checkpointId}-worldline-name`">Worldline point name</label>
+      <label :for="`${checkpointId}-worldline-name`">存档点名称</label>
       <input
         :id="`${checkpointId}-worldline-name`"
         ref="nameInput"
@@ -337,8 +361,8 @@ function formatTime(value: string): string {
         autocomplete="off"
       />
       <div class="play-worldline-name-actions">
-        <button type="button" @click="cancelNaming">Cancel</button>
-        <button type="submit" :disabled="!nameIsValid">Save name</button>
+        <button type="button" @click="cancelNaming">取消</button>
+        <button type="submit" :disabled="!nameIsValid">保存名称</button>
       </div>
     </form>
 
@@ -347,56 +371,78 @@ function formatTime(value: string): string {
       class="play-history-confirmation"
       role="group"
       :aria-label="pendingAction === 'retry'
-        ? 'Confirm settlement Retry'
-        : 'Confirm worldline restore'"
+        ? '确认重演'
+        : '确认回到这里'"
       @keydown.esc.stop.prevent="cancelAction"
     >
-      <p v-if="pendingAction === 'retry'">
-        Retry from before this turn? The existing result is preserved as a variant,
-        shown here as a retained outcome.
-      </p>
+      <template v-if="pendingAction === 'retry'">
+        <p>
+          从这一回合开始前重演？行动不变，现有结果会保留为另一个结果。
+        </p>
+        <label class="play-retry-guidance-label" :for="`${checkpointId}-retry-guidance`">
+          这次希望有什么不同（可选）
+        </label>
+        <textarea
+          :id="`${checkpointId}-retry-guidance`"
+          v-model="guidanceDraft"
+          class="play-retry-guidance"
+          rows="3"
+          placeholder="例如：别让她这么快妥协；让对话更紧张一些。"
+          :aria-invalid="guidanceTooLong"
+          :aria-describedby="`${checkpointId}-retry-guidance-hint`"
+        ></textarea>
+        <small
+          :id="`${checkpointId}-retry-guidance-hint`"
+          class="play-retry-guidance-hint"
+          :class="{ 'play-retry-guidance-error': guidanceTooLong }"
+        >
+          {{ guidanceTooLong
+            ? `最多 ${MAX_GUIDANCE_LENGTH} 字，当前 ${guidanceLength} 字。`
+            : `只用于这一次重演，不会带到后续回合；参与者视角看不到。${guidanceLength}/${MAX_GUIDANCE_LENGTH}` }}
+        </small>
+      </template>
       <p v-else-if="checkpointKind === 'initialWorld'">
-        Return to the initial world? Later turns remain variants and are not deleted.
+        回到初始世界？之后的回合会保留为其他结果，不会删除。
       </p>
       <p v-else>
-        Continue from this point? Later turns remain variants and are not deleted.
+        回到这个存档点继续？之后的回合会保留为其他结果，不会删除。
       </p>
       <div class="play-history-confirmation-actions">
-        <button type="button" @click="cancelAction">Cancel</button>
+        <button type="button" @click="cancelAction">取消</button>
         <button
           ref="confirmActionButton"
           class="play-history-confirm"
           type="button"
-          :disabled="isActionUnavailable(pendingAction)"
+          :disabled="isActionUnavailable(pendingAction) || (pendingAction === 'retry' && guidanceTooLong)"
           @click="confirmAction"
         >
-          {{ pendingAction === 'retry' ? 'Confirm Retry' : 'Confirm restore' }}
+          {{ pendingAction === 'retry' ? '确认重演' : '确认回到这里' }}
         </button>
       </div>
     </div>
 
     <details class="play-worldline-technical">
-      <summary>Technical details</summary>
+      <summary>技术细节</summary>
       <p class="play-worldline-session-revision">
-        Session revision {{ sessionRevision }}
+        会话 revision {{ sessionRevision }}
       </p>
       <dl>
-        <dt>Checkpoint</dt>
+        <dt>存档点</dt>
         <dd>{{ checkpointId }}</dd>
         <template v-if="checkpoint.artifactId">
           <dt>Artifact</dt>
           <dd>{{ checkpoint.artifactId }}</dd>
         </template>
         <template v-if="parentCheckpointId">
-          <dt>Parent</dt>
+          <dt>上一节点</dt>
           <dd>{{ parentCheckpointId }}</dd>
         </template>
-        <dt>Depth</dt>
+        <dt>深度</dt>
         <dd>{{ checkpointDepth }}</dd>
         <dt>Revision</dt>
         <dd>{{ checkpoint.revision }}</dd>
-        <dt>Selected path</dt>
-        <dd>{{ checkpoint.selectedTurnIds.join(' → ') || 'Initial world' }}</dd>
+        <dt>选中路径</dt>
+        <dd>{{ checkpoint.selectedTurnIds.join(' → ') || '初始世界' }}</dd>
       </dl>
     </details>
   </li>
@@ -437,6 +483,55 @@ function formatTime(value: string): string {
 .play-worldline-preview {
   margin: 1px 0 0;
   line-height: 1.45;
+}
+
+.play-worldline-guidance {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  border-inline-start: 2px solid var(--play-line-strong);
+  color: var(--play-body);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.play-worldline-guidance span {
+  display: block;
+  color: var(--play-muted);
+  font-size: 10px;
+}
+
+.play-retry-guidance-label {
+  display: block;
+  margin-top: 6px;
+  color: var(--play-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.play-retry-guidance {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  margin-top: 4px;
+  padding: 6px 7px;
+  border: 1px solid var(--play-line-strong);
+  background: var(--play-canvas);
+  color: var(--play-ink);
+  font: inherit;
+  font-size: 11px;
+  resize: vertical;
+}
+
+.play-retry-guidance-hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--play-muted);
+  font-size: 10px;
+}
+
+.play-retry-guidance-error {
+  color: var(--play-danger, #b42318);
 }
 
 .play-worldline-name,

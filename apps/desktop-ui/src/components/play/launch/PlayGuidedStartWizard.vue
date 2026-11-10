@@ -82,11 +82,11 @@ const busy = computed(() =>
     || previewing.value
     || creating.value);
 const steps: Array<{ id: PlayGuidedStartStep; label: string }> = [
-  { id: 'sources', label: 'Sources' },
-  { id: 'entry', label: 'Entry' },
-  { id: 'identity', label: 'Identity' },
-  { id: 'cast', label: 'Cast' },
-  { id: 'review', label: 'Review' },
+  { id: 'sources', label: '来源' },
+  { id: 'entry', label: '入场' },
+  { id: 'identity', label: '身份' },
+  { id: 'cast', label: '人物' },
+  { id: 'review', label: '确认' },
 ];
 
 async function advance(): Promise<void> {
@@ -122,13 +122,13 @@ async function focusStepPanel(): Promise<void> {
   >
     <header class="wizard-heading">
       <div>
-        <span>{{ purpose === 'sceneRehearsal' ? 'Scene Rehearsal' : 'Immersive Journey' }}</span>
-        <h1 :id="headingId">Guided Start</h1>
+        <span>{{ purpose === 'sceneRehearsal' ? '场景试演' : '沉浸推演' }}</span>
+        <h1 :id="headingId">引导开局</h1>
       </div>
-      <span>Source-backed · Play-local · not canonical</span>
+      <span>有来源依据 · 推演内 · 不属于正式文件</span>
     </header>
 
-    <nav aria-label="Guided Start progress">
+    <nav aria-label="引导开局进度">
       <ol>
         <li
           v-for="(step, index) in steps"
@@ -143,10 +143,10 @@ async function focusStepPanel(): Promise<void> {
     </nav>
 
     <p v-if="requestError && currentStep !== 'review'" class="request-error" role="alert">
-      {{ requestError }} Preview again before retrying.
+      {{ requestError }} 请重新预览后再试。
     </p>
     <p v-if="filesLoading && currentStep === 'sources'" class="source-status" role="status">
-      Loading workspace files…
+      正在载入工作区文件…
     </p>
     <p v-else-if="filesError && currentStep === 'sources'" class="request-error" role="alert">
       {{ filesError }}

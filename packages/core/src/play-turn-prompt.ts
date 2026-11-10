@@ -35,6 +35,25 @@ export interface PlayTurnTailContext {
   state: string;
   /** This turn's action and output requirements. */
   requirements?: string;
+  /** Author guidance for this one Retry. Never carried into later turns or the frozen prefix. */
+  retryGuidance?: string;
+}
+
+/**
+ * Wraps one Retry's author guidance. It shapes how the referee settles the
+ * unchanged action; it cannot change the action, reveal hidden facts to the
+ * player, or override the settlement protocol.
+ */
+export function formatPlayRetryGuidanceBlock(guidance: string): string {
+  return [
+    '<本次重演要求>',
+    '作者在重演这一回合。玩家行动与上次完全相同，不得改写或替玩家增加行动；请按下面的作者要求重新裁定这一回合的发展。',
+    '要求只影响本回合，不得在叙述里提及“重演”或这段要求，也不能违背隐藏信息、因果约束和结算格式。',
+    '<作者要求>',
+    guidance,
+    '</作者要求>',
+    '</本次重演要求>',
+  ].join('\n');
 }
 
 export function formatPlayTurnTail(session: PlaySession, context: string | PlayTurnTailContext, playerInput: string): string {
@@ -45,6 +64,7 @@ export function formatPlayTurnTail(session: PlaySession, context: string | PlayT
     ...(tail.world?.trim() ? [`<世界设定>\n${tail.world}\n</世界设定>`] : []),
     `<当前状态>\n${tail.state}\n</当前状态>`,
     ...(tail.requirements?.trim() ? [`<本轮回合要求>\n${tail.requirements}\n</本轮回合要求>`] : []),
+    ...(tail.retryGuidance?.trim() ? [formatPlayRetryGuidanceBlock(tail.retryGuidance.trim())] : []),
     `<玩家输入>${playerInput}</玩家输入>`,
     '<本轮提醒>本轮回复同样遵守系统前缀末尾「每轮回复都要遵守」一节的全部要求。</本轮提醒>',
   ].join('\n');

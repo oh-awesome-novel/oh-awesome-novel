@@ -33,14 +33,14 @@ function update(field: keyof PlayGuidedIdentityDraft, event: Event): void {
 <template>
   <form class="guided-identity" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>Step 3 / 5</span>
-      <h2 :id="`${prefix}-heading`">Identity</h2>
-      <p v-if="purpose === 'immersiveJourney'">Set the player lens used to enter this world.</p>
-      <p v-else>State what the Director wants this rehearsal to test.</p>
+      <span>第 3 / 5 步</span>
+      <h2 :id="`${prefix}-heading`">身份</h2>
+      <p v-if="purpose === 'immersiveJourney'">设定以什么身份进入这个世界。</p>
+      <p v-else>写下导演想通过这次试演检验什么。</p>
     </header>
 
     <label v-if="purpose === 'immersiveJourney'">
-      <span>Player persona</span>
+      <span>参与者身份</span>
       <textarea
         name="guided-player-persona"
         rows="4"
@@ -48,14 +48,14 @@ function update(field: keyof PlayGuidedIdentityDraft, event: Event): void {
         :disabled="disabled"
         :aria-invalid="Boolean(errors.persona)"
         aria-required="true"
-        placeholder="Who am I here, and what can I reasonably know?"
+        placeholder="我在这里是谁，合理地知道些什么？"
         @input="update('persona', $event)"
       ></textarea>
       <small v-if="errors.persona" class="field-error">{{ errors.persona }}</small>
     </label>
 
     <label v-else>
-      <span>Director rehearsal purpose</span>
+      <span>试演目的</span>
       <textarea
         name="guided-director-purpose"
         rows="4"
@@ -63,22 +63,22 @@ function update(field: keyof PlayGuidedIdentityDraft, event: Event): void {
         :disabled="disabled"
         :aria-invalid="Boolean(errors.directorPurpose)"
         aria-required="true"
-        placeholder="What character behavior or scene tension should this run test?"
+        placeholder="这次要检验哪种角色行为或场景张力？"
         @input="update('directorPurpose', $event)"
       ></textarea>
       <small v-if="errors.directorPurpose" class="field-error">{{ errors.directorPurpose }}</small>
     </label>
 
     <aside>
-      <strong>{{ purpose === 'immersiveJourney' ? 'Player Lens' : 'Director Lens' }}</strong>
-      <span>Identity changes the viewing boundary; it does not create a second world truth.</span>
+      <strong>{{ purpose === 'immersiveJourney' ? '参与者视角' : '导演视角' }}</strong>
+      <span>身份只改变能看到什么，不会产生第二套世界事实。</span>
     </aside>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
       <div>
-        <button type="button" :disabled="disabled" @click="emit('back')">Back to Entry</button>
-        <button class="primary" type="submit" :disabled="disabled">Continue to Cast</button>
+        <button type="button" :disabled="disabled" @click="emit('back')">返回入场</button>
+        <button class="primary" type="submit" :disabled="disabled">下一步：人物</button>
       </div>
     </footer>
   </form>

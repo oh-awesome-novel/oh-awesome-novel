@@ -76,9 +76,9 @@ describe('PlayWorkspace Retry', () => {
     expect(activeTranscript).toContain('Root result');
     expect(activeTranscript).not.toContain('Old source result');
     expect(activeTranscript).toContain('Source action');
-    expect(activeTranscript).toContain('Retry · provisional · not committed');
+    expect(activeTranscript).toContain('重演 · 生成中 · 尚未提交');
     expect(wrapper.get('.play-history-status').text()).toContain(
-      'existing result remains a variant',
+      '现有结果会保留为另一个结果',
     );
 
     expect(api.retryPlayWorldRefereeTurn).toHaveBeenCalledWith(
@@ -94,8 +94,34 @@ describe('PlayWorkspace Retry', () => {
 
     expect(wrapper.get('.play-transcript').text()).toContain('Old source result');
     expect(wrapper.find('.play-turn-failed').exists()).toBe(true);
-    expect(wrapper.get('.play-retry-source').text()).toContain('Old result preserved');
+    expect(wrapper.get('.play-retry-source').text()).toContain('旧结果会保留为另一个结果');
     expect(wrapper.get('[role="alert"]').text()).toContain('Retry settlement failed');
+    wrapper.unmount();
+  });
+
+  it('passes optional guidance through Retry while the action stays the original one', async () => {
+    const session = createSession();
+    api.listPlaySessions.mockResolvedValue({ sessions: [session] });
+    api.listPlayCheckpoints.mockResolvedValue({
+      checkpoints: [createCheckpoint('turn-source', 'current', session.revision)],
+    });
+    api.retryPlayWorldRefereeTurn.mockImplementation(async function* () {
+      yield retryStartedEvent();
+      yield retryFailedEvent();
+    });
+    const wrapper = mountWorkspace();
+    await flushPromises();
+    await wrapper.get('.play-history-retry[data-artifact-id="turn-source"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('.play-retry-guidance').setValue('别让守卫这么快放行。');
+    await wrapper.get('.play-history-confirm').trigger('click');
+    await flushPromises();
+    expect(api.retryPlayWorldRefereeTurn).toHaveBeenCalledWith(
+      'play-1',
+      'turn-source',
+      { baseRevision: 2, guidance: '别让守卫这么快放行。' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     wrapper.unmount();
   });
 
@@ -146,7 +172,7 @@ describe('PlayWorkspace Retry', () => {
     expect(transcript).toContain('New sibling result');
     expect(transcript).not.toContain('Old source result');
     expect(wrapper.find('.play-retry-source').exists()).toBe(false);
-    expect(wrapper.text()).toContain('Session revision 3');
+    expect(wrapper.text()).toContain('会话 revision 3');
     wrapper.unmount();
   });
 
@@ -190,7 +216,7 @@ describe('PlayWorkspace Retry', () => {
       expect(wrapper.find('.play-turn-indeterminate').exists()).toBe(true);
       expect(wrapper.get('.play-composer textarea').attributes('disabled')).toBeDefined();
       const refresh = wrapper.get<HTMLButtonElement>(
-        '.play-workspace-status button[aria-label="刷新 Play workspace"]',
+        '.play-workspace-status button[aria-label="刷新推演工作区"]',
       );
       expect(refresh.element.disabled).toBe(false);
 
@@ -305,7 +331,7 @@ function createSessionEnvelope(
     },
     events: [],
     scheduledEvents: [],
-    suggestedActions: ['Wait'],
+    suggestedActions: ['等'],
     activatedSources: [],
     observations: [],
     adoptionCandidates: [],

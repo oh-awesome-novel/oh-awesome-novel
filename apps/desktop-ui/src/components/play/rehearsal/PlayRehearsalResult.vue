@@ -15,7 +15,7 @@ const headingId = `${useId()}-rehearsal-result-heading`;
     <header>
       <div>
         <span>[committed]</span>
-        <h2 :id="headingId">Rehearsal Result</h2>
+        <h2 :id="headingId">试演结果</h2>
       </div>
       <span>Revision {{ result.revision }} · {{ result.artifactRef }}</span>
     </header>
@@ -23,7 +23,7 @@ const headingId = `${useId()}-rehearsal-result-heading`;
     <p class="play-rehearsal-result-summary">{{ result.summary }}</p>
 
     <section v-if="result.blocks.length">
-      <h3>Selected narrative</h3>
+      <h3>选定的叙述</h3>
       <ul>
         <li v-for="block in result.blocks" :key="block.id">
           <span>{{ block.speakerName || block.kind }}</span>
@@ -33,14 +33,14 @@ const headingId = `${useId()}-rehearsal-result-heading`;
     </section>
 
     <section v-if="result.eventSummaries.length">
-      <h3>World events</h3>
+      <h3>世界事件</h3>
       <ul>
         <li v-for="(event, index) in result.eventSummaries" :key="`${index}:${event}`">{{ event }}</li>
       </ul>
     </section>
 
     <section v-if="result.stateChanges.length">
-      <h3>State changes</h3>
+      <h3>状态变化</h3>
       <dl>
         <div v-for="change in result.stateChanges" :key="change.label">
           <dt>{{ change.label }}</dt>

@@ -78,7 +78,7 @@ export function usePlayRehearsalWorkspace(
         const rebuild = options.client.rebuildPlaySceneMemory;
         return rebuild
           ? rebuild(sessionId, lens)
-          : Promise.reject(new Error('Scene Memory is unavailable.'));
+          : Promise.reject(new Error('场景记忆不可用。'));
       },
     },
     sessionId,
@@ -211,34 +211,34 @@ export function usePlayRehearsalWorkspace(
     disabledReasons: {
       ...(!options.providerConfigured.value
         ? {
-            startAttempt: 'Configure a provider before starting a rehearsal.',
-            generateStep: 'Configure a provider before generating an actor step.',
-            retry: 'Configure a provider before generating a Retry variant.',
+            startAttempt: '请先配置模型再开始试演。',
+            generateStep: '请先配置模型再生成角色步骤。',
+            retry: '请先配置模型再重演。',
           }
         : {}),
       ...(truthIndeterminate.value
         ? {
-            generateStep: 'Actor-step truth is indeterminate; recover attempt truth before continuing.',
-            retry: 'Actor-step truth is indeterminate; recover attempt truth before continuing.',
+            generateStep: '角色步骤状态不确定，请先恢复试演状态再继续。',
+            retry: '角色步骤状态不确定，请先恢复试演状态再继续。',
           }
         : {}),
       ...(activeLookupIndeterminate.value
         ? {
-            startAttempt: 'Recover active-attempt truth before starting another rehearsal.',
+            startAttempt: '请先恢复当前试演状态，再开始新的试演。',
           }
         : {}),
       ...(mutationIndeterminate.value
         ? {
-            startAttempt: 'Recover mutation truth before starting another rehearsal.',
-            generateStep: 'Recover mutation truth before generating another actor step.',
-            retry: 'Recover mutation truth before generating another Retry variant.',
+            startAttempt: '请先恢复上一个操作的状态，再开始新的试演。',
+            generateStep: '请先恢复上一个操作的状态，再生成角色步骤。',
+            retry: '请先恢复上一个操作的状态，再重演。',
           }
         : {}),
       ...(!rehearsal.canIntervene.value
         ? {
-            modify: 'Director interventions require a stable active attempt.',
-            insertActor: 'Director interventions require a stable active attempt.',
-            grantKnowledge: 'Director interventions require a stable active attempt.',
+            modify: '导演干预需要一场状态稳定、正在进行的试演。',
+            insertActor: '导演干预需要一场状态稳定、正在进行的试演。',
+            grantKnowledge: '导演干预需要一场状态稳定、正在进行的试演。',
           }
         : {}),
     },

@@ -37,7 +37,7 @@ describe('Play renderer journey QA harness', () => {
   it('activates a focused native control through the shared journey helper', () => {
     document.body.innerHTML = createContractFixture();
     const onAccept = vi.fn();
-    const [accept] = getNativeButtonContracts(document, ['Accept']);
+    const [accept] = getNativeButtonContracts(document, ['采用']);
     accept!.button.addEventListener('click', onAccept);
 
     activateFocusedControl(accept!);
@@ -47,10 +47,10 @@ describe('Play renderer journey QA harness', () => {
   });
 
   it('rejects role-only button substitutes', () => {
-    document.body.innerHTML = '<div role="button" aria-label="Accept" tabindex="0"></div>';
+    document.body.innerHTML = '<div role="button" aria-label="采用" tabindex="0"></div>';
 
-    expect(() => getNativeButtonContracts(document, ['Accept'])).toThrow(
-      'Missing native Play button with accessible name: Accept',
+    expect(() => getNativeButtonContracts(document, ['采用'])).toThrow(
+      'Missing native Play button with accessible name: 采用',
     );
   });
 

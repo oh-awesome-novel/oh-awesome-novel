@@ -81,10 +81,10 @@ describe('PlayWorkspace Guided Start wiring', () => {
     const wrapper = mountWorkspace();
     await flushPromises();
 
-    await buttonContaining(wrapper, 'New session').trigger('click');
-    await buttonContaining(wrapper, 'Immersive Journey').trigger('click');
+    await buttonContaining(wrapper, '新建会话').trigger('click');
+    await buttonContaining(wrapper, '以参与者身份在世界中行动').trigger('click');
     await flushPromises();
-    await buttonContaining(wrapper, 'Guided Start').trigger('click');
+    await buttonContaining(wrapper, '依次确认来源').trigger('click');
     await flushPromises();
 
     expect(wrapper.find('.guided-start').exists()).toBe(true);
@@ -107,7 +107,7 @@ describe('PlayWorkspace Guided Start wiring', () => {
     await wrapper.get('.guided-identity').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Cast');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('人物');
     expect(api.previewPlayLaunchPackage).not.toHaveBeenCalled();
     expect(api.createPlayLaunchPackage).not.toHaveBeenCalled();
     expect(api.startPlaySessionFromLaunchPackage).not.toHaveBeenCalled();
@@ -130,12 +130,12 @@ describe('PlayWorkspace Guided Start wiring', () => {
         role: 'chapter',
       })],
     }));
-    expect(wrapper.get('[aria-current="step"]').text()).toContain('Review');
+    expect(wrapper.get('[aria-current="step"]').text()).toContain('确认');
     expect(wrapper.text()).toContain('Chapter launch evidence.');
     expect(api.createPlayLaunchPackage).not.toHaveBeenCalled();
     expect(api.startPlaySessionFromLaunchPackage).not.toHaveBeenCalled();
 
-    await buttonContaining(wrapper, 'Start Immersive Journey').trigger('click');
+    await buttonContaining(wrapper, '开始沉浸推演').trigger('click');
     await vi.waitFor(() => {
       expect(api.createPlayLaunchPackage).toHaveBeenCalledOnce();
       expect(api.startPlaySessionFromLaunchPackage).toHaveBeenCalledWith({

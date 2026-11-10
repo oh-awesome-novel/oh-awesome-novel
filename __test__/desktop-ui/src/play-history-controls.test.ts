@@ -18,13 +18,13 @@ describe('PlayHistoryControls', () => {
       'turn-current',
       'turn-variant',
     ]);
-    expect(wrapper.get('.play-history-heading').text()).toContain('Worldline');
+    expect(wrapper.get('.play-history-heading').text()).toContain('世界线');
     expect(wrapper.find('.play-history-group').exists()).toBe(false);
     expect(wrapper.get('[data-worldline-checkpoint="initial-world"]').text()).toContain(
-      'Initial world',
+      '初始世界',
     );
     expect(wrapper.get('[data-worldline-checkpoint="turn-variant"]').text()).toContain(
-      'Retained outcome',
+      '保留的另一结果',
     );
     expect(wrapper.get('[aria-current="step"]').text()).toContain('Current scene');
     expect(wrapper.get('.play-history-controls').attributes('aria-busy')).toBe('false');
@@ -44,10 +44,10 @@ describe('PlayHistoryControls', () => {
     const confirm = wrapper.get('.play-history-confirm');
     expect(document.activeElement).toBe(confirm.element);
     expect(wrapper.get('.play-history-confirmation').text()).toContain(
-      'Return to the initial world?',
+      '回到初始世界？',
     );
     expect(wrapper.get('.play-history-confirmation').text()).toContain(
-      'Later turns remain variants and are not deleted.',
+      '之后的回合会保留为其他结果，不会删除。',
     );
 
     await confirm.trigger('keydown', { key: 'Escape' });
@@ -84,7 +84,7 @@ describe('PlayHistoryControls', () => {
 
     await wrapper.setProps({ busyArtifactId: 'turn-variant' });
     expect(wrapper.get('.play-history-controls').attributes('aria-busy')).toBe('true');
-    expect(wrapper.get('[role="status"]').text()).toBe('Restoring worldline…');
+    expect(wrapper.get('[role="status"]').text()).toBe('正在回到这里…');
     wrapper.unmount();
   });
 
@@ -100,15 +100,58 @@ describe('PlayHistoryControls', () => {
     const confirm = wrapper.get('.play-history-confirm');
     expect(document.activeElement).toBe(confirm.element);
     expect(wrapper.get('.play-history-confirmation').text()).toContain(
-      'Retry from before this turn?',
+      '从这一回合开始前重演？',
     );
     expect(wrapper.get('.play-history-confirmation').text()).toContain(
-      'existing result is preserved as a variant',
+      '现有结果会保留为另一个结果',
     );
 
     await confirm.trigger('click');
     expect(wrapper.emitted('retry')).toEqual([['turn-current']]);
     wrapper.unmount();
+  });
+
+  it('sends optional retry guidance, trims it, and blocks guidance over 500 characters', async () => {
+    const wrapper = mountControls();
+    await wrapper.get('.play-history-retry[data-checkpoint-id="turn-current"]').trigger('click');
+    await flushPromises();
+    const box = wrapper.get<HTMLTextAreaElement>('.play-retry-guidance');
+    expect(wrapper.get('.play-history-confirmation').text()).toContain('这次希望有什么不同（可选）');
+    expect(wrapper.get('.play-history-confirmation').text()).toContain('参与者视角看不到');
+
+    await box.setValue('字'.repeat(501));
+    expect(box.attributes('aria-invalid')).toBe('true');
+    expect(wrapper.get('.play-history-confirm').attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain('最多 500 字，当前 501 字。');
+
+    await box.setValue('  别让她这么快妥协。  ');
+    await wrapper.get('.play-history-confirm').trigger('click');
+    expect(wrapper.emitted('retry')).toEqual([['turn-current', '别让她这么快妥协。']]);
+
+    // A fresh confirmation starts empty again.
+    await wrapper.setProps({ sessionRevision: 8 });
+    await wrapper.get('.play-history-retry[data-checkpoint-id="turn-current"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get<HTMLTextAreaElement>('.play-retry-guidance').element.value).toBe('');
+    await wrapper.get('.play-history-confirm').trigger('click');
+    expect(wrapper.emitted('retry')?.at(-1)).toEqual(['turn-current']);
+    wrapper.unmount();
+  });
+
+  it('shows retry guidance only in the Director view, never in the Player view', async () => {
+    const checkpoints = createCheckpoints().map((checkpoint) => checkpoint.checkpointId === 'turn-variant'
+      ? { ...checkpoint, retryGuidance: '让守卫更早出现。' }
+      : checkpoint);
+    const player = mountControls({ checkpoints });
+    expect(player.text()).not.toContain('让守卫更早出现。');
+    expect(player.find('.play-worldline-guidance').exists()).toBe(false);
+    expect(player.html()).not.toContain('让守卫更早出现');
+    player.unmount();
+
+    const director = mountControls({ checkpoints, directorLens: true });
+    expect(director.get('[data-worldline-checkpoint="turn-variant"] .play-worldline-guidance').text())
+      .toContain('让守卫更早出现。');
+    director.unmount();
   });
 
   it('returns focus to the stable worldline node after Restore succeeds', async () => {
@@ -176,7 +219,7 @@ describe('PlayHistoryControls', () => {
     expect(technicalDetails.attributes('open')).toBeUndefined();
     expect(technicalDetails.text()).toContain('turn-current');
     expect(technicalDetails.text()).toContain('Revision');
-    expect(technicalDetails.text()).toContain('Session revision 7');
+    expect(technicalDetails.text()).toContain('会话 revision 7');
 
     await currentNode.get('.play-worldline-name').trigger('click');
     await flushPromises();
@@ -208,7 +251,7 @@ describe('PlayHistoryControls', () => {
     await wrapper.setProps({
       namingCheckpointId: '',
       sessionRevision: 8,
-      notice: 'Worldline point named.',
+      notice: '存档点已命名。',
     });
     await flushPromises();
 
@@ -218,7 +261,7 @@ describe('PlayHistoryControls', () => {
     const status = wrapper.get('[role="status"]');
     expect(document.activeElement).toBe(stableNode.element);
     expect(status.attributes('aria-live')).toBe('polite');
-    expect(status.text()).toBe('Worldline point named.');
+    expect(status.text()).toBe('存档点已命名。');
     wrapper.unmount();
   });
 
@@ -240,9 +283,9 @@ describe('PlayHistoryControls', () => {
       retryingArtifactId: 'turn-current',
     });
     expect(wrapper.get('[role="status"]').text()).toContain(
-      'Retrying from before the original turn',
+      '正在从原回合开始前重演',
     );
-    expect(wrapper.get('[role="status"]').text()).toContain('remains a variant');
+    expect(wrapper.get('[role="status"]').text()).toContain('会保留为另一个结果');
 
     await wrapper.setProps({
       retryingArtifactId: '',
@@ -250,7 +293,7 @@ describe('PlayHistoryControls', () => {
     });
     expect(wrapper.get('.play-history-controls').attributes('aria-busy')).toBe('true');
     expect(wrapper.get('[role="status"]').text()).toBe(
-      'Saving worldline point name…',
+      '正在保存存档点名称…',
     );
     wrapper.unmount();
   });
@@ -267,6 +310,7 @@ function mountControls(overrides: Partial<{
   retryDisabledReason: string;
   blocked: boolean;
   notice: string;
+  directorLens: boolean;
 }> = {}) {
   return mount(PlayHistoryControls, {
     attachTo: document.body,
@@ -337,7 +381,7 @@ function createCheckpoints(): PlayCheckpointSummary[] {
     revision: 0,
     worldTurn: 0,
     committedAt: '2026-07-15T06:00:00.000Z',
-    preview: 'Initial world',
+    preview: '初始世界',
     status: 'selectedAncestor',
     restorable: true,
     retryable: false,

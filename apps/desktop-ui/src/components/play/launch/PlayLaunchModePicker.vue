@@ -20,29 +20,29 @@ const headingId = `${useId()}-play-launch-mode-heading`;
 <template>
   <section class="play-launch-mode-picker" :aria-labelledby="headingId">
     <header>
-      <span>Start mode</span>
+      <span>开局方式</span>
       <h2 :id="headingId">
-        {{ purpose === 'sceneRehearsal' ? 'Scene Rehearsal' : 'Immersive Journey' }}
+        {{ purpose === 'sceneRehearsal' ? '场景试演' : '沉浸推演' }}
       </h2>
-      <p>Quick keeps the compact form. Guided verifies real workspace sources before the stage opens.</p>
+      <p>快速开局用简短表单；引导开局会在打开舞台前核对工作区里的真实来源。</p>
     </header>
 
     <div class="play-launch-mode-options">
       <button type="button" :disabled="disabled" @click="emit('choose', 'quick')">
         <span aria-hidden="true">[Q]</span>
-        <strong>Quick Start</strong>
-        <small>Use author-provided defaults and start with the shortest setup.</small>
+        <strong>快速开局</strong>
+        <small>使用默认设置，以最少的步骤开始。</small>
       </button>
       <button type="button" :disabled="disabled" @click="emit('choose', 'guided')">
         <span aria-hidden="true">[G]</span>
-        <strong>Guided Start</strong>
-        <small>Review Sources, Entry, Identity, Cast and the final Launch Package.</small>
+        <strong>引导开局</strong>
+        <small>依次确认来源、入场、身份、人物和最终开局包。</small>
       </button>
     </div>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('back')">Back</button>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('back')">返回</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
     </footer>
   </section>
 </template>

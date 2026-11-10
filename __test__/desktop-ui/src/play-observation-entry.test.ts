@@ -44,14 +44,14 @@ describe('PlayWorkspace manual observation entry', () => {
       return {};
     });
     const view = await mountWorkspace();
-    await button(view, 'Add observation').trigger('click');
+    await button(view, '记一条观察笔记').trigger('click');
     expect((view.get('[name="observation-source"]').element as HTMLSelectElement).value).toBe('message-2');
     expect(view.get('[name="observation-source"]').text()).not.toContain('hidden clue');
     expect((view.get('[name="observation-summary"]').element as HTMLInputElement).value).toBe('');
     expect((view.get('[name="observation-evidence"]').element as HTMLTextAreaElement).value).toBe('');
     await fillNote(view);
     await view.get('[name="observation-source"]').setValue('message-1');
-    await view.get('form[aria-label="Add observation"]').trigger('submit');
+    await view.get('form[aria-label="记一条观察笔记"]').trigger('submit');
     expect(api.addPlayObservation).toHaveBeenCalledWith('play-note', {
       summary: 'The gate is guarded', evidence: 'I approached the guarded gate.',
       sourceTurnIds: ['message-1'], baseRevision: 1,
@@ -62,9 +62,9 @@ describe('PlayWorkspace manual observation entry', () => {
     release();
     await flushPromises();
     expect(view.get('.play-observation-list').text()).toContain('The gate is guarded');
-    expect(view.text()).toContain('Observation saved as your Play-local note');
+    expect(view.text()).toContain('观察笔记已保存在推演内');
     expect(view.get('.play-session-card').attributes('disabled')).toBeUndefined();
-    await view.get('[aria-label="Bring observation to writing: The gate is guarded"]').trigger('click');
+    await view.get('[aria-label="带回写作：The gate is guarded"]').trigger('click');
     expect(api.createPlayAdoptionPreview).toHaveBeenCalledWith('play-note', expect.objectContaining({
       baseRevision: 2, seed: { kind: 'observation', observationId: 'note-1' },
     }));
@@ -74,17 +74,17 @@ describe('PlayWorkspace manual observation entry', () => {
     api.addPlayObservation.mockRejectedValueOnce(Object.assign(new Error('Play session revision changed.'), { status: 409 }));
     api.addPlayObservation.mockResolvedValueOnce({});
     const view = await mountWorkspace();
-    await button(view, 'Add observation').trigger('click');
+    await button(view, '记一条观察笔记').trigger('click');
     await fillNote(view);
-    await view.get('form[aria-label="Add observation"]').trigger('submit');
+    await view.get('form[aria-label="记一条观察笔记"]').trigger('submit');
     await flushPromises();
-    expect(view.get('[role="alert"]').text()).toContain('Your input is retained');
+    expect(view.get('[role="alert"]').text()).toContain('你的输入已保留');
     expect((view.get('[name="observation-summary"]').element as HTMLInputElement).value).toBe('The gate is guarded');
     advanceRevision();
-    await button(view, 'Refresh observation sources').trigger('click');
+    await button(view, '刷新来源消息').trigger('click');
     await flushPromises();
     expect((view.get('[name="observation-evidence"]').element as HTMLTextAreaElement).value).toBe('I approached the guarded gate.');
-    await view.get('form[aria-label="Add observation"]').trigger('submit');
+    await view.get('form[aria-label="记一条观察笔记"]').trigger('submit');
     await flushPromises();
     expect(api.addPlayObservation).toHaveBeenLastCalledWith('play-note', expect.objectContaining({ baseRevision: 2 }));
   });
@@ -95,15 +95,15 @@ describe('PlayWorkspace manual observation entry', () => {
       return {};
     });
     const view = await mountWorkspace();
-    await button(view, 'Add observation').trigger('click');
+    await button(view, '记一条观察笔记').trigger('click');
     await fillNote(view);
-    await view.get('form[aria-label="Add observation"]').trigger('submit');
+    await view.get('form[aria-label="记一条观察笔记"]').trigger('submit');
     await flushPromises();
-    expect(view.get('[role="alert"]').text()).toContain('The observation was saved');
-    expect(view.get('[role="alert"]').text()).toContain('Do not submit it again');
-    expect(view.text()).not.toContain('Your input is retained');
-    expect(view.find('form[aria-label="Add observation"]').exists()).toBe(false);
-    await button(view, 'Refresh observation sources').trigger('click');
+    expect(view.get('[role="alert"]').text()).toContain('观察笔记已保存');
+    expect(view.get('[role="alert"]').text()).toContain('不要重复提交');
+    expect(view.text()).not.toContain('你的输入已保留');
+    expect(view.find('form[aria-label="记一条观察笔记"]').exists()).toBe(false);
+    await button(view, '刷新来源消息').trigger('click');
     await flushPromises();
     expect(api.addPlayObservation).toHaveBeenCalledOnce();
   });
@@ -111,22 +111,22 @@ describe('PlayWorkspace manual observation entry', () => {
   it('requires a committed source ID and resets drafts when switching sessions', async () => {
     detail.transcript.items = [{ speaker: 'narrator', content: 'Legacy message without ID', createdAt: detail.snapshot.createdAt }];
     const view = await mountWorkspace();
-    expect(button(view, 'Add observation').attributes('disabled')).toBeDefined();
-    expect(view.text()).toContain('A committed message with a saved source ID is needed');
+    expect(button(view, '记一条观察笔记').attributes('disabled')).toBeDefined();
+    expect(view.text()).toContain('需要一条已提交、带来源编号的消息');
     detail = makeDetail();
-    await view.get('[aria-label="刷新 Play workspace"]').trigger('click');
+    await view.get('[aria-label="刷新推演工作区"]').trigger('click');
     await flushPromises();
-    await button(view, 'Add observation').trigger('click');
+    await button(view, '记一条观察笔记').trigger('click');
     await fillNote(view);
     const second = makeDetail('play-other');
     api.listPlaySessionSummaries.mockResolvedValue({ summaries: [detail.summary, second.summary] });
     api.getPlaySessionDetail.mockImplementation(async (id: string) => ({ detail: structuredClone(id === 'play-other' ? second : detail) }));
-    await view.get('[aria-label="刷新 Play workspace"]').trigger('click');
+    await view.get('[aria-label="刷新推演工作区"]').trigger('click');
     await flushPromises();
     await view.findAll('.play-session-card')[1]!.trigger('click');
     await flushPromises();
-    expect(view.find('form[aria-label="Add observation"]').exists()).toBe(false);
-    await button(view, 'Add observation').trigger('click');
+    expect(view.find('form[aria-label="记一条观察笔记"]').exists()).toBe(false);
+    await button(view, '记一条观察笔记').trigger('click');
     expect((view.get('[name="observation-summary"]').element as HTMLInputElement).value).toBe('');
     expect(api.addPlayObservation).not.toHaveBeenCalled();
   });

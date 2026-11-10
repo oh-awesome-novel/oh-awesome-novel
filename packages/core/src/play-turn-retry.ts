@@ -14,6 +14,7 @@ import {
 } from './play-turn-graph.js';
 import {
   assertSafePlayTurnArtifactId,
+  normalizePlayRetryGuidanceText,
 } from './play-turn-artifact.js';
 import type { PlayTurnArtifact } from './play-turn-artifact.js';
 import type { PlayActionKind, PlayRelativeTimeAdvance } from './play-types.js';
@@ -24,6 +25,7 @@ export type PlayWorldSettlementRetryErrorCode =
   | 'artifactNotRetryable'
   | 'beforeSnapshotUnavailable'
   | 'invalidRevision'
+  | 'invalidGuidance'
   | 'revisionConflict';
 
 export class PlayWorldSettlementRetryError extends Error {
@@ -47,7 +49,14 @@ export interface PlayWorldSettlementRetryPreparation {
   userText: string;
   actionKind: PlayActionKind;
   timeAdvance?: PlayRelativeTimeAdvance;
+  /** Normalized author guidance for this one retry; absent when none was given. */
+  guidance?: string;
   beforeTurnSession: PlaySession;
+}
+
+export interface PreparePlayWorldSettlementRetryOptions {
+  /** Optional author note, at most 500 characters; blank means none. */
+  guidance?: unknown;
 }
 
 export interface SettlePlayWorldSettlementRetryInput {
@@ -55,6 +64,8 @@ export interface SettlePlayWorldSettlementRetryInput {
   sourceArtifactId: string;
   expectedSessionRevision: number;
   refereeResponse: string;
+  /** Same guidance that shaped the prompt; recorded on the new sibling only. */
+  guidance?: string;
   createdAt?: string;
 }
 
@@ -74,8 +85,10 @@ export interface SettledPlayWorldSettlementRetry {
 export function preparePlayWorldSettlementRetry(
   session: PlaySession,
   sourceArtifactId: string,
+  options: PreparePlayWorldSettlementRetryOptions = {},
 ): PlayWorldSettlementRetryPreparation {
   const safeSourceArtifactId = normalizeRetryArtifactId(sourceArtifactId);
+  const guidance = normalizeRetryGuidance(options.guidance);
   const facts = materializePlayTurnFacts(session);
   const sourceArtifact = facts.turnArtifacts.find(
     (artifact) => artifact.id === safeSourceArtifactId,
@@ -115,6 +128,7 @@ export function preparePlayWorldSettlementRetry(
     ...(sourceArtifact.input!.timeAdvance
       ? { timeAdvance: { ...sourceArtifact.input!.timeAdvance } }
       : {}),
+    ...(guidance ? { guidance } : {}),
     beforeTurnSession,
   };
 }
@@ -152,8 +166,9 @@ export function settlePlayWorldSettlementRetry(
   const preparation = preparePlayWorldSettlementRetry(
     input.session,
     input.sourceArtifactId,
+    { guidance: input.guidance },
   );
-  const next = settlePlayWorldRefereeResponse({
+  const settled = settlePlayWorldRefereeResponse({
     session: preparation.beforeTurnSession,
     userText: preparation.userText,
     actionKind: preparation.actionKind,
@@ -163,6 +178,23 @@ export function settlePlayWorldSettlementRetry(
     refereeResponse: input.refereeResponse,
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
   });
+  const settledHeadId = settled.selectedTurnIds.at(-1);
+  // Guidance belongs only to the new sibling; the source and all other ledger facts stay byte-identical.
+  const next: PlaySession = preparation.guidance
+    ? {
+        ...settled,
+        turnArtifacts: settled.turnArtifacts.map((artifact) =>
+          artifact.id === settledHeadId
+            ? {
+                ...artifact,
+                retryGuidance: {
+                  sourceArtifactId: preparation.sourceArtifactId,
+                  text: preparation.guidance!,
+                },
+              }
+            : artifact),
+      }
+    : settled;
 
   // Re-run the full ledger and selected-projection validator before exposing a
   // retry result. Validation failures leave the caller's input untouched.
@@ -187,6 +219,17 @@ export function settlePlayWorldSettlementRetry(
       ? { parentArtifactId: preparation.parentArtifactId }
       : {}),
   };
+}
+
+function normalizeRetryGuidance(value: unknown): string | undefined {
+  try {
+    return normalizePlayRetryGuidanceText(value);
+  } catch (error) {
+    throw new PlayWorldSettlementRetryError(
+      'invalidGuidance',
+      error instanceof Error ? error.message : 'Invalid Play retry guidance.',
+    );
+  }
 }
 
 function normalizeRetryArtifactId(value: string): string {

@@ -69,7 +69,7 @@ describe('projectPlaySessionBeforeArtifact', () => {
       worldClock: { turn: 5, revision: 5 },
       playLocalStateSnapshot: { door: 'closed' },
       playLocalStateVisibilitySnapshot: { door: 'playerVisible' },
-      suggestedActions: ['Wait'],
+      suggestedActions: ['等'],
     });
     const session = createSession([root, source], {
       selectedTurnIds: ['turn-root', 'turn-source'],

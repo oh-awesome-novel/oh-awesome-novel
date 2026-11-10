@@ -88,7 +88,7 @@ export function usePlayAdoptionPreview(options: UsePlayAdoptionPreviewOptions) {
   const error = computed(() => {
     if (!storedError.value) return '';
     return options.projection.value === 'player'
-      ? 'Adoption preview could not be prepared for the Player lens.'
+      ? '无法在参与者视角下生成采纳预览。'
       : storedError.value;
   });
   const busy = computed(() => previewing.value || confirming.value);
@@ -147,7 +147,7 @@ export function usePlayAdoptionPreview(options: UsePlayAdoptionPreviewOptions) {
         return false;
       }
       if (!isPreviewForCurrentContext(nextPreview, session, seed, options.projection.value)) {
-        throw new Error('Adoption preview did not match the current Play context.');
+        throw new Error('采纳预览与当前推演状态不一致。');
       }
       storedPreview.value = nextPreview;
       return true;

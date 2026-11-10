@@ -44,20 +44,20 @@ describe('PlayWorkspace world momentum', () => {
     const wrapper = mountWorkspace();
     await flushPromises();
 
-    expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Station lockdown');
-    expect(wrapper.get('[aria-label="World momentum"]').text()).not.toContain('Hidden command');
-    expect(wrapper.get('.play-event-cause').text()).toContain('Pressure · Station lockdown');
+    expect(wrapper.get('[aria-label="世界动向"]').text()).toContain('Station lockdown');
+    expect(wrapper.get('[aria-label="世界动向"]').text()).not.toContain('Hidden command');
+    expect(wrapper.get('.play-event-cause').text()).toContain('压力 · Station lockdown');
     expect(wrapper.text()).toContain('PLAYER-VISIBLE-STATE');
     expect(wrapper.text()).not.toContain('RUMOR-STATE-MUST-NOT-LEAK');
     expect(wrapper.text()).not.toContain('HIDDEN-STATE-MUST-NOT-LEAK');
-    expect(wrapper.text()).toContain('tracked world condition = matched');
+    expect(wrapper.text()).toContain('追踪中的世界状态 = matched');
     expect(wrapper.text()).not.toContain('secrets.commandCode');
     expect(wrapper.text()).not.toContain('AUTHOR-CODE-9417');
     expect(wrapper.text()).not.toContain('worldMomentum');
     expect(wrapper.text()).not.toContain('A commander secretly ordered the guards.');
 
     await wrapper.get('[role="switch"]').trigger('click');
-    expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Hidden command');
+    expect(wrapper.get('[aria-label="世界动向"]').text()).toContain('Hidden command');
     expect(wrapper.text()).toContain('RUMOR-STATE-MUST-NOT-LEAK');
     expect(wrapper.text()).toContain('HIDDEN-STATE-MUST-NOT-LEAK');
     expect(wrapper.text()).toContain('secrets.commandCode = AUTHOR-CODE-9417');
@@ -85,7 +85,7 @@ describe('PlayWorkspace world momentum', () => {
     const wrapper = mountWorkspace();
     await flushPromises();
 
-    expect(wrapper.get('[aria-label="World momentum"]').text()).toContain('Station lockdown');
+    expect(wrapper.get('[aria-label="世界动向"]').text()).toContain('Station lockdown');
     expect(wrapper.find('[role="switch"]').exists()).toBe(false);
     wrapper.unmount();
   });
@@ -122,7 +122,7 @@ describe('PlayWorkspace world momentum', () => {
     await flushPromises();
 
     const wait = wrapper.findAll('.play-action-kinds button').find(
-      (button) => button.text().includes('Wait'),
+      (button) => button.text().includes('等'),
     );
     await wait!.trigger('click');
     const oneHour = wrapper.findAll('.play-time-presets button').find(

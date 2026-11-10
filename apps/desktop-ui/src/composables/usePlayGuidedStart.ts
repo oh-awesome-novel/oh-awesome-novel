@@ -228,7 +228,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
 
   function addParticipant(): void {
     participants.value = [...participants.value, createParticipant()];
-    announcement.value = `Participant added. ${participants.value.length} in the cast.`;
+    announcement.value = `已添加参与者，现在共 ${participants.value.length} 人。`;
     invalidatePreview();
   }
 
@@ -236,7 +236,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     participants.value = participants.value.filter(
       (participant) => participant.participantRef !== participantRef,
     );
-    announcement.value = `Participant removed. ${participants.value.length} remain.`;
+    announcement.value = `已移除参与者，还剩 ${participants.value.length} 人。`;
     invalidatePreview();
   }
 
@@ -284,15 +284,15 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   async function previewLaunchPackage(): Promise<boolean> {
     previewing.value = true;
     requestError.value = undefined;
-    announcement.value = 'Checking sources and preparing the launch preview.';
+    announcement.value = '正在核对来源并准备开局预览。';
     try {
       const result = await options.api.previewPlayLaunchPackage(buildPreviewInput());
       preview.value = result.launchPackage;
       currentStep.value = 'review';
-      announcement.value = 'Review. Step 5 of 5. Nothing has been created yet.';
+      announcement.value = '确认。第 5 / 5 步。还没有创建任何内容。';
       return true;
     } catch (error) {
-      requestError.value = errorMessage(error, 'Launch preview failed.');
+      requestError.value = errorMessage(error, '开局预览失败。');
       announcement.value = requestError.value;
       return false;
     } finally {
@@ -302,28 +302,28 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
 
   async function confirm(): Promise<PlaySession | undefined> {
     if (!canStart.value || !preview.value) {
-      announcement.value = 'Resolve source errors before starting Play.';
+      announcement.value = '请先处理来源错误再开始推演。';
       return undefined;
     }
 
     creating.value = true;
     requestError.value = undefined;
-    announcement.value = 'Saving the reviewed launch package.';
+    announcement.value = '正在保存已确认的开局包。';
     try {
       const storedResult = await options.api.createPlayLaunchPackage(preview.value);
       const storedPackage = storedResult.launchPackage;
-      announcement.value = 'Launch package saved. Starting the Play session.';
+      announcement.value = '开局包已保存，正在开始推演。';
       const sessionResult = await options.api.startPlaySessionFromLaunchPackage({
         launchPackageId: storedPackage.id,
       });
       const session = sessionResult.session;
-      announcement.value = 'Play session created.';
+      announcement.value = '推演会话已创建。';
       return session;
     } catch (error) {
-      requestError.value = errorMessage(error, 'Play could not be started.');
+      requestError.value = errorMessage(error, '无法开始推演。');
       preview.value = undefined;
       currentStep.value = 'cast';
-      announcement.value = `${requestError.value} Preview the Launch Package again before retrying.`;
+      announcement.value = `${requestError.value} 请重新预览开局包后再试。`;
       return undefined;
     } finally {
       creating.value = false;
@@ -556,10 +556,10 @@ function validateDraft(
   const participantErrors = Object.fromEntries(participants.flatMap((participant) => {
     const errors = {
       ...(!participant.displayName.trim()
-        ? { displayName: 'Participant name is required.' }
+        ? { displayName: '请填写参与者名字。' }
         : {}),
       ...(!participant.currentGoal.trim()
-        ? { currentGoal: 'Current goal is required.' }
+        ? { currentGoal: '请填写当前目标。' }
         : {}),
     };
     return Object.keys(errors).length
@@ -568,25 +568,25 @@ function validateDraft(
   }));
   return {
     ...(selectedSourceIds.length === 0
-      ? { sources: 'Select at least one workspace file.' }
+      ? { sources: '请至少选择一个工作区文件。' }
       : {}),
-    ...(!entry.title.trim() ? { title: 'Session title is required.' } : {}),
-    ...(!entry.label.trim() ? { label: 'Entry label is required.' } : {}),
-    ...(!entry.opening.trim() ? { opening: 'Opening situation is required.' } : {}),
+    ...(!entry.title.trim() ? { title: '请填写会话标题。' } : {}),
+    ...(!entry.label.trim() ? { label: '请填写入场点名称。' } : {}),
+    ...(!entry.opening.trim() ? { opening: '请填写开场情境。' } : {}),
     ...(entry.worldTimeFormat === 'iso8601' && !normalizePlayIsoWorldTime(entry.worldTime.trim())
-      ? { worldTime: 'Enter a valid date-time with timezone, for example 2026-10-07T09:00:00+08:00.' }
+      ? { worldTime: '请输入带时区的有效日期时间，例如 2026-10-07T09:00:00+08:00。' }
       : {}),
     ...(entry.sourceRefs.length === 0
-      ? { entrySources: 'Choose at least one source for the entry point.' }
+      ? { entrySources: '请为入场点至少选择一个来源。' }
       : {}),
     ...(purpose === 'immersiveJourney' && !identity.persona.trim()
-      ? { persona: 'Player persona is required.' }
+      ? { persona: '请填写参与者身份。' }
       : {}),
     ...(purpose === 'sceneRehearsal' && !identity.directorPurpose.trim()
-      ? { directorPurpose: 'Director purpose is required.' }
+      ? { directorPurpose: '请填写试演目的。' }
       : {}),
     ...(purpose === 'sceneRehearsal' && participants.length === 0
-      ? { cast: 'Scene Rehearsal requires at least one participant.' }
+      ? { cast: '场景试演至少需要一名参与者。' }
       : {}),
     ...(Object.keys(participantErrors).length > 0
       ? { participants: participantErrors }
@@ -628,10 +628,10 @@ function stepHasErrors(
 }
 
 function validationMessage(step: PlayGuidedStartStep): string {
-  if (step === 'sources') return 'Select at least one source before continuing.';
-  if (step === 'entry') return 'Complete the required Entry fields before continuing.';
-  if (step === 'identity') return 'Complete the Play identity before continuing.';
-  return 'Complete the required Cast fields before continuing.';
+  if (step === 'sources') return '请至少选择一个来源再继续。';
+  if (step === 'entry') return '请先填写入场的必填项。';
+  if (step === 'identity') return '请先填写身份。';
+  return '请先填写人物的必填项。';
 }
 
 function stepAnnouncement(step: PlayGuidedStartStep): string {

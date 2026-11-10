@@ -68,26 +68,26 @@ async function generateAndFocus(): Promise<void> {
 </script>
 
 <template>
-  <section class="play-outcome-panel" aria-label="Play Outcome and Writing handoff">
+  <section class="play-outcome-panel" aria-label="结果报告与写作交接">
     <header class="play-outcome-panel-header">
       <div>
         <span class="play-section-marker" aria-hidden="true">[outcome]</span>
-        <h2 ref="reportHeading" tabindex="-1">Outcome Report</h2>
+        <h2 ref="reportHeading" tabindex="-1">结果报告</h2>
       </div>
       <div class="play-outcome-panel-actions">
-        <div class="play-outcome-lens" role="group" aria-label="Outcome visibility lens">
+        <div class="play-outcome-lens" role="group" aria-label="结果报告视角">
           <button
             type="button"
             :aria-pressed="projection === 'player'"
             :disabled="panelBusy"
             @click="emit('updateShowSpoilers', false)"
-          >Player</button>
+          >参与者</button>
           <button
             type="button"
             :aria-pressed="projection === 'director'"
             :disabled="panelBusy"
             @click="emit('updateShowSpoilers', true)"
-          >Director</button>
+          >导演</button>
         </div>
         <button
           class="ghost-button tight-button"
@@ -100,12 +100,12 @@ async function generateAndFocus(): Promise<void> {
           type="button"
           :disabled="panelBusy"
           @click="generateAndFocus"
-        >{{ generating ? 'Generating…' : 'Generate report' }}</button>
+        >{{ generating ? 'Generating…' : '生成报告' }}</button>
       </div>
     </header>
 
     <p class="play-outcome-boundary">
-      仅从当前 committed selected branch 生成；未选择的 sibling、discarded variant 与 provisional attempt 不进入报告。
+      只根据当前选中分支上已提交的回合生成；未选中的其他结果、丢弃的结果和生成中的尝试都不会进入报告。
     </p>
     <p v-if="disabledReason" class="play-outcome-boundary" role="status">
       {{ disabledReason }}
@@ -115,10 +115,10 @@ async function generateAndFocus(): Promise<void> {
       {{ notice }}
     </p>
     <p v-if="loading && !report" class="play-muted-copy" role="status">
-      正在读取 Outcome Report…
+      正在读取结果报告…
     </p>
     <p v-else-if="reportStatus === 'missing' && !report" class="play-muted-copy">
-      尚未生成 Outcome Report。完成 committed Play 分支后可按需生成。
+      还没有生成结果报告。推进并提交回合后可以按需生成。
     </p>
 
     <PlayOutcomeReportView

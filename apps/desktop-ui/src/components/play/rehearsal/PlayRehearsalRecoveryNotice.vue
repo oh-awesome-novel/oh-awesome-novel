@@ -12,14 +12,13 @@ const emit = defineEmits<{
 <template>
   <section
     class="play-rehearsal-recovery"
-    aria-label="Actor-step recovery required"
+    aria-label="需要恢复角色步骤"
     role="alert"
   >
     <div>
-      <strong>Rehearsal truth needs reconciliation</strong>
+      <strong>试演状态需要核对</strong>
       <p>
-        Active-attempt or actor-step truth could not be proven. Recover from authoritative
-        attempt state before continuing; no Play turn is committed by this action.
+        无法确认当前试演或角色步骤的状态。请先从已保存的试演状态恢复再继续；这个操作不会提交任何回合。
       </p>
       <small v-if="message">{{ message }}</small>
     </div>
@@ -28,7 +27,7 @@ const emit = defineEmits<{
       :disabled="recovering"
       @click="emit('recover')"
     >
-      {{ recovering ? 'Recovering…' : 'Recover attempt truth' }}
+      {{ recovering ? 'Recovering…' : '恢复试演状态' }}
     </button>
   </section>
 </template>

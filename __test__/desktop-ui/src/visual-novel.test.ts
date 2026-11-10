@@ -90,7 +90,7 @@ describe('visual novel stage', () => {
     const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [turn], choices: ['走进门'], draft: '草稿。', disabled: true } });
     await wrapper.trigger('keydown', { key: '1' });
     expect(wrapper.emitted('choose')).toBeUndefined();
-    await wrapper.findAll('button').find(b => b.text().includes('Log'))!.trigger('click');
+    await wrapper.findAll('button').find(b => b.text().includes('历史'))!.trigger('click');
     await wrapper.findAll('button').find(b => b.text().includes('回看'))!.trigger('click');
     await wrapper.trigger('keydown', { key: ' ' });
     expect(wrapper.findComponent(VisualNovelTextBox).text()).toContain('雨停。');

@@ -274,8 +274,8 @@ export function usePlayActorStepStream(
       phase: 'starting',
       provisionalText: '',
       statusMessage: input.mode === 'retry'
-        ? 'Starting attempt-local Retry…'
-        : 'Starting actor step…',
+        ? '正在启动试演内重演…'
+        : '正在启动角色步骤…',
     };
     announcement.value = currentRun.value.statusMessage;
     const controller = new AbortController();
@@ -374,7 +374,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'failed',
           provisionalText: '',
-          statusMessage: 'Actor step not prepared',
+          statusMessage: '角色步骤未生成',
           error: toErrorMessage(caught),
         });
         outcome = 'failed';
@@ -398,7 +398,7 @@ export function usePlayActorStepStream(
 
     updateRun(run.localId, {
       phase: 'stopping',
-      statusMessage: 'Stopping actor step; attempt remains active…',
+      statusMessage: '正在停止角色步骤，试演保持进行…',
       error: undefined,
     });
 
@@ -465,7 +465,7 @@ export function usePlayActorStepStream(
       updateRun(run.localId, {
         phase: 'failed',
         provisionalText: '',
-        statusMessage: 'Actor step failed before preparation',
+        statusMessage: '角色步骤在生成前失败',
         error: result.error,
       });
       abortConnection(run.localId, connection.controller, 'actor-step-failed');
@@ -474,14 +474,14 @@ export function usePlayActorStepStream(
     if (result?.status === 'cancelling' && !cancelError) {
       updateRun(run.localId, {
         phase: 'stopping',
-        statusMessage: 'Server is cancelling the actor step…',
+        statusMessage: '正在停止角色步骤…',
       });
       return;
     }
     if (result?.status === 'committing') {
       updateRun(run.localId, {
         phase: 'stopping',
-        statusMessage: 'Stop arrived after commit began · waiting for authoritative actor-step truth…',
+        statusMessage: '停止时已开始提交 · 正在等待最终结果…',
         error: undefined,
       });
       return;
@@ -565,22 +565,22 @@ export function usePlayActorStepStream(
           participantRef: event.participantRef,
           phase: 'streaming',
           statusMessage: input.mode === 'retry'
-            ? 'Streaming Retry variant · attempt-local'
-            : 'Streaming actor step · provisional',
+            ? '正在生成重演结果 · 仅限本次试演'
+            : '正在生成角色步骤 · 临时',
         });
         return undefined;
       case 'play.actor.step.delta':
         updateRun(localId, (run) => ({
           provisionalText: `${run.provisionalText}${event.delta}`,
           phase: 'streaming',
-          statusMessage: 'Streaming actor step · provisional',
+          statusMessage: '正在生成角色步骤 · 临时',
         }));
         return undefined;
       case 'play.actor.step.reset':
         updateRun(localId, {
           provisionalText: '',
           phase: 'streaming',
-          statusMessage: `Actor-step context reset · ${event.reason}`,
+          statusMessage: `角色步骤上下文已重置 · ${event.reason}`,
         });
         return undefined;
       case 'play.actor.step.prepared': {
@@ -625,8 +625,8 @@ export function usePlayActorStepStream(
           phase: 'prepared',
           provisionalText: '',
           statusMessage: freshPrepared
-            ? 'Actor step prepared · still not committed'
-            : 'Actor-step receipt reconciled against newer attempt truth',
+            ? '角色步骤已生成 · 尚未提交'
+            : '角色步骤已按最新试演状态核对',
         });
         terminalOutcomes.set(event.stepRunId, 'prepared');
         abortConnection(localId, controller, 'actor-step-prepared');
@@ -639,7 +639,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'aborted',
           provisionalText: '',
-          statusMessage: `Actor step aborted · ${event.reason}`,
+          statusMessage: `角色步骤已停止 · ${event.reason}`,
         });
         terminalOutcomes.set(event.stepRunId, 'aborted');
         abortConnection(localId, controller, 'actor-step-aborted');
@@ -648,7 +648,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'failed',
           provisionalText: '',
-          statusMessage: 'Actor step failed before preparation',
+          statusMessage: '角色步骤在生成前失败',
           error: event.error.message,
         });
         terminalOutcomes.set(event.stepRunId, 'failed');
@@ -683,7 +683,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           preparedStepRef: step.id,
           phase: 'prepared',
-          statusMessage: 'Actor step prepared · recovered from attempt truth',
+          statusMessage: '角色步骤已生成 · 已从试演状态恢复',
           error: undefined,
         });
         return 'prepared';
@@ -699,7 +699,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'aborted',
           provisionalText: '',
-          statusMessage: 'Actor step aborted · recovered from run truth',
+          statusMessage: '角色步骤已停止 · 已从运行记录恢复',
           error: undefined,
         });
         return 'aborted';
@@ -709,7 +709,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'failed',
           provisionalText: '',
-          statusMessage: 'Actor step failed before preparation',
+          statusMessage: '角色步骤在生成前失败',
           error: terminalProof.error,
         });
         return 'failed';
@@ -729,7 +729,7 @@ export function usePlayActorStepStream(
         updateRun(localId, {
           phase: 'failed',
           provisionalText: '',
-          statusMessage: 'Actor step failed before preparation',
+          statusMessage: '角色步骤在生成前失败',
           error: terminalProof.error,
         });
         return 'failed';
@@ -753,13 +753,13 @@ export function usePlayActorStepStream(
       ? {
           preparedStepRef,
           phase: 'prepared',
-          statusMessage: 'Actor step prepared before Stop completed · still not committed',
+          statusMessage: '停止完成前角色步骤已生成 · 尚未提交',
           error: undefined,
         }
       : {
           phase: 'aborted',
           provisionalText: '',
-          statusMessage: 'Actor step aborted · rehearsal attempt remains active',
+          statusMessage: '角色步骤已停止 · 试演仍在进行',
           error: undefined,
         });
     abortConnection(run.localId, controller, `actor-step-${outcome}`);
@@ -769,7 +769,7 @@ export function usePlayActorStepStream(
     updateRun(localId, {
       phase: 'indeterminate',
       provisionalText: '',
-      statusMessage: 'Actor-step terminal state unknown · reconcile before continuing',
+      statusMessage: '角色步骤结果未知 · 请先恢复再继续',
       error: toErrorMessage(cause),
     });
   }

@@ -90,12 +90,12 @@ function buildPlayerRevealChain(
   if (!card.revealChain) return undefined;
   return card.visibility === 'rumor'
     ? {
-        statusLabel: 'Rumor surfaced',
-        explanation: 'This event carries a rumor about an earlier unseen development.',
+        statusLabel: '传闻浮现',
+        explanation: '这条事件带出了一条关于此前未见变化的传闻。',
       }
     : {
-        statusLabel: 'Information confirmed',
-        explanation: 'This event confirms information about an earlier unseen development.',
+        statusLabel: '信息得到证实',
+        explanation: '这条事件证实了此前未见变化的信息。',
       };
 }
 
@@ -115,13 +115,13 @@ function mergeLegacyCauseLabels(
 </script>
 
 <template>
-  <section class="play-event-feed" aria-label="World events">
+  <section class="play-event-feed" aria-label="世界事件">
     <header>
       <div>
-        <span>World motion</span>
-        <h2>Recent events</h2>
+        <span>世界动向</span>
+        <h2>最近事件</h2>
         <small v-if="totalCount !== undefined && totalCount > displayCards.length">
-          Showing {{ displayCards.length }} of {{ totalCount }}
+          显示 {{ displayCards.length }} / {{ totalCount }} 条
         </small>
       </div>
       <button
@@ -129,12 +129,12 @@ function mergeLegacyCauseLabels(
         type="button"
         role="switch"
         :aria-checked="showSpoilers"
-        :aria-label="showSpoilers ? '关闭作者视图' : '开启作者视图，显示玩家未知内容和因果分析'"
-        :title="showSpoilers ? '隐藏作者专用内容' : '作者视图：显示未知内容和因果分析'"
+        :aria-label="showSpoilers ? '关闭导演视角' : '开启导演视角，显示参与者不知道的内容和因果分析'"
+        :title="showSpoilers ? '隐藏导演专用内容' : '导演视角：显示参与者不知道的内容和因果分析'"
         @click="showSpoilers = !showSpoilers"
       >
         <span aria-hidden="true">{{ showSpoilers ? '[-]' : '[+]' }}</span>
-        Author view
+        导演视角
       </button>
     </header>
 
@@ -145,7 +145,7 @@ function mergeLegacyCauseLabels(
       :disabled="loadingEarlier"
       @click="emit('loadEarlier')"
     >
-      {{ loadingEarlier ? 'Loading earlier events…' : 'Load earlier events' }}
+      {{ loadingEarlier ? '正在载入更早的事件…' : '载入更早的事件' }}
     </button>
 
     <div v-if="displayCards.length" class="play-event-list">

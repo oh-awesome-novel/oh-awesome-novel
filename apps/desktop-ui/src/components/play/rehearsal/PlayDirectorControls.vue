@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_REHEARSAL_ATTEMPT_STATUS_LABELS } from '../../../composables/playTerms';
 import {
   computed,
   nextTick,
@@ -46,9 +47,9 @@ const confirmButton = useTemplateRef<HTMLButtonElement>('confirmButton');
 const helpId = `${useId()}-director-control-help`;
 
 const helpText = computed(() => {
-  if (props.busy) return 'Wait for the current actor-step operation to reach terminal truth.';
-  if (!props.activeStepRef) return 'Generate a provisional actor step before using Accept or Retry.';
-  return props.announcement || 'Accept selects the draft. Retry preserves it as an attempt-local variant.';
+  if (props.busy) return '请等待当前角色步骤处理完毕。';
+  if (!props.activeStepRef) return '先生成一个角色步骤，再采用或重演。';
+  return props.announcement || '采用会选定这份草稿；重演会把它保留为本次试演内的另一个结果。';
 });
 
 watch(
@@ -166,7 +167,7 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
 </script>
 
 <template>
-  <section class="play-director-controls" aria-label="Director controls">
+  <section class="play-director-controls" aria-label="导演控制">
     <div v-if="!pendingAction" class="play-director-control-row" role="group" :aria-describedby="helpId">
       <button
         type="button"
@@ -174,7 +175,7 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('accept')"
         :aria-describedby="helpId"
         @click="emitStepAction('accept')"
-      >Accept</button>
+      >采用</button>
       <button
         ref="modifyButton"
         type="button"
@@ -182,14 +183,14 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('modify')"
         :aria-describedby="helpId"
         @click="requestPanel('modify')"
-      >Modify</button>
+      >修改</button>
       <button
         type="button"
         :disabled="busy || !capabilities.canRetry || !activeStepRef"
         :title="reasonFor('retry')"
         :aria-describedby="helpId"
         @click="emitStepAction('retry')"
-      >Retry</button>
+      >重演</button>
       <button
         ref="insertActorButton"
         type="button"
@@ -197,7 +198,7 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('insertActor')"
         :aria-describedby="helpId"
         @click="requestPanel('insertActor')"
-      >Insert actor</button>
+      >插入角色</button>
       <button
         ref="grantKnowledgeButton"
         type="button"
@@ -205,7 +206,7 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('grantKnowledge')"
         :aria-describedby="helpId"
         @click="requestPanel('grantKnowledge')"
-      >Grant knowledge</button>
+      >授予认知</button>
       <span class="play-director-control-separator" aria-hidden="true"></span>
       <button
         ref="finishButton"
@@ -214,7 +215,7 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('finish')"
         :aria-describedby="helpId"
         @click="requestConfirmation('finish')"
-      >Finish</button>
+      >完成试演</button>
       <button
         ref="cancelButton"
         type="button"
@@ -222,24 +223,24 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
         :title="reasonFor('cancel')"
         :aria-describedby="helpId"
         @click="requestConfirmation('cancel')"
-      >Cancel</button>
+      >取消</button>
     </div>
 
     <div
       v-else
       class="play-director-confirmation"
       role="group"
-      :aria-label="pendingAction === 'finish' ? 'Confirm rehearsal finish' : 'Confirm rehearsal cancellation'"
+      :aria-label="pendingAction === 'finish' ? '确认完成试演' : '确认取消试演'"
       @keydown.esc.stop.prevent="closeConfirmation"
     >
       <p v-if="pendingAction === 'finish'">
-        Finish and commit the selected step prefix once? Provisional and superseded variants stay out of the committed transcript.
+        完成试演并一次性提交已选步骤？生成中和被替换的结果不会进入提交的记录。
       </p>
       <p v-else>
-        Cancel this entire attempt? The committed session revision, clock, state, events and transcript remain unchanged.
+        取消整次试演？已提交的会话、时钟、状态、事件和记录都不会改变。
       </p>
       <div>
-        <button type="button" @click="closeConfirmation">Back</button>
+        <button type="button" @click="closeConfirmation">返回</button>
         <button
           ref="confirmButton"
           class="play-director-confirm"
@@ -247,13 +248,13 @@ function focusPanelAction(action: PlayDirectorPanelMode): void {
           type="button"
           @click="confirmPendingAction"
         >
-          {{ pendingAction === 'finish' ? 'Confirm Finish' : 'Confirm Cancel attempt' }}
+          {{ pendingAction === 'finish' ? '确认完成' : '确认取消' }}
         </button>
       </div>
     </div>
 
     <p :id="helpId" class="play-director-control-help">
-      Attempt {{ attemptStatus }} · {{ helpText }}
+      试演{{ PLAY_REHEARSAL_ATTEMPT_STATUS_LABELS[attemptStatus] ?? attemptStatus }} · {{ helpText }}
     </p>
   </section>
 </template>

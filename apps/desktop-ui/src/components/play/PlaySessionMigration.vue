@@ -6,18 +6,18 @@ defineEmits<{ confirm: [] }>();
 </script>
 
 <template>
-  <section class="play-migration" aria-label="Review Play session upgrade">
-    <h2>Review this Play session upgrade</h2>
-    <p>This session uses format {{ preview.fromSchemaVersion }}. Upgrade to format {{ preview.toSchemaVersion }} before continuing. Opening this preview does not upgrade it.</p>
-    <p>The upgrade preserves {{ preview.legacyTranscriptCount }} legacy messages and {{ preview.projectedTurnCount }} saved turns. Original files will be backed up inside this session at <code>{{ preview.backupRelativePath }}</code>.</p>
-    <p v-if="preview.unknownMetadataKeys.length">Custom metadata will be preserved: {{ preview.unknownMetadataKeys.join(', ') }}.</p>
-    <p>Your novel files are unchanged. You can select another session or return later to keep this session in its original format.</p>
+  <section class="play-migration" aria-label="确认升级推演会话">
+    <h2>确认升级这个推演会话</h2>
+    <p>这个会话使用格式 {{ preview.fromSchemaVersion }}，需要升级到格式 {{ preview.toSchemaVersion }} 才能继续。打开这个预览不会升级。</p>
+    <p>升级会保留 {{ preview.legacyTranscriptCount }} 条旧消息和 {{ preview.projectedTurnCount }} 个已保存回合。原始文件会备份到会话内的 <code>{{ preview.backupRelativePath }}</code>。</p>
+    <p v-if="preview.unknownMetadataKeys.length">会保留自定义元数据：{{ preview.unknownMetadataKeys.join('、') }}。</p>
+    <p>小说文件不会改变。你可以先选择其他会话，或稍后再来；在此之前这个会话保持原格式。</p>
     <details v-if="preview.generatedTurnIds.length">
-      <summary>Preview saved turn identifiers</summary>
+      <summary>预览已保存的回合编号</summary>
       <ul><li v-for="id in preview.generatedTurnIds" :key="id">{{ id }}</li></ul>
     </details>
     <p v-if="error" role="alert">{{ error }}</p>
-    <button type="button" :disabled="busy" @click="$emit('confirm')">{{ busy ? 'Upgrading…' : 'Confirm upgrade and preserve backup' }}</button>
+    <button type="button" :disabled="busy" @click="$emit('confirm')">{{ busy ? 'Upgrading…' : '确认升级并保留备份' }}</button>
     <slot />
   </section>
 </template>

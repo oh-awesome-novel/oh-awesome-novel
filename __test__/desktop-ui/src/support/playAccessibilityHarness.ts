@@ -1,27 +1,27 @@
 export const PLAY_WINDOW_CONTROL_NAMES = [
-  'Load earlier transcript',
-  'Load earlier events',
+  '载入更早的记录',
+  '载入更早的事件',
 ] as const;
 
 export const PLAY_SOURCE_DRIFT_CONTROL_NAMES = [
-  'Continue frozen',
-  'Reassemble',
-  'Fork session',
+  '沿用开局时的内容',
+  '按当前文件重组',
+  '另开会话',
 ] as const;
 
 export const PLAY_DIRECTOR_CONTROL_NAMES = [
-  'Accept',
-  'Modify',
-  'Retry',
-  'Insert actor',
-  'Grant knowledge',
-  'Finish',
-  'Cancel',
+  '采用',
+  '修改',
+  '重演',
+  '插入角色',
+  '授予认知',
+  '完成试演',
+  '取消',
 ] as const;
 
 export const PLAY_MODIFY_MODE_NAMES = [
-  'Revise projection',
-  'Redirect step',
+  '修改呈现',
+  '改变走向',
 ] as const;
 
 export type PlayDirectorControlName = typeof PLAY_DIRECTOR_CONTROL_NAMES[number];

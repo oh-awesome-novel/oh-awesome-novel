@@ -87,7 +87,7 @@ const showDirectorControls = computed(() =>
   Boolean(props.attempt && !terminalAttempt.value && !props.result),
 );
 const launchLabel = computed(() =>
-  props.attempt ? 'Generate current actor step' : 'Begin rehearsal attempt',
+  props.attempt ? '生成当前角色步骤' : '开始试演',
 );
 const canLaunch = computed(() =>
   props.providerConfigured && !props.busy && (
@@ -164,7 +164,7 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
 <template>
   <section
     class="play-rehearsal-workspace"
-    aria-label="Scene rehearsal workspace"
+    aria-label="场景试演工作区"
     :aria-busy="busy"
   >
     <PlayRehearsalHeader
@@ -178,13 +178,13 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
       v-if="attempt?.supersededStepRefs?.length"
       class="play-rehearsal-workspace-notice"
     >
-      {{ attempt.supersededStepRefs.length }} earlier step variant(s) are superseded; Finish will use only the current selected prefix.
+      有 {{ attempt.supersededStepRefs.length }} 个较早的步骤结果已被替换；完成试演时只使用当前选定的步骤。
     </p>
     <p
       v-if="attempt?.stagnation?.warning"
       class="play-rehearsal-workspace-notice"
     >
-      {{ attempt.stagnation.consecutiveNoMaterialSteps }} consecutive steps had no material effect. The Director may redirect or continue without manufacturing conflict.
+      连续 {{ attempt.stagnation.consecutiveNoMaterialSteps }} 个步骤没有实质变化。导演可以改变走向，也可以继续，不必强行制造冲突。
     </p>
 
     <PlayRehearsalRecoveryNotice
@@ -208,8 +208,8 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
           class="play-rehearsal-launch"
         >
           <span aria-hidden="true">[actor step]</span>
-          <strong>{{ currentActor ? `${currentActor.displayName} is next` : 'Ready to begin' }}</strong>
-          <p>Generation remains provisional until Accept, and the attempt remains uncommitted until Finish.</p>
+          <strong>{{ currentActor ? `${currentActor.displayName} is next` : '可以开始' }}</strong>
+          <p>采用之前生成内容都是临时的；完成试演之前整次试演都不会提交。</p>
           <button ref="launchButton" type="button" :disabled="!canLaunch" @click="launch">
             {{ launchLabel }}
           </button>
@@ -233,14 +233,14 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
           <PlayRehearsalResult :result="result" />
           <div v-if="capabilities.canStartAttempt" class="play-rehearsal-next-attempt">
             <div>
-              <strong>Continue from committed rehearsal truth</strong>
-              <p>Start a new recovery attempt at revision {{ result.revision }}.</p>
+              <strong>从已提交的试演结果继续</strong>
+              <p>从 revision {{ result.revision }} 开始新的恢复试演。</p>
             </div>
             <button
               type="button"
               :disabled="!providerConfigured || busy"
               @click="emit('startAttempt')"
-            >Begin next rehearsal attempt</button>
+            >开始下一次试演</button>
           </div>
         </div>
       </main>

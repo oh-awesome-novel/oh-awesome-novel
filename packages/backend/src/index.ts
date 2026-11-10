@@ -20,7 +20,7 @@ import { assertForgeActionFresh, assertForgePreviewFresh } from './forge';
 import { attachPlayCharacterRoster } from '@oh-awesome-novel/core';
 import { createNovelLintHandlers } from './novel-lint';
 import { generateNovelLintReview } from '@oh-awesome-novel/agent';
-import { getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereeTurnContext, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
+import { buildPlayExtraSuggestionsInstruction, parsePlayExtraSuggestionsResponse, getPlayFrozenSystemPrompt, isPlayCompactionActive, buildPlayFrozenSystemPrompt, formatPlayTurnTail, formatPlayWorldRefereeTurnContext, createPlayCompactionPreview, createCompactedPlaySession } from '@oh-awesome-novel/core';
 import { assertUsageSessionId, listAgentUsageSessions, readAgentGovernanceHistory } from '@oh-awesome-novel/core';
 import { searchWorkspaceText, exportManuscript, readWorkspaceTextFile } from '@oh-awesome-novel/core';
 import { assertManuscriptImportPreview, assertTavernImportPreviewFresh } from '@oh-awesome-novel/tools';
@@ -987,6 +987,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     }
     return context.json(window);
   });
+  app.post('/api/workspace/play-sessions/:id/suggestions', (context) =>
+    handlePlayExtraSuggestions(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/compact', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, false));
   app.post('/api/workspace/play-sessions/:id/compact/continue', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, true));
   app.post('/api/workspace/play-sessions/:id/attempts', (context) =>
@@ -4304,7 +4306,7 @@ async function handlePlayWorldRefereeTurnRetryStream(
   if (!hasOwn(body, 'baseRevision')) {
     return jsonResponse(context, 400, { error: 'baseRevision is required.' });
   }
-  if (Object.keys(body).some((field) => field !== 'baseRevision')) {
+  if (Object.keys(body).some((field) => field !== 'baseRevision' && field !== 'guidance')) {
     return jsonResponse(context, 400, {
       error: 'Play turn retry request contains unknown fields.',
     });
@@ -4361,7 +4363,9 @@ async function handlePlayWorldRefereeTurnRetryStream(
 
   let preparation: ReturnType<typeof preparePlayWorldSettlementRetry>;
   try {
-    preparation = preparePlayWorldSettlementRetry(session, artifactId);
+    preparation = preparePlayWorldSettlementRetry(session, artifactId, {
+      guidance: body.guidance,
+    });
   } catch (error) {
     state.activePlayTurns.delete(sessionLockKey);
     return jsonResponse(context, playTurnRetryErrorStatus(error), {
@@ -4385,6 +4389,7 @@ async function handlePlayWorldRefereeTurnRetryStream(
     userText: preparation.userText,
     actionKind: preparation.actionKind,
     ...(preparation.timeAdvance ? { timeAdvance: preparation.timeAdvance } : {}),
+    ...(preparation.guidance ? { retryGuidance: preparation.guidance } : {}),
     expectedArtifactId,
     retry: {
       sourceArtifactId: preparation.sourceArtifactId,
@@ -4398,6 +4403,7 @@ async function handlePlayWorldRefereeTurnRetryStream(
         sourceArtifactId: preparation.sourceArtifactId,
         expectedSessionRevision: preparation.expectedSessionRevision,
         refereeResponse,
+        ...(preparation.guidance ? { guidance: preparation.guidance } : {}),
       });
       if (settled.retryArtifactId !== expectedArtifactId) {
         throw new Error(
@@ -4423,6 +4429,8 @@ interface PlayWorldRefereeTurnStreamExecution {
   timeAdvance?: PlayRelativeTimeAdvance;
   /** How the author sent this action; only recorded in the debug message log. */
   delivery?: PlayTurnDelivery;
+  /** Author guidance for this one Retry; only enters this request's tail. */
+  retryGuidance?: string;
   expectedArtifactId: string;
   retry?: {
     sourceArtifactId: string;
@@ -4596,7 +4604,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
             actionKind,
             userText,
             ...(timeAdvance ? { timeAdvance } : {}),
-          }, activatedSourceContext);
+          }, activatedSourceContext, execution.retryGuidance);
 
           await logPlayMessages([
             {
@@ -4606,6 +4614,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
                 actionKind,
                 ...(timeAdvance ? { timeAdvance } : {}),
                 ...(execution.retry ? { retry: execution.retry } : {}),
+                ...(execution.retryGuidance ? { retryGuidance: execution.retryGuidance } : {}),
                 ...(execution.delivery ? { delivery: execution.delivery } : {}),
               },
             },
@@ -5070,7 +5079,7 @@ function playTurnRetryErrorStatus(error: unknown): 400 | 404 | 409 | 422 {
   const code = isRecord(error) && typeof error.code === 'string'
     ? error.code
     : undefined;
-  if (code === 'invalidArtifactId' || code === 'invalidRevision') {
+  if (code === 'invalidArtifactId' || code === 'invalidRevision' || code === 'invalidGuidance') {
     return 400;
   }
   if (code === 'artifactNotFound') {
@@ -5578,6 +5587,7 @@ function buildPlayRefereeTurnTail(
   session: PlaySession,
   turn: { actionKind: PlayActionKind; userText: string; timeAdvance?: PlayRelativeTimeAdvance },
   activatedSourceContext: { blocks: readonly string[] },
+  retryGuidance?: string,
 ): string {
   const frozen = getPlayFrozenSystemPrompt(session);
   const context = formatPlayWorldRefereeTurnContext(session, turn);
@@ -5585,6 +5595,7 @@ function buildPlayRefereeTurnTail(
     world: formatPlayActivatedSourceBlocks(activatedSourceContext.blocks.filter(block => !frozen.includes(block))),
     state: context.state,
     requirements: context.requirements,
+    ...(retryGuidance ? { retryGuidance } : {}),
   }, turn.userText);
 }
 
@@ -9170,6 +9181,74 @@ export type {
   StoredReferenceMaterialAdoptionPreview,
 } from './reference-material-adoption-preview.js';
 export { BACKEND_AUTH_TOKEN_HEADER } from './request-guard.js';
+
+/**
+ * "A few more actions": one read-only model call in the selected branch's
+ * context. Nothing is written — not the session snapshot, not the revision,
+ * not the displayed suggestion list — and a failure leaves the session as is.
+ */
+async function handlePlayExtraSuggestions(options: NovelBackendOptions, state: BackendState, id: string, context: NovelBackendContext): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  if (Object.keys(body).some(key => !['baseRevision', 'headId', 'existing'].includes(key))) {
+    return jsonResponse(context, 400, { error: '补充建议请求包含未知字段。' });
+  }
+  const revisionCheck = readPlayBaseRevision(body);
+  if (revisionCheck.error || revisionCheck.value === undefined) {
+    return jsonResponse(context, 400, { error: revisionCheck.error ?? 'baseRevision is required.' });
+  }
+  const headId = body.headId === undefined || body.headId === null ? undefined : body.headId;
+  if (headId !== undefined && typeof headId !== 'string') return jsonResponse(context, 400, { error: 'headId must be a string.' });
+  const existing = body.existing === undefined ? [] : body.existing;
+  if (!Array.isArray(existing) || existing.length > 12 || existing.some(item => typeof item !== 'string' || item.length > 400)) {
+    return jsonResponse(context, 400, { error: 'existing must be at most 12 short strings.' });
+  }
+  const rehearsalConflict = await playRehearsalAttemptConflictResponse(state, workspaceRoot, id, context);
+  if (rehearsalConflict) return rehearsalConflict;
+  // Read-only: refuse while a turn or other mutation holds the session, but never
+  // reserve it ourselves, so ordinary reads keep working during the model call.
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.workspaceTransitionActive || state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: '另一个推演操作正在进行，请稍后再试。' });
+  }
+  try {
+    const session = await readPlaySessionFiles(workspaceRoot, id);
+    if (session.schemaVersion !== 4) return jsonResponse(context, 409, { error: '只有沉浸推演会话支持补充行动建议。' });
+    if (session.revision !== revisionCheck.value || session.selectedTurnIds.at(-1) !== headId) {
+      return jsonResponse(context, 409, { error: '当前分支已改变，请重新打开后再试。' });
+    }
+    await ensureProviderConfigLoaded(options, state);
+    const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+    const signal = context.req.raw.signal;
+    const usageOperation = { domain: 'play' as const, operationId: `suggest-${randomUUID()}`, sessionId: session.id, stage: 'suggestions', contextTraceId: headId ?? 'initial-world' };
+    // Exactly one model call per click; a malformed reply is reported, never retried silently.
+    const response = await askInPlayContext(session, headId, buildPlayExtraSuggestionsInstruction(existing as string[]), async (question) => {
+      signal.throwIfAborted();
+      const turnInput = { workspaceRoot, session, request: question.request, userText: question.request, actionKind: 'do' as const, abortSignal: signal };
+      if (options.runPlayTurn) return options.runPlayTurn(turnInput);
+      if (options.streamPlayTurn) {
+        let text = '';
+        for await (const chunk of options.streamPlayTurn(turnInput)) text += chunk;
+        return text;
+      }
+      if (!providerConfig) throw new Error('请先配置模型。');
+      const result = await runNovelAgentTurn({ providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver(), workspaceRoot, workspace: { workspaceRoot }, capability: 'novel.play_scene', frozenSystemPrompt: question.frozenSystemPrompt, priorMessages: question.priorMessages, request: question.request, usageSessionId: `play-${session.id}`, usageOperation, abortSignal: signal });
+      if (result.stoppedReason === 'aborted') throw new Error('补充建议已取消。');
+      return result.assistantMessage?.content ?? '';
+    });
+    signal.throwIfAborted();
+    const suggestions = parsePlayExtraSuggestionsResponse(response, existing as string[]);
+    // Suggestions for a head that moved during the call would be misleading.
+    const current = await readPlaySessionFiles(workspaceRoot, id);
+    if (requireActiveWorkspaceRoot(options, state) !== workspaceRoot || current.revision !== session.revision || current.selectedTurnIds.at(-1) !== headId) {
+      return jsonResponse(context, 409, { error: '生成期间分支已改变，请重新生成。' });
+    }
+    return jsonResponse(context, 200, { suggestions, baseRevision: session.revision, ...(headId ? { headId } : {}) });
+  } catch (error) {
+    const status = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422;
+    return jsonResponse(context, status, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
 
 function archiveReviewId(preview: unknown) {
   return `play-archive-${createHash('sha256').update(JSON.stringify(preview)).digest('hex').slice(0, 24)}`;

@@ -56,7 +56,7 @@ export function usePlayOutcome(options: UsePlayOutcomeOptions) {
   const error = computed(() => {
     if (!storedError.value) return '';
     return projection.value === 'player'
-      ? 'Outcome Report could not be loaded for the Player lens.'
+      ? '无法在参与者视角下载入结果报告。'
       : storedError.value;
   });
   const report = computed(() => projectPlayOutcomeReportForUi(
@@ -168,7 +168,7 @@ export function usePlayOutcome(options: UsePlayOutcomeOptions) {
       reportStatus.value = result.status;
       storedStaleReasons.value = result.staleReasons;
       selectedItemIds.value = [];
-      notice.value = 'Outcome Report 已从当前 committed selected branch 生成。';
+      notice.value = '结果报告已根据当前选中分支生成。';
       return true;
     } catch (caught) {
       if (epoch !== loadEpoch) return false;
@@ -206,7 +206,7 @@ export function usePlayOutcome(options: UsePlayOutcomeOptions) {
       });
       replaceAttachment(result.attachment);
       selectedItemIds.value = [];
-      notice.value = 'Writing Reference 已创建；只有写作请求显式选择它时才会进入上下文。';
+      notice.value = '写作参考已创建；只有写作时显式选择它才会进入上下文。';
       options.onWritingReferencesUpdated?.();
       return true;
     } catch (caught) {
@@ -238,7 +238,7 @@ export function usePlayOutcome(options: UsePlayOutcomeOptions) {
     try {
       const result = await client.detachPlayWritingReferenceAttachment(attachmentId);
       replaceAttachment(result.attachment);
-      notice.value = 'Writing Reference 已 detach；审计文件保留，但不会再进入写作上下文。';
+      notice.value = '写作参考已解除附加；记录保留，但不会再进入写作上下文。';
       options.onWritingReferencesUpdated?.();
       return true;
     } catch (caught) {
@@ -317,11 +317,11 @@ export function sanitizePlayerStaleReasons(reasons: readonly string[]): string[]
 }
 
 function formatOutcomeKind(kind: PlayOutcomeItemKind): string {
-  if (kind === 'sceneSummary') return 'Scene summary';
-  if (kind === 'goalAssessment') return 'Goal assessment';
-  if (kind === 'participantFootprint') return 'Character footprint';
-  if (kind === 'worldChange') return 'World changes';
-  return 'Writing material';
+  if (kind === 'sceneSummary') return '场景概要';
+  if (kind === 'goalAssessment') return '目标达成情况';
+  if (kind === 'participantFootprint') return '人物足迹';
+  if (kind === 'worldChange') return '世界变化';
+  return '写作素材';
 }
 
 function isRequestStatus(error: unknown, status: number): boolean {

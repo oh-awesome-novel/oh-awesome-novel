@@ -52,7 +52,7 @@ const PlayWorkspaceStub = defineComponent({
   props: ['workspace', 'files'],
   emits: ['reviewPendingAction', 'pendingActionCreated'],
   template: `
-    <section aria-label="Play workspace">
+    <section aria-label="推演工作区">
       <button data-test="review-created-adoption"
         @click="$emit('reviewPendingAction', '${actionId}')">Review created adoption</button>
       <TavernImportPanel :workspace-root="workspace.path"
@@ -167,9 +167,9 @@ describe('Play review surface', () => {
     await wrapper.get('select').setValue('create');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
-    await button(wrapper, 'Create changes for approval').trigger('click');
+    await button(wrapper, '生成待确认改动').trigger('click');
     await flushPromises();
-    await button(wrapper, 'Review changes').trigger('click');
+    await button(wrapper, '审阅改动').trigger('click');
     await flushPromises();
     expect(wrapper.get('[aria-label="PendingAction approval"]').isVisible()).toBe(true);
     expect(api.acceptPendingAction).not.toHaveBeenCalled();

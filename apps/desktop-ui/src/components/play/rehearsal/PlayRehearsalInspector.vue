@@ -43,55 +43,55 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
   <aside class="play-rehearsal-inspector" :aria-labelledby="headingId">
     <header>
       <div>
-        <span>{{ lens === 'director' ? 'Director view' : 'Player-safe view' }}</span>
-        <h2 :id="headingId">Scene Inspector</h2>
+        <span>{{ lens === 'director' ? '导演视角' : '参与者视角' }}</span>
+        <h2 :id="headingId">场景检查器</h2>
       </div>
-      <div class="play-rehearsal-inspector-lens" role="group" aria-label="Rehearsal inspector lens">
-        <button type="button" :aria-pressed="lens === 'player'" @click="emit('updateLens', 'player')">Player</button>
-        <button type="button" :aria-pressed="lens === 'director'" @click="emit('updateLens', 'director')">Director</button>
+      <div class="play-rehearsal-inspector-lens" role="group" aria-label="试演检查器视角">
+        <button type="button" :aria-pressed="lens === 'player'" @click="emit('updateLens', 'player')">参与者</button>
+        <button type="button" :aria-pressed="lens === 'director'" @click="emit('updateLens', 'director')">导演</button>
       </div>
     </header>
 
     <section>
-      <h3>Scene Contract</h3>
+      <h3>场景约定</h3>
       <dl>
-        <div><dt>Location</dt><dd>{{ scene.location || 'Unspecified' }}</dd></div>
-        <div v-if="lens === 'director'"><dt>Objective</dt><dd>{{ scene.objective || 'Unspecified' }}</dd></div>
-        <div v-if="lens === 'director'"><dt>Risk</dt><dd>{{ scene.risk || 'Unspecified' }}</dd></div>
-        <div><dt>Atmosphere</dt><dd>{{ scene.atmosphere || 'Unspecified' }}</dd></div>
+        <div><dt>地点</dt><dd>{{ scene.location || '未指定' }}</dd></div>
+        <div v-if="lens === 'director'"><dt>目标</dt><dd>{{ scene.objective || '未指定' }}</dd></div>
+        <div v-if="lens === 'director'"><dt>风险</dt><dd>{{ scene.risk || '未指定' }}</dd></div>
+        <div><dt>氛围</dt><dd>{{ scene.atmosphere || '未指定' }}</dd></div>
       </dl>
     </section>
 
     <section>
-      <h3>Current actor</h3>
+      <h3>当前角色</h3>
       <div v-if="activeActor" class="play-rehearsal-current-actor">
         <strong>{{ activeActor.displayName }}</strong>
-        <span>{{ activeActor.position || 'Position not specified' }}</span>
-        <p>{{ activeActor.currentGoal || 'Goal not specified' }}</p>
+        <span>{{ activeActor.position || '未指定位置' }}</span>
+        <p>{{ activeActor.currentGoal || '未指定目标' }}</p>
       </div>
-      <p v-else class="play-rehearsal-inspector-empty">No actor is currently active.</p>
+      <p v-else class="play-rehearsal-inspector-empty">当前没有行动中的角色。</p>
     </section>
 
     <section>
-      <h3>Permitted perception</h3>
+      <h3>允许的感知</h3>
       <p class="play-rehearsal-perception-note">
-        Only the filtered perception supplied for this actor is rendered here.
+        这里只显示提供给这个角色的过滤后感知。
       </p>
       <template v-if="perception">
-        <h4>Visible facts</h4>
+        <h4>可见事实</h4>
         <ul v-if="projectedVisibleFacts.length">
           <li v-for="(fact, index) in projectedVisibleFacts" :key="`${index}:${fact}`">{{ fact }}</li>
         </ul>
-        <p v-else class="play-rehearsal-inspector-empty">No visible facts supplied.</p>
+        <p v-else class="play-rehearsal-inspector-empty">没有提供可见事实。</p>
 
-        <h4 v-if="lens === 'director'">Behavior anchors</h4>
+        <h4 v-if="lens === 'director'">行为锚点</h4>
         <ul v-if="lens === 'director' && perception.behaviorAnchors.length">
           <li v-for="(anchor, index) in perception.behaviorAnchors" :key="`${index}:${anchor}`">{{ anchor }}</li>
         </ul>
-        <p v-else-if="lens === 'director'" class="play-rehearsal-inspector-empty">No behavior anchors supplied.</p>
+        <p v-else-if="lens === 'director'" class="play-rehearsal-inspector-empty">没有提供行为锚点。</p>
 
         <template v-if="visibleGrantedKnowledge.length">
-          <h4>Granted knowledge</h4>
+          <h4>授予的认知</h4>
           <ul>
             <li v-for="grant in visibleGrantedKnowledge" :key="grant.id">
               {{ grant.summary }}
@@ -100,28 +100,28 @@ const headingId = `${useId()}-rehearsal-inspector-heading`;
           </ul>
         </template>
 
-        <h4>Observed blocks</h4>
+        <h4>已观察的段落</h4>
         <ul v-if="perception.observedBlockLabels.length">
           <li v-for="(label, index) in perception.observedBlockLabels" :key="`${index}:${label}`">{{ label }}</li>
         </ul>
-        <p v-else class="play-rehearsal-inspector-empty">No earlier block observations.</p>
+        <p v-else class="play-rehearsal-inspector-empty">没有更早的段落观察。</p>
 
         <p v-if="lens === 'director' && perception.omissionNotice" class="play-rehearsal-omission-notice">
           {{ perception.omissionNotice }}
         </p>
       </template>
-      <p v-else class="play-rehearsal-inspector-empty">Perception package not prepared.</p>
+      <p v-else class="play-rehearsal-inspector-empty">感知包尚未准备。</p>
     </section>
 
     <section>
-      <h3>Visible events</h3>
+      <h3>可见事件</h3>
       <ul v-if="visibleEvents.length" class="play-rehearsal-visible-events">
         <li v-for="event in visibleEvents" :key="event.id">
           <strong>{{ event.title }}</strong>
           <p>{{ event.summary }}</p>
         </li>
       </ul>
-      <p v-else class="play-rehearsal-inspector-empty">No visible event in this attempt.</p>
+      <p v-else class="play-rehearsal-inspector-empty">这次试演没有可见事件。</p>
     </section>
   </aside>
 </template>

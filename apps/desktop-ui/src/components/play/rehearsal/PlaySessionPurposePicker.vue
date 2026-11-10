@@ -19,9 +19,9 @@ const headingId = `${prefix}-heading`;
 <template>
   <section class="play-purpose-picker" :aria-labelledby="headingId">
     <header>
-      <span>New Play session</span>
-      <h2 :id="headingId">Choose how to enter the world</h2>
-      <p>Purpose and world activity stay independent. You can keep the existing quick journey or direct a scene rehearsal.</p>
+      <span>新建推演会话</span>
+      <h2 :id="headingId">选择进入世界的方式</h2>
+      <p>用途和世界活跃度相互独立。你可以沉浸推演，也可以导演一场场景试演。</p>
     </header>
 
     <div class="play-purpose-options">
@@ -32,8 +32,8 @@ const headingId = `${prefix}-heading`;
         @click="emit('choose', 'immersiveJourney')"
       >
         <span aria-hidden="true">[J]</span>
-        <strong>Immersive Journey</strong>
-        <small :id="`${prefix}-immersive-description`">Act as a player and continue through the world.</small>
+        <strong>沉浸推演</strong>
+        <small :id="`${prefix}-immersive-description`">以参与者身份在世界中行动。</small>
       </button>
       <button
         type="button"
@@ -42,13 +42,13 @@ const headingId = `${prefix}-heading`;
         @click="emit('choose', 'sceneRehearsal')"
       >
         <span aria-hidden="true">[R]</span>
-        <strong>Scene Rehearsal</strong>
-        <small :id="`${prefix}-rehearsal-description`">Direct a fixed actor queue and review each provisional reaction.</small>
+        <strong>场景试演</strong>
+        <small :id="`${prefix}-rehearsal-description`">按固定顺序指挥角色行动，逐条审阅生成的反应。</small>
       </button>
     </div>
 
     <footer>
-      <button type="button" :disabled="disabled" @click="emit('cancel')">Cancel</button>
+      <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
     </footer>
   </section>
 </template>

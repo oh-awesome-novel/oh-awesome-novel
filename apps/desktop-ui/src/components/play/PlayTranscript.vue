@@ -26,6 +26,15 @@ const emit = defineEmits<{
 const scrollId = `${useId()}-play-transcript-scroll`;
 const messageCount = computed(() => props.totalCount ?? props.turns.length);
 
+/** Display name only; stored speakers stay protocol identifiers. */
+function speakerLabel(speaker: string): string {
+  const normalized = speaker.toLowerCase();
+  if (normalized === 'user' || normalized === 'player') return '我';
+  if (normalized === 'world-referee') return '裁判';
+  if (normalized === 'narrator') return '旁白';
+  return speaker;
+}
+
 function turnClass(speaker: string): string {
   const normalized = speaker.toLowerCase();
   if (normalized === 'user' || normalized === 'player') {
@@ -41,25 +50,25 @@ function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 </script>
 
 <template>
-  <section class="play-transcript" aria-label="Play transcript">
+  <section class="play-transcript" aria-label="推演记录">
     <header class="play-transcript-heading">
       <div>
-        <span class="play-transcript-kicker">Now playing</span>
+        <span class="play-transcript-kicker">正在推演</span>
         <h1>{{ title }}</h1>
       </div>
       <span class="play-transcript-count">
-        {{ messageCount }} messages<span v-if="turns.length < messageCount"> · showing {{ turns.length }}</span>
+        {{ messageCount }} 条消息<span v-if="turns.length < messageCount"> · 显示 {{ turns.length }} 条</span>
       </span>
     </header>
 
     <div :id="scrollId" class="play-transcript-scroll">
       <article class="play-scene-opening">
-        <span>Opening scene</span>
+        <span>开场</span>
         <p>{{ sceneStart }}</p>
       </article>
 
@@ -71,7 +80,7 @@ function formatTime(value: string): string {
         :aria-controls="scrollId"
         @click="emit('loadEarlier')"
       >
-        {{ loadingEarlier ? 'Loading earlier messages…' : 'Load earlier transcript' }}
+        {{ loadingEarlier ? '正在载入更早的消息…' : '载入更早的记录' }}
       </button>
 
       <article
@@ -81,7 +90,7 @@ function formatTime(value: string): string {
         :class="turnClass(turn.speaker)"
       >
         <header>
-          <strong>{{ turn.speaker }}</strong>
+          <strong>{{ speakerLabel(turn.speaker) }}</strong>
           <span v-if="turn.actionKind" class="play-action-pill">{{ turn.actionKind }}</span>
           <time :datetime="turn.createdAt">{{ formatTime(turn.createdAt) }}</time>
         </header>
@@ -94,15 +103,15 @@ function formatTime(value: string): string {
         :class="`play-turn-${provisional.phase}`"
       >
         <header>
-          <strong>world-referee</strong>
+          <strong>裁判</strong>
           <span>
-            {{ provisional.intent === 'retry' ? 'Retry · provisional · not committed' : 'provisional · not committed' }}
+            {{ provisional.intent === 'retry' ? '重演 · 生成中 · 尚未提交' : '生成中 · 尚未提交' }}
           </span>
         </header>
         <div v-if="provisional.intent === 'retry'" class="play-retry-source">
-          <span>Replaying original action</span>
+          <span>按原行动重演</span>
           <p>{{ provisional.userText }}</p>
-          <small>Old result preserved as a variant.</small>
+          <small>旧结果会保留为另一个结果。</small>
         </div>
         <p :data-usage-operation="provisional.provisionalText ? provisional.turnId : undefined">{{ provisional.provisionalText || provisional.statusMessage }}</p>
         <footer class="play-provisional-status">
@@ -112,7 +121,7 @@ function formatTime(value: string): string {
       </article>
 
       <p v-if="turns.length === 0 && !provisional" class="play-transcript-empty">
-        舞台已经布置好。提交第一个行动，world referee 会同时推进人物与外部世界。
+        舞台已经布置好。提交第一个行动，裁判会同时推进人物与外部世界。
       </p>
     </div>
 

@@ -18,10 +18,10 @@ describe('PlayActorQueue', () => {
     const rows = wrapper.findAll('li');
 
     expect(rows.map((row) => row.text())).toEqual([
-      expect.stringContaining('Selected'),
-      expect.stringContaining('Current'),
-      expect.stringContaining('Waiting'),
-      expect.stringContaining('Committed'),
+      expect.stringContaining('已采用'),
+      expect.stringContaining('当前'),
+      expect.stringContaining('等待'),
+      expect.stringContaining('已提交'),
     ]);
     expect(wrapper.get('[aria-current="step"]').text()).toContain('Ivo');
     expect(wrapper.get('[data-status="selected"]').text()).toContain('Mara');

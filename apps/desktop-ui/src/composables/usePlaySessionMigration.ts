@@ -31,7 +31,7 @@ export function usePlaySessionMigration(options: {
         confirmed: true, baseRevision: reviewed.baseRevision, sourceFingerprint: reviewed.sourceFingerprint,
       });
       preview.value = null;
-      notice.value = 'Play session upgraded. The original files were preserved in the migration backup.';
+      notice.value = '推演会话已升级，原始文件保留在升级备份中。';
       await options.onConfirmed();
     } catch (caught) {
       error.value = caught instanceof Error ? caught.message : String(caught);

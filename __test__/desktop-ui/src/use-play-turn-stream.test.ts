@@ -68,7 +68,7 @@ describe('usePlayTurnStream', () => {
     expect(flow.run.value).toMatchObject({
       phase: 'failed',
       provisionalText: '',
-      statusMessage: 'Turn not committed',
+      statusMessage: '回合未提交',
     });
   });
 
@@ -111,7 +111,7 @@ describe('usePlayTurnStream', () => {
     expect(flow.run.value).toMatchObject({
       phase: 'cancelled',
       provisionalText: '尚未提交的正文',
-      statusMessage: expect.stringContaining('not committed'),
+      statusMessage: expect.stringContaining('没有提交'),
     });
   });
 
@@ -404,7 +404,7 @@ describe('usePlayTurnStream', () => {
 
     expect(cancellationCalls).toBe(2);
     expect(onCommitted).toHaveBeenCalledOnce();
-    expect(flow.announcement.value).toBe('Play turn committed.');
+    expect(flow.announcement.value).toBe('回合已提交。');
     expect(flow.run.value).toBeUndefined();
   });
 
@@ -433,7 +433,7 @@ describe('usePlayTurnStream', () => {
     })).resolves.toBe('committed');
 
     expect(onCommitted).toHaveBeenCalledWith(committedSession);
-    expect(flow.announcement.value).toBe('Play turn committed.');
+    expect(flow.announcement.value).toBe('回合已提交。');
   });
 
   it('keeps reconciling while the reachable server remains inside the commit barrier', async () => {
@@ -507,9 +507,9 @@ describe('usePlayTurnStream', () => {
       await expect(submit).resolves.toBe('unknown');
       expect(flow.run.value).toMatchObject({
         phase: 'indeterminate',
-        statusMessage: expect.stringContaining('outcome unknown'),
+        statusMessage: expect.stringContaining('结果未知'),
       });
-      expect(flow.run.value?.statusMessage).not.toContain('not committed');
+      expect(flow.run.value?.statusMessage).not.toContain('没有提交');
       expect(flow.busy.value).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -634,7 +634,7 @@ describe('usePlayTurnStream', () => {
       retryParentArtifactId: 'turn-artifact-root',
       phase: 'streaming',
       provisionalText: '新的分支结果',
-      statusMessage: 'Retry streaming · not committed',
+      statusMessage: '重演生成中 · 尚未提交',
     });
     await expect(flow.submit({
       sessionId: 'play-1',
@@ -675,7 +675,7 @@ describe('usePlayTurnStream', () => {
     expect(source).toContain('{{ announcement }}');
     expect(source).toContain(':busy="interactionBlocked"');
     expect(source).toContain('<PlayHistoryControls');
-    expect(source).toContain('Preview canonical diff');
+    expect(source).toContain('预览改动');
   });
 });
 

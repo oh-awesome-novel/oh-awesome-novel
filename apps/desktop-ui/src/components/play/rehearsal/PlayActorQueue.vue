@@ -14,10 +14,10 @@ const headingId = `${useId()}-actor-queue-heading`;
 
 function statusLabel(status: PlayRehearsalActorStatus): string {
   switch (status) {
-    case 'current': return 'Current';
-    case 'waiting': return 'Waiting';
-    case 'selected': return 'Selected';
-    case 'committed': return 'Committed';
+    case 'current': return '当前';
+    case 'waiting': return '等待';
+    case 'selected': return '已采用';
+    case 'committed': return '已提交';
   }
 }
 
@@ -35,8 +35,8 @@ function statusMarker(status: PlayRehearsalActorStatus): string {
   <section class="play-actor-queue" :aria-labelledby="headingId">
     <header>
       <div>
-        <span>Director fixed</span>
-        <h2 :id="headingId">Actor Queue</h2>
+        <span>导演固定</span>
+        <h2 :id="headingId">角色行动顺序</h2>
       </div>
       <span>{{ items.length }}</span>
     </header>
@@ -54,12 +54,12 @@ function statusMarker(status: PlayRehearsalActorStatus): string {
             <strong>{{ item.displayName }}</strong>
             <span>{{ statusLabel(item.status) }}</span>
           </header>
-          <small>Queue {{ index + 1 }}<template v-if="item.position"> · {{ item.position }}</template></small>
+          <small>第 {{ index + 1 }} 位<template v-if="item.position"> · {{ item.position }}</template></small>
           <p v-if="item.currentGoal">{{ item.currentGoal }}</p>
         </div>
       </li>
     </ol>
-    <p v-else class="play-actor-queue-empty">No actors in this rehearsal.</p>
+    <p v-else class="play-actor-queue-empty">这次试演没有角色。</p>
   </section>
 </template>
 

@@ -20,6 +20,6 @@ it('shows backup and retained metadata, and waits for an explicit confirmation c
   await wrapper.get('button').trigger('click'); await flushPromises();
   expect(client.confirmPlaySessionMigration).toHaveBeenCalledWith('legacy', { confirmed: true, baseRevision: 0, sourceFingerprint: preview.sourceFingerprint });
   expect(onConfirmed).toHaveBeenCalledOnce();
-  expect(wrapper.text()).toContain('upgraded');
+  expect(wrapper.text()).toContain('已升级');
   wrapper.unmount();
 });

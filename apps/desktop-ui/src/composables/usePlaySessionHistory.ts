@@ -140,7 +140,7 @@ export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
       loadGeneration += 1;
       checkpoints.value = result.checkpoints;
       loadedSessionKey = sessionKey(result.session);
-      notice.value = 'Checkpoint restored. Later turns remain available as variants.';
+      notice.value = '已回到这个存档点。之后的回合会保留为其他结果。';
       options.onRestored(result.session);
       return true;
     } catch (error) {
@@ -172,7 +172,7 @@ export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
 
     const renamePlayCheckpoint = options.client.renamePlayCheckpoint;
     if (!renamePlayCheckpoint) {
-      options.onError(new Error('Play checkpoint naming is unavailable.'));
+      options.onError(new Error('暂时无法命名存档点。'));
       return false;
     }
 
@@ -189,7 +189,7 @@ export function usePlaySessionHistory(options: UsePlaySessionHistoryOptions) {
       loadGeneration += 1;
       checkpoints.value = result.checkpoints;
       loadedSessionKey = sessionKey(result.session);
-      notice.value = 'Worldline point named.';
+      notice.value = '存档点已命名。';
       (options.onRenamed ?? options.onRestored)(result.session);
       return true;
     } catch (error) {

@@ -14,7 +14,7 @@ export function playEventSettingsError(draft: Readonly<PlayEventSettingsDraft>):
   const limit = Number(draft.maxExternalEventsPerTurn);
   return String(draft.maxExternalEventsPerTurn).trim() === '' ||
     !Number.isInteger(limit) || limit < 0 || limit > 6
-    ? 'Enter a whole number from 0 to 6.'
+    ? '请输入 0 到 6 的整数。'
     : undefined;
 }
 

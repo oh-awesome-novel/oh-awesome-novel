@@ -74,12 +74,12 @@ describe('PlayWorkspace M5 bounded history journey', () => {
     expect(api.getPlaySessionDetail).toHaveBeenNthCalledWith(1, summary.id, {
       limit: 50,
     });
-    expect(wrapper.get('.play-session-card').text()).toContain('4 messages');
-    expect(wrapper.get('.play-session-card').text()).toContain('4 events');
+    expect(wrapper.get('.play-session-card').text()).toContain('4 条消息');
+    expect(wrapper.get('.play-session-card').text()).toContain('4 条事件');
     expect(wrapper.get('.play-transcript').text()).toContain('latest message 3');
     expect(wrapper.get('.play-event-feed').text()).toContain('Latest event 4');
 
-    await button(wrapper, 'Load earlier transcript').trigger('click');
+    await button(wrapper, '载入更早的记录').trigger('click');
     await vi.waitFor(() => {
       expect(api.getPlaySessionDetail).toHaveBeenCalledWith(summary.id, {
         limit: 50,
@@ -92,9 +92,9 @@ describe('PlayWorkspace M5 bounded history journey', () => {
     expect(transcriptText).toContain('legacy message 2');
     expect(transcriptText).toContain('latest message 3');
     expect(transcriptText).toContain('latest message 4');
-    expect(wrapper.get('.play-transcript-count').text()).toBe('4 messages');
+    expect(wrapper.get('.play-transcript-count').text()).toBe('4 条消息');
 
-    await button(wrapper, 'Load earlier events').trigger('click');
+    await button(wrapper, '载入更早的事件').trigger('click');
     await vi.waitFor(() => {
       expect(api.getPlaySessionDetail).toHaveBeenCalledWith(summary.id, {
         limit: 50,
@@ -107,7 +107,7 @@ describe('PlayWorkspace M5 bounded history journey', () => {
     expect(eventText).toContain('Earlier event 2');
     expect(eventText).toContain('Latest event 3');
     expect(eventText).toContain('Latest event 4');
-    expect(eventText).toContain('Pressure · Earlier pressure 1');
+    expect(eventText).toContain('压力 · Earlier pressure 1');
     expect(api.getPlaySessionDetail).toHaveBeenCalledTimes(3);
     expect(api.getPlaySession).not.toHaveBeenCalled();
     wrapper.unmount();

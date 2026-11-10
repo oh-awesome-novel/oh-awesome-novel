@@ -131,9 +131,9 @@ export function playMessageLogKindLabel(entry: PlayMessageLogEntry): string {
 
 export function playMessageLogRoleLabel(entry: PlayMessageLogEntry): string {
   switch (entry.role) {
-    case 'world_referee': return 'World referee';
-    case 'rehearsal_actor': return entry.participantRef ? `Actor · ${entry.participantRef}` : 'Actor';
-    case 'rehearsal_referee': return 'Rehearsal referee';
+    case 'world_referee': return '裁判';
+    case 'rehearsal_actor': return entry.participantRef ? `角色 · ${entry.participantRef}` : 'Actor';
+    case 'rehearsal_referee': return '试演裁判';
     default: return entry.role ?? '';
   }
 }

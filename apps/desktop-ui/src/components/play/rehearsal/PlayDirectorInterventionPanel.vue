@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_NARRATIVE_BLOCK_KIND_LABELS, PLAY_REHEARSAL_STEP_STATUS_LABELS } from '../../../composables/playTerms';
 import {
   computed,
   nextTick,
@@ -196,51 +197,51 @@ function splitRefs(value: string): string[] {
   >
     <header>
       <div>
-        <span>Attempt-local intervention</span>
+        <span>试演内干预</span>
         <h2 :id="panelId" ref="heading" tabindex="-1">
           {{ mode === 'modify'
-            ? 'Modify actor step'
+            ? '修改角色步骤'
             : mode === 'insertActor'
-              ? 'Insert actor'
-              : 'Grant participant knowledge' }}
+              ? '插入角色'
+              : '授予参与者认知' }}
         </h2>
       </div>
-      <button type="button" :disabled="busy" aria-label="Close intervention panel" @click="emit('close')">
-        Close
+      <button type="button" :disabled="busy" aria-label="关闭干预面板" @click="emit('close')">
+        关闭
       </button>
     </header>
 
     <template v-if="mode === 'modify'">
-      <div class="play-director-mode-tabs" role="group" aria-label="Modify mode">
+      <div class="play-director-mode-tabs" role="group" aria-label="修改方式">
         <button
           type="button"
           :aria-pressed="modifyMode === 'reviseProjection'"
           :disabled="busy"
           @click="modifyMode = 'reviseProjection'"
-        >Revise projection</button>
+        >修改呈现</button>
         <button
           type="button"
           :aria-pressed="modifyMode === 'redirectStep'"
           :disabled="busy"
           @click="modifyMode = 'redirectStep'"
-        >Redirect step</button>
+        >改变走向</button>
       </div>
 
       <label>
-        Target live step
+        目标步骤
         <select v-model="targetStepRef" :disabled="busy">
           <option v-for="step in liveSteps" :key="step.id" :value="step.id">
-            {{ step.participantName }} · {{ step.status }} · {{ step.id }}
+            {{ step.participantName }} · {{ PLAY_REHEARSAL_STEP_STATUS_LABELS[step.status] ?? step.status }} · {{ step.id }}
           </option>
         </select>
       </label>
 
       <template v-if="modifyMode === 'reviseProjection'">
         <p>
-          Revise changes narrative projection only. Host-issued settlement effects and their fingerprint stay unchanged.
+          修改呈现只改叙述，宿主结算的效果和指纹不变。
         </p>
         <label v-for="block in editableBlocks" :key="block.id">
-          {{ block.kind }} · {{ block.id }}
+          {{ PLAY_NARRATIVE_BLOCK_KIND_LABELS[block.kind] ?? block.kind }} · {{ block.id }}
           <textarea
             :value="projectionByBlockId[block.id]"
             :disabled="busy"
@@ -250,13 +251,13 @@ function splitRefs(value: string): string[] {
         </label>
       </template>
       <template v-else>
-        <p>Redirect asks the host referee for a new variant from the target's before-step snapshot.</p>
+        <p>改变走向会让裁判从目标步骤之前的状态重新生成一个结果。</p>
         <label>
-          Director intent
+          导演意图
           <textarea v-model="directorIntent" :disabled="busy" rows="4"></textarea>
         </label>
         <label>
-          Author constraint refs (comma or whitespace separated)
+          作者约束引用（逗号或空格分隔）
           <input v-model="authorConstraintRefs" :disabled="busy" />
         </label>
       </template>
@@ -264,7 +265,7 @@ function splitRefs(value: string): string[] {
 
     <template v-else-if="mode === 'insertActor'">
       <label>
-        Scene participant
+        场景参与者
         <select v-model="participantRef" :disabled="busy">
           <option v-for="participant in participants" :key="participant.participantRef" :value="participant.participantRef">
             {{ participant.displayName }}
@@ -272,25 +273,25 @@ function splitRefs(value: string): string[] {
         </select>
       </label>
       <label>
-        Placement
+        插入位置
         <select v-model="insertionAnchor" :disabled="busy">
-          <option value="next">At the next unselected position</option>
-          <option value="before">Before a live step</option>
-          <option value="after">After a live step</option>
+          <option value="next">下一个未选定的位置</option>
+          <option value="before">某个步骤之前</option>
+          <option value="after">某个步骤之后</option>
         </select>
       </label>
       <label v-if="insertionAnchor !== 'next'">
-        Anchor step
+        参照步骤
         <select v-model="insertionStepRef" :disabled="busy">
           <option v-for="step in liveSteps" :key="step.id" :value="step.id">{{ step.id }}</option>
         </select>
       </label>
-      <p>Changing actor order preserves old variants and supersedes only the affected live suffix.</p>
+      <p>调整角色顺序会保留旧结果，只替换受影响的后续步骤。</p>
     </template>
 
     <template v-else>
       <label>
-        Participant receiving knowledge
+        获得认知的参与者
         <select v-model="participantRef" :disabled="busy">
           <option v-for="participant in participants" :key="participant.participantRef" :value="participant.participantRef">
             {{ participant.displayName }}
@@ -298,41 +299,41 @@ function splitRefs(value: string): string[] {
         </select>
       </label>
       <label>
-        Effective from live step
+        从这个步骤起生效
         <select v-model="effectiveFromStepRef" :disabled="busy">
           <option v-for="step in liveSteps" :key="step.id" :value="step.id">{{ step.id }}</option>
         </select>
       </label>
       <fieldset>
-        <legend>Knowledge evidence</legend>
-        <label><input v-model="grantMode" type="radio" value="existingFact" :disabled="busy" /> Existing stable facts</label>
-        <label><input v-model="grantMode" type="radio" value="authorProvidedPlayFact" :disabled="busy" /> Author-provided Play fact</label>
+        <legend>认知依据</legend>
+        <label><input v-model="grantMode" type="radio" value="existingFact" :disabled="busy" /> 已有的稳定事实</label>
+        <label><input v-model="grantMode" type="radio" value="authorProvidedPlayFact" :disabled="busy" /> 作者提供的推演事实</label>
       </fieldset>
       <label v-if="grantMode === 'existingFact'">
-        Stable fact refs (comma or whitespace separated)
+        稳定事实引用（逗号或空格分隔）
         <input v-model="factRefs" :disabled="busy" />
       </label>
       <template v-else>
         <label>
-          Play-local fact
+          推演内事实
           <textarea v-model="authorFact" :disabled="busy" rows="3"></textarea>
         </label>
         <label>
-          Visibility
+          可见性
           <select v-model="authorFactVisibility" :disabled="busy">
-            <option value="playerVisible">Player visible</option>
-            <option value="rumor">Rumor</option>
-            <option value="playerUnknown">Director only</option>
+            <option value="playerVisible">参与者可见</option>
+            <option value="rumor">传闻</option>
+            <option value="playerUnknown">仅导演可见</option>
           </select>
         </label>
       </template>
-      <p>The grant is participant-scoped and branch-local; it never promotes global event visibility.</p>
+      <p>授予的认知只属于这个参与者和当前分支，不会改变事件的整体可见性。</p>
     </template>
 
     <footer>
-      <button type="button" :disabled="busy" @click="emit('close')">Back</button>
+      <button type="button" :disabled="busy" @click="emit('close')">返回</button>
       <button type="button" :disabled="!canSubmit" @click="submit">
-        {{ busy ? 'Applying…' : 'Apply intervention' }}
+        {{ busy ? 'Applying…' : '应用干预' }}
       </button>
     </footer>
   </section>

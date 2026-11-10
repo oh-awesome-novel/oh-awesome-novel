@@ -13,9 +13,9 @@ describe('PlayTranscript', () => {
       intent: 'submit',
     });
 
-    expect(wrapper.get('.play-turn-provisional header').text()).toContain('world-referee');
+    expect(wrapper.get('.play-turn-provisional header').text()).toContain('裁判');
     expect(wrapper.get('.play-turn-provisional header').text()).toContain(
-      'provisional · not committed',
+      '生成中 · 尚未提交',
     );
     expect(wrapper.find('.play-retry-source').exists()).toBe(false);
     wrapper.unmount();
@@ -30,12 +30,12 @@ describe('PlayTranscript', () => {
     });
 
     expect(wrapper.get('.play-turn-provisional header').text()).toContain(
-      'Retry · provisional · not committed',
+      '重演 · 生成中 · 尚未提交',
     );
-    expect(wrapper.get('.play-retry-source').text()).toContain('Replaying original action');
+    expect(wrapper.get('.play-retry-source').text()).toContain('按原行动重演');
     expect(wrapper.get('.play-retry-source').text()).toContain('推开生锈的门');
     expect(wrapper.get('.play-retry-source').text()).toContain(
-      'Old result preserved as a variant.',
+      '旧结果会保留为另一个结果。',
     );
     wrapper.unmount();
   });
@@ -59,11 +59,11 @@ function createProvisional(): PlayProvisionalTurn {
     turnId: 'run-1',
     sessionId: 'play-1',
     baseRevision: 1,
-    userText: 'Wait',
+    userText: '等',
     actionKind: 'wait',
     intent: 'submit',
     phase: 'streaming',
     provisionalText: 'Footsteps approach.',
-    statusMessage: 'Streaming · not committed',
+    statusMessage: '生成中 · 尚未提交',
   };
 }

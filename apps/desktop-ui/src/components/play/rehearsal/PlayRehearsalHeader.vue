@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PLAY_REHEARSAL_ATTEMPT_STATUS_LABELS } from '../../../composables/playTerms';
 import type {
   PlayRehearsalAttemptStatus,
   PlayRehearsalClockView,
@@ -15,14 +16,14 @@ const { scene, clock, attemptStatus } = defineProps<{
 <template>
   <header class="play-rehearsal-header">
     <div>
-      <span>Scene Contract</span>
+      <span>场景约定</span>
       <h1>{{ scene.title }}</h1>
-      <p>{{ scene.location || 'Location unspecified' }}<template v-if="scene.objective"> · {{ scene.objective }}</template></p>
+      <p>{{ scene.location || '地点未指定' }}<template v-if="scene.objective"> · {{ scene.objective }}</template></p>
     </div>
     <dl>
-      <div><dt>World</dt><dd>{{ clock.anchor || `Turn ${clock.turn}` }}</dd></div>
+      <div><dt>世界</dt><dd>{{ clock.anchor || `第 ${clock.turn} 回合` }}</dd></div>
       <div><dt>Revision</dt><dd>{{ clock.revision }}</dd></div>
-      <div><dt>Attempt</dt><dd>{{ attemptStatus || 'not started' }}</dd></div>
+      <div><dt>试演</dt><dd>{{ attemptStatus ? PLAY_REHEARSAL_ATTEMPT_STATUS_LABELS[attemptStatus] ?? attemptStatus : '未开始' }}</dd></div>
     </dl>
   </header>
 </template>

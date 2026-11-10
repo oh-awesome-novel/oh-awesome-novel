@@ -40,7 +40,7 @@ describe('PlayOutcomePanel', () => {
     const wrapper = mountPanel({ showSpoilers: true });
     await flushPromises();
 
-    await button(wrapper, 'Generate report').trigger('click');
+    await button(wrapper, '生成报告').trigger('click');
     await flushPromises();
 
     expect(api.generatePlayOutcomeReport).toHaveBeenCalledWith('play-outcome-1', {
@@ -49,7 +49,7 @@ describe('PlayOutcomePanel', () => {
     });
     expect(wrapper.text()).toContain('Committed ending');
     expect(document.activeElement).toBe(wrapper.get('h2').element);
-    expect(wrapper.get('section[aria-label="Play Outcome and Writing handoff"]')).toBeTruthy();
+    expect(wrapper.get('section[aria-label="结果报告与写作交接"]')).toBeTruthy();
     wrapper.unmount();
   });
 
@@ -65,8 +65,8 @@ describe('PlayOutcomePanel', () => {
     const wrapper = mountPanel({ showSpoilers: true });
     await flushPromises();
 
-    expect(wrapper.text()).toContain('Scene summary');
-    expect(wrapper.text()).toContain('Writing material');
+    expect(wrapper.text()).toContain('场景概要');
+    expect(wrapper.text()).toContain('写作素材');
     const selections = wrapper.findAll<HTMLInputElement>(
       '.play-outcome-item input[type="checkbox"]',
     );
@@ -76,7 +76,7 @@ describe('PlayOutcomePanel', () => {
       await selection.setValue(true);
     }
 
-    expect(wrapper.text()).toContain('24 / 24 item(s) selected');
+    expect(wrapper.text()).toContain('已选 24 / 24 条');
     expect(selections[24]!.element.disabled).toBe(true);
     expect(selections[0]!.element.disabled).toBe(false);
 
@@ -144,31 +144,31 @@ describe('PlayOutcomePanel', () => {
     });
     await button(wrapper, '刷新').trigger('click');
     await flushPromises();
-    expect(wrapper.text()).toContain('sourceContentChanged:source-secret');
+    expect(wrapper.text()).toContain('来源已改变：source-secret');
 
     let rejectPlayerRequest!: (reason?: unknown) => void;
     api.getPlayOutcomeReport.mockImplementationOnce(() => new Promise((_, reject) => {
       rejectPlayerRequest = reject;
     }));
 
-    await button(wrapper, 'Player').trigger('click');
+    await button(wrapper, '参与者').trigger('click');
     expect(wrapper.emitted('updateShowSpoilers')?.at(-1)).toEqual([false]);
     await wrapper.setProps({ showSpoilers: false });
     await nextTick();
 
     assertNoDirectorEvidence(wrapper, true);
     expect(wrapper.get<HTMLButtonElement>(
-      '.play-outcome-item button[aria-label^="Bring outcome to writing"]',
+      '.play-outcome-item button[aria-label^="带回写作"]',
     ).element.disabled).toBe(true);
-    expect(wrapper.text()).toContain('0 / 24 item(s) selected');
-    expect(wrapper.text()).toContain('sourceSnapshotChanged');
+    expect(wrapper.text()).toContain('已选 0 / 24 条');
+    expect(wrapper.text()).toContain('来源内容已改变');
     expect(wrapper.text()).not.toContain('attachment-secret');
 
     rejectPlayerRequest(new Error('source-secret is unavailable'));
     await flushPromises();
 
     assertNoDirectorEvidence(wrapper, false);
-    expect(wrapper.text()).toContain('Outcome Report could not be loaded for the Player lens.');
+    expect(wrapper.text()).toContain('无法在参与者视角下载入结果报告。');
     wrapper.unmount();
   });
 
@@ -191,7 +191,7 @@ describe('PlayOutcomePanel', () => {
     await flushPromises();
 
     await wrapper.get('.play-outcome-item input[type="checkbox"]').setValue(true);
-    await button(wrapper, 'Create attachment').trigger('click');
+    await button(wrapper, '附加为写作参考').trigger('click');
     await flushPromises();
 
     expect(api.createPlayWritingReferenceAttachment).toHaveBeenCalledWith({
@@ -206,7 +206,7 @@ describe('PlayOutcomePanel', () => {
     await flushPromises();
 
     expect(api.detachPlayWritingReferenceAttachment).toHaveBeenCalledWith('attachment-1');
-    expect(wrapper.text()).toContain('detached');
+    expect(wrapper.text()).toContain('已解除');
     expect(wrapper.emitted('writingReferencesUpdated')).toHaveLength(2);
 
     await outcomeItem(wrapper, 'material-1').get('button').trigger('click');
