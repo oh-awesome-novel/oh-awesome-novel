@@ -99,4 +99,42 @@ describe('visual novel stage', () => {
     expect(wrapper.find('[aria-label="历史文本"]').exists()).toBe(false);
     wrapper.unmount();
   });
+  it('lets the author edit an option or write a new action without leaving the stage', async () => {
+    const wrapper = mount(VisualNovelStage, { attachTo: document.body, props: { sessionId: 'a', scene: '客栈', turns: [turn], choices: ['走进门', '转身离开'], disabled: false } });
+
+    await wrapper.findAll('.vn-choice-edit')[1]!.trigger('click');
+    const editor = wrapper.get<HTMLTextAreaElement>('#vn-choice-input');
+    expect(editor.element.value).toBe('转身离开');
+    // Typing a digit in the editor is text, not a choice.
+    await editor.trigger('keydown', { key: '1' });
+    expect(wrapper.emitted('choose')).toBeUndefined();
+    await editor.setValue('转身离开，但把门留一条缝');
+    await editor.trigger('keydown', { key: 'Enter', ctrlKey: true });
+    expect(wrapper.emitted('custom')).toEqual([['转身离开，但把门留一条缝', '转身离开']]);
+
+    await wrapper.get('.vn-choice-own').trigger('click');
+    expect(wrapper.get<HTMLTextAreaElement>('#vn-choice-input').element.value).toBe('');
+    expect(wrapper.get<HTMLButtonElement>('.vn-choice-editor button[type="submit"]').element.disabled).toBe(true);
+    await wrapper.get('#vn-choice-input').setValue('  翻窗进去  ');
+    await wrapper.get('.vn-choice-editor').trigger('submit');
+    expect(wrapper.emitted('custom')![1]).toEqual(['翻窗进去', undefined]);
+
+    // An unchanged option is the option itself; Escape leaves the list untouched.
+    await wrapper.findAll('.vn-choice-edit')[0]!.trigger('click');
+    await wrapper.get('.vn-choice-editor').trigger('submit');
+    expect(wrapper.emitted('choose')).toEqual([['走进门']]);
+    await wrapper.get('.vn-choice-own').trigger('click');
+    await wrapper.get('#vn-choice-input').trigger('keydown', { key: 'Escape' });
+    expect(wrapper.find('.vn-choice-editor').exists()).toBe(false);
+    expect(wrapper.emitted('custom')).toHaveLength(2);
+    wrapper.unmount();
+  });
+  it('offers no editing in a read-only playback', () => {
+    const replay = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [turn], choices: [], disabled: true } });
+    expect(replay.find('.vn-choice-own').exists()).toBe(false);
+    replay.unmount();
+    const blocked = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [turn], choices: ['走进门'], disabled: true } });
+    expect(blocked.findAll<HTMLButtonElement>('.vn-choices button').every(button => button.element.disabled)).toBe(true);
+    blocked.unmount();
+  });
 });

@@ -2,6 +2,7 @@ import { normalizeRosterCharacter } from './character-roster.js';
 import { createStageSnapshot } from './text-speaker-parser.js';
 import { buildPlayFrozenSystemPrompt, getPlayFrozenSystemPrompt, isPlayCompactionActive } from './play-turn-prompt.js';
 import { hasPlayRefereeFrozenProtocol, PLAY_REFEREE_CUE_RULE, PLAY_REFEREE_HARD_DUE_RULE, PLAY_REFEREE_INTRO_RULES, PLAY_REFEREE_OUTPUT_PROTOCOL, PLAY_REFEREE_REVEAL_RULE } from './play-referee-protocol.js';
+import { PLAY_TURN_CHOICE_RULE } from './play-turn-choices.js';
 import { assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
@@ -1365,6 +1366,7 @@ const buildPlayWorldRefereePromptParts = (
     ],
     requirements: [
       `Turn action: ${turn.actionKind ?? 'do'}; requested elapsed ${timeAdvance ? formatPlayRelativeTimeAdvance(timeAdvance) : 'unspecified'}`,
+      PLAY_TURN_CHOICE_RULE,
     ],
     state: [
       '',

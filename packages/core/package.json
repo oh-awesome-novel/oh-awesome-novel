@@ -49,6 +49,10 @@
     "./novel-lint-rules": {
       "types": "./dist/novel-lint-rules.d.mts",
       "import": "./dist/novel-lint-rules.mjs"
+    },
+    "./play-turn-choices": {
+      "types": "./dist/play-turn-choices.d.mts",
+      "import": "./dist/play-turn-choices.mjs"
     }
   }
 }

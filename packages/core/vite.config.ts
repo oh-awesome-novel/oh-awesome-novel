@@ -9,6 +9,7 @@ export default defineConfig({
       "novel-copilot-contract": "src/novel-copilot-contract.ts",
       "agent-usage": "src/agent-usage.ts",
       "play-event-evidence": "src/play-event-evidence.ts",
+      "play-turn-choices": "src/play-turn-choices.ts",
     },
     format: "esm",
     outDir: "dist",

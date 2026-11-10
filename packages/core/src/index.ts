@@ -1203,6 +1203,7 @@ export { TAVERN_PLAY_IMPORT_METADATA_KEY, prepareTavernCardPlaySession, resolveT
 
 export * from './play-turn-prompt.js';
 export * from './play-referee-protocol.js';
+export * from './play-turn-choices.js';
 export * from './play-compaction.js';
 
 export * from './novel-lint.js';

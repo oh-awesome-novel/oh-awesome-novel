@@ -1,6 +1,8 @@
 import { computed, onMounted, readonly, shallowRef, toRaw } from 'vue';
 import type { Ref } from 'vue';
 
+import { parsePlayTurnChoices } from '@oh-awesome-novel/core/play-turn-choices';
+
 import { useWorkspaceApi } from './useWorkspaceApi';
 import {
   projectPlaySessionBeforeArtifact,
@@ -66,6 +68,13 @@ export interface PlaySuggestedActionView {
   label: string;
   userText: string;
   actionKind: PlayActionKind;
+  /** Set only when the option states its own wait duration. */
+  timeAdvance?: PlayRelativeTimeAdvance;
+}
+
+/** A wait option without a stated duration cannot be sent as is: the author picks the duration first. */
+export function canSubmitPlayChoiceDirectly(choice: Pick<PlaySuggestedActionView, 'actionKind' | 'timeAdvance'>): boolean {
+  return choice.actionKind !== 'wait' || choice.timeAdvance !== undefined;
 }
 
 export interface PlayStateEntryView {
@@ -264,11 +273,12 @@ export function usePlayWorkspace(
     Boolean(historyRetryingArtifactId.value),
   );
   const suggestedActions = computed<PlaySuggestedActionView[]>(() =>
-    (displaySession.value?.suggestedActions ?? []).map((suggestion, index) => ({
+    parsePlayTurnChoices(displaySession.value?.suggestedActions ?? []).map((choice, index) => ({
       id: `${displaySession.value?.id ?? 'play'}-suggestion-${index}`,
-      label: suggestion,
-      userText: suggestion,
-      actionKind: inferActionKind(suggestion),
+      label: choice.text,
+      userText: choice.text,
+      actionKind: choice.actionKind,
+      ...(choice.timeAdvance ? { timeAdvance: choice.timeAdvance } : {}),
     })),
   );
   const worldMomentum = computed(() =>
@@ -478,6 +488,40 @@ export function usePlayWorkspace(
 
     userText.value = '';
     await runAction(action, session.revision);
+  }
+
+  /**
+   * Sends one choice option as this turn's action without touching the composer draft.
+   * Returns false when nothing was sent, so the caller can fall back to editing.
+   */
+  async function submitChoice(choice: {
+    userText: string;
+    actionKind: PlayActionKind;
+    timeAdvance?: PlayRelativeTimeAdvance;
+  }): Promise<boolean> {
+    const session = selectedSession.value;
+    const text = choice.userText.trim();
+    const requestedTimeAdvance = choice.actionKind === 'wait'
+      ? normalizeRelativeTimeAdvance(choice.timeAdvance)
+      : undefined;
+    if (
+      !session ||
+      migration.preview.value ||
+      session.schemaVersion !== 4 ||
+      !text ||
+      (choice.actionKind === 'wait' && !requestedTimeAdvance) ||
+      sending.value ||
+      interactionBlocked.value
+    ) {
+      return false;
+    }
+    await runAction({
+      sessionId: session.id,
+      userText: text,
+      actionKind: choice.actionKind,
+      ...(requestedTimeAdvance ? { timeAdvance: requestedTimeAdvance } : {}),
+    }, session.revision);
+    return true;
   }
 
   /** Adds the composer text to the running turn: cancel it, then resend with the addition. */
@@ -805,6 +849,7 @@ export function usePlayWorkspace(
     selectSession,
     stopTurn,
     steerTurn,
+    submitChoice,
     submitTurn,
   };
 }
@@ -986,25 +1031,6 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function inferActionKind(text: string): PlayActionKind {
-  const normalized = text.trim().toLowerCase();
-
-  if (/^(等待|等到|休息|wait|rest)/u.test(normalized)) {
-    return 'wait';
-  }
-  if (/^(观察|查看|环顾|look|inspect)/u.test(normalized)) {
-    return 'look';
-  }
-  if (/^(前往|走向|离开|进入|move|go|leave|enter)/u.test(normalized)) {
-    return 'move';
-  }
-  if (/^(说|询问|回答|say|ask|tell)/u.test(normalized)) {
-    return 'say';
-  }
-
-  return 'do';
 }
 
 function formatStateValue(value: unknown): string {

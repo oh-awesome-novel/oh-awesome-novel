@@ -26,13 +26,13 @@ import type {
   PlayAdoptionProjection,
   PlayAdoptionSeed,
 } from '../../composables/usePlayAdoptionPreview';
-import { usePlayWorkspace } from '../../composables/usePlayWorkspace';
+import { canSubmitPlayChoiceDirectly, usePlayWorkspace } from '../../composables/usePlayWorkspace';
 import type {
   FileTreeNode,
   PlaySession,
   WorkspaceSummary,
 } from '../../composables/useWorkspaceApi';
-import type { PlaySessionCreateRequest } from '../../composables/usePlayWorkspace';
+import type { PlaySessionCreateRequest, PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
 
 const props = withDefaults(defineProps<{
   workspace: WorkspaceSummary;
@@ -111,6 +111,7 @@ const {
   selectSession,
   stopTurn,
   steerTurn,
+  submitChoice,
   submitTurn,
 } = usePlayWorkspace(props.workspace.path, providerConfigured);
 
@@ -232,12 +233,34 @@ function prepareAdoption(seed: PlayAdoptionSeed): void {
   void adoption.open(seed);
 }
 
-function chooseVisualAction(text: string): void {
+type PlayChoiceAction = Pick<PlaySuggestedActionView, 'userText' | 'actionKind' | 'timeAdvance'>;
+
+/** Sends one choice option as the turn's action; the composer draft is left alone. */
+function sendChoice(choice: PlayChoiceAction): void {
   if (interactionBlocked.value || !providerConfigured.value) return;
-  const suggestion = suggestedActions.value.find(action => action.userText === text);
-  actionKind.value = suggestion?.actionKind ?? 'do';
-  userText.value = text;
-  void submitTurn();
+  if (!canSubmitPlayChoiceDirectly(choice)) {
+    // A wait without a stated duration goes to the composer, where the author sets how long.
+    actionKind.value = 'wait';
+    userText.value = choice.userText;
+    timeAdvance.value = undefined;
+    visualNovelOpen.value = false;
+    return;
+  }
+  void submitChoice(choice);
+}
+
+function chooseVisualAction(text: string): void {
+  sendChoice(suggestedActions.value.find(action => action.userText === text) ?? { userText: text, actionKind: 'do' });
+}
+
+/** The author's own text from the stage; an edited option keeps the kind of the option it came from. */
+function chooseCustomVisualAction(text: string, basedOn?: string): void {
+  const source = suggestedActions.value.find(action => action.userText === basedOn);
+  sendChoice({
+    userText: text,
+    actionKind: source?.actionKind ?? 'do',
+    ...(source?.timeAdvance ? { timeAdvance: source.timeAdvance } : {}),
+  });
 }
 
 function openLaunch(): void {
@@ -463,6 +486,7 @@ function acceptGuidedSession(session: PlaySession): void {
           @load-earlier="loadEarlierTranscript"
           :disabled="interactionBlocked || !providerConfigured"
           @choose="chooseVisualAction"
+          @custom="chooseCustomVisualAction"
           @close="visualNovelOpen = false"
         />
         <PlayTranscript v-else
@@ -499,6 +523,9 @@ function acceptGuidedSession(session: PlaySession): void {
           :running="sending"
           :can-steer="canSteer"
           :follow-ups="followUpControls"
+          :suppress-choice-hotkeys="visualNovelOpen"
+          :show-empty-choices="(displaySession?.transcript ?? selectedSession.transcript).length > 0"
+          @choose="sendChoice"
           @stop="stopTurn"
           @steer="steerTurn"
           @submit="submitTurn"

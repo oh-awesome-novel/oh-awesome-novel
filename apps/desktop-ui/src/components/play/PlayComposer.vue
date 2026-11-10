@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue';
 
 import PlayFollowUpQueue from './PlayFollowUpQueue.vue';
 import PlayTimeAdvanceControl from './PlayTimeAdvanceControl.vue';
@@ -8,7 +8,7 @@ import type {
   PlayRelativeTimeAdvance,
 } from '../../composables/useWorkspaceApi';
 import type { PlayFollowUpControls } from '../../composables/usePlayFollowUpQueue';
-import type { PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
+import { canSubmitPlayChoiceDirectly, type PlaySuggestedActionView } from '../../composables/usePlayWorkspace';
 import type { PlayTurnRunPhase } from '../../composables/usePlayTurnStream';
 
 const userText = defineModel<string>('userText', { required: true });
@@ -27,11 +27,17 @@ const props = defineProps<{
   running?: boolean;
   canSteer?: boolean;
   followUps?: PlayFollowUpControls;
+  /** Another surface (the visual novel stage) owns the number keys. */
+  suppressChoiceHotkeys?: boolean;
+  /** The session has committed turns, so missing options are worth explaining. */
+  showEmptyChoices?: boolean;
 }>();
 
 const emit = defineEmits<{
   /** Sends the action, or queues it while a turn runs. */
   submit: [];
+  /** Sends one option as the turn's action, leaving the composer draft alone. */
+  choose: [suggestion: PlaySuggestedActionView];
   steer: [];
   stop: [];
 }>();
@@ -45,6 +51,12 @@ const actions: Array<{ id: PlayActionKind; label: string }> = [
 ];
 // While a turn runs only that turn holds the composer; other busy work locks it.
 const inputLocked = computed(() => props.disabled || (props.busy && !props.running));
+// Options belong to the last committed turn; they are not offered while anything else runs.
+const choiceLocked = computed(() => props.disabled || props.busy);
+const choices = computed(() => props.suggestions.slice(0, 9));
+const textarea = shallowRef<HTMLTextAreaElement>();
+const kindLabels: Record<PlayActionKind, string> = { say: '说', look: '看', move: '走', do: '做', wait: '等' };
+const unitLabels: Record<PlayRelativeTimeAdvance['unit'], string> = { minute: '分钟', hour: '小时', day: '天' };
 const canSubmit = computed(() =>
   !inputLocked.value && (
     actionKind.value === 'wait'
@@ -94,7 +106,26 @@ function steer() {
   }
 }
 
-function useSuggestion(suggestion: PlaySuggestedActionView) {
+function choiceKindLabel(suggestion: PlaySuggestedActionView): string {
+  const advance = suggestion.timeAdvance;
+  return advance
+    ? `${kindLabels.wait} ${advance.amount} ${unitLabels[advance.unit]}`
+    : kindLabels[suggestion.actionKind];
+}
+
+function pickChoice(suggestion: PlaySuggestedActionView) {
+  if (choiceLocked.value) {
+    return;
+  }
+  // The host never guesses how long a wait lasts: the author sets it in the composer first.
+  if (!canSubmitPlayChoiceDirectly(suggestion)) {
+    editChoice(suggestion);
+    return;
+  }
+  emit('choose', suggestion);
+}
+
+function editChoice(suggestion: PlaySuggestedActionView) {
   if (inputLocked.value) {
     return;
   }
@@ -102,9 +133,45 @@ function useSuggestion(suggestion: PlaySuggestedActionView) {
   actionKind.value = suggestion.actionKind;
   userText.value = suggestion.userText;
   if (suggestion.actionKind === 'wait') {
-    timeAdvance.value = undefined;
+    timeAdvance.value = suggestion.timeAdvance;
+  }
+  textarea.value?.focus();
+}
+
+function writeOwnAction() {
+  if (inputLocked.value) {
+    return;
+  }
+  // Text that is just an untouched option is not a draft worth keeping.
+  if (props.suggestions.some(suggestion => suggestion.userText === userText.value)) {
+    userText.value = '';
+  }
+  textarea.value?.focus();
+}
+
+function handleChoiceHotkey(event: KeyboardEvent) {
+  if (
+    props.suppressChoiceHotkeys || choiceLocked.value || event.repeat || event.isComposing
+    || event.metaKey || event.ctrlKey || event.altKey || !/^[1-9]$/u.test(event.key)
+  ) {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.matches('input, textarea, select') || target.isContentEditable)) {
+    return;
+  }
+  if (document.querySelector('dialog[open], [aria-modal="true"]')) {
+    return;
+  }
+  const choice = choices.value[Number(event.key) - 1];
+  if (choice) {
+    event.preventDefault();
+    pickChoice(choice);
   }
 }
+
+onMounted(() => document.addEventListener('keydown', handleChoiceHotkey));
+onBeforeUnmount(() => document.removeEventListener('keydown', handleChoiceHotkey));
 
 function selectActionKind(value: PlayActionKind) {
   actionKind.value = value;
@@ -147,17 +214,38 @@ function isValidTimeAdvance(
 
 <template>
   <form class="play-composer" @submit.prevent="submit">
-    <div v-if="suggestions.length" class="play-suggestions" aria-label="Suggested actions">
-      <button
-        v-for="suggestion in suggestions"
-        :key="suggestion.id"
-        type="button"
-        :disabled="inputLocked"
-        @click="useSuggestion(suggestion)"
-      >
-        {{ suggestion.label }}
-      </button>
-    </div>
+    <ol v-if="choices.length" class="play-choices" aria-label="候选行动">
+      <li v-for="(suggestion, index) in choices" :key="suggestion.id">
+        <button
+          class="play-choice-pick"
+          type="button"
+          :disabled="choiceLocked"
+          :title="canSubmitPlayChoiceDirectly(suggestion) ? `以这条行动推进本回合（按 ${index + 1}）` : '这条等待没有写明时长，先在下方选择时长'"
+          @click="pickChoice(suggestion)"
+        >
+          <kbd aria-hidden="true">{{ index + 1 }}</kbd>
+          <span class="play-choice-kind">{{ choiceKindLabel(suggestion) }}</span>
+          <span class="play-choice-text">{{ suggestion.label }}</span>
+        </button>
+        <button
+          class="play-choice-edit"
+          type="button"
+          :disabled="inputLocked"
+          :aria-label="`修改候选行动 ${index + 1}`"
+          @click="editChoice(suggestion)"
+        >
+          改一改
+        </button>
+      </li>
+      <li>
+        <button class="play-choice-own" type="button" :disabled="inputLocked" @click="writeOwnAction">
+          自己写
+        </button>
+      </li>
+    </ol>
+    <p v-else-if="showEmptyChoices && !busy" class="play-choices-empty">
+      本回合没有候选行动，在下方写下你的行动。
+    </p>
 
     <div class="play-composer-surface">
       <div class="play-action-kinds" aria-label="Action kind">
@@ -184,6 +272,7 @@ function isValidTimeAdvance(
       <label class="visually-hidden" for="play-action-input">Play action</label>
       <textarea
         id="play-action-input"
+        ref="textarea"
         v-model="userText"
         rows="3"
         :placeholder="placeholder"

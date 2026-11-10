@@ -5,7 +5,7 @@ import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import VisualNovelTextBox from './VisualNovelTextBox.vue';
 import VisualNovelChoiceOverlay from './VisualNovelChoiceOverlay.vue';
 const props = defineProps<{ sessionId: string; scene: string; turns: PlayTranscriptTurn[]; choices: string[]; draft?: string; usageOperationId?: string; disabled: boolean; hasMoreBefore?: boolean; loadingEarlier?: boolean; roster?: unknown; portraits?: unknown; backgrounds?: unknown }>();
-const emit = defineEmits<{ choose: [text: string]; close: []; loadEarlier: [] }>();
+const emit = defineEmits<{ choose: [text: string]; custom: [text: string, basedOn?: string]; close: []; loadEarlier: [] }>();
 const stage = ref<HTMLElement>();
 onMounted(() => stage.value?.focus());
 const beatIndex = ref(0);
@@ -67,6 +67,7 @@ watch(() => Boolean(props.draft), (drafting) => { if (drafting) beatIndex.value 
 watch(() => selected.value?.id, () => { beatIndex.value = 0; });
 watch(() => props.turns, () => { if (historicalId.value && !narratives.value.some(turn => turn.id === historicalId.value)) historicalId.value = undefined; });
 function choose(text: string): void { if (!props.disabled && !props.draft && !historicalId.value) emit('choose', text); }
+function custom(text: string, basedOn?: string): void { if (!props.disabled && !props.draft && !historicalId.value) emit('custom', text, basedOn); }
 function keydown(event: KeyboardEvent): void {
   if (event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable)) return;
   if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); textbox.value?.advance(); }
@@ -79,7 +80,7 @@ function keydown(event: KeyboardEvent): void {
     <header><strong>{{ snapshot.sceneId }}</strong><div><button type="button" @click="logOpen = !logOpen">Log · 历史</button><button type="button" @click="emit('close')">返回推演工作台</button></div></header>
     <p v-if="draft && !historicalId" role="status">正在演出草稿 · 尚未保存</p>
     <div class="vn-cast" aria-label="在场角色"><span v-for="character in cast" :key="character.characterId" :class="[character.position, { speaking: beat?.speaker === character.label || beat?.speaker === character.characterId }]"><img v-if="character.portrait" :src="character.portrait" :alt="character.label" />{{ character.label }}</span></div>
-    <VisualNovelChoiceOverlay v-if="isLast && !historicalId && !draft" :choices="choices" :disabled="disabled" @choose="choose" />
+    <VisualNovelChoiceOverlay v-if="isLast && !historicalId && !draft" :choices="choices" :disabled="disabled" @choose="choose" @custom="custom" />
     <VisualNovelTextBox ref="textbox" :beat="beat" :usage-operation-id="draft && !historicalId ? usageOperationId : undefined" :usage-message-id="!draft ? selected?.id : undefined" @next="beatIndex = Math.min(beatIndex + 1, snapshot.beats.length - 1)" />
     <aside v-if="logOpen" class="vn-log" aria-label="历史文本"><button v-if="hasMoreBefore" type="button" :disabled="loadingEarlier" @click="emit('loadEarlier')">加载更早回合</button><button type="button" @click="historicalId = undefined; beatIndex = 0">回到当前回合</button><article v-for="turn in narratives" :key="turn.id"><button type="button" @click="historicalId = turn.id; beatIndex = 0">回看 {{ turn.createdAt }}</button><p>{{ turn.content }}</p></article></aside>
   </section>

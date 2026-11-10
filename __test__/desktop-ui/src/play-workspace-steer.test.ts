@@ -147,6 +147,57 @@ describe('PlayWorkspace steer and follow-up', () => {
     wrapper.unmount();
   });
 
+  it('plays three turns by picking an option, editing one, and writing a new action', async () => {
+    const calls: Array<TurnInput & { timeAdvance?: unknown }> = [];
+    const options = ['[say] 问她昨晚去了哪里', '[wait 2h] 守在门外', '[look] 检查门锁'];
+    session = { ...createSession(1), suggestedActions: options };
+    api.streamPlayWorldRefereeTurn.mockImplementation(async function* (
+      _id: string,
+      input: TurnInput,
+      streamOptions?: PlayTurnStreamOptions,
+    ) {
+      calls.push(input);
+      const turnId = `run-${calls.length}`;
+      streamOptions?.onTurnId?.(turnId);
+      yield startedEvent(turnId, input.baseRevision ?? 0);
+      session = { ...createSession((input.baseRevision ?? 0) + 1), suggestedActions: options };
+      yield committedEvent(turnId, session);
+    });
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    // The type tag is parsed away; the author sees only the action.
+    expect(wrapper.findAll('.play-choice-text').map(choice => choice.text())).toEqual([
+      '问她昨晚去了哪里', '守在门外', '检查门锁',
+    ]);
+
+    // Turn 1: take an option as written, with its stated wait duration, keeping the draft.
+    const textarea = wrapper.get<HTMLTextAreaElement>('.play-composer textarea');
+    await textarea.setValue('草稿');
+    await wrapper.findAll('.play-choice-pick')[1]!.trigger('click');
+    await flushPromises();
+    expect(calls[0]).toMatchObject({
+      userText: '守在门外', actionKind: 'wait', timeAdvance: { amount: 2, unit: 'hour' }, baseRevision: 1,
+    });
+    expect(wrapper.get<HTMLTextAreaElement>('.play-composer textarea').element.value).toBe('草稿');
+
+    // Turn 2: edit an option, keeping its kind.
+    await wrapper.findAll('.play-choice-edit')[0]!.trigger('click');
+    await wrapper.get('.play-composer textarea').setValue('问她昨晚去了哪里，语气放软');
+    await wrapper.get('.play-composer').trigger('submit');
+    await flushPromises();
+    expect(calls[1]).toMatchObject({ userText: '问她昨晚去了哪里，语气放软', actionKind: 'say', baseRevision: 2 });
+
+    // Turn 3: a new action of the author's own.
+    await wrapper.get('.play-choice-own').trigger('click');
+    await wrapper.get('.play-composer textarea').setValue('翻窗离开');
+    await wrapper.get('.play-composer').trigger('submit');
+    await flushPromises();
+    expect(calls[2]).toMatchObject({ userText: '翻窗离开', baseRevision: 3 });
+    expect(calls).toHaveLength(3);
+    wrapper.unmount();
+  });
+
   it('sends a queued action after the turn commits, using the new revision', async () => {
     const calls: TurnInput[] = [];
     const gate = deferred<void>();

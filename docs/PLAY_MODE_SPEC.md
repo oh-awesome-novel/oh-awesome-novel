@@ -113,6 +113,15 @@ session snapshot 采用 sibling staging directory + ready marker + directory swa
 - `POST .../turns/stream` 可带可选 `delivery: 'steer' | 'follow_up'`，只记入消息日志 `author_action.data.delivery`。
 - Rehearsal 中 actor 生成时的插话映射为该 step 的 `redirectStep`（Retry 立即停止后改写原 step；新 step 等 draft 生成后改写），沿用 redirect 的约束校验；可选 `delivery: 'steer'` 只进入消息日志。
 
+### Turn Choice Options
+
+每回合的本轮回合要求向裁判要求 3–4 条候选行动，写入结算的 `suggestedActions`。存储合同不变：最多 6 条字符串，随分支快照保存；规则在消息尾部，冻结前缀不含它，因此旧会话同样适用。
+
+- 每条以一个类型前缀开头：`[say]`、`[look]`、`[move]`、`[do]`，或带整数时长的 `[wait Nm]`、`[wait Nh]`、`[wait Nd]`。`play-turn-choices.ts` 的 `parsePlayTurnChoice` 是唯一把存储字符串转成行动类型、等待时长和显示文本的地方；界面不显示前缀。
+- 没有可识别前缀的字符串按原文显示，行动类型沿用措辞推断。宿主不从措辞推断等待时长：只有前缀写明且不超过一年的时长才成为 typed wait，否则由作者在输入区选择。
+- 候选项是输入辅助。直接选、修改后选和自己写提交的都是普通作者行动，走同一回合事务；候选项不足不使回合失败。
+- 结算可见性为 `playerUnknown` 的回合仍不保存候选项。按需生成候选项由 [1450](tasks/1450.md) 提供，尚未实现。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：
@@ -124,6 +133,7 @@ Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 
 - `play-session-facts.ts`：selected path、branch snapshot、ledger provenance、事实 projection 与严格 stored-fact codec。
 - `play-turn-graph.ts`：隐式 checkpoint 摘要、selected path 恢复与 sibling variant 语义。
 - `play-turn-retry.ts`：before-turn 投影、typed source action、原子 sibling settlement 与稳定 retry error code。
+- `play-turn-choices.ts`：候选行动的回合规则与类型前缀解析，无 Play 运行时依赖。
 - `play-session.ts`：session lifecycle、referee settlement、staged snapshot、migration 与兼容 public interface。
 
 后续 Pressure / Agenda、checkpoint / variant、context trace、migration confirmation 等新增能力应建立独立深模块，再由 facade 组合；不得把新的领域状态机继续直接堆入 `play-session.ts`。包入口继续通过现有 Play public interface 暴露能力，包内文件拆分不应迫使 Backend、Client 或 Desktop UI 改用私有路径。
