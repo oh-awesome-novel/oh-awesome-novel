@@ -1927,6 +1927,193 @@ describe('reference full deconstruction backend', () => {
     await expect(staleAccept.json()).resolves.toMatchObject({ code: 'stalePreview' });
     await expect(readFile(targetPath, 'utf8')).resolves.toBe(externalContent);
   });
+
+  it('preflights an adoption batch without the model and rebuilds adoption records from review data', async () => {
+    const workspaceRoot = await createOanWorkspace();
+    let modelCalls = 0;
+    const backend = await startCompleteReferenceBackend(workspaceRoot, {
+      runReferenceMaterialAdoption: async (input) => {
+        modelCalls += 1;
+        return {
+          status: 'completed',
+          finishReason: 'stop',
+          plan: createReferenceMaterialAdoptionPlan(input.context, {
+            targets: input.context.targets.map((target) => ({
+              targetId: target.id,
+              decision: target.targetExisted ? 'update' : 'create',
+              reason: 'Adopt the selected entry.',
+              draft: `# Adopted ${target.entries.map((entry) => entry.id).join(', ')}\n`,
+            })),
+          }),
+        };
+      },
+    });
+    servers.push(backend);
+    await activateWritingProfile(backend.url, 'fanfictionWriting');
+    const referenceId = await importReference(backend.url, 'Preflight Source');
+    const ready = await createReviewReadyRunForReference(backend.url, referenceId, 'preflight-source');
+    await publishAndAcceptReferenceRun({
+      workspaceRoot,
+      backendUrl: backend.url,
+      referenceId,
+      run: ready,
+      idempotencyKey: 'publish-preflight-source',
+    });
+    await mkdir(join(workspaceRoot, 'characters', 'lin'), { recursive: true });
+    await writeFile(join(workspaceRoot, 'characters', 'lin', 'personality.md'), '# Lin\n', 'utf8');
+    await mkdir(join(workspaceRoot, 'world', 'magic'), { recursive: true });
+    await writeFile(join(workspaceRoot, 'world', 'magic', 'rules.md'), '# Rules\n', 'utf8');
+
+    type Issue = { code: string; severity: string; entryIds: string[]; targetFile?: string; message: string };
+    const referenceUrl = `${backend.url}/api/workspace/references/${referenceId}`;
+    const catalogEnvelope = await fetchJson<{
+      catalog: { fingerprint: string; entries: Array<{ id: string; materialKind: string }> };
+      targetSuggestions: Record<string, unknown>;
+    }>(`${referenceUrl}/materials`);
+    expect(catalogEnvelope.targetSuggestions).toMatchObject({
+      world: ['world/magic/rules.md'],
+      characters: ['characters/lin/personality.md'],
+      relationships: ['characters/lin/relationships.yaml'],
+      truncated: false,
+    });
+    const world = catalogEnvelope.catalog.entries.find((entry) => entry.materialKind === 'world')!;
+    const character = catalogEnvelope.catalog.entries.find((entry) => entry.materialKind === 'characters')!;
+    expect(world).toBeDefined();
+    expect(character).toBeDefined();
+    const preflight = (selections: unknown[], catalogFingerprint = catalogEnvelope.catalog.fingerprint) =>
+      fetchJson<{
+        preflight: {
+          status: 'ready' | 'blocked';
+          targetCount: number;
+          targets: Array<{ targetFile: string; operation: string; entryIds: string[] }>;
+          issues: Issue[];
+        };
+      }>(`${referenceUrl}/material-adoption-preflight`, {
+        method: 'POST',
+        body: JSON.stringify({ catalogFingerprint, selections }),
+      });
+
+    // Every conflict is explained in one pass, and nothing is generated.
+    const blocked = await preflight([
+      { entryId: world.id, targetFile: '../outside.md' },
+      { entryId: character.id, targetFile: 'world/magic/rules.md' },
+      { entryId: 'not-a-published-entry', targetFile: 'world/magic/x.md' },
+      { entryId: world.id, targetFile: 'world/magic/again.md' },
+    ]);
+    expect(blocked.preflight.status).toBe('blocked');
+    expect(blocked.preflight.issues.map((issue) => issue.code).sort()).toEqual([
+      'duplicateEntry', 'entryNotPublished', 'illegalTargetPath', 'targetKindMismatch',
+    ]);
+    expect(blocked.preflight.issues.every((issue) => issue.severity === 'error')).toBe(true);
+
+    const mixed = await preflight([
+      { entryId: world.id, targetFile: 'characters/lin/personality.md' },
+      { entryId: character.id, targetFile: 'characters/lin/personality.md' },
+    ]);
+    // The world entry cannot target a character file at all, so only the kind mismatch is reported.
+    expect(mixed.preflight.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.code))
+      .toEqual(['targetKindMismatch']);
+
+    expect((await preflight([{ entryId: world.id, targetFile: 'world/magic/new.md' }], 'f'.repeat(64)))
+      .preflight.issues.map((issue) => issue.code)).toContain('catalogChanged');
+    expect((await preflight([])).preflight.status).toBe('blocked');
+
+    // After remapping, the batch is ready and says what each target will do.
+    const worldTarget = 'world/magic/rules.md';
+    const characterTarget = 'characters/lin/summary.md';
+    const readyBatch = [
+      { entryId: world.id, targetFile: worldTarget },
+      { entryId: character.id, targetFile: characterTarget },
+    ];
+    const ok = await preflight(readyBatch);
+    expect(ok.preflight).toMatchObject({
+      status: 'ready',
+      targetCount: 2,
+      targets: [
+        { targetFile: characterTarget, operation: 'create', entryIds: [character.id] },
+        { targetFile: worldTarget, operation: 'update', entryIds: [world.id] },
+      ],
+    });
+    expect(ok.preflight.issues.map((issue) => [issue.code, issue.severity, issue.targetFile])).toEqual([
+      ['existingCharacter', 'notice', characterTarget],
+      ['existingTarget', 'notice', worldTarget],
+    ]);
+    expect(modelCalls).toBe(0);
+    await expect(readFile(join(workspaceRoot, worldTarget), 'utf8')).resolves.toBe('# Rules\n');
+    await expect(readOptionalFile(join(workspaceRoot, characterTarget))).resolves.toBeUndefined();
+
+    type Records = {
+      coverage: string;
+      records: Array<{
+        pendingActionId: string;
+        status: string;
+        currentPublication: boolean;
+        entryEvidence: string;
+        commit?: string;
+        targets: Array<{ operation: string; path: string }>;
+        entries: Array<{ entryId: string; targetFile: string; decision: string }>;
+      }>;
+    };
+    const readRecords = () => fetchJson<Records>(`${referenceUrl}/material-adoption-records`);
+    await expect(readRecords()).resolves.toEqual({
+      referenceId,
+      records: [],
+      coverage: 'retainedReviewDataOnly',
+    });
+
+    const createPending = async (selections: unknown[]) => {
+      const preview = await fetchJson<{ preview: { id: string; fingerprint: string } }>(
+        `${referenceUrl}/material-adoption-previews`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ catalogFingerprint: catalogEnvelope.catalog.fingerprint, selections }),
+        },
+      );
+      const pending = await fetchJson<{ pendingAction: { id: string } }>(
+        `${referenceUrl}/material-adoption-previews/${preview.preview.id}/pending-action`,
+        { method: 'POST', body: JSON.stringify({ fingerprint: preview.preview.fingerprint }) },
+      );
+      return pending.pendingAction.id;
+    };
+    // A preview alone is not an adoption record.
+    await fetchJson(`${referenceUrl}/material-adoption-previews`, {
+      method: 'POST',
+      body: JSON.stringify({
+        catalogFingerprint: catalogEnvelope.catalog.fingerprint,
+        selections: [{ entryId: world.id, targetFile: 'world/magic/preview-only.md' }],
+      }),
+    });
+    expect((await readRecords()).records).toEqual([]);
+
+    const acceptedId = await createPending(readyBatch);
+    expect((await readRecords()).records).toMatchObject([{
+      pendingActionId: acceptedId,
+      status: 'pending',
+      currentPublication: true,
+      entryEvidence: 'available',
+    }]);
+    await fetchJson(`${backend.url}/api/workspace/pending-actions/${acceptedId}/accept`, { method: 'POST' });
+    const rejectedId = await createPending([{ entryId: world.id, targetFile: 'world/magic/rejected.md' }]);
+    await fetchJson(`${backend.url}/api/workspace/pending-actions/${rejectedId}/reject`, { method: 'POST' });
+
+    const records = await readRecords();
+    expect(records.records.map((record) => record.status).sort()).toEqual(['accepted', 'rejected']);
+    const accepted = records.records.find((record) => record.pendingActionId === acceptedId)!;
+    expect(accepted.entries.map((entry) => [entry.entryId, entry.targetFile, entry.decision]).sort()).toEqual([
+      [character.id, characterTarget, 'create'],
+      [world.id, worldTarget, 'update'],
+    ].sort());
+    expect(accepted.targets.map((target) => target.path).sort()).toEqual([characterTarget, worldTarget]);
+
+    // When the preview record is gone, the record keeps what the review data still proves.
+    await rm(join(
+      workspaceRoot, '.workspace', 'change-engine', 'v1', 'domain',
+      'reference-material-adoption-previews', `${acceptedId}.json`,
+    ));
+    const afterCleanup = (await readRecords()).records.find((record) => record.pendingActionId === acceptedId)!;
+    expect(afterCleanup).toMatchObject({ status: 'accepted', entryEvidence: 'missing', entries: [] });
+    expect(afterCleanup.targets.map((target) => target.path).sort()).toEqual([characterTarget, worldTarget]);
+  });
 });
 
 interface RunProjection {

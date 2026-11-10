@@ -132,16 +132,23 @@ import type {
   RetryReferenceDeconstructionRunInput,
 } from './reference-deconstruction.js';
 import {
+  assertReferenceMaterialAdoptionPreflightInput,
   assertReferenceMaterialAdoptionPreviewInput,
   parseReferenceMaterialAdoptionCatalogEnvelope,
   parseReferenceMaterialAdoptionPendingActionResult,
+  parseReferenceMaterialAdoptionPreflightEnvelope,
   parseReferenceMaterialAdoptionPreviewResult,
+  parseReferenceMaterialAdoptionRecords,
 } from './reference-material-adoption.js';
 import type {
   ReferenceMaterialAdoptionCatalog,
   ReferenceMaterialAdoptionPendingActionResult,
+  ReferenceMaterialAdoptionPreflight,
+  ReferenceMaterialAdoptionPreflightInput,
   ReferenceMaterialAdoptionPreviewResult,
+  ReferenceMaterialAdoptionRecords,
   ReferenceMaterialAdoptionSelection,
+  ReferenceMaterialAdoptionTargetSuggestions,
 } from './reference-material-adoption.js';
 import {
   assertCloneWritingProfileInput,
@@ -270,15 +277,25 @@ export type {
   ReferenceMaterialAdoptionDecision,
   ReferenceMaterialAdoptionEntry,
   ReferenceMaterialAdoptionPendingActionResult,
+  ReferenceMaterialAdoptionPreflight,
+  ReferenceMaterialAdoptionPreflightInput,
+  ReferenceMaterialAdoptionPreflightIssue,
+  ReferenceMaterialAdoptionPreflightIssueCode,
   ReferenceMaterialAdoptionPreview,
   ReferenceMaterialAdoptionPreviewResult,
+  ReferenceMaterialAdoptionRecord,
+  ReferenceMaterialAdoptionRecords,
   ReferenceMaterialAdoptionSelection,
+  ReferenceMaterialAdoptionTargetSuggestions,
 } from './reference-material-adoption.js';
 export {
+  assertReferenceMaterialAdoptionPreflightInput,
   assertReferenceMaterialAdoptionPreviewInput,
   parseReferenceMaterialAdoptionCatalogEnvelope,
   parseReferenceMaterialAdoptionPendingActionResult,
+  parseReferenceMaterialAdoptionPreflightEnvelope,
   parseReferenceMaterialAdoptionPreviewResult,
+  parseReferenceMaterialAdoptionRecords,
 } from './reference-material-adoption.js';
 
 export type ThemeMode = 'light' | 'dark';
@@ -2005,7 +2022,18 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
   ): Promise<ReferenceDeconstructionPublishResult>;
   getReferenceMaterialAdoptionCatalog(
     referenceId: string,
-  ): Promise<{ catalog: ReferenceMaterialAdoptionCatalog }>;
+  ): Promise<{
+    catalog: ReferenceMaterialAdoptionCatalog;
+    targetSuggestions: ReferenceMaterialAdoptionTargetSuggestions;
+  }>;
+  /** Checks a batch without calling the model; bad targets come back as issues, not errors. */
+  preflightReferenceMaterialAdoption(
+    referenceId: string,
+    input: ReferenceMaterialAdoptionPreflightInput,
+  ): Promise<{ preflight: ReferenceMaterialAdoptionPreflight }>;
+  listReferenceMaterialAdoptionRecords(
+    referenceId: string,
+  ): Promise<ReferenceMaterialAdoptionRecords>;
   createReferenceMaterialAdoptionPreview(
     referenceId: string,
     input: {
@@ -2574,6 +2602,22 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         value,
         referenceId,
       ));
+    },
+    preflightReferenceMaterialAdoption: (referenceIdValue, input) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      assertReferenceMaterialAdoptionPreflightInput(input);
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        '/material-adoption-preflight',
+        { method: 'POST', body: input },
+      ).then((value) => parseReferenceMaterialAdoptionPreflightEnvelope(value, referenceId));
+    },
+    listReferenceMaterialAdoptionRecords: (referenceIdValue) => {
+      const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');
+      return requestJson<unknown>(
+        `/api/workspace/references/${encodeURIComponent(referenceId)}` +
+        '/material-adoption-records',
+      ).then((value) => parseReferenceMaterialAdoptionRecords(value, referenceId));
     },
     createReferenceMaterialAdoptionPreview: (referenceIdValue, input) => {
       const referenceId = assertReferenceWireId(referenceIdValue, 'Reference id');

@@ -806,6 +806,18 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       referenceMaterialAdoption.readCatalog(
         context.req.param('referenceId') ?? '',
       )));
+  app.post('/api/workspace/references/:referenceId/material-adoption-preflight', (context) =>
+    handlePreflightReferenceMaterialAdoption(
+      referenceMaterialAdoption,
+      context.req.param('referenceId') ?? '',
+      context,
+    ));
+  app.get('/api/workspace/references/:referenceId/material-adoption-records', (context) =>
+    handleReferenceMaterialAdoptionRequest(context, () => {
+      const referenceId = context.req.param('referenceId') ?? '';
+      requireReferenceWireId(referenceId, 'referenceId');
+      return referenceMaterialAdoption.listRecords(referenceId);
+    }));
   app.post('/api/workspace/references/:referenceId/material-adoption-previews', (context) =>
     handleCreateReferenceMaterialAdoptionPreview(
       referenceMaterialAdoption,
@@ -2545,6 +2557,50 @@ async function handlePublishReferenceDeconstructionRun(
       context,
     );
     return controller.publishRun(referenceId, runId, input);
+  });
+}
+
+/** Accepts targets the preview would reject, so the preflight can explain them instead of failing. */
+async function handlePreflightReferenceMaterialAdoption(
+  controller: ReferenceMaterialAdoptionController,
+  referenceId: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  return handleReferenceMaterialAdoptionRequest(context, async () => {
+    requireReferenceWireId(referenceId, 'referenceId');
+    const body = await readJsonBody(context);
+    assertOnlyJsonFields(body, ['catalogFingerprint', 'selections']);
+    const catalogFingerprint = getOptionalString(body, 'catalogFingerprint') ?? '';
+    if (!/^[a-f0-9]{64}$/u.test(catalogFingerprint)) {
+      throw new InvalidJsonBodyError('catalogFingerprint must be a sha256 value.');
+    }
+    if (!Array.isArray(body.selections) || body.selections.length > 512) {
+      throw new InvalidJsonBodyError('selections must be an array of at most 512 items.');
+    }
+    const selections = body.selections.map((value, index): ReferenceMaterialAdoptionSelection => {
+      if (!isRecord(value)) {
+        throw new InvalidJsonBodyError(`selections[${index}] must be an object.`);
+      }
+      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath']);
+      if (
+        typeof value.entryId !== 'string'
+        || typeof value.targetFile !== 'string'
+        || value.entryId.length > 200
+        || value.targetFile.length > 1_000
+        || (value.targetPath !== undefined
+          && (typeof value.targetPath !== 'string' || value.targetPath.length > 300))
+      ) {
+        throw new InvalidJsonBodyError(
+          `selections[${index}] requires string entryId and targetFile.`,
+        );
+      }
+      return {
+        entryId: value.entryId,
+        targetFile: value.targetFile,
+        ...(value.targetPath ? { targetPath: value.targetPath } : {}),
+      };
+    });
+    return controller.preflight(referenceId, { catalogFingerprint, selections });
   });
 }
 

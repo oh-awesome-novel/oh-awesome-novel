@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 
 import { parse } from 'yaml';
@@ -23,6 +23,10 @@ export const REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION = 1 as const;
 export const MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS = 64 as const;
 export const MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS = 32 as const;
 export const MAX_REFERENCE_MATERIAL_ADOPTION_BASELINE_CHARS = 512_000 as const;
+/** Above this much selected material the preflight suggests splitting the batch; it is not a hard limit. */
+export const REFERENCE_MATERIAL_ADOPTION_LARGE_BATCH_CHARS = 120_000 as const;
+export const MAX_REFERENCE_MATERIAL_ADOPTION_PREFLIGHT_SELECTIONS = 512 as const;
+export const MAX_REFERENCE_MATERIAL_ADOPTION_TARGET_SUGGESTIONS = 200 as const;
 
 export interface ReferenceMaterialAdoptionEntry {
   id: string;
@@ -204,6 +208,366 @@ export async function readReferenceMaterialAdoptionCatalog(
     ...catalogCore,
     fingerprint: sha256(stableSerialize(catalogCore)),
   };
+}
+
+export type ReferenceMaterialAdoptionPreflightIssueCode =
+  | 'catalogChanged'
+  | 'entryNotPublished'
+  | 'duplicateEntry'
+  | 'illegalTargetPath'
+  | 'targetKindMismatch'
+  | 'mixedTarget'
+  | 'targetUnreadable'
+  | 'tooManySelections'
+  | 'tooManyTargets'
+  | 'existingTarget'
+  | 'existingCharacter'
+  | 'sharedTarget'
+  | 'largeBatch';
+
+export interface ReferenceMaterialAdoptionPreflightIssue {
+  code: ReferenceMaterialAdoptionPreflightIssueCode;
+  /** `error` blocks generation; `notice` only explains what the batch will do. */
+  severity: 'error' | 'notice';
+  message: string;
+  entryIds: string[];
+  targetFile?: string;
+}
+
+export interface ReferenceMaterialAdoptionPreflightTarget {
+  materialKind: ReferenceStoryMaterialKind;
+  targetFile: string;
+  targetPath?: string;
+  entryIds: string[];
+  operation: 'create' | 'update';
+}
+
+export interface ReferenceMaterialAdoptionPreflight {
+  schemaVersion: typeof REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION;
+  referenceId: string;
+  /** The catalog the batch was checked against, which may be newer than the one the author selected from. */
+  catalogFingerprint: string;
+  status: 'ready' | 'blocked';
+  selectionCount: number;
+  targetCount: number;
+  materialChars: number;
+  limits: { selections: number; targets: number; largeBatchChars: number };
+  targets: ReferenceMaterialAdoptionPreflightTarget[];
+  issues: ReferenceMaterialAdoptionPreflightIssue[];
+}
+
+export type ReferenceMaterialAdoptionTargetSuggestions =
+  Record<ReferenceStoryMaterialKind, string[]> & { truncated: boolean };
+
+const TARGET_PATTERN_HINT: Record<ReferenceStoryMaterialKind, string> = {
+  world: 'world/<主题>/<文件>.md',
+  characters: 'characters/<角色ID>/<文件>.md',
+  relationships: 'characters/<角色ID>/relationships.yaml',
+  outline: 'outline/<文件>.md',
+  timeline: 'timeline/<文件>.yaml，并填写 YAML 路径',
+};
+
+/**
+ * Explains a batch before any model call: every problem the preview would
+ * reject, plus what each target will do. It reads only the published catalog
+ * and whether targets exist, and never throws for a bad selection.
+ */
+export async function preflightReferenceMaterialAdoption(input: {
+  workspaceRoot: string;
+  referenceId: string;
+  catalogFingerprint: string;
+  selections: readonly ReferenceMaterialAdoptionSelection[];
+}): Promise<ReferenceMaterialAdoptionPreflight> {
+  const catalog = await readReferenceMaterialAdoptionCatalog(
+    input.workspaceRoot,
+    input.referenceId,
+  );
+  if (
+    !Array.isArray(input.selections)
+    || input.selections.length > MAX_REFERENCE_MATERIAL_ADOPTION_PREFLIGHT_SELECTIONS
+  ) {
+    throw new Error('Story Material adoption preflight selections are invalid.');
+  }
+  const issues: ReferenceMaterialAdoptionPreflightIssue[] = [];
+  if (input.catalogFingerprint !== catalog.fingerprint) {
+    issues.push({
+      code: 'catalogChanged',
+      severity: 'error',
+      message: '参考材料在你选择之后已重新发布或变更，请刷新材料列表后重新选择。',
+      entryIds: [],
+    });
+  }
+  if (input.selections.length > MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS) {
+    issues.push({
+      code: 'tooManySelections',
+      severity: 'error',
+      message: `一批最多采用 ${MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS} 条材料，当前选了 ${input.selections.length} 条，请分批处理。`,
+      entryIds: [],
+    });
+  }
+
+  const workspaceRealpath = await realpath(input.workspaceRoot);
+  const seen = new Set<string>();
+  const groups = new Map<string, ReferenceMaterialAdoptionPreflightTarget & { conflict: boolean }>();
+  let materialChars = 0;
+  for (const selection of input.selections) {
+    const entryId = typeof selection?.entryId === 'string' ? selection.entryId : '';
+    const entry = catalog.entries.find((candidate) => candidate.id === entryId);
+    if (!entry) {
+      issues.push({
+        code: 'entryNotPublished',
+        severity: 'error',
+        message: `材料条目 ${entryId || '（空）'} 不在当前已发布的材料中，请移除后重选。`,
+        entryIds: entryId ? [entryId] : [],
+      });
+      continue;
+    }
+    if (seen.has(entry.id)) {
+      issues.push({
+        code: 'duplicateEntry',
+        severity: 'error',
+        message: `「${entry.title}」被重复选择，每条材料一批只能采用一次。`,
+        entryIds: [entry.id],
+      });
+      continue;
+    }
+    seen.add(entry.id);
+    materialChars += entry.content.length
+      + entry.details.reduce((total, detail) => total + detail.length, 0);
+
+    let target: { targetFile: string; targetPath?: string };
+    try {
+      safeWorkspacePath(selection.targetFile);
+    } catch {
+      issues.push({
+        code: 'illegalTargetPath',
+        severity: 'error',
+        message: `「${entry.title}」的目标路径不合法：必须是作品目录内的相对路径，不能含 ..、隐藏目录、反斜杠或以 / 开头。`,
+        entryIds: [entry.id],
+        ...(typeof selection.targetFile === 'string' && selection.targetFile
+          ? { targetFile: selection.targetFile }
+          : {}),
+      });
+      continue;
+    }
+    try {
+      target = normalizeAdoptionTarget(entry.materialKind, selection.targetFile, selection.targetPath);
+    } catch {
+      issues.push({
+        code: 'targetKindMismatch',
+        severity: 'error',
+        message: `「${entry.title}」是${MATERIAL_KIND_LABEL[entry.materialKind]}材料，目标应为 ${TARGET_PATTERN_HINT[entry.materialKind]}。`,
+        entryIds: [entry.id],
+        targetFile: selection.targetFile,
+      });
+      continue;
+    }
+
+    const existing = groups.get(target.targetFile);
+    if (!existing) {
+      groups.set(target.targetFile, {
+        materialKind: entry.materialKind,
+        targetFile: target.targetFile,
+        ...(target.targetPath ? { targetPath: target.targetPath } : {}),
+        entryIds: [entry.id],
+        operation: 'create',
+        conflict: false,
+      });
+      continue;
+    }
+    existing.entryIds.push(entry.id);
+    if (existing.materialKind !== entry.materialKind || existing.targetPath !== target.targetPath) {
+      existing.conflict = true;
+    }
+  }
+
+  const targets: ReferenceMaterialAdoptionPreflightTarget[] = [];
+  for (const { conflict, ...group } of [...groups.values()]
+    .sort((left, right) => left.targetFile.localeCompare(right.targetFile))) {
+    if (conflict) {
+      issues.push({
+        code: 'mixedTarget',
+        severity: 'error',
+        message: `${group.targetFile} 同时被不同类型的材料或不同的 YAML 路径指向。一个目标文件只能接收同一类型、同一路径的材料，请给其中几条换一个目标。`,
+        entryIds: [...group.entryIds],
+        targetFile: group.targetFile,
+      });
+      continue;
+    }
+    let exists: boolean;
+    try {
+      exists = (await readWorkspaceTargetBaseline(workspaceRealpath, group.targetFile)).exists;
+    } catch {
+      issues.push({
+        code: 'targetUnreadable',
+        severity: 'error',
+        message: `${group.targetFile} 不能作为目标：它不是普通文件、路径中有符号链接，或文件过大。`,
+        entryIds: [...group.entryIds],
+        targetFile: group.targetFile,
+      });
+      continue;
+    }
+    targets.push({ ...group, operation: exists ? 'update' : 'create' });
+    if (exists) {
+      issues.push({
+        code: 'existingTarget',
+        severity: 'notice',
+        message: `${group.targetFile} 已存在，将在现有内容上修改，不会新建。`,
+        entryIds: [...group.entryIds],
+        targetFile: group.targetFile,
+      });
+    } else if (
+      group.materialKind !== 'world'
+      && group.targetFile.startsWith('characters/')
+      && await isDirectory(resolve(workspaceRealpath, 'characters', group.targetFile.split('/')[1]!))
+    ) {
+      issues.push({
+        code: 'existingCharacter',
+        severity: 'notice',
+        message: `角色 ${group.targetFile.split('/')[1]} 已存在，将为它新增文件 ${group.targetFile.split('/').slice(2).join('/')}。如果这是另一个同名角色，请换一个角色 ID。`,
+        entryIds: [...group.entryIds],
+        targetFile: group.targetFile,
+      });
+    }
+    if (group.entryIds.length > 1) {
+      issues.push({
+        code: 'sharedTarget',
+        severity: 'notice',
+        message: `${group.entryIds.length} 条材料将合并写入 ${group.targetFile}。`,
+        entryIds: [...group.entryIds],
+        targetFile: group.targetFile,
+      });
+    }
+  }
+  if (groups.size > MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS) {
+    issues.push({
+      code: 'tooManyTargets',
+      severity: 'error',
+      message: `一批最多写入 ${MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS} 个目标文件，当前有 ${groups.size} 个，请分批处理或合并目标。`,
+      entryIds: [],
+    });
+  }
+  if (materialChars > REFERENCE_MATERIAL_ADOPTION_LARGE_BATCH_CHARS) {
+    issues.push({
+      code: 'largeBatch',
+      severity: 'notice',
+      message: `本批材料约 ${materialChars} 字，生成会比较慢，也更容易超出模型窗口。可以考虑分批采用。`,
+      entryIds: [],
+    });
+  }
+
+  return {
+    schemaVersion: REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION,
+    referenceId: catalog.referenceId,
+    catalogFingerprint: catalog.fingerprint,
+    status: input.selections.length > 0 && issues.every((issue) => issue.severity !== 'error')
+      ? 'ready'
+      : 'blocked',
+    selectionCount: input.selections.length,
+    targetCount: groups.size,
+    materialChars,
+    limits: {
+      selections: MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS,
+      targets: MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS,
+      largeBatchChars: REFERENCE_MATERIAL_ADOPTION_LARGE_BATCH_CHARS,
+    },
+    targets,
+    issues,
+  };
+}
+
+/**
+ * Existing workspace files each material kind may legally target, from a
+ * bounded host listing. Only suggestions: every target is validated again by
+ * the preflight and the preview.
+ */
+export async function listReferenceMaterialAdoptionTargetSuggestions(
+  workspaceRoot: string,
+): Promise<ReferenceMaterialAdoptionTargetSuggestions> {
+  const workspaceRealpath = await realpath(workspaceRoot);
+  const state = { visited: 0, truncated: false };
+  const result: ReferenceMaterialAdoptionTargetSuggestions = {
+    world: [], characters: [], relationships: [], outline: [], timeline: [], truncated: false,
+  };
+  const add = (kind: ReferenceStoryMaterialKind, path: string): void => {
+    if (result[kind].length >= MAX_REFERENCE_MATERIAL_ADOPTION_TARGET_SUGGESTIONS) {
+      state.truncated = true;
+      return;
+    }
+    try {
+      normalizeAdoptionTarget(kind, path, kind === 'timeline' ? 'events' : undefined);
+      result[kind].push(path);
+    } catch {
+      // Files the adoption contract cannot target are simply not suggested.
+    }
+  };
+  for (const path of await listRegularFiles(workspaceRealpath, 'world', 4, state)) {
+    if (path.endsWith('.md')) add('world', path);
+  }
+  for (const path of await listRegularFiles(workspaceRealpath, 'outline', 3, state)) {
+    if (path.endsWith('.md')) add('outline', path);
+  }
+  for (const path of await listRegularFiles(workspaceRealpath, 'timeline', 1, state)) {
+    if (path.endsWith('.yaml')) add('timeline', path);
+  }
+  const characterIds = new Set<string>();
+  for (const path of await listRegularFiles(workspaceRealpath, 'characters', 2, state)) {
+    const segments = path.split('/');
+    if (segments.length !== 3) continue;
+    characterIds.add(segments[1]!);
+    if (path.endsWith('.md')) add('characters', path);
+  }
+  // An existing character can receive relationships even before it has that file.
+  for (const id of [...characterIds].sort()) add('relationships', `characters/${id}/relationships.yaml`);
+  result.truncated = state.truncated;
+  return result;
+}
+
+const MATERIAL_KIND_LABEL: Record<ReferenceStoryMaterialKind, string> = {
+  world: '世界设定',
+  characters: '角色',
+  relationships: '人物关系',
+  outline: '大纲',
+  timeline: '时间线',
+};
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    const stat = await lstat(path);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** Workspace-relative regular files under `root`, skipping hidden names and symlinks, in name order. */
+async function listRegularFiles(
+  workspaceRealpath: string,
+  root: string,
+  maxDepth: number,
+  state: { visited: number; truncated: boolean },
+): Promise<string[]> {
+  const files: string[] = [];
+  const walk = async (relative: string, depth: number): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(resolve(workspaceRealpath, relative), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name.startsWith('.')) continue;
+      if (++state.visited > 4_000) {
+        state.truncated = true;
+        return;
+      }
+      const child = `${relative}/${entry.name}`;
+      if (entry.isFile()) files.push(child);
+      else if (entry.isDirectory() && depth < maxDepth) await walk(child, depth + 1);
+    }
+  };
+  if (await isDirectory(resolve(workspaceRealpath, root))) await walk(root, 1);
+  return files;
 }
 
 export async function prepareReferenceMaterialAdoptionContext(input: {

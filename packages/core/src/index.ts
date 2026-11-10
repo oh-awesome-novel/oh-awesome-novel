@@ -996,11 +996,16 @@ export type {
 } from './reference-story-material.js';
 export {
   MAX_REFERENCE_MATERIAL_ADOPTION_BASELINE_CHARS,
+  MAX_REFERENCE_MATERIAL_ADOPTION_PREFLIGHT_SELECTIONS,
   MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS,
   MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS,
+  MAX_REFERENCE_MATERIAL_ADOPTION_TARGET_SUGGESTIONS,
+  REFERENCE_MATERIAL_ADOPTION_LARGE_BATCH_CHARS,
   REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION,
   createReferenceMaterialAdoptionPlan,
   fingerprintReferenceMaterialAdoptionContext,
+  listReferenceMaterialAdoptionTargetSuggestions,
+  preflightReferenceMaterialAdoption,
   prepareReferenceMaterialAdoptionContext,
   readReferenceMaterialAdoptionCatalog,
 } from './reference-material-adoption.js';
@@ -1012,8 +1017,13 @@ export type {
   ReferenceMaterialAdoptionModelOutput,
   ReferenceMaterialAdoptionModelTarget,
   ReferenceMaterialAdoptionPlan,
+  ReferenceMaterialAdoptionPreflight,
+  ReferenceMaterialAdoptionPreflightIssue,
+  ReferenceMaterialAdoptionPreflightIssueCode,
+  ReferenceMaterialAdoptionPreflightTarget,
   ReferenceMaterialAdoptionSelection,
   ReferenceMaterialAdoptionTargetGroup,
+  ReferenceMaterialAdoptionTargetSuggestions,
 } from './reference-material-adoption.js';
 export {
   MAX_REFERENCE_DISTILLATION_INPUT_CHARS,

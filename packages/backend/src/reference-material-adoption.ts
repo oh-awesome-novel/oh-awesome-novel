@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   fingerprintReferenceMaterialAdoptionContext,
+  listReferenceMaterialAdoptionTargetSuggestions,
+  preflightReferenceMaterialAdoption,
   prepareReferenceMaterialAdoptionContext,
   readReferenceMaterialAdoptionCatalog,
 } from '@oh-awesome-novel/core';
@@ -9,7 +11,10 @@ import type {
   LlmProviderConfig,
   ReferenceMaterialAdoptionCatalog,
   ReferenceMaterialAdoptionDecision,
+  ReferenceMaterialAdoptionPreflight,
   ReferenceMaterialAdoptionSelection,
+  ReferenceMaterialAdoptionTargetSuggestions,
+  ReferenceStoryMaterialKind,
 } from '@oh-awesome-novel/core';
 import {
   createPendingActionStore,
@@ -83,8 +88,49 @@ export interface ReferenceMaterialAdoptionPendingActionResult {
   pendingAction: PendingActionView;
 }
 
+/** One adoption that reached review, rebuilt from its PendingAction and stored preview. */
+export interface ReferenceMaterialAdoptionRecord {
+  pendingActionId: string;
+  status: PendingActionView['status'];
+  createdAt: string;
+  decidedAt?: string;
+  /** Present when Accept committed the change. */
+  commit?: string;
+  /** False when the adoption used an older publication than the current one. */
+  currentPublication: boolean;
+  targets: Array<{ operation: 'create' | 'update' | 'delete'; path: string }>;
+  /** `missing` when the preview record that named the entries is gone or unreadable. */
+  entryEvidence: 'available' | 'missing';
+  entries: Array<{
+    entryId: string;
+    title: string;
+    materialKind: ReferenceStoryMaterialKind;
+    targetFile: string;
+    decision: 'create' | 'update' | 'skip';
+  }>;
+}
+
+export interface ReferenceMaterialAdoptionRecords {
+  referenceId: string;
+  records: ReferenceMaterialAdoptionRecord[];
+  /** Records come only from review data still on disk; cleaned-up history cannot be rebuilt. */
+  coverage: 'retainedReviewDataOnly';
+}
+
 export interface ReferenceMaterialAdoptionController {
-  readCatalog(referenceId: string): Promise<{ catalog: ReferenceMaterialAdoptionCatalog }>;
+  readCatalog(referenceId: string): Promise<{
+    catalog: ReferenceMaterialAdoptionCatalog;
+    targetSuggestions: ReferenceMaterialAdoptionTargetSuggestions;
+  }>;
+  /** Deterministic batch check; never calls the model or writes anything. */
+  preflight(
+    referenceId: string,
+    input: {
+      catalogFingerprint: string;
+      selections: readonly ReferenceMaterialAdoptionSelection[];
+    },
+  ): Promise<{ preflight: ReferenceMaterialAdoptionPreflight }>;
+  listRecords(referenceId: string): Promise<ReferenceMaterialAdoptionRecords>;
   createPreview(
     referenceId: string,
     input: {
@@ -155,12 +201,79 @@ export function createReferenceMaterialAdoptionController(
   }
 
   async function readCatalog(referenceId: string) {
+    const workspaceRoot = options.getWorkspaceRoot();
     return {
-      catalog: await readReferenceMaterialAdoptionCatalog(
-        options.getWorkspaceRoot(),
-        referenceId,
-      ),
+      catalog: await readReferenceMaterialAdoptionCatalog(workspaceRoot, referenceId),
+      targetSuggestions: await listReferenceMaterialAdoptionTargetSuggestions(workspaceRoot),
     };
+  }
+
+  async function preflight(
+    referenceId: string,
+    input: {
+      catalogFingerprint: string;
+      selections: readonly ReferenceMaterialAdoptionSelection[];
+    },
+  ) {
+    return {
+      preflight: await preflightReferenceMaterialAdoption({
+        workspaceRoot: options.getWorkspaceRoot(),
+        referenceId,
+        catalogFingerprint: input.catalogFingerprint,
+        selections: input.selections,
+      }),
+    };
+  }
+
+  async function listRecords(referenceId: string): Promise<ReferenceMaterialAdoptionRecords> {
+    const workspaceRoot = options.getWorkspaceRoot();
+    // Fails for an unknown or unpublished reference, like the catalog itself.
+    const catalog = await readReferenceMaterialAdoptionCatalog(workspaceRoot, referenceId);
+    const store = await getStoreWithoutValidator(workspaceRoot);
+    const views = (await store.listViews()).filter((view) =>
+      view.origin?.kind === 'referenceMaterialAdoption'
+      && view.origin.referenceId === catalog.referenceId);
+    const records: ReferenceMaterialAdoptionRecord[] = [];
+    for (const view of views) {
+      const origin = view.origin as ReferenceMaterialAdoptionOrigin;
+      let stored: StoredReferenceMaterialAdoptionPreview | undefined;
+      try {
+        const candidate = await readStoredReferenceMaterialAdoptionPreview(workspaceRoot, view.id);
+        // A record that does not belong to this PendingAction is not evidence for it.
+        if (
+          candidate.context.referenceId === catalog.referenceId
+          && candidate.previewFingerprint === origin.previewFingerprint
+        ) stored = candidate;
+      } catch {
+        stored = undefined;
+      }
+      records.push({
+        pendingActionId: view.id,
+        status: view.status,
+        createdAt: view.createdAt,
+        ...(view.decidedAt ? { decidedAt: view.decidedAt } : {}),
+        ...(view.git?.status === 'committed' ? { commit: view.git.commit } : {}),
+        currentPublication: origin.manifestRevision === catalog.manifestRevision
+          && origin.sourceChecksumSha256 === catalog.sourceChecksumSha256,
+        targets: view.changes.map((change) => ({ operation: change.operation, path: change.path })),
+        entryEvidence: stored ? 'available' : 'missing',
+        entries: stored
+          ? stored.context.targets.flatMap((target) => {
+              const decision = stored.plan.decisions.find((item) => item.targetId === target.id);
+              return target.entries.map((entry) => ({
+                entryId: entry.id,
+                title: entry.title,
+                materialKind: entry.materialKind,
+                targetFile: target.targetFile,
+                decision: decision?.decision ?? 'skip',
+              }));
+            })
+          : [],
+      });
+    }
+    records.sort((left, right) => right.createdAt.localeCompare(left.createdAt)
+      || left.pendingActionId.localeCompare(right.pendingActionId));
+    return { referenceId: catalog.referenceId, records, coverage: 'retainedReviewDataOnly' };
   }
 
   async function getStore(workspaceRoot: string): Promise<PendingActionStore> {
@@ -399,6 +512,8 @@ export function createReferenceMaterialAdoptionController(
 
   return {
     readCatalog,
+    preflight,
+    listRecords,
     createPreview,
     createPendingAction,
     assertPreparedPreviewCurrent,

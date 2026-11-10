@@ -6,6 +6,7 @@ import type {
   ReferenceMaterialAdoptionPendingActionResult,
   ReferenceMaterialAdoptionPreview,
 } from '../../../composables/useWorkspaceApi';
+import { DECISION_LABELS } from './referenceMaterialLabels';
 
 const props = defineProps<{
   preview?: ReferenceMaterialAdoptionPreview;
@@ -29,44 +30,44 @@ const decisions = computed(() =>
   <section
     v-if="preview || noChangeDecisions.length"
     class="material-adoption-preview"
-    aria-label="Story Material adoption preview"
+    aria-label="采纳预览"
   >
     <div class="material-adoption-preview-heading">
       <div>
-        <h4>Adoption Preview</h4>
-        <p>Selected materials only · canonical workspace files are still unchanged.</p>
+        <h4>采纳预览</h4>
+        <p>只包含你选中的材料 · 作品文件此时仍未改动。</p>
       </div>
       <button class="ghost-button tight-button" type="button" @click="emit('clear')">
-        Clear
+        返回修改这一批
       </button>
     </div>
 
     <p v-if="preview?.warnings.length" class="material-adoption-warning">
-      This publication carries {{ preview.warnings.length }} warning(s). Review the decisions and
-      diff before creating a PendingAction.
+      这次发布带有 {{ preview.warnings.length }} 条提示。创建审批前请核对下面的处理方式和 diff。
     </p>
 
     <ul class="material-adoption-decisions">
       <li v-for="decision in decisions" :key="decision.targetId">
-        <span class="status-pill">{{ decision.decision }}</span>
+        <span class="status-pill">{{ DECISION_LABELS[decision.decision] }}</span>
         <div>
           <strong>{{ decision.targetFile }}</strong>
-          <small v-if="decision.targetPath">YAML path {{ decision.targetPath }}</small>
-          <p>{{ decision.reason }}</p>
+          <small v-if="decision.targetPath">YAML 路径 {{ decision.targetPath }}</small>
+          <small>涉及 {{ decision.entryIds.length }} 条材料</small>
+          <p>原因：{{ decision.reason }}</p>
         </div>
       </li>
     </ul>
 
     <template v-if="preview">
       <div class="material-adoption-targets">
-        <span>Target files</span>
+        <span>将改动的文件</span>
         <code v-for="change in preview.changes" :key="change.path">
-          {{ change.operation }} · {{ change.path }}
+          {{ DECISION_LABELS[change.operation] }} · {{ change.path }}
         </code>
       </div>
-      <pre aria-label="Story Material adoption diff">{{ preview.diff }}</pre>
+      <pre aria-label="采纳 diff">{{ preview.diff }}</pre>
       <p class="material-adoption-boundary">
-        Preview only. A PendingAction is created only after the next explicit confirmation.
+        这只是预览。点击下面的确认后才会创建审批项，接受审批后才会写入文件。
       </p>
       <button
         v-if="!pendingAction"
@@ -75,24 +76,24 @@ const decisions = computed(() =>
         :disabled="confirming"
         @click="emit('confirm')"
       >
-        {{ confirming ? 'Creating PendingAction…' : 'Confirm and create PendingAction' }}
+        {{ confirming ? '正在创建审批项…' : '确认并创建审批项' }}
       </button>
     </template>
     <p v-else class="material-adoption-boundary">
-      Every target was skipped or already matched its current baseline. No PendingAction was created.
+      所有目标都被跳过，或内容已与现有文件一致，没有创建审批项。
     </p>
 
     <section v-if="pendingAction" class="material-adoption-pending">
       <div>
-        <strong>PendingAction {{ pendingAction.id }}</strong>
-        <p>Workspace files remain unchanged until the global Review accepts it.</p>
+        <strong>审批项 {{ pendingAction.id }}</strong>
+        <p>在审批面板接受之前，作品文件保持不变。</p>
       </div>
       <button
         class="primary-button tight-button"
         type="button"
         @click="emit('review', pendingAction.id)"
       >
-        Review PendingAction
+        去审批
       </button>
     </section>
   </section>

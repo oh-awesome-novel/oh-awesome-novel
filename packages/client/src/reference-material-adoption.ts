@@ -76,6 +76,81 @@ export interface ReferenceMaterialAdoptionPreview {
   canonicalUnchanged: true;
 }
 
+export type ReferenceMaterialAdoptionTargetSuggestions =
+  Record<ReferenceStoryMaterialKind, string[]> & { truncated: boolean };
+
+export type ReferenceMaterialAdoptionPreflightIssueCode =
+  | 'catalogChanged'
+  | 'entryNotPublished'
+  | 'duplicateEntry'
+  | 'illegalTargetPath'
+  | 'targetKindMismatch'
+  | 'mixedTarget'
+  | 'targetUnreadable'
+  | 'tooManySelections'
+  | 'tooManyTargets'
+  | 'existingTarget'
+  | 'existingCharacter'
+  | 'sharedTarget'
+  | 'largeBatch';
+
+export interface ReferenceMaterialAdoptionPreflightIssue {
+  code: ReferenceMaterialAdoptionPreflightIssueCode;
+  severity: 'error' | 'notice';
+  message: string;
+  entryIds: string[];
+  targetFile?: string;
+}
+
+export interface ReferenceMaterialAdoptionPreflight {
+  schemaVersion: 1;
+  referenceId: string;
+  catalogFingerprint: string;
+  status: 'ready' | 'blocked';
+  selectionCount: number;
+  targetCount: number;
+  materialChars: number;
+  limits: { selections: number; targets: number; largeBatchChars: number };
+  targets: Array<{
+    materialKind: ReferenceStoryMaterialKind;
+    targetFile: string;
+    targetPath?: string;
+    entryIds: string[];
+    operation: 'create' | 'update';
+  }>;
+  issues: ReferenceMaterialAdoptionPreflightIssue[];
+}
+
+export interface ReferenceMaterialAdoptionRecord {
+  pendingActionId: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+  decidedAt?: string;
+  commit?: string;
+  currentPublication: boolean;
+  targets: Array<{ operation: 'create' | 'update' | 'delete'; path: string }>;
+  entryEvidence: 'available' | 'missing';
+  entries: Array<{
+    entryId: string;
+    title: string;
+    materialKind: ReferenceStoryMaterialKind;
+    targetFile: string;
+    decision: 'create' | 'update' | 'skip';
+  }>;
+}
+
+export interface ReferenceMaterialAdoptionRecords {
+  referenceId: string;
+  records: ReferenceMaterialAdoptionRecord[];
+  coverage: 'retainedReviewDataOnly';
+}
+
+/** The preflight explains bad targets, so its input is only bounded, not path-validated. */
+export interface ReferenceMaterialAdoptionPreflightInput {
+  catalogFingerprint: string;
+  selections: ReferenceMaterialAdoptionSelection[];
+}
+
 export type ReferenceMaterialAdoptionPreviewResult =
   | { status: 'ready'; preview: ReferenceMaterialAdoptionPreview }
   | {
@@ -125,11 +200,155 @@ export function assertReferenceMaterialAdoptionPreviewInput(value: unknown): ass
 export function parseReferenceMaterialAdoptionCatalogEnvelope(
   value: unknown,
   referenceId: string,
-): { catalog: ReferenceMaterialAdoptionCatalog } {
-  if (!isRecord(value) || !hasFields(value, ['catalog'])) {
+): {
+  catalog: ReferenceMaterialAdoptionCatalog;
+  targetSuggestions: ReferenceMaterialAdoptionTargetSuggestions;
+} {
+  if (!isRecord(value) || !hasFields(value, ['catalog', 'targetSuggestions'])) {
     throw new Error('Reference Material catalog response is invalid.');
   }
-  return { catalog: parseCatalog(value.catalog, referenceId) };
+  return {
+    catalog: parseCatalog(value.catalog, referenceId),
+    targetSuggestions: parseTargetSuggestions(value.targetSuggestions),
+  };
+}
+
+export function assertReferenceMaterialAdoptionPreflightInput(
+  value: unknown,
+): asserts value is ReferenceMaterialAdoptionPreflightInput {
+  if (
+    !isRecord(value)
+    || !hasFields(value, ['catalogFingerprint', 'selections'])
+    || !isSha256(value.catalogFingerprint)
+    || !Array.isArray(value.selections)
+    || value.selections.length > 512
+    || !value.selections.every((selection) =>
+      isRecord(selection)
+      && hasFields(selection, ['entryId', 'targetFile', 'targetPath'])
+      && typeof selection.entryId === 'string' && selection.entryId.length <= 200
+      && typeof selection.targetFile === 'string' && selection.targetFile.length <= 1_000
+      && (selection.targetPath === undefined
+        || (typeof selection.targetPath === 'string' && selection.targetPath.length <= 300)))
+  ) {
+    throw new Error('Reference Material adoption preflight input is invalid.');
+  }
+}
+
+export function parseReferenceMaterialAdoptionPreflightEnvelope(
+  value: unknown,
+  referenceId: string,
+): { preflight: ReferenceMaterialAdoptionPreflight } {
+  const preflight = isRecord(value) && hasFields(value, ['preflight']) ? value.preflight : undefined;
+  if (
+    !isRecord(preflight)
+    || !hasFields(preflight, [
+      'schemaVersion', 'referenceId', 'catalogFingerprint', 'status', 'selectionCount',
+      'targetCount', 'materialChars', 'limits', 'targets', 'issues',
+    ])
+    || preflight.schemaVersion !== 1
+    || preflight.referenceId !== referenceId
+    || !isSha256(preflight.catalogFingerprint)
+    || (preflight.status !== 'ready' && preflight.status !== 'blocked')
+    || !isNonNegativeInteger(preflight.selectionCount)
+    || !isNonNegativeInteger(preflight.targetCount)
+    || !isNonNegativeInteger(preflight.materialChars)
+    || !isRecord(preflight.limits)
+    || !hasFields(preflight.limits, ['selections', 'targets', 'largeBatchChars'])
+    || !Object.values(preflight.limits).every(isNonNegativeInteger)
+    || !Array.isArray(preflight.targets)
+    || !preflight.targets.every((target) =>
+      isRecord(target)
+      && hasFields(target, ['materialKind', 'targetFile', 'targetPath', 'entryIds', 'operation'])
+      && isMaterialKind(target.materialKind)
+      && isSafePath(target.targetFile)
+      && (target.targetPath === undefined || isBoundedText(target.targetPath, 300))
+      && isStringArray(target.entryIds)
+      && (target.operation === 'create' || target.operation === 'update'))
+    || !Array.isArray(preflight.issues)
+    || !preflight.issues.every((issue) =>
+      isRecord(issue)
+      && hasFields(issue, ['code', 'severity', 'message', 'entryIds', 'targetFile'])
+      && typeof issue.code === 'string' && PREFLIGHT_ISSUE_CODES.includes(issue.code)
+      && (issue.severity === 'error' || issue.severity === 'notice')
+      && isBoundedText(issue.message, 2_000)
+      && isStringArray(issue.entryIds)
+      && (issue.targetFile === undefined
+        || (typeof issue.targetFile === 'string' && issue.targetFile.length <= 1_000)))
+    // A batch with a blocking issue can never be reported as ready.
+    || (preflight.status === 'ready'
+      && preflight.issues.some((issue) => isRecord(issue) && issue.severity === 'error'))
+  ) {
+    throw new Error('Reference Material adoption preflight response is invalid.');
+  }
+  return { preflight: structuredClone(preflight) as unknown as ReferenceMaterialAdoptionPreflight };
+}
+
+export function parseReferenceMaterialAdoptionRecords(
+  value: unknown,
+  referenceId: string,
+): ReferenceMaterialAdoptionRecords {
+  if (
+    !isRecord(value)
+    || !hasFields(value, ['referenceId', 'records', 'coverage'])
+    || value.referenceId !== referenceId
+    || value.coverage !== 'retainedReviewDataOnly'
+    || !Array.isArray(value.records)
+    || !value.records.every((record) =>
+      isRecord(record)
+      && hasFields(record, [
+        'pendingActionId', 'status', 'createdAt', 'decidedAt', 'commit', 'currentPublication',
+        'targets', 'entryEvidence', 'entries',
+      ])
+      && isPendingActionId(record.pendingActionId)
+      && (record.status === 'pending' || record.status === 'accepted' || record.status === 'rejected')
+      && isTimestamp(record.createdAt)
+      && (record.decidedAt === undefined || isTimestamp(record.decidedAt))
+      && (record.commit === undefined
+        || (typeof record.commit === 'string' && /^[a-f0-9]{7,64}$/u.test(record.commit)))
+      && typeof record.currentPublication === 'boolean'
+      && Array.isArray(record.targets)
+      && record.targets.every((target) =>
+        isRecord(target)
+        && hasFields(target, ['operation', 'path'])
+        && (target.operation === 'create' || target.operation === 'update' || target.operation === 'delete')
+        && isSafePath(target.path))
+      && (record.entryEvidence === 'available' || record.entryEvidence === 'missing')
+      && Array.isArray(record.entries)
+      // Without the preview record there is nothing to name entries from.
+      && (record.entryEvidence === 'available' || record.entries.length === 0)
+      && record.entries.every((entry) =>
+        isRecord(entry)
+        && hasFields(entry, ['entryId', 'title', 'materialKind', 'targetFile', 'decision'])
+        && isSafeId(entry.entryId)
+        && isBoundedText(entry.title, 500)
+        && isMaterialKind(entry.materialKind)
+        && isSafePath(entry.targetFile)
+        && (entry.decision === 'create' || entry.decision === 'update' || entry.decision === 'skip')))
+  ) {
+    throw new Error('Reference Material adoption records response is invalid.');
+  }
+  return structuredClone(value) as unknown as ReferenceMaterialAdoptionRecords;
+}
+
+const PREFLIGHT_ISSUE_CODES: readonly string[] = [
+  'catalogChanged', 'entryNotPublished', 'duplicateEntry', 'illegalTargetPath',
+  'targetKindMismatch', 'mixedTarget', 'targetUnreadable', 'tooManySelections',
+  'tooManyTargets', 'existingTarget', 'existingCharacter', 'sharedTarget', 'largeBatch',
+];
+
+function parseTargetSuggestions(value: unknown): ReferenceMaterialAdoptionTargetSuggestions {
+  if (
+    !isRecord(value)
+    || !hasFields(value, [...MATERIAL_KINDS, 'truncated'])
+    || typeof value.truncated !== 'boolean'
+    || !MATERIAL_KINDS.every((kind) => {
+      const paths = value[kind];
+      return Array.isArray(paths) && paths.length <= 200 && paths.every(isSafePath);
+    })
+  ) {
+    throw new Error('Reference Material target suggestions are invalid.');
+  }
+  return structuredClone(value) as unknown as ReferenceMaterialAdoptionTargetSuggestions;
 }
 
 export function parseReferenceMaterialAdoptionPreviewResult(

@@ -213,6 +213,11 @@ async function createPublishPendingAction(): Promise<void> {
 
     <ReferenceMaterialAdoptionPanel
       :catalog="adoption.catalog.value"
+      :target-suggestions="adoption.targetSuggestions.value"
+      :preflight="adoption.preflight.value"
+      :records="adoption.records.value"
+      :records-error="adoption.recordsError.value"
+      :preflighting="adoption.preflighting.value"
       :preview="adoption.preview.value"
       :no-change-decisions="adoption.noChangeDecisions.value"
       :pending-action="adoption.pendingAction.value"
@@ -220,7 +225,9 @@ async function createPublishPendingAction(): Promise<void> {
       :previewing="adoption.previewing.value"
       :confirming="adoption.confirming.value"
       :error="adoption.error.value"
-      @preview="adoption.requestPreview($event)"
+      @preflight="adoption.requestPreflight($event)"
+      @selection-change="adoption.clearPreflight()"
+      @generate="adoption.requestPreflightedPreview()"
       @confirm="adoption.confirm()"
       @review="emit('reviewPendingAction', $event)"
       @clear="adoption.clearPreview()"

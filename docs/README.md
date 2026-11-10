@@ -96,6 +96,7 @@ docs/
 
 - [research/AINT_REFERENCE_ANALYSIS.md](research/AINT_REFERENCE_ANALYSIS.md)：AINT (Agentic Interactive Narrative Theatre) 架构深度逆向分析与吸收设计（5 层前缀冻结、动态断点仲裁退让、阶段块长会话整理与 VFS、增量叙事标记 AST、舞台背景复合滤镜、伪工具拦截与 Gemini/Anthropic 协议自愈、显式审计与无锁死 SQLite 单连接写池）。
 - [research/CICATAVERN_REFERENCE_ANALYSIS.md](research/CICATAVERN_REFERENCE_ANALYSIS.md)：CicaTavern 架构深度分析报告与推荐吸收设计（Prompt Cache 冻结前缀、视觉小说模式、五维剧情存档、名册一致性、Forge 引导共创与反套话 LINT）。
+- [research/LIVE_VISUAL_NOVEL_REFERENCE_ANALYSIS.md](research/LIVE_VISUAL_NOVEL_REFERENCE_ANALYSIS.md)：Live Visual Novel 架构深度分析报告与吸收建议（幕制两级流式编排、Choice 选项硬切断流、生成与演出解耦的恒速显示泵、GPT-SoVITS 深度 2 预取流水线与单底模零热切架构、NDJSON 稳健容错与 Tier-2 窥视解析、绿幕生图与自动抠图工具链）。
 - [research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md](research/OPENTAVERN_PLAY_MODE_REFERENCE_ANALYSIS.md)：OpenTavern 两套参考实现对 Play Mode 的优化分析。
 - [research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md](research/MUSEAI_PLAY_MODE_REFERENCE_ANALYSIS.md)：MuseAI 推演与多角色模式分析。
 - [research/SILLYTAVERN_REFERENCE_OVERVIEW.md](research/SILLYTAVERN_REFERENCE_OVERVIEW.md) 与 [SILLYTAVERN_REFERENCE_LESSONS.md](research/SILLYTAVERN_REFERENCE_LESSONS.md)：SillyTavern 角色卡与生态研究。
@@ -125,6 +126,6 @@ docs/
 
 同日后续规划新增 [1390–1440](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md) 六项 Planned，当前任务统计为 60 Completed、4 Needs Review、6 Planned。规划保留既有写入/审批边界，不把参考项目的完整功能表移入 OAN。
 
-2026-11-10 按 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md) 新增 [1450–1510](tasks/README.md#planned-tasks) 七项 Planned；1390、1400 已于 2026-11-09 交付，当前任务统计为 62 Completed、5 Needs Review、11 Planned。同日追加的 [1520](tasks/1520.md) 回合候选项已交付协议与界面部分，状态为 Needs Review。
+2026-11-10 按 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md) 新增 [1450–1510](tasks/README.md#planned-tasks) 七项 Planned；1390、1400 已于 2026-11-09 交付，当前任务统计为 62 Completed、6 Needs Review、10 Planned。[1410](tasks/1410.md) 材料采纳工作台的主要功能同日交付，状态为 Needs Review。同日追加的 [1520](tasks/1520.md) 回合候选项已交付协议与界面部分，状态为 Needs Review。
 
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。
