@@ -13,6 +13,7 @@ type TestMock = Mock<(...args: any[]) => any>;
 
 export interface LegacyPlayReadModelApi {
   previewPlaySessionMigration?: TestMock;
+  getPlayRelationshipTimeline?: TestMock;
   listPlaySessions: TestMock;
   listPlaySessionSummaries: TestMock;
   getPlaySession: TestMock;
@@ -36,6 +37,12 @@ export function installLegacyPlayReadModelMocks(
 ): void {
   api.previewPlaySessionMigration ??= vi.fn();
   api.previewPlaySessionMigration.mockResolvedValue({ preview: null });
+  if (!api.getPlayRelationshipTimeline) {
+    api.getPlayRelationshipTimeline = vi.fn();
+    api.getPlayRelationshipTimeline.mockImplementation(async (sessionId: string, lens: string) => ({
+      timeline: { sessionId, revision: 0, lens, threads: [], canonical: false },
+    }));
+  }
   api.listPlaySessionSummaries.mockImplementation(async () => ({
     summaries: (await readLegacySessions(api)).map(toPlaySessionSummary),
   }));

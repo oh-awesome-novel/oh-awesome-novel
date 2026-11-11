@@ -11,10 +11,13 @@ import { normalizePlayIsoWorldTime } from '@oh-awesome-novel/client';
 
 import type {
   FileTreeNode,
+  PlayCanonBeatCandidate,
   PlayEventDensity,
   PlayEventVisibility,
   PlayLaunchPackage,
   PlayLaunchPackagePreviewInput,
+  PlayLaunchReuseSeed,
+  PlayLaunchReuseSourceCheck,
   PlayLaunchSceneValue,
   PlayLaunchSourceRole,
   PlaySession,
@@ -47,7 +50,27 @@ export type PlayGuidedStartApi = Pick<
   | 'previewPlayLaunchPackage'
   | 'createPlayLaunchPackage'
   | 'startPlaySessionFromLaunchPackage'
->;
+> & Partial<Pick<OanClient, 'listPlayCanonBeatCandidates'>>;
+
+export const MAX_GUIDED_CANON_BEATS = 24;
+
+/** One canon beat the author ticked from a timeline source or typed by hand. */
+export interface PlayGuidedCanonBeatDraft {
+  key: string;
+  label: string;
+  expectedWhen: string;
+  /** Set for a beat picked from a timeline source; its quote is verbatim source text. */
+  sourceId?: string;
+  quote?: string;
+}
+
+export interface PlayGuidedCanonCandidates {
+  sourceId: string;
+  path: string;
+  loading: boolean;
+  error?: string;
+  candidates: readonly Readonly<PlayCanonBeatCandidate>[];
+}
 
 export interface PlayGuidedSourceOption {
   sourceId: string;
@@ -105,6 +128,17 @@ export interface PlayGuidedStartErrors {
   participants?: Record<string, { displayName?: string; currentGoal?: string }>;
 }
 
+export type PlayGuidedReuseSeed = Extract<PlayLaunchReuseSeed, { kind: 'guided' }>;
+
+/** A reused source whose current file no longer matches the frozen opening. */
+export interface PlayGuidedReuseCheck {
+  sourceId: string;
+  path: string;
+  status: Exclude<PlayLaunchReuseSourceCheck['status'], 'unchanged'>;
+  /** False once the author removed it, or when it can no longer be selected. */
+  selected: boolean;
+}
+
 export interface UsePlayGuidedStartOptions {
   api: PlayGuidedStartApi;
   purpose: MaybeRefOrGetter<PlaySessionPurpose>;
@@ -138,6 +172,12 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   const creating = shallowRef(false);
   const requestError = shallowRef<string>();
   const announcement = shallowRef('Sources. Step 1 of 5.');
+  const canonBeats = shallowRef<PlayGuidedCanonBeatDraft[]>([]);
+  const protagonistKnowsCanon = shallowRef(true);
+  const canonCandidates = shallowRef<Record<string, PlayGuidedCanonCandidates>>({});
+  let canonBeatSequence = 0;
+  const reuseSourceTitle = shallowRef<string>();
+  const reuseProblems = shallowRef<Array<Omit<PlayGuidedReuseCheck, 'selected'>>>([]);
 
   const sourceOptions = computed(() => flattenFiles(toValue(options.tree)));
   const selectedSources = computed(() => {
@@ -146,6 +186,10 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   });
   const characterSources = computed(() =>
     selectedSources.value.filter((source) => source.role === 'character'));
+  const timelineSources = computed(() =>
+    selectedSources.value.filter((source) => source.role === 'timeline'));
+  const canonBeatLimitReached = computed(() =>
+    canonBeats.value.length >= MAX_GUIDED_CANON_BEATS);
   const rawErrors = computed(() => validateDraft(
     purpose.value,
     selectedSourceIds.value,
@@ -158,6 +202,13 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     return errorsForStep(currentStep.value, rawErrors.value);
   });
   const stepNumber = computed(() => steps.indexOf(currentStep.value) + 1);
+  const reuseChecks = computed<PlayGuidedReuseCheck[]>(() => {
+    const selected = new Set(selectedSources.value.map((source) => source.sourceId));
+    return reuseProblems.value.map((check) => ({
+      ...check,
+      selected: selected.has(check.sourceId),
+    }));
+  });
   const blockingDiagnostics = computed(() => preview.value?.diagnostics.filter(
     (diagnostic) => diagnostic.severity === 'error',
   ) ?? []);
@@ -206,6 +257,83 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
       participant.characterSourceId && !retained.has(participant.characterSourceId)
         ? { ...participant, characterSourceId: '' }
         : participant);
+    // A beat cannot outlive the timeline source its quote came from.
+    canonBeats.value = canonBeats.value.filter((beat) =>
+      beat.sourceId === undefined || retained.has(beat.sourceId));
+    invalidatePreview();
+  }
+
+  /** Reads the verbatim beats one selected timeline source offers. Read-only. */
+  async function loadCanonCandidates(sourceId: string): Promise<void> {
+    const source = timelineSources.value.find((item) => item.sourceId === sourceId);
+    if (!source || !options.api.listPlayCanonBeatCandidates) return;
+    const set = (patch: Partial<PlayGuidedCanonCandidates>): void => {
+      canonCandidates.value = {
+        ...canonCandidates.value,
+        [sourceId]: {
+          sourceId,
+          path: source.path,
+          loading: false,
+          candidates: canonCandidates.value[sourceId]?.candidates ?? [],
+          ...patch,
+        },
+      };
+    };
+    set({ loading: true, error: undefined });
+    try {
+      const result = await options.api.listPlayCanonBeatCandidates(source.path);
+      set({ candidates: result.candidates });
+    } catch (error) {
+      set({ error: errorMessage(error, '无法读取这个时间线来源。') });
+    }
+  }
+
+  function isCanonCandidateSelected(sourceId: string, quote: string): boolean {
+    return canonBeats.value.some((beat) => beat.sourceId === sourceId && beat.quote === quote);
+  }
+
+  function toggleCanonCandidate(
+    sourceId: string,
+    candidate: PlayCanonBeatCandidate,
+    selected: boolean,
+  ): void {
+    if (!selected) {
+      canonBeats.value = canonBeats.value.filter((beat) =>
+        beat.sourceId !== sourceId || beat.quote !== candidate.quote);
+    } else if (!canonBeatLimitReached.value && !isCanonCandidateSelected(sourceId, candidate.quote)) {
+      canonBeatSequence += 1;
+      canonBeats.value = [...canonBeats.value, {
+        key: `canon-draft-${canonBeatSequence}`,
+        label: candidate.label,
+        expectedWhen: candidate.expectedWhen ?? '',
+        sourceId,
+        quote: candidate.quote,
+      }];
+    }
+    invalidatePreview();
+  }
+
+  /** A hand-written beat has no source quote and is marked author-provided. */
+  function addManualCanonBeat(label: string, expectedWhen = ''): boolean {
+    const text = label.trim();
+    if (!text || canonBeatLimitReached.value) return false;
+    canonBeatSequence += 1;
+    canonBeats.value = [...canonBeats.value, {
+      key: `canon-draft-${canonBeatSequence}`,
+      label: text.slice(0, 200),
+      expectedWhen: expectedWhen.trim().slice(0, 120),
+    }];
+    invalidatePreview();
+    return true;
+  }
+
+  function removeCanonBeat(key: string): void {
+    canonBeats.value = canonBeats.value.filter((beat) => beat.key !== key);
+    invalidatePreview();
+  }
+
+  function setProtagonistKnowsCanon(value: boolean): void {
+    protagonistKnowsCanon.value = value;
     invalidatePreview();
   }
 
@@ -330,7 +458,119 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     }
   }
 
+  /**
+   * Prefills every step from another session's frozen opening. Source ids are
+   * re-derived from paths, so the new launch shares nothing with the old setup.
+   * Missing files cannot be selected and are dropped; changed files stay
+   * selected (the new opening freezes their current content) until removed.
+   */
+  function applySeed(seed: PlayGuidedReuseSeed): void {
+    const launch = seed.launch;
+    const checks = new Map(seed.sources.map((check) => [check.sourceId, check]));
+    const idByOldId = new Map<string, string>();
+    for (const source of launch.sources) {
+      if (checks.get(source.sourceId)?.status === 'missing') continue;
+      idByOldId.set(source.sourceId, sourceIdForPath(normalizeTreePath(source.path)));
+    }
+    const remap = (refs: readonly string[]): string[] =>
+      refs.flatMap((ref) => idByOldId.get(ref) ?? []);
+    const entry = launch.entryPoint;
+    const worldTime = entry.worldTime?.value ?? '';
+
+    selectedSourceIds.value = [...new Set(idByOldId.values())];
+    entryDraft.value = {
+      title: launch.title,
+      label: entry.label,
+      opening: entry.opening,
+      sourceRefs: remap(entry.sourceRefs),
+      location: entry.location?.value ?? '',
+      worldTime,
+      worldTimeFormat: worldTime && normalizePlayIsoWorldTime(worldTime)
+        ? 'iso8601'
+        : 'narrative',
+      atmosphere: entry.atmosphere?.value ?? '',
+      trigger: entry.trigger?.value ?? '',
+      objective: entry.objective?.value ?? '',
+      risk: entry.risk?.value ?? '',
+      simulationMode: launch.simulationMode,
+      density: launch.density,
+    };
+    identityDraft.value = {
+      persona: launch.identity.persona ?? '',
+      directorPurpose: launch.identity.directorPurpose ?? '',
+    };
+    participantSequence = launch.participantRoles.length;
+    participants.value = launch.participantRoles.map((participant, index) => ({
+      participantRef: options.createParticipantRef?.(index + 1)
+        ?? `participant-${index + 1}`,
+      displayName: participant.displayName,
+      characterSourceId: remap(participant.sourceRefs).find((id) =>
+        launch.sources.some((source) =>
+          source.role === 'character' && idByOldId.get(source.sourceId) === id)) ?? '',
+      position: participant.position ?? '',
+      currentGoal: participant.currentGoal ?? '',
+      initialKnowledge: participant.initialKnowledge
+        .map((knowledge) => knowledge.fact)
+        .join('\n'),
+      knowledgeVisibility: participant.initialKnowledge[0]?.visibility
+        ?? 'playerUnknown',
+    }));
+    canonBeatSequence = 0;
+    protagonistKnowsCanon.value = launch.canonBeats?.protagonistKnowsCanon ?? true;
+    canonBeats.value = (launch.canonBeats?.beats ?? []).flatMap((beat) => {
+      const sourceId = beat.source.kind === 'sourceBacked'
+        ? idByOldId.get(beat.source.sourceId)
+        : undefined;
+      // A beat whose timeline file is gone cannot keep a verifiable quote.
+      if (beat.source.kind === 'sourceBacked' && !sourceId) return [];
+      canonBeatSequence += 1;
+      return [{
+        key: `canon-draft-${canonBeatSequence}`,
+        label: beat.label,
+        expectedWhen: beat.expectedWhen ?? '',
+        ...(beat.source.kind === 'sourceBacked'
+          ? { sourceId, quote: beat.source.quote }
+          : {}),
+      }];
+    });
+    reuseSourceTitle.value = seed.sourceSessionTitle;
+    reuseProblems.value = seed.sources.flatMap((check) =>
+      check.status === 'unchanged'
+        ? []
+        : [{
+            sourceId: idByOldId.get(check.sourceId) ?? check.sourceId,
+            path: check.path,
+            status: check.status,
+          }]);
+    currentStep.value = 'sources';
+    validationVisible.value = {};
+    invalidatePreview();
+    announcement.value = reuseProblems.value.length
+      ? `已用「${seed.sourceSessionTitle}」的开局预填，有 ${reuseProblems.value.length} 个来源与当时不同，请先确认。`
+      : `已用「${seed.sourceSessionTitle}」的开局预填。`;
+  }
+
+  /**
+   * With an unchanged opening the author can create straight away: this skips
+   * to Review through the same validation and preview as walking the steps.
+   */
+  async function previewSeededLaunch(): Promise<boolean> {
+    if (
+      !reuseSourceTitle.value ||
+      reuseProblems.value.length > 0 ||
+      selectedSources.value.length !== selectedSourceIds.value.length ||
+      Object.values(rawErrors.value).some(Boolean)
+    ) return false;
+    return previewLaunchPackage();
+  }
+
   function reset(): void {
+    canonBeats.value = [];
+    canonCandidates.value = {};
+    protagonistKnowsCanon.value = true;
+    canonBeatSequence = 0;
+    reuseSourceTitle.value = undefined;
+    reuseProblems.value = [];
     participantSequence = 0;
     currentStep.value = 'sources';
     selectedSourceIds.value = [];
@@ -427,6 +667,21 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
             : [],
         };
       }),
+      // Absent unless the author picked beats, so other launches are unchanged.
+      ...(purpose.value === 'immersiveJourney' && canonBeats.value.length
+        ? {
+            canonBeats: {
+              protagonistKnowsCanon: protagonistKnowsCanon.value,
+              beats: canonBeats.value.map((beat) => ({
+                label: beat.label,
+                ...(beat.expectedWhen ? { expectedWhen: beat.expectedWhen } : {}),
+                source: beat.sourceId && beat.quote
+                  ? { kind: 'sourceBacked' as const, sourceId: beat.sourceId, quote: beat.quote }
+                  : { kind: 'authorProvided' as const },
+              })),
+            },
+          }
+        : {}),
     };
   }
 
@@ -449,6 +704,21 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     blockingDiagnostics,
     hasUnavailableSources,
     canStart,
+    timelineSources,
+    canonBeats: readonly(canonBeats),
+    canonCandidates: readonly(canonCandidates),
+    canonBeatLimitReached,
+    protagonistKnowsCanon: readonly(protagonistKnowsCanon),
+    loadCanonCandidates,
+    isCanonCandidateSelected,
+    toggleCanonCandidate,
+    addManualCanonBeat,
+    removeCanonBeat,
+    setProtagonistKnowsCanon,
+    reuseSourceTitle: readonly(reuseSourceTitle),
+    reuseChecks,
+    applySeed,
+    previewSeededLaunch,
     toggleSource,
     updateEntry,
     toggleEntrySource,
@@ -494,7 +764,7 @@ function flattenFiles(tree: readonly FileTreeNode[]): PlayGuidedSourceOption[] {
         visit(node.children ?? []);
         continue;
       }
-      const path = node.path.replaceAll('\\', '/').replace(/^\.\//u, '');
+      const path = normalizeTreePath(node.path);
       const role = inferPlayLaunchSourceRole(path);
       const objectId = inferObjectId(path, role);
       files.push({
@@ -508,6 +778,10 @@ function flattenFiles(tree: readonly FileTreeNode[]): PlayGuidedSourceOption[] {
   };
   visit(tree);
   return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function normalizeTreePath(path: string): string {
+  return path.replaceAll('\\', '/').replace(/^\.\//u, '');
 }
 
 export function inferPlayLaunchSourceRole(path: string): PlayLaunchSourceRole {

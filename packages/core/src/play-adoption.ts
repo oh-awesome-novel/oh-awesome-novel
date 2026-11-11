@@ -1028,6 +1028,7 @@ function recommendTargetForOutcome(item: PlayOutcomeItem): PlayAdoptionTarget {
     case 'goalAssessment':
       return 'foreshadow';
     case 'worldChange':
+    case 'canonDivergence':
       return 'timeline';
     case 'sceneSummary':
     case 'participantFootprint':

@@ -16,8 +16,10 @@ const emit = defineEmits<{
 
 <template>
   <article
+    :id="`play-event-${card.id}`"
     class="play-event-card"
     :class="`play-event-${card.visibility}`"
+    tabindex="-1"
   >
     <div class="play-event-line" aria-hidden="true"></div>
     <div class="play-event-body">

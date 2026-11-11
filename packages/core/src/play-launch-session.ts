@@ -14,6 +14,11 @@ import type {
   PlaySession,
 } from './play-session.js';
 import type { PlayActivatedSource, PlayWorldClock } from './play-types.js';
+import {
+  PLAY_CANON_BEATS_STATE_KEY,
+  createPlayCanonBeatTable,
+} from './play-canon-beats.js';
+import { buildPlayFrozenSystemPrompt } from './play-turn-prompt.js';
 
 export const PLAY_LAUNCH_SESSION_METADATA_KEY = 'playLaunch' as const;
 
@@ -85,15 +90,37 @@ export function createPlaySessionFromLaunchPackage(
       } satisfies CreatePlaySceneRehearsalSessionInput)
     : createPlaySessionDraft(common);
 
+  // The canon beat table enters the base snapshot at creation and can never be added later.
+  const canonState: Record<string, unknown> = launchPackage.canonBeats
+    ? { [PLAY_CANON_BEATS_STATE_KEY]: createPlayCanonBeatTable(launchPackage.canonBeats) }
+    : {};
+  const canonVisibility: PlaySession['playLocalStateVisibility'] = launchPackage.canonBeats
+    ? { [PLAY_CANON_BEATS_STATE_KEY]: 'playerUnknown' }
+    : {};
+  const playLocalState = { ...session.playLocalState, ...canonState };
+
   return {
     ...session,
     worldClock,
+    playLocalState,
+    playLocalStateVisibility: { ...session.playLocalStateVisibility, ...canonVisibility },
     branchBaseSnapshot: {
       ...session.branchBaseSnapshot,
       worldClock,
+      playLocalState: {
+        ...session.branchBaseSnapshot.playLocalState,
+        ...structuredClone(canonState),
+      },
+      playLocalStateVisibility: {
+        ...session.branchBaseSnapshot.playLocalStateVisibility,
+        ...canonVisibility,
+      },
     },
     metadataExtensions: {
       ...session.metadataExtensions,
+      ...(launchPackage.canonBeats
+        ? { frozenSystemPrompt: buildPlayFrozenSystemPrompt({ ...common, playLocalState }) }
+        : {}),
       [PLAY_LAUNCH_SESSION_METADATA_KEY]: createLaunchMetadata(launchPackage),
     },
   };

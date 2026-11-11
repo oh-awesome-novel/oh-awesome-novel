@@ -3,6 +3,22 @@ import { createStageSnapshot } from './text-speaker-parser.js';
 import { buildPlayFrozenSystemPrompt, getPlayFrozenSystemPrompt, isPlayCompactionActive } from './play-turn-prompt.js';
 import { hasPlayRefereeFrozenProtocol, PLAY_REFEREE_CUE_RULE, PLAY_REFEREE_HARD_DUE_RULE, PLAY_REFEREE_INTRO_RULES, PLAY_REFEREE_OUTPUT_PROTOCOL, PLAY_REFEREE_REVEAL_RULE } from './play-referee-protocol.js';
 import { PLAY_TURN_CHOICE_RULE } from './play-turn-choices.js';
+import {
+  PLAY_CANON_BEATS_STATE_KEY,
+  PLAY_DIRECTOR_NOTE_SPEAKER,
+  applyPlayCanonBeatChanges,
+  applyPlayCanonBeatManualCorrection,
+  formatPlayCanonBeatPromptLines,
+  formatPlayCanonBeatsFrozenProtocol,
+  hasPlayCanonBeatsFrozenProtocol,
+  linkPlayCanonBeatScheduledEvent,
+  normalizePlayCanonBeatChanges,
+  readPlayCanonBeatTable,
+} from './play-canon-beats.js';
+import type {
+  PlayCanonBeatChange,
+  PlayCanonBeatTerminalStatus,
+} from './play-canon-beats.js';
 import { assertPlayEventStateDeltaRefs } from './play-event-evidence.js';
 import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
@@ -30,6 +46,7 @@ import type { PlayKnowledgeChange } from './play-knowledge.js';
 import {
   evaluatePlayDueEvents,
   normalizePlayEventTrigger,
+  normalizePlayScheduledEvent,
   normalizePlayScheduledEventTemplate,
   normalizePlayScheduledEvents,
 } from './play-event-schedule.js';
@@ -207,6 +224,8 @@ export const PLAY_TURNS_DIRECTORY = 'turns' as const;
 export type PlaySessionFile = typeof PLAY_SESSION_FILES[number];
 
 export interface PlayWorldRefereeSettlement {
+  /** Present only when the referee proposes canon beat changes this turn. */
+  canonBeatChanges?: PlayCanonBeatChange[];
   elapsed?: string;
   worldTimeAnchor?: string;
   events: PlayWorldRefereeSettlementEvent[];
@@ -1340,6 +1359,7 @@ const buildPlayWorldRefereePromptParts = (
   const revision = resolvePlaySessionRevision(session, facts.turnArtifacts);
   const scheduleEvaluation = evaluatePlaySessionDueEvents(session);
   const momentum = readPlayWorldMomentum(facts.selectedPlayLocalState);
+  const canonBeats = readPlayCanonBeatTable(facts.selectedPlayLocalState);
   const revealCandidates = listPlayKnowledgeRevealCandidates({
     playLocalState: facts.selectedPlayLocalState,
     selectedEvents,
@@ -1371,7 +1391,11 @@ const buildPlayWorldRefereePromptParts = (
     state: [
       '',
       'Current Play-local state:',
-      formatPromptJson(facts.selectedPlayLocalState),
+      // Canon beats are listed once in their own section below.
+      formatPromptJson(canonBeats
+        ? Object.fromEntries(Object.entries(facts.selectedPlayLocalState)
+            .filter(([key]) => key !== PLAY_CANON_BEATS_STATE_KEY))
+        : facts.selectedPlayLocalState),
     ],
     transcript: [
       '',
@@ -1442,6 +1466,11 @@ const buildPlayWorldRefereePromptParts = (
             )
           : ['- none']
       ),
+      ...formatPlayCanonBeatPromptLines(canonBeats),
+      // A stored prefix that predates the canon protocol still gets it in the tail.
+      ...(canonBeats && !hasPlayCanonBeatsFrozenProtocol(getPlayFrozenSystemPrompt(session))
+        ? ['', formatPlayCanonBeatsFrozenProtocol(canonBeats.protagonistKnowsCanon)]
+        : []),
       '',
       ...(frozen ? [] : PLAY_REFEREE_OUTPUT_PROTOCOL),
       ...(timeAdvance
@@ -1698,6 +1727,17 @@ export const settlePlayWorldRefereeSettlement = (
   if (momentumChanged) {
     stateDelta[PLAY_WORLD_MOMENTUM_STATE_KEY] = nextMomentum;
   }
+  // Unknown beat, illegal transition or a non-current event reference throws here, before any write.
+  const nextCanonBeats = applyPlayCanonBeatChanges({
+    table: readPlayCanonBeatTable(existingFacts.selectedPlayLocalState),
+    changes: settlement.canonBeatChanges ?? [],
+    eventIds: events.map((event) => event.id),
+    refereeTurnId,
+    revision,
+  });
+  if (settlement.canonBeatChanges?.length && nextCanonBeats) {
+    stateDelta[PLAY_CANON_BEATS_STATE_KEY] = nextCanonBeats;
+  }
   if (settlement.knowledgeChanges.length) {
     stateDelta[PLAY_KNOWLEDGE_STATE_KEY] = nextKnowledge;
   }
@@ -1707,7 +1747,8 @@ export const settlePlayWorldRefereeSettlement = (
   for (const key of Object.keys(stateDelta)) {
     playLocalStateVisibility[key] = (
       key === PLAY_WORLD_MOMENTUM_STATE_KEY ||
-      key === PLAY_KNOWLEDGE_STATE_KEY
+      key === PLAY_KNOWLEDGE_STATE_KEY ||
+      key === PLAY_CANON_BEATS_STATE_KEY
     )
       ? 'playerUnknown'
       : settlementVisibility;
@@ -1860,6 +1901,138 @@ export const addPlayTranscriptTurn = (
     branchBaseSnapshot: existingFacts.branchBaseSnapshot,
     metadataExtensions: { ...(session.metadataExtensions ?? {}) },
   };
+};
+
+export type PlayCanonBeatDirectorOperation =
+  | {
+      type: 'correct';
+      beatId: string;
+      status: PlayCanonBeatTerminalStatus;
+      reason: string;
+    }
+  | {
+      type: 'schedule';
+      beatId: string;
+      trigger: PlayEventTrigger;
+      /** How the event is settled when it fires. Defaults to the beat's own visibility. */
+      visibility?: PlayEventVisibility;
+      priority?: number;
+    };
+
+/**
+ * An author-side canon beat operation, committed as a director note so it
+ * follows Restore and Retry like any other branch state. The note's transcript
+ * text never names the beat: a Player who does not know canon can read it.
+ */
+export const applyPlayCanonBeatDirectorOperation = (
+  session: PlaySession,
+  operation: PlayCanonBeatDirectorOperation,
+  createdAt = new Date().toISOString(),
+): PlaySession => {
+  if (session.schemaVersion !== PLAY_SESSION_SCHEMA_VERSION) {
+    throw new Error('Canon beats are only supported for an Immersive Journey.');
+  }
+  const existingFacts = materializePlayTurnFacts(session);
+  const table = readPlayCanonBeatTable(existingFacts.selectedPlayLocalState);
+  const next = advancePlaySessionRevision(session, existingFacts.turnArtifacts);
+  const artifactId = createPlayTurnArtifactId(
+    next.revision,
+    existingFacts.turnArtifacts.map((artifact) => artifact.id),
+  );
+  const messageId = `${artifactId}-message-1`;
+  let nextTable;
+  let scheduledEvents = existingFacts.selectedScheduledEvents.map(clonePlayScheduledEvent);
+  let content: string;
+  if (operation.type === 'correct') {
+    nextTable = applyPlayCanonBeatManualCorrection({
+      table,
+      beatId: operation.beatId,
+      status: operation.status,
+      reason: operation.reason,
+      turnId: messageId,
+      revision: next.revision,
+    });
+    content = '（导演记录：更正了一条原作走向。）';
+  } else {
+    const beat = table?.beats.find((candidate) => candidate.id === operation.beatId);
+    if (!table || !beat) throw new Error(`Unknown Play canon beat: ${operation.beatId}.`);
+    const usedIds = new Set(session.scheduledEvents.map((event) => event.id));
+    let index = 1;
+    while (usedIds.has(`scheduled-${next.revision}-${index}`)) index += 1;
+    const scheduledEvent = normalizePlayScheduledEvent({
+      id: `scheduled-${next.revision}-${index}`,
+      label: beat.label,
+      trigger: operation.trigger,
+      template: {
+        kind: 'manual',
+        origin: 'manual',
+        title: beat.label,
+        summary: beat.source.kind === 'sourceBacked' ? beat.source.quote : beat.label,
+        visibility: operation.visibility ?? beat.visibility,
+      },
+      status: 'scheduled',
+      scheduledAtTurn: next.worldClock.turn,
+      scheduledAtRevision: next.revision,
+      sourceTurnId: messageId,
+      changeReason: `Author scheduled canon beat ${beat.id}.`,
+      ...(operation.priority !== undefined ? { priority: operation.priority } : {}),
+    });
+    nextTable = linkPlayCanonBeatScheduledEvent({
+      table,
+      beatId: beat.id,
+      scheduledEventId: scheduledEvent.id,
+    });
+    scheduledEvents = [...scheduledEvents, scheduledEvent];
+    content = '（导演记录：把一条原作节点排入了计划事件。）';
+  }
+  const stateDelta = { [PLAY_CANON_BEATS_STATE_KEY]: nextTable };
+  const playLocalState = mergePlayLocalState(existingFacts.selectedPlayLocalState, stateDelta);
+  const parentTurnId = existingFacts.selectedTurnIds.at(-1);
+  const artifact: PlayTurnArtifact = {
+    schemaVersion: PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+    artifactKind: 'transcriptAppend',
+    branchSnapshotVersion: 1,
+    id: artifactId,
+    revision: next.revision,
+    ...(parentTurnId ? { parentTurnId } : {}),
+    messages: [{ id: messageId, speaker: PLAY_DIRECTOR_NOTE_SPEAKER, content, createdAt }],
+    worldClock: { ...next.worldClock },
+    eventIds: [],
+    dueScheduledEventIds: [],
+    scheduledEventIds: scheduledEvents.map((event) => event.id),
+    scheduledEventSnapshots: scheduledEvents.map(clonePlayScheduledEvent),
+    playLocalStateSnapshot: clonePlayLocalState(playLocalState),
+    playLocalStateVisibilitySnapshot: {
+      ...existingFacts.selectedPlayLocalStateVisibility,
+      [PLAY_CANON_BEATS_STATE_KEY]: 'playerUnknown',
+    },
+    observationIds: [],
+    stateDelta,
+    suggestedActions: [...existingFacts.selectedSuggestedActions],
+    committedAt: createdAt,
+    canonical: false,
+  };
+  const turnArtifacts = [...existingFacts.turnArtifacts, artifact];
+  const selectedTurnIds = [...existingFacts.selectedTurnIds, artifact.id];
+  const result: PlaySession = {
+    ...next,
+    transcript: projectPlayTranscript(turnArtifacts, selectedTurnIds),
+    turnArtifacts,
+    selectedTurnIds,
+    branchSnapshotRequiredFromRevision: session.branchSnapshotRequiredFromRevision,
+    branchBaseSnapshot: existingFacts.branchBaseSnapshot,
+    metadataExtensions: { ...(session.metadataExtensions ?? {}) },
+    playLocalState,
+    playLocalStateVisibility: { ...artifact.playLocalStateVisibilitySnapshot },
+    scheduledEvents: [
+      ...session.scheduledEvents.filter((event) =>
+        !scheduledEvents.some((selected) => selected.id === event.id)),
+      ...scheduledEvents,
+    ],
+  };
+  // Replays the stored-history rules, so an invalid operation never reaches the writer.
+  materializePlayTurnFacts(result);
+  return result;
 };
 
 export const addPlayObservation = (
@@ -3001,7 +3174,8 @@ export function normalizePlayWorldRefereeSettlement(
     isRecord(value.stateDelta) &&
     (
       Object.hasOwn(value.stateDelta, PLAY_WORLD_MOMENTUM_STATE_KEY) ||
-      Object.hasOwn(value.stateDelta, PLAY_KNOWLEDGE_STATE_KEY)
+      Object.hasOwn(value.stateDelta, PLAY_KNOWLEDGE_STATE_KEY) ||
+      Object.hasOwn(value.stateDelta, PLAY_CANON_BEATS_STATE_KEY)
     )
   ) {
     throw new Error(
@@ -3018,7 +3192,10 @@ export function normalizePlayWorldRefereeSettlement(
   const events = (value.events ?? []).map(normalizePlayWorldRefereeEvent);
   const stateDelta = isRecord(value.stateDelta) ? clonePlayLocalState(value.stateDelta) : {};
   assertPlayEventStateDeltaRefs(events, stateDelta);
+  const canonBeatChanges = normalizePlayCanonBeatChanges(value.canonBeatChanges);
   return {
+    // Omitted when empty, so a session without canon beats settles exactly as before.
+    ...(canonBeatChanges.length ? { canonBeatChanges } : {}),
     ...(normalizeOptionalString(value.elapsed)
       ? { elapsed: normalizeOptionalString(value.elapsed) }
       : {}),

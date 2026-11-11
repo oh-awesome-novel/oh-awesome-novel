@@ -11,18 +11,21 @@ import type {
 import { buildPlayRehearsalSessionInput } from '../../../composables/playRehearsalPresentation';
 import type {
   FileTreeNode,
+  PlayLaunchReuseSeed,
   PlaySession,
 } from '../../../composables/useWorkspaceApi';
 import type { PlaySessionCreateRequest } from '../../../composables/usePlayWorkspace';
 import PlayGuidedStartWizard from './PlayGuidedStartWizard.vue';
 import PlayLaunchModePicker from './PlayLaunchModePicker.vue';
 
-defineProps<{
+const props = defineProps<{
   files: FileTreeNode[];
   filesLoading: boolean;
   filesError?: string;
   creating: boolean;
   busy: boolean;
+  /** Opens the flow directly on the matching form, prefilled from an existing session. */
+  seed?: PlayLaunchReuseSeed;
 }>();
 
 const emit = defineEmits<{
@@ -32,28 +35,36 @@ const emit = defineEmits<{
   openForge: [];
 }>();
 
-const purpose = shallowRef<PlaySessionPurposeChoice>();
-const mode = shallowRef<'quick' | 'guided'>();
+const purpose = shallowRef<PlaySessionPurposeChoice | undefined>(props.seed?.purpose);
+const mode = shallowRef<'quick' | 'guided' | undefined>(
+  props.seed ? (props.seed.kind === 'guided' ? 'guided' : 'quick') : undefined,
+);
+// The seed prefills only the form it was read for; leaving that form drops it.
+const seed = shallowRef(props.seed);
 const flow = useTemplateRef<HTMLElement>('flow');
 
 async function choosePurpose(next: PlaySessionPurposeChoice): Promise<void> {
+  seed.value = undefined;
   purpose.value = next;
   mode.value = undefined;
   await focusFirst();
 }
 
 async function chooseMode(next: 'quick' | 'guided'): Promise<void> {
+  seed.value = undefined;
   mode.value = next;
   await focusFirst();
 }
 
 async function returnToPurpose(): Promise<void> {
+  seed.value = undefined;
   purpose.value = undefined;
   mode.value = undefined;
   await focusFirst();
 }
 
 async function returnToMode(): Promise<void> {
+  seed.value = undefined;
   mode.value = undefined;
   await focusFirst();
 }
@@ -92,6 +103,7 @@ async function focusFirst(): Promise<void> {
     <PlaySessionCreateForm
       v-else-if="mode === 'quick' && purpose === 'immersiveJourney'"
       :creating="creating || busy"
+      :initial="seed?.kind === 'quickJourney' ? seed : undefined"
       @cancel="returnToMode"
       @create="emit('quickCreate', $event)"
     />
@@ -100,6 +112,7 @@ async function focusFirst(): Promise<void> {
       v-else-if="mode === 'quick'"
       :creating="creating"
       :disabled="busy"
+      :initial="seed?.kind === 'quickRehearsal' ? seed : undefined"
       @cancel="returnToMode"
       @create="createQuickRehearsal"
     />
@@ -111,6 +124,7 @@ async function focusFirst(): Promise<void> {
       :files-loading="filesLoading"
       :files-error="filesError"
       :disabled="creating || busy"
+      :seed="seed?.kind === 'guided' ? seed : undefined"
       @cancel="returnToMode"
       @created="emit('created', $event)"
       @open-forge="emit('openForge')"

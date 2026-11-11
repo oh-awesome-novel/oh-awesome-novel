@@ -182,6 +182,8 @@ function toggleSource(sourceId: string, event: Event): void {
       </label>
     </div>
 
+    <slot />
+
     <footer>
       <button type="button" :disabled="disabled" @click="emit('cancel')">取消</button>
       <div>

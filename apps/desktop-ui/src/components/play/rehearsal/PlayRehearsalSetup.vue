@@ -5,14 +5,17 @@ import PlayRehearsalCastStep from './PlayRehearsalCastStep.vue';
 import PlayRehearsalReviewStep from './PlayRehearsalReviewStep.vue';
 import PlayRehearsalSceneStep from './PlayRehearsalSceneStep.vue';
 import { usePlayRehearsalSetup } from '../../../composables/usePlayRehearsalSetup';
+import type { PlayLaunchReuseSeed } from '../../../composables/useWorkspaceApi';
 import type {
   PlayRehearsalSetupStep,
   PlayRehearsalSetupSubmission,
 } from './types';
 
-const { creating = false, disabled = false } = defineProps<{
+const { creating = false, disabled = false, initial = undefined } = defineProps<{
   creating?: boolean;
   disabled?: boolean;
+  /** Another quick rehearsal's opening to prefill from. Read once on setup. */
+  initial?: Extract<PlayLaunchReuseSeed, { kind: 'quickRehearsal' }>;
 }>();
 
 const emit = defineEmits<{
@@ -36,7 +39,7 @@ const {
   previousStep,
   buildSubmission,
   reset,
-} = usePlayRehearsalSetup();
+} = usePlayRehearsalSetup({ initial: initial?.form });
 
 const headingId = `${useId()}-rehearsal-setup-heading`;
 const stepPanel = useTemplateRef<HTMLDivElement>('stepPanel');
@@ -85,6 +88,9 @@ async function focusStepPanel(): Promise<void> {
       </div>
       <span>推演内 · 不属于正式文件</span>
     </header>
+    <p v-if="initial" class="play-rehearsal-setup-reuse" role="status">
+      已用「{{ initial.sourceSessionTitle }}」的开局预填。创建的是全新会话，与原会话互不影响。
+    </p>
 
     <nav aria-label="试演设置进度">
       <ol>

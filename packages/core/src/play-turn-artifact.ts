@@ -22,6 +22,19 @@ export type PlayTurnArtifactSchemaVersion =
   | typeof PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION;
 export type PlayTurnArtifactKind = 'worldSettlement' | 'transcriptAppend';
 
+/**
+ * A director note is a transcriptAppend authored by the `director` speaker. It
+ * is the only non-settlement artifact that may correct the canon beat table or
+ * add a scheduled event.
+ */
+export function isPlayDirectorNoteArtifact(
+  artifact: Pick<PlayTurnArtifact, 'artifactKind' | 'messages'>,
+): boolean {
+  return artifact.artifactKind === 'transcriptAppend' &&
+    artifact.messages.length === 1 &&
+    artifact.messages[0]?.speaker === 'director';
+}
+
 /** Upper bound for one retry guidance, counted in Unicode code points. */
 export const MAX_PLAY_RETRY_GUIDANCE_LENGTH = 500;
 

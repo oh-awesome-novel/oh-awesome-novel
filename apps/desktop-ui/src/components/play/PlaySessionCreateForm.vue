@@ -6,6 +6,7 @@ import { buildPlayEventSettings, createPlayEventSettingsDraft, playEventSettings
 import type {
   PlayAgenda,
   PlayEventDensity,
+  PlayLaunchReuseSeed,
   PlayPressure,
   PlaySimulationMode,
 } from '../../composables/useWorkspaceApi';
@@ -14,28 +15,41 @@ import type {
   PlayWorldMomentum,
 } from '../../composables/usePlayWorkspace';
 
-defineProps<{
+const props = defineProps<{
   creating: boolean;
+  /** Another quick session's opening form to prefill from. Read once on setup. */
+  initial?: Extract<PlayLaunchReuseSeed, { kind: 'quickJourney' }>;
 }>();
+const initialForm = props.initial?.form;
+const initialPressure = initialForm?.worldMomentum?.pressures[0];
+const initialAgenda = initialForm?.worldMomentum?.agendas[0];
 
 const emit = defineEmits<{
   cancel: [];
   create: [input: PlaySessionCreateInput];
 }>();
 
-const title = shallowRef('');
-const sceneStart = shallowRef('');
-const userPersona = shallowRef('');
-const characters = shallowRef('');
-const simulationMode = shallowRef<PlaySimulationMode>('reactiveWorld');
-const density = shallowRef<PlayEventDensity>('balanced');
-const eventSettings = shallowRef(createPlayEventSettingsDraft());
-const pressureKind = shallowRef<PlayPressure['kind']>('deadline');
-const pressureLabel = shallowRef('');
-const pressureNextConsequence = shallowRef('');
-const agendaOwner = shallowRef('');
-const agendaGoal = shallowRef('');
-const agendaNextMove = shallowRef('');
+const title = shallowRef(initialForm?.title ?? '');
+const sceneStart = shallowRef(initialForm?.sceneStart ?? '');
+const userPersona = shallowRef(initialForm?.userPersona ?? '');
+const characters = shallowRef(initialForm?.characters.join('\n') ?? '');
+const simulationMode = shallowRef<PlaySimulationMode>(
+  initialForm?.eventPolicy.simulationMode ?? 'reactiveWorld',
+);
+const density = shallowRef<PlayEventDensity>(initialForm?.eventPolicy.density ?? 'balanced');
+const eventSettings = shallowRef(initialForm
+  ? {
+      allowOffscreen: initialForm.eventPolicy.allowOffscreen,
+      allowHidden: initialForm.eventPolicy.allowHidden,
+      maxExternalEventsPerTurn: initialForm.eventPolicy.maxExternalEventsPerTurn,
+    }
+  : createPlayEventSettingsDraft());
+const pressureKind = shallowRef<PlayPressure['kind']>(initialPressure?.kind ?? 'deadline');
+const pressureLabel = shallowRef(initialPressure?.label ?? '');
+const pressureNextConsequence = shallowRef(initialPressure?.nextConsequence ?? '');
+const agendaOwner = shallowRef(initialAgenda?.ownerEntityId ?? '');
+const agendaGoal = shallowRef(initialAgenda?.goal ?? '');
+const agendaNextMove = shallowRef(initialAgenda?.nextMove ?? '');
 const pressureSeedTouched = computed(() =>
   pressureLabel.value.trim().length > 0 || pressureNextConsequence.value.trim().length > 0,
 );
@@ -121,6 +135,9 @@ function splitCharacters(value: string): string[] {
 
 <template>
   <form class="play-create-form" @submit.prevent="submitCreate">
+    <p v-if="initial" class="play-create-reuse" role="status">
+      已用「{{ initial.sourceSessionTitle }}」的开局预填。创建的是全新会话，与原会话互不影响。
+    </p>
     <label>
       <span>标题</span>
       <input v-model="title" class="text-input" type="text" placeholder="雨夜码头">

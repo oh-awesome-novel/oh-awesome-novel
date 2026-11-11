@@ -42,6 +42,12 @@ import type {
   PlayWorldRefereeSettlementEvent,
 } from './play-types.js';
 import {
+  PLAY_CANON_BEATS_STATE_KEY,
+  assertPlayCanonBeatTransition,
+  readPlayCanonBeatTable,
+} from './play-canon-beats.js';
+import { isPlayDirectorNoteArtifact } from './play-turn-artifact.js';
+import {
   PLAY_WORLD_MOMENTUM_STATE_KEY,
   assertPlayWorldMomentumTransition,
   formatPlayRelativeTimeAdvance,
@@ -979,6 +985,11 @@ function validatePlayBranchSnapshots(input: {
       visibilitySnapshot,
       `Play turn artifact ${artifact.id}`,
     );
+    assertPlayCanonBeatState(
+      stateSnapshot,
+      visibilitySnapshot,
+      `Play turn artifact ${artifact.id}`,
+    );
     assertPlayKnowledgeState(
       stateSnapshot,
       visibilitySnapshot,
@@ -1058,6 +1069,24 @@ function validatePlayBranchSnapshots(input: {
     const refereeTurnId = artifact.artifactKind === 'worldSettlement'
       ? artifact.messages[1]!.id!
       : artifact.messages[0]!.id!;
+    // A canon beat table exists from session creation or never: an older session cannot gain one.
+    const predecessorHasCanonBeats = Object.hasOwn(predecessorState, PLAY_CANON_BEATS_STATE_KEY);
+    if (predecessorHasCanonBeats !== Object.hasOwn(stateSnapshot, PLAY_CANON_BEATS_STATE_KEY)) {
+      throw new Error(
+        `Play turn artifact ${artifact.id} cannot add or remove the canon beat table.`,
+      );
+    }
+    if (predecessorHasCanonBeats) {
+      assertPlayCanonBeatTransition({
+        previous: predecessorState[PLAY_CANON_BEATS_STATE_KEY],
+        next: stateSnapshot[PLAY_CANON_BEATS_STATE_KEY],
+        artifactKind: artifact.artifactKind!,
+        directorNote: isPlayDirectorNoteArtifact(artifact),
+        turnId: refereeTurnId,
+        revision: artifact.revision,
+        currentEventIds: artifact.eventIds,
+      });
+    }
     assertPlayKnowledgeTransition({
       predecessorPlayLocalState: predecessorState,
       nextPlayLocalState: stateSnapshot,
@@ -1083,7 +1112,8 @@ function validatePlayBranchSnapshots(input: {
     for (const key of Object.keys(artifact.stateDelta)) {
       expectedVisibility[key] = (
         key === PLAY_WORLD_MOMENTUM_STATE_KEY ||
-        key === PLAY_KNOWLEDGE_STATE_KEY
+        key === PLAY_KNOWLEDGE_STATE_KEY ||
+        key === PLAY_CANON_BEATS_STATE_KEY
       )
         ? 'playerUnknown'
         : settlementVisibility;
@@ -1190,6 +1220,18 @@ function validatePlayBranchSnapshots(input: {
     },
     suggestedActions: [...selectedHead.suggestedActions],
   };
+}
+
+function assertPlayCanonBeatState(
+  state: Record<string, unknown>,
+  visibility: Record<string, PlayEventVisibility>,
+  label: string,
+): void {
+  if (!Object.hasOwn(state, PLAY_CANON_BEATS_STATE_KEY)) return;
+  readPlayCanonBeatTable(state);
+  if (visibility[PLAY_CANON_BEATS_STATE_KEY] !== 'playerUnknown') {
+    throw new Error(`${label} canon beat table must remain referee-only in generic state.`);
+  }
 }
 
 function assertPlayWorldMomentumState(
@@ -1305,6 +1347,13 @@ function assertCompletePlayArtifactKind(
     return;
   }
 
+  // Only a director note may carry state, and then only the canon beat table.
+  const stateKeys = Object.keys(artifact.stateDelta);
+  const stateAllowed = stateKeys.length === 0 || (
+    isPlayDirectorNoteArtifact(artifact) &&
+    stateKeys.length === 1 &&
+    stateKeys[0] === PLAY_CANON_BEATS_STATE_KEY
+  );
   if (
     artifact.artifactKind !== 'transcriptAppend' ||
     artifact.input !== undefined ||
@@ -1312,7 +1361,7 @@ function assertCompletePlayArtifactKind(
     artifact.eventIds.length !== 0 ||
     artifact.dueScheduledEventIds.length !== 0 ||
     artifact.observationIds.length !== 0 ||
-    Object.keys(artifact.stateDelta).length !== 0
+    !stateAllowed
   ) {
     throw new Error(
       `Play turn artifact ${artifact.id} has an invalid transcript append shape.`,

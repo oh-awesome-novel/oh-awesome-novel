@@ -1,3 +1,4 @@
+import { PLAY_CANON_BEATS_STATE_KEY, readPlayCanonBeatTable } from './play-canon-beats.js';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
@@ -40,7 +41,9 @@ export type PlayOutcomeItemKind =
   | 'goalAssessment'
   | 'participantFootprint'
   | 'worldChange'
-  | 'writingMaterial';
+  | 'writingMaterial'
+  /** One canon beat this branch altered, prevented or made obsolete. */
+  | 'canonDivergence';
 
 export type PlayOutcomeConfidence = 'confirmed' | 'inferred' | 'authorProvided';
 
@@ -302,8 +305,12 @@ export function createPlayOutcomeReport(
     });
   }
 
+  addCanonDivergenceItems(session, evidence, addItem);
+
   for (const artifact of evidence.artifacts) {
     for (const [key, value] of Object.entries(artifact.stateDelta)) {
+      // The canon beat table is reported beat by beat above, not as one state blob.
+      if (key === PLAY_CANON_BEATS_STATE_KEY) continue;
       addItem({
         kind: 'worldChange',
         summary: `State ${key} changed to ${formatOutcomeValue(value)}.`,
@@ -340,6 +347,51 @@ export function createPlayOutcomeReport(
     items,
   });
   return report;
+}
+
+const CANON_DIVERGENCE_LABELS = {
+  altered: '已改写',
+  prevented: '已阻止',
+  obsolete: '不再适用',
+} as const;
+
+/**
+ * "与原作的差异": every beat the selected branch settled differently from canon.
+ * A beat that happened as in canon, or is still pending, is not a difference.
+ */
+function addCanonDivergenceItems(
+  session: PlaySession,
+  evidence: SelectedPlayOutcomeEvidenceIndex,
+  addItem: (item: Omit<PlayOutcomeItem, 'id'>) => void,
+): void {
+  const table = readPlayCanonBeatTable(session.playLocalState);
+  if (!table) return;
+  const messageOwners = new Map(evidence.messages.map((entry) =>
+    [entry.message.id, entry.artifactTurnRef]));
+  for (const beat of table.beats) {
+    if (beat.status === 'pending' || beat.status === 'occurredAsCanon') continue;
+    const record = table.changes.findLast((change) => change.beatId === beat.id);
+    const owner = record ? messageOwners.get(record.turnId) : undefined;
+    // A change whose turn is off the selected path cannot be on this branch's state.
+    if (!record || !owner) continue;
+    const canon = beat.source.kind === 'sourceBacked'
+      ? `原作（${beat.source.path}）：${beat.source.quote}`
+      : `原作节点（作者提供）：${beat.label}`;
+    addItem({
+      kind: 'canonDivergence',
+      summary: `${CANON_DIVERGENCE_LABELS[beat.status]}「${beat.label}」。${canon}。本局：${record.reason}`,
+      visibility: beat.visibility,
+      confidence: record.origin === 'manual' ? 'authorProvided' : 'confirmed',
+      tags: ['divergence', 'writingMaterial'],
+      artifactTurnRefs: [owner],
+      messageRefs: [record.turnId],
+      eventRefs: [...record.eventIds],
+      observationRefs: [],
+      evidenceRefs: [],
+      sourceRefs: [],
+      participantRefs: [],
+    });
+  }
 }
 
 export function projectPlayOutcomeReport(
@@ -723,6 +775,7 @@ function normalizePlayOutcomeItem(value: unknown): PlayOutcomeItem {
     'participantFootprint',
     'worldChange',
     'writingMaterial',
+    'canonDivergence',
   ];
   const confidences: readonly PlayOutcomeConfidence[] = [
     'confirmed',

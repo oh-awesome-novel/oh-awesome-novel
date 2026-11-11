@@ -373,6 +373,7 @@ export {
   addPlayAdoptionCandidate,
   addPlayObservation,
   addPlayTranscriptTurn,
+  applyPlayCanonBeatDirectorOperation,
   createPlayAdoptionCandidate,
   createPlaySceneRehearsalSessionDraft,
   createPlaySessionDraft,
@@ -406,6 +407,7 @@ export {
   PLAY_LAUNCH_SETUP_FILE,
   PlayLaunchSourceValidationError,
   normalizePlayLaunchPackage,
+  listPlayLaunchCanonBeatCandidates,
   previewPlayLaunchPackage,
   readPlayLaunchPackage,
   resolvePlayLaunchSetupPath,
@@ -413,6 +415,9 @@ export {
   writePlayLaunchPackage,
 } from './play-launch.js';
 export type {
+  PlayLaunchCanonBeatInput,
+  PlayLaunchCanonBeats,
+  PlayLaunchCanonBeatsInput,
   PlayLaunchDiagnostic,
   PlayLaunchDiagnosticCode,
   PlayLaunchEntryPointInput,
@@ -427,6 +432,57 @@ export type {
   PlayLaunchSourceRole,
   PlayLaunchSourceStatus,
 } from './play-launch.js';
+export {
+  readPlayLaunchReuseSeed,
+  toPlayLaunchPackagePreviewInput,
+} from './play-launch-reuse.js';
+export type {
+  PlayLaunchReuseQuickJourneyForm,
+  PlayLaunchReuseQuickRehearsalForm,
+  PlayLaunchReuseSeed,
+  PlayLaunchReuseSourceCheck,
+  PlayLaunchReuseSourceStatus,
+} from './play-launch-reuse.js';
+export {
+  PLAY_RELATIONSHIP_PROTAGONIST,
+  projectPlayRelationshipTimeline,
+} from './play-relationship-timeline.js';
+export type {
+  PlayRelationshipEntry,
+  PlayRelationshipLens,
+  PlayRelationshipThread,
+  PlayRelationshipTimeline,
+} from './play-relationship-timeline.js';
+export {
+  MAX_PLAY_CANON_BEATS,
+  MAX_PLAY_CANON_BEAT_QUOTE_LENGTH,
+  PLAY_CANON_BEATS_PROTOCOL_MARKER,
+  PLAY_CANON_BEATS_STATE_KEY,
+  PLAY_DIRECTOR_NOTE_SPEAKER,
+  applyPlayCanonBeatChanges,
+  applyPlayCanonBeatManualCorrection,
+  assertPlayCanonBeatTransition,
+  createPlayCanonBeatTable,
+  isLegalPlayCanonBeatTransition,
+  listPlayCanonBeatCandidates,
+  normalizePlayCanonBeatChanges,
+  normalizePlayCanonBeatTable,
+  projectPlayCanonBeats,
+  readPlayCanonBeatTable,
+} from './play-canon-beats.js';
+export type {
+  PlayCanonBeat,
+  PlayCanonBeatCandidate,
+  PlayCanonBeatChange,
+  PlayCanonBeatChangeOrigin,
+  PlayCanonBeatChangeRecord,
+  PlayCanonBeatProjection,
+  PlayCanonBeatSeed,
+  PlayCanonBeatSource,
+  PlayCanonBeatStatus,
+  PlayCanonBeatTable,
+  PlayCanonBeatTerminalStatus,
+} from './play-canon-beats.js';
 export {
   PLAY_LAUNCH_SESSION_METADATA_KEY,
   createPlaySessionFromLaunchPackage,
@@ -488,6 +544,7 @@ export type {
   PlayWorldRefereeSettlement,
   PlayWorldRefereeSettlementEvent,
   PlayWorldRefereeScheduledEventChange,
+  PlayCanonBeatDirectorOperation,
   PlayWorldMomentum,
   PlayWorldRefereeTurnContext,
   SettlePlayWorldRefereeResponseInput,

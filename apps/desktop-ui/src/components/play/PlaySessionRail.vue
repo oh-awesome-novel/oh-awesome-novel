@@ -14,6 +14,7 @@ defineProps<{
 const emit = defineEmits<{
   selectSession: [id: string];
   newSession: [];
+  reuseLaunch: [id: string];
   refresh: [];
 }>();
 </script>
@@ -47,9 +48,8 @@ const emit = defineEmits<{
     </button>
 
     <div class="play-session-list">
+      <div v-for="session in sessions" :key="session.id" class="play-session-row">
       <button
-        v-for="session in sessions"
-        :key="session.id"
         class="play-session-card"
         :class="{ 'play-session-card-active': session.id === selectedSessionId }"
         type="button"
@@ -67,6 +67,16 @@ const emit = defineEmits<{
           · {{ session.eventCount }} 条事件
         </span>
       </button>
+      <button
+        class="play-session-reuse"
+        type="button"
+        :disabled="busy || creating"
+        :aria-label="`以「${session.title}」的开局再开一局`"
+        @click="emit('reuseLaunch', session.id)"
+      >
+        以此开局再开一局
+      </button>
+      </div>
       <p v-if="!loading && sessions.length === 0" class="play-empty-copy">
         还没有推演会话。创建一个场景，让人物和世界开始运转。
       </p>

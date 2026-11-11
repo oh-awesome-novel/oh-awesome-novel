@@ -142,6 +142,67 @@ session snapshot 采用 sibling staging directory + ready marker + directory swa
 - 候选项是输入辅助。直接选、修改后选和自己写提交的都是普通作者行动，走同一回合事务；候选项不足不使回合失败。
 - 结算可见性为 `playerUnknown` 的回合仍不保存候选项。候选项为空、不足或想换一批时，界面使用上文的补充行动建议，结果只临时显示。
 
+### Canon Beats And Divergence Ledger
+
+沉浸推演（v4）可以在引导开局时带一张原作节点表，记录哪些原作事件照常发生、被改写、被阻止或不再适用。范围与验收见 [1480](tasks/1480.md)，核实结论见[实施计划](superpowers/plans/2026-11-10-play-canon-beats.md)。
+
+**存储。** 节点表是 Play-local state 的保留键 `canonBeats`，做法与 `worldMomentum` 相同：随 `branchBaseSnapshot` 和每个 turn artifact 的状态快照保存，Restore、Retry 与阶段归档不需要另一套逻辑。它属于会话，不修改 `timeline/` 文件；进入正式文件只有显式采纳一条路。
+
+```yaml
+canonBeats:
+  schemaVersion: 1
+  protagonistKnowsCanon: false
+  beats:
+    - id: canon-beat-1            # 宿主分配
+      label: 码头仓库暑期读书会
+      expectedWhen: 今年七月十七日   # 只作说明，宿主不比较
+      source:
+        kind: sourceBacked         # 或 authorProvided + providedAt
+        sourceId: source-timeline-events
+        path: timeline/events.yaml
+        contentHash: <sha256>
+        quote: 码头仓库暑期读书会   # 冻结时在来源里逐字存在
+      status: pending              # pending | occurredAsCanon | altered | prevented | obsolete
+      visibility: playerUnknown    # 由 protagonistKnowsCanon 决定
+      causeEventIds: []
+  changes: []                      # 只增不改的变更记录
+```
+
+**兼容规则。**
+
+- session schema 仍为 v4，artifact schema 与 branch snapshot watermark 不变。
+- 是否启用在创建时决定：`canonBeats` 键的有无在 predecessor 与当前快照之间必须一致。旧会话没有这个键，不能追加启用。
+- 未启用的会话在存储与模型请求上与之前逐字节一致：冻结前缀不含节点协议，回合尾部没有节点段，结算里没有 `canonBeatChanges`，launch package 没有 `canonBeats` 字段。
+- 场景试演（v5）不支持节点表。
+
+**开局。** `PlayLaunchPackage` 增加可选 `canonBeats: { protagonistKnowsCanon, beats[] }`，上限 24 条，只对 `immersiveJourney` 有效。来源节点必须引用一个已选的 `timeline` 来源，`quote` 必须是该文件当前内容的逐字子串；宿主冻结 `path`、`contentHash` 与 `quote`。找不到引文时给出 `canonBeatQuoteMissing` 诊断并阻止创建。手写节点没有引文，标为 `authorProvided`。来源文件之后变化走现有来源漂移流程，节点保留冻结时的引文。
+
+**结算协议。** 启用节点表的会话，冻结前缀在创建时追加一段节点协议，回合尾部列出全部节点及状态。结算增加可选字段：
+
+```json
+"canonBeatChanges": [
+  { "beatId": "canon-beat-1", "status": "prevented", "reason": "仓库在活动前被封", "eventRefs": [1] }
+]
+```
+
+- `eventRefs` 是本回合 `events` 数组里的 1 起始位置，至少一个。模型不知道宿主分配的事件 id，所以不用 id 引用。
+- 裁判只能把 `pending` 改成四种终态之一，每回合每条节点至多一次。
+- 节点不存在、迁移不合法、引用越界或不是整数、会话没有节点表，都使整回合失败且零写入，与其它结算校验一致。
+- 宿主不判断自然语言剧情是否“算发生”，不自动推进节点，不自动生成被阻止后的连锁后果；后果由裁判作为普通事件或 Pressure 提出，受现有事件预算约束。
+
+**导演操作。** 两个操作都写成一条导演记录：`artifactKind: transcriptAppend`、说话人 `director`、消息内容不含节点文本。只有导演记录可以：
+
+- 带 `stateDelta.canonBeats`：手动更正节点状态，记为 `origin: manual` 的变更记录。可以把 `pending` 改成终态，或在终态之间改写；不能回到 `pending`（改回只能通过重演该回合）。
+- 在计划表里新增 `scheduled` 条目：把一条待发生节点转成计划事件，使用现有触发类型，`sourceTurnId` 指向这条导演消息。绝对时间仍须是带时区的 ISO 格式。没有转成计划事件的节点不会自己发生。
+
+其它 `transcriptAppend` 的规则不变。Core `play-session-facts.ts` / `play-event-schedule-history.ts` 与 Client 的重放校验按同一规则放宽。
+
+**可见性。** `canonBeats` 在通用状态里固定为 `playerUnknown`，不出现在“推演内状态”。专用投影按节点 `visibility` 过滤：穿越者不知道原作时，参与者视角的世界面板、结果报告和采纳表单都拿不到节点的标签、引文、理由与状态；导演视角全部可见。
+
+**结果报告。** 报告增加“与原作的差异”分组：已改写、已阻止、不再适用的节点各成一项，证据指向造成变化的回合与事件，可以保存为写作参考或进入采纳。手动更正的节点标明来源是作者。
+
+**阶段归档。** 开启新阶段时宿主克隆整个会话，节点表完整带入。归档提示与 `resourceState` 审计不包含 `canonBeats`，不要求模型复述。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：
@@ -155,6 +216,9 @@ Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 
 - `play-turn-retry.ts`：before-turn 投影、typed source action、可选重演指引、原子 sibling settlement 与稳定 retry error code。
 - `play-extra-suggestions.ts`：补充行动建议的只读指令与回复解析。
 - `play-turn-choices.ts`：候选行动的回合规则与类型前缀解析，无 Play 运行时依赖。
+- `play-canon-beats.ts`：原作节点表的类型、codec、状态迁移纯函数、历史校验、视角投影与候选节点提取。
+- `play-relationship-timeline.ts`：关系与态度面板的只读投影，无存储。
+- `play-launch-reuse.ts`：从已有会话读取开局并按当前文件重新核对来源，只读。
 - `play-session.ts`：session lifecycle、referee settlement、staged snapshot、migration 与兼容 public interface。
 
 后续 Pressure / Agenda、checkpoint / variant、context trace、migration confirmation 等新增能力应建立独立深模块，再由 facade 组合；不得把新的领域状态机继续直接堆入 `play-session.ts`。包入口继续通过现有 Play public interface 暴露能力，包内文件拆分不应迫使 Backend、Client 或 Desktop UI 改用私有路径。

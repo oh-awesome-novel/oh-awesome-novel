@@ -19,6 +19,16 @@ import type {
   ContextBudgetLayer,
   SemanticBoundary,
 } from './agent-context-package.js';
+import {
+  MAX_PLAY_CANON_BEATS,
+  isPlayCanonBeatQuoteVerbatim,
+  listPlayCanonBeatCandidates,
+  normalizePlayCanonBeatSeeds,
+} from './play-canon-beats.js';
+import type {
+  PlayCanonBeatCandidate,
+  PlayCanonBeatSeed,
+} from './play-canon-beats.js';
 
 export const PLAY_LAUNCH_PACKAGE_SCHEMA_VERSION = 1 as const;
 export const PLAY_LAUNCH_SETUP_DIRECTORY = 'play-setups' as const;
@@ -43,7 +53,28 @@ export type PlayLaunchDiagnosticCode =
   | 'sourceTooLarge'
   | 'binarySource'
   | 'participantWithoutCharacterSource'
-  | 'participantCharacterMismatch';
+  | 'participantCharacterMismatch'
+  | 'canonBeatQuoteMissing';
+
+/** One canon beat as the author picked or typed it, before the host freezes evidence. */
+export interface PlayLaunchCanonBeatInput {
+  label: string;
+  expectedWhen?: string;
+  source:
+    | { kind: 'sourceBacked'; sourceId: string; quote: string }
+    | { kind: 'authorProvided' };
+}
+
+export interface PlayLaunchCanonBeatsInput {
+  /** Whether the author's character knows what canon says will happen. */
+  protagonistKnowsCanon: boolean;
+  beats: PlayLaunchCanonBeatInput[];
+}
+
+export interface PlayLaunchCanonBeats {
+  protagonistKnowsCanon: boolean;
+  beats: PlayCanonBeatSeed[];
+}
 
 export interface PlayLaunchSourceInput {
   sourceId: string;
@@ -107,6 +138,8 @@ export interface PlayLaunchPackagePreviewInput {
   entryPoint: PlayLaunchEntryPointInput;
   identity: PlayLaunchIdentityInput;
   participantRoles: PlayLaunchParticipantRoleInput[];
+  /** Immersive Journey only. Omitted when the session tracks no canon beats. */
+  canonBeats?: PlayLaunchCanonBeatsInput;
 }
 
 export interface PlayLaunchSource {
@@ -152,6 +185,8 @@ export interface PlayLaunchPackage {
   entryPoint: PlayLaunchEntryPointInput;
   identity: PlayLaunchIdentityInput;
   participantRoles: PlayLaunchParticipantRoleInput[];
+  /** Frozen canon beats. Absent for a session that tracks none. */
+  canonBeats?: PlayLaunchCanonBeats;
   diagnostics: PlayLaunchDiagnostic[];
   canonical: false;
 }
@@ -226,10 +261,15 @@ export async function previewPlayLaunchPackage(
     }
   }
 
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const canonBeats = input.canonBeats
+    ? freezeCanonBeats(input.canonBeats, sources, createdAt, diagnostics)
+    : undefined;
+
   return normalizePlayLaunchPackage({
     schemaVersion: PLAY_LAUNCH_PACKAGE_SCHEMA_VERSION,
     id: input.id ?? `setup-${randomUUID()}`,
-    createdAt: input.createdAt ?? new Date().toISOString(),
+    createdAt,
     title: input.title,
     purpose: input.purpose,
     startMode: 'guided',
@@ -243,9 +283,79 @@ export async function previewPlayLaunchPackage(
     entryPoint: input.entryPoint,
     identity: input.identity,
     participantRoles: input.participantRoles,
+    ...(canonBeats ? { canonBeats } : {}),
     diagnostics,
     canonical: false,
   });
+}
+
+/**
+ * Lists beats the author can tick from one selected timeline file. Read-only;
+ * every candidate quote is verbatim text of that file.
+ */
+export async function listPlayLaunchCanonBeatCandidates(
+  workspaceRoot: string,
+  sourcePath: string,
+): Promise<{ path: string; contentHash: string; candidates: PlayCanonBeatCandidate[] }> {
+  const path = normalizeSourcePath(sourcePath);
+  if (!sourcePathMatchesRole(path, 'timeline')) {
+    throw new Error('Canon beats can only be picked from a timeline source.');
+  }
+  const loaded = await readPlayLaunchSourceText(workspaceRoot, path);
+  if ('error' in loaded) throw new Error(loaded.error.message);
+  return {
+    path,
+    contentHash: loaded.contentHash,
+    candidates: listPlayCanonBeatCandidates(loaded.content),
+  };
+}
+
+function freezeCanonBeats(
+  input: PlayLaunchCanonBeatsInput,
+  sources: Array<{ source: PlayLaunchSource; content?: string }>,
+  createdAt: string,
+  diagnostics: PlayLaunchDiagnostic[],
+): PlayLaunchCanonBeats {
+  const beats = input.beats.map((beat, index): PlayCanonBeatSeed => {
+    const id = `canon-beat-${index + 1}`;
+    const common = {
+      id,
+      label: beat.label,
+      ...(beat.expectedWhen ? { expectedWhen: beat.expectedWhen } : {}),
+    };
+    if (beat.source.kind === 'authorProvided') {
+      return { ...common, source: { kind: 'authorProvided', providedAt: createdAt } };
+    }
+    const sourceId = beat.source.sourceId;
+    const selected = sources.find((item) => item.source.sourceId === sourceId);
+    if (!selected || selected.source.role !== 'timeline') {
+      throw new Error(`Play canon beat ${id} must cite a selected timeline source.`);
+    }
+    const found = selected.content !== undefined &&
+      isPlayCanonBeatQuoteVerbatim(selected.content, beat.source.quote);
+    if (!found && selected.source.status === 'ready') {
+      diagnostics.push({
+        id: `diagnostic-canon-beat-${index + 1}`,
+        code: 'canonBeatQuoteMissing',
+        severity: 'error',
+        message: `Canon beat quote is no longer in its timeline source: ${selected.source.path}`,
+        sourceId,
+        path: selected.source.path,
+      });
+    }
+    return {
+      ...common,
+      source: {
+        kind: 'sourceBacked',
+        sourceId,
+        path: selected.source.path,
+        // An unavailable source already blocks creation through its own diagnostic.
+        contentHash: selected.source.contentHash ?? '0'.repeat(64),
+        quote: beat.source.quote,
+      },
+    };
+  });
+  return { protagonistKnowsCanon: input.protagonistKnowsCanon, beats };
 }
 
 export async function validatePlayLaunchPackageSources(
@@ -344,6 +454,9 @@ async function inspectPlayLaunchPackageEvidence(
     entryPoint: launchPackage.entryPoint,
     identity: launchPackage.identity,
     participantRoles: launchPackage.participantRoles,
+    ...(launchPackage.canonBeats
+      ? { canonBeats: toPlayLaunchCanonBeatsInput(launchPackage.canonBeats) }
+      : {}),
   });
   const diagnostics = [...authoritative.diagnostics];
 
@@ -379,6 +492,15 @@ async function inspectPlayLaunchPackageEvidence(
     });
   }
 
+  if (!isDeepStrictEqual(launchPackage.canonBeats, authoritative.canonBeats)) {
+    diagnostics.push({
+      id: 'diagnostic-evidence-canon-beats',
+      code: 'invalidSource',
+      severity: 'error',
+      message: 'Submitted canon beats do not match the authoritative timeline sources.',
+    });
+  }
+
   if (!isDeepStrictEqual(launchPackage.diagnostics, authoritative.diagnostics)) {
     diagnostics.push({
       id: 'diagnostic-evidence-diagnostics',
@@ -391,6 +513,22 @@ async function inspectPlayLaunchPackageEvidence(
   return {
     authoritative,
     diagnostics: normalizeDiagnostics(diagnostics),
+  };
+}
+
+/** Strips host-frozen evidence so a stored package can be previewed again. */
+export function toPlayLaunchCanonBeatsInput(
+  canonBeats: PlayLaunchCanonBeats,
+): PlayLaunchCanonBeatsInput {
+  return {
+    protagonistKnowsCanon: canonBeats.protagonistKnowsCanon,
+    beats: canonBeats.beats.map((beat) => ({
+      label: beat.label,
+      ...(beat.expectedWhen ? { expectedWhen: beat.expectedWhen } : {}),
+      source: beat.source.kind === 'sourceBacked'
+        ? { kind: 'sourceBacked', sourceId: beat.source.sourceId, quote: beat.source.quote }
+        : { kind: 'authorProvided' },
+    })),
   };
 }
 
@@ -448,6 +586,7 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
     'entryPoint',
     'identity',
     'participantRoles',
+    'canonBeats',
     'diagnostics',
     'canonical',
   ], 'Play launch package');
@@ -526,6 +665,9 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
   }
   const identity = normalizeIdentity(record.identity);
   assertIdentityMatchesPurpose(purpose, identity);
+  const canonBeats = record.canonBeats === undefined
+    ? undefined
+    : normalizeLaunchCanonBeats(record.canonBeats, purpose, sources);
   const diagnostics = normalizeDiagnostics(record.diagnostics);
   const participantRefs = new Set(participants.map((item) => item.participantRef));
   for (const diagnostic of diagnostics) {
@@ -556,8 +698,90 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
     entryPoint,
     identity,
     participantRoles: participants,
+    ...(canonBeats ? { canonBeats } : {}),
     diagnostics,
     canonical: false,
+  };
+}
+
+function normalizeLaunchCanonBeats(
+  value: unknown,
+  purpose: PlaySessionPurpose,
+  sources: readonly PlayLaunchSource[],
+): PlayLaunchCanonBeats {
+  if (purpose !== 'immersiveJourney') {
+    throw new Error('Canon beats are only supported for an Immersive Journey.');
+  }
+  const record = requireRecord(value, 'Play launch canonBeats');
+  assertOnlyKnownFields(record, ['protagonistKnowsCanon', 'beats'], 'Play launch canonBeats');
+  if (typeof record.protagonistKnowsCanon !== 'boolean') {
+    throw new Error('Play launch canonBeats requires protagonistKnowsCanon.');
+  }
+  const beats = normalizePlayCanonBeatSeeds(record.beats);
+  for (const [index, beat] of beats.entries()) {
+    if (beat.id !== `canon-beat-${index + 1}`) {
+      throw new Error('Play launch canon beat ids must be host-assigned in order.');
+    }
+    if (beat.source.kind !== 'sourceBacked') continue;
+    const sourceId = beat.source.sourceId;
+    const source = sources.find((item) => item.sourceId === sourceId);
+    if (!source || source.role !== 'timeline' || source.path !== beat.source.path) {
+      throw new Error(`Play canon beat ${beat.id} must cite a selected timeline source.`);
+    }
+    if (source.status === 'ready' && source.contentHash !== beat.source.contentHash) {
+      throw new Error(`Play canon beat ${beat.id} evidence does not match its timeline source.`);
+    }
+  }
+  return { protagonistKnowsCanon: record.protagonistKnowsCanon, beats };
+}
+
+function normalizeLaunchCanonBeatsInput(
+  value: unknown,
+  purpose: PlaySessionPurpose,
+): PlayLaunchCanonBeatsInput {
+  if (purpose !== 'immersiveJourney') {
+    throw new Error('Canon beats are only supported for an Immersive Journey.');
+  }
+  const record = requireRecord(value, 'Play launch canonBeats');
+  assertOnlyKnownFields(record, ['protagonistKnowsCanon', 'beats'], 'Play launch canonBeats');
+  if (typeof record.protagonistKnowsCanon !== 'boolean') {
+    throw new Error('Play launch canonBeats requires protagonistKnowsCanon.');
+  }
+  if (
+    !Array.isArray(record.beats) ||
+    record.beats.length === 0 ||
+    record.beats.length > MAX_PLAY_CANON_BEATS
+  ) {
+    throw new Error(`Play launch canonBeats must contain 1-${MAX_PLAY_CANON_BEATS} beats.`);
+  }
+  return {
+    protagonistKnowsCanon: record.protagonistKnowsCanon,
+    beats: record.beats.map((item) => {
+      const beat = requireRecord(item, 'Play launch canon beat');
+      assertOnlyKnownFields(beat, ['label', 'expectedWhen', 'source'], 'Play launch canon beat');
+      const source = requireRecord(beat.source, 'Play launch canon beat source');
+      const expectedWhen = normalizeOptionalText(beat.expectedWhen, 'canon beat expectedWhen', 120);
+      const common = {
+        label: normalizeText(beat.label, 'canon beat label', 200),
+        ...(expectedWhen ? { expectedWhen } : {}),
+      };
+      if (source.kind === 'authorProvided') {
+        assertOnlyKnownFields(source, ['kind'], 'Play launch canon beat source');
+        return { ...common, source: { kind: 'authorProvided' as const } };
+      }
+      if (source.kind !== 'sourceBacked') {
+        throw new Error('Play launch canon beat source kind is invalid.');
+      }
+      assertOnlyKnownFields(source, ['kind', 'sourceId', 'quote'], 'Play launch canon beat source');
+      return {
+        ...common,
+        source: {
+          kind: 'sourceBacked' as const,
+          sourceId: assertSafePlayLaunchId(source.sourceId, 'canon beat source id'),
+          quote: normalizeText(source.quote, 'canon beat quote', 240),
+        },
+      };
+    }),
   };
 }
 
@@ -577,6 +801,7 @@ function normalizePlayLaunchPackagePreviewInput(
     'entryPoint',
     'identity',
     'participantRoles',
+    'canonBeats',
   ], 'Play launch preview input');
   if (record.startMode !== 'guided') {
     throw new Error('Play launch preview startMode must be guided.');
@@ -615,6 +840,9 @@ function normalizePlayLaunchPackagePreviewInput(
     entryPoint,
     identity,
     participantRoles: normalizeParticipants(record.participantRoles),
+    ...(record.canonBeats === undefined
+      ? {}
+      : { canonBeats: normalizeLaunchCanonBeatsInput(record.canonBeats, purpose) }),
   };
 }
 
@@ -622,7 +850,7 @@ async function inspectPlayLaunchSource(
   workspaceRoot: string,
   input: PlayLaunchSourceInput,
   index: number,
-): Promise<{ source: PlayLaunchSource; diagnostics: PlayLaunchDiagnostic[] }> {
+): Promise<{ source: PlayLaunchSource; content?: string; diagnostics: PlayLaunchDiagnostic[] }> {
   const source = normalizeSourceInput(input);
   const objectId = deriveObjectId(source.path, source.role);
   const base: Omit<PlayLaunchSource, 'status'> = {
@@ -646,52 +874,61 @@ async function inspectPlayLaunchSource(
     );
   }
 
+  const loaded = await readPlayLaunchSourceText(workspaceRoot, source.path);
+  if ('error' in loaded) {
+    return invalidSource(
+      base,
+      diagnosticId,
+      loaded.error.code,
+      loaded.error.message,
+      loaded.error.code === 'missingSource' ? 'missing' : 'invalid',
+    );
+  }
+  return {
+    source: {
+      ...base,
+      status: 'ready',
+      contentHash: loaded.contentHash,
+      excerpt: normalizeExcerpt(loaded.content),
+    },
+    content: loaded.content,
+    diagnostics: [],
+  };
+}
+
+/** Reads one workspace-contained UTF-8 text source with the launch size and safety limits. */
+async function readPlayLaunchSourceText(
+  workspaceRoot: string,
+  sourcePath: string,
+): Promise<
+  | { content: string; contentHash: string }
+  | { error: { code: PlayLaunchDiagnosticCode; message: string } }
+> {
+  const fail = (code: PlayLaunchDiagnosticCode, message: string) => ({ error: { code, message } });
   try {
-    const filePath = await resolveRealWorkspaceSource(workspaceRoot, source.path);
+    const filePath = await resolveRealWorkspaceSource(workspaceRoot, sourcePath);
     const fileStat = await stat(filePath);
-    if (!fileStat.isFile()) {
-      return invalidSource(base, diagnosticId, 'invalidSource', 'Selected source is not a file.');
-    }
+    if (!fileStat.isFile()) return fail('invalidSource', 'Selected source is not a file.');
     if (fileStat.size > MAX_PLAY_LAUNCH_SOURCE_BYTES) {
-      return invalidSource(
-        base,
-        diagnosticId,
-        'sourceTooLarge',
-        `Selected source exceeds ${MAX_PLAY_LAUNCH_SOURCE_BYTES} bytes.`,
-      );
+      return fail('sourceTooLarge', `Selected source exceeds ${MAX_PLAY_LAUNCH_SOURCE_BYTES} bytes.`);
     }
     const buffer = await readFile(filePath);
-    if (buffer.includes(0)) {
-      return invalidSource(base, diagnosticId, 'binarySource', 'Selected source is not plain text.');
-    }
+    if (buffer.includes(0)) return fail('binarySource', 'Selected source is not plain text.');
     let content: string;
     try {
       content = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
     } catch {
-      return invalidSource(base, diagnosticId, 'binarySource', 'Selected source is not valid UTF-8 text.');
+      return fail('binarySource', 'Selected source is not valid UTF-8 text.');
     }
-    if (!content.trim()) {
-      return invalidSource(base, diagnosticId, 'invalidSource', 'Selected source is empty.');
-    }
-    return {
-      source: {
-        ...base,
-        status: 'ready',
-        contentHash: createHash('sha256').update(buffer).digest('hex'),
-        excerpt: normalizeExcerpt(content),
-      },
-      diagnostics: [],
-    };
+    if (!content.trim()) return fail('invalidSource', 'Selected source is empty.');
+    return { content, contentHash: createHash('sha256').update(buffer).digest('hex') };
   } catch (error) {
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
-    return invalidSource(
-      base,
-      diagnosticId,
+    return fail(
       missing ? 'missingSource' : 'invalidSource',
       missing
-        ? `Selected source is missing: ${source.path}`
-        : `Selected source is unavailable or unsafe: ${source.path}`,
-      missing ? 'missing' : 'invalid',
+        ? `Selected source is missing: ${sourcePath}`
+        : `Selected source is unavailable or unsafe: ${sourcePath}`,
     );
   }
 }
@@ -1065,7 +1302,8 @@ function normalizeDiagnosticCode(value: unknown): PlayLaunchDiagnosticCode {
     value !== 'sourceTooLarge' &&
     value !== 'binarySource' &&
     value !== 'participantWithoutCharacterSource' &&
-    value !== 'participantCharacterMismatch'
+    value !== 'participantCharacterMismatch' &&
+    value !== 'canonBeatQuoteMissing'
   ) {
     throw new Error('Play launch diagnostic code is invalid.');
   }

@@ -5,6 +5,7 @@ import type { PlayScheduledEvent } from './play-event-schedule.js';
 import {
   PLAY_REHEARSAL_TURN_ARTIFACT_SCHEMA_VERSION,
   PLAY_TURN_ARTIFACT_SCHEMA_VERSION,
+  isPlayDirectorNoteArtifact,
 } from './play-turn-artifact.js';
 import type { PlayTurnArtifact } from './play-turn-artifact.js';
 import type {
@@ -62,10 +63,19 @@ export function validatePlayScheduledEventHistory(
     const currentById = new Map(
       artifact.scheduledEventSnapshots.map((event) => [event.id, event]),
     );
+    // A director note may add scheduled events it sources itself; nothing else may move.
+    const directorNoteMessageId = isPlayDirectorNoteArtifact(artifact)
+      ? artifact.messages[0]!.id
+      : undefined;
+    const carriedSnapshots = artifact.scheduledEventSnapshots.filter((event) =>
+      previousById.has(event.id) ||
+      directorNoteMessageId === undefined ||
+      event.status !== 'scheduled' ||
+      event.sourceTurnId !== directorNoteMessageId);
     if (
       artifact.artifactKind === 'transcriptAppend' &&
       !arePlayScheduledEventListsEqual(
-        artifact.scheduledEventSnapshots,
+        carriedSnapshots,
         previousSnapshots,
       )
     ) {
@@ -201,12 +211,16 @@ function assertPlayScheduledEventEvidence(input: {
     const sourceMessage = sourceOwner?.messages.find(
       (message) => message.id === scheduledEvent.sourceTurnId,
     );
+    const sourcedByReferee = sourceOwner?.artifactKind === 'worldSettlement' &&
+      sourceMessage?.speaker === 'world-referee' &&
+      sourceOwner.messages[1]?.id === scheduledEvent.sourceTurnId;
+    const sourcedByDirectorNote = Boolean(sourceOwner) &&
+      isPlayDirectorNoteArtifact(sourceOwner!) &&
+      sourceOwner!.messages[0]?.id === scheduledEvent.sourceTurnId;
     if (
       !sourceOwnerId ||
       !sourceOwner ||
-      sourceOwner.artifactKind !== 'worldSettlement' ||
-      sourceMessage?.speaker !== 'world-referee' ||
-      sourceOwner.messages[1]?.id !== scheduledEvent.sourceTurnId ||
+      (!sourcedByReferee && !sourcedByDirectorNote) ||
       !allowedArtifactIds.has(sourceOwnerId)
     ) {
       throw new Error(

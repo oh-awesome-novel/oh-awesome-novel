@@ -1,6 +1,7 @@
 import { computed, readonly, shallowRef } from 'vue';
 import { createPlayEventSettingsDraft, playEventSettingsError } from './playEventPolicyForm';
 
+import type { PlayLaunchReuseQuickRehearsalForm } from './useWorkspaceApi';
 import type {
   PlayRehearsalCastErrors,
   PlayRehearsalParticipantDraft,
@@ -13,6 +14,8 @@ import type {
 
 export interface UsePlayRehearsalSetupOptions {
   createParticipantRef?: (sequence: number) => string;
+  /** Another quick rehearsal's opening form to prefill from. */
+  initial?: PlayLaunchReuseQuickRehearsalForm;
 }
 
 const setupSteps: PlayRehearsalSetupStep[] = ['scene', 'cast', 'review'];
@@ -22,10 +25,34 @@ export function usePlayRehearsalSetup(
 ) {
   let participantSequence = 0;
   const currentStep = shallowRef<PlayRehearsalSetupStep>('scene');
-  const sceneDraft = shallowRef<PlayRehearsalSceneDraft>(createSceneDraft());
-  const participants = shallowRef<PlayRehearsalParticipantDraft[]>([
-    createParticipantDraft(),
-  ]);
+  const sceneDraft = shallowRef<PlayRehearsalSceneDraft>(options.initial
+    ? {
+        title: options.initial.title,
+        opening: options.initial.opening,
+        location: options.initial.location,
+        atmosphere: options.initial.atmosphere,
+        objective: options.initial.objective,
+        risk: options.initial.risk,
+        simulationMode: options.initial.eventPolicy.simulationMode,
+        density: options.initial.eventPolicy.density,
+        eventSettings: {
+          allowOffscreen: options.initial.eventPolicy.allowOffscreen,
+          allowHidden: options.initial.eventPolicy.allowHidden,
+          maxExternalEventsPerTurn: options.initial.eventPolicy.maxExternalEventsPerTurn,
+        },
+      }
+    : createSceneDraft());
+  const participants = shallowRef<PlayRehearsalParticipantDraft[]>(
+    options.initial?.participants.length
+      ? options.initial.participants.map((participant) => ({
+          ...createParticipantDraft(),
+          displayName: participant.displayName,
+          position: participant.position,
+          currentGoal: participant.currentGoal,
+          initialKnowledge: participant.initialKnowledge,
+        }))
+      : [createParticipantDraft()],
+  );
   const sceneValidationVisible = shallowRef(false);
   const castValidationVisible = shallowRef(false);
   const announcement = shallowRef('场景设置。第 1 / 3 步。');

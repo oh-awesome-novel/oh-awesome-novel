@@ -29,6 +29,7 @@ const OUTCOME_KIND_ORDER: PlayOutcomeItemKind[] = [
   'sceneSummary',
   'goalAssessment',
   'participantFootprint',
+  'canonDivergence',
   'worldChange',
   'writingMaterial',
 ];
@@ -320,6 +321,7 @@ function formatOutcomeKind(kind: PlayOutcomeItemKind): string {
   if (kind === 'sceneSummary') return '场景概要';
   if (kind === 'goalAssessment') return '目标达成情况';
   if (kind === 'participantFootprint') return '人物足迹';
+  if (kind === 'canonDivergence') return '与原作的差异';
   if (kind === 'worldChange') return '世界变化';
   return '写作素材';
 }

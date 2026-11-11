@@ -71,7 +71,26 @@ function sourceStatus(
         <dt>参与者</dt>
         <dd>{{ preview.participantRoles.length }}</dd>
       </div>
+      <div v-if="preview.canonBeats">
+        <dt>原作节点</dt>
+        <dd>
+          {{ preview.canonBeats.beats.length }} 条 ·
+          {{ preview.canonBeats.protagonistKnowsCanon ? '穿越者知道原作' : '穿越者不知道原作' }}
+        </dd>
+      </div>
     </dl>
+
+    <section v-if="preview.canonBeats" class="canon-beat-review" aria-labelledby="guided-review-canon-heading">
+      <h3 id="guided-review-canon-heading">原作节点</h3>
+      <ul>
+        <li v-for="beat in preview.canonBeats.beats" :key="beat.id">
+          <strong>{{ beat.label }}</strong>
+          <span v-if="beat.expectedWhen"> · {{ beat.expectedWhen }}</span>
+          <span v-if="beat.source.kind === 'sourceBacked'"> · 引自 {{ beat.source.path }}</span>
+          <span v-else> · 作者提供</span>
+        </li>
+      </ul>
+    </section>
 
     <section class="source-evidence" aria-labelledby="guided-review-sources-heading">
       <h3 id="guided-review-sources-heading">来源依据</h3>

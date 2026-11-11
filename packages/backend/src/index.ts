@@ -61,6 +61,8 @@ import {
   activateWritingProfile,
   addPlayAdoptionCandidate,
   addPlayObservation,
+  applyPlayCanonBeatDirectorOperation,
+  listPlayLaunchCanonBeatCandidates,
   addPlayTranscriptTurn,
   cloneCustomWritingProfile,
   createCustomWritingProfile,
@@ -102,10 +104,12 @@ import {
   normalizePlayWorldMomentum,
   preparePlayWorldSettlementRetry,
   projectPlayOutcomeReport,
+  projectPlayRelationshipTimeline,
   projectPlayAdoptionCandidate,
   projectPlayAdoptionDraft,
   readProjectHealth,
   readPlayLaunchPackage,
+  readPlayLaunchReuseSeed,
   readPlayOutcomeReport,
   readPlaySessionFiles,
   readPlaySessionSelectedDetail,
@@ -164,6 +168,7 @@ import type {
   PlayEventDensity,
   PlayEventPolicy,
   PlayLaunchDiagnostic,
+  PlayCanonBeatDirectorOperation,
   PlayLaunchPackage,
   PlayLaunchPackagePreviewInput,
   PlayObservation,
@@ -947,6 +952,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.get('/api/workspace/play-sessions/:id/migration', (context) => playMigration.preview(context, context.req.param('id')));
   app.post('/api/workspace/play-sessions/:id/migration', (context) => playMigration.confirm(context, context.req.param('id')));
+  app.get('/api/workspace/play-sessions/:id/launch-reuse', (context) =>
+    handleReadPlayLaunchReuseSeed(options, state, context.req.param('id') ?? '', context));
   app.get('/api/workspace/play-session-summaries', (context) =>
     handleListPlaySessionSummaries(options, state, context));
   app.post('/api/workspace/play-sessions', (context) =>
@@ -1090,6 +1097,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   );
   app.get('/api/workspace/play-sessions/:id', (context) =>
     handleReadPlaySession(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace/play-sessions/:id/relationships', (context) =>
+    handleReadPlayRelationshipTimeline(options, state, context.req.param('id') ?? '', context));
   app.get('/api/workspace/play-sessions/:id/detail', (context) =>
     handleReadPlaySessionDetail(
       options,
@@ -1148,6 +1157,10 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     context.header('Link', `</api/workspace/play-sessions/${encodeURIComponent(context.req.param('id'))}/turns/stream>; rel="successor-version"`);
     return handleAppendPlayTranscript(options, state, context.req.param('id') ?? '', context);
   });
+  app.post('/api/workspace/play-setups/canon-beat-candidates', (context) =>
+    handleListPlayCanonBeatCandidates(options, state, context));
+  app.post('/api/workspace/play-sessions/:id/canon-beats', (context) =>
+    handlePlayCanonBeatDirectorOperation(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/observations', (context) =>
     handleAddPlayObservation(options, state, context.req.param('id') ?? '', context));
   app.post('/api/workspace/play-sessions/:id/adoption-candidates', (context) =>
@@ -2969,6 +2982,31 @@ async function handleReadPlayLaunchPackage(
   }
 }
 
+/** Read-only: the source session is never written, so its revision cannot move. */
+async function handleReadPlayLaunchReuseSeed(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  try {
+    return jsonResponse(context, 200, {
+      seed: await readPlayLaunchReuseSeed(workspaceRoot, id),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonResponse(
+      context,
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422,
+      { error: message },
+    );
+  }
+}
+
 async function handleCreatePlaySession(
   options: NovelBackendOptions,
   state: BackendState,
@@ -3225,6 +3263,37 @@ async function handleReadPlaySessionDetail(
         ? 400
         : 422;
     return jsonResponse(context, status, { error: message });
+  }
+}
+
+/** Rebuilt from the selected branch on every read; nothing is stored. */
+async function handleReadPlayRelationshipTimeline(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  if (state.activePlayTurns.has(createPlayTurnLockKey(workspaceRoot, id))) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  const lens = new URL(context.req.url).searchParams.get('lens') ?? 'player';
+  if (lens !== 'player' && lens !== 'director') {
+    return jsonResponse(context, 400, { error: 'Play relationship lens is invalid.' });
+  }
+  try {
+    return jsonResponse(context, 200, {
+      timeline: projectPlayRelationshipTimeline(
+        await readPlaySessionFiles(workspaceRoot, id),
+        lens,
+      ),
+    });
+  } catch (error) {
+    return jsonResponse(
+      context,
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422,
+      { error: error instanceof Error ? error.message : String(error) },
+    );
   }
 }
 
@@ -3795,6 +3864,101 @@ async function handleAddPlayObservation(
       throw error;
     }
 
+    return jsonResponse(context, 200, { session: next });
+  } finally {
+    state.activePlayTurns.delete(lockKey);
+  }
+}
+
+/** Read-only: offers verbatim beats from one timeline file for the launch wizard. */
+async function handleListPlayCanonBeatCandidates(
+  options: NovelBackendOptions,
+  state: BackendState,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const path = getOptionalString(body, 'path');
+  if (!path || Object.keys(body).some((field) => field !== 'path')) {
+    return jsonResponse(context, 400, { error: 'Canon beat candidates require only a timeline path.' });
+  }
+  try {
+    return jsonResponse(context, 200, await listPlayLaunchCanonBeatCandidates(workspaceRoot, path));
+  } catch (error) {
+    return jsonResponse(context, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** An author correction or a beat-to-schedule conversion, committed as a director note. */
+async function handlePlayCanonBeatDirectorOperation(
+  options: NovelBackendOptions,
+  state: BackendState,
+  id: string,
+  context: NovelBackendContext,
+): Promise<Response> {
+  const workspaceRoot = requireActiveWorkspaceRoot(options, state);
+  const body = await readJsonBody(context);
+  const revisionCheck = readPlayBaseRevision(body);
+  if (revisionCheck.error) return jsonResponse(context, 400, { error: revisionCheck.error });
+  const operation = body.operation;
+  if (
+    Object.keys(body).some((field) => field !== 'baseRevision' && field !== 'operation') ||
+    typeof operation !== 'object' || operation === null || Array.isArray(operation)
+  ) {
+    return jsonResponse(context, 400, { error: 'Canon beat request requires baseRevision and operation.' });
+  }
+  const fields = operation as Record<string, unknown>;
+  const allowed = fields.type === 'correct'
+    ? ['type', 'beatId', 'status', 'reason']
+    : fields.type === 'schedule'
+      ? ['type', 'beatId', 'trigger', 'visibility', 'priority']
+      : undefined;
+  if (!allowed || Object.keys(fields).some((field) => !allowed.includes(field))) {
+    return jsonResponse(context, 400, { error: 'Canon beat operation is invalid.' });
+  }
+
+  const lockKey = createPlayTurnLockKey(workspaceRoot, id);
+  if (state.activePlayTurns.has(lockKey)) {
+    return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+  }
+  state.activePlayTurns.add(lockKey);
+  try {
+    let session: PlaySession;
+    try {
+      session = await readPlaySessionFiles(workspaceRoot, id);
+    } catch (error) {
+      return jsonResponse(context, 404, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const revisionConflict = playRevisionConflictResponse(
+      context,
+      revisionCheck.value,
+      session.revision,
+    );
+    if (revisionConflict) return revisionConflict;
+    let next: PlaySession;
+    try {
+      // Core validates every field and replays the stored-history rules before returning.
+      next = applyPlayCanonBeatDirectorOperation(
+        session,
+        fields as unknown as PlayCanonBeatDirectorOperation,
+      );
+    } catch (error) {
+      return jsonResponse(context, 400, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      await writePlaySessionFiles(workspaceRoot, next, { expectedCurrentSession: session });
+    } catch (error) {
+      if (error instanceof PlaySessionWriteConflictError) {
+        return jsonResponse(context, 409, { error: 'Play session changed before the canon beat could be saved.' });
+      }
+      throw error;
+    }
     return jsonResponse(context, 200, { session: next });
   } finally {
     state.activePlayTurns.delete(lockKey);

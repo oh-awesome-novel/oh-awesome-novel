@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { playCompactionSource } from './play-compaction.js';
 import { PLAY_KNOWLEDGE_STATE_KEY } from './play-knowledge.js';
 import { PLAY_WORLD_MOMENTUM_STATE_KEY } from './play-world-momentum.js';
+import { PLAY_CANON_BEATS_STATE_KEY } from './play-canon-beats.js';
 import type { PlaySession } from './play-session.js';
 import type { PlayEventVisibility } from './play-types.js';
 import type { PlayTurnArtifact } from './play-turn-artifact.js';
@@ -145,7 +146,7 @@ function stateAt(turn: PlayTurnArtifact, lens: PlayPhaseQuery['lens']) {
   for (const [key, value] of Object.entries(state)) {
     const labels = [visibility[key] ?? 'playerUnknown', ...Object.entries(visibility)
       .filter(([path]) => path.startsWith(key + '.')).map(([, label]) => label)];
-    if (key === PLAY_KNOWLEDGE_STATE_KEY || key === PLAY_WORLD_MOMENTUM_STATE_KEY) labels.push('playerUnknown');
+    if (key === PLAY_KNOWLEDGE_STATE_KEY || key === PLAY_WORLD_MOMENTUM_STATE_KEY || key === PLAY_CANON_BEATS_STATE_KEY) labels.push('playerUnknown');
     const fieldVisibility = labels.includes('playerUnknown') ? 'playerUnknown' : labels.includes('rumor') ? 'rumor' : 'playerVisible';
     if (lens === 'player' && fieldVisibility !== 'playerVisible') continue;
     const bytes = Buffer.byteLength(JSON.stringify({ [key]: value }));

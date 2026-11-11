@@ -1035,7 +1035,211 @@ export type PlayLaunchDiagnosticCode =
   | 'sourceTooLarge'
   | 'binarySource'
   | 'participantWithoutCharacterSource'
-  | 'participantCharacterMismatch';
+  | 'participantCharacterMismatch'
+  | 'canonBeatQuoteMissing';
+
+export const PLAY_CANON_BEATS_STATE_KEY = 'canonBeats' as const;
+export const MAX_PLAY_CANON_BEATS = 24;
+
+export type PlayCanonBeatStatus =
+  | 'pending'
+  | 'occurredAsCanon'
+  | 'altered'
+  | 'prevented'
+  | 'obsolete';
+
+export type PlayCanonBeatTerminalStatus = Exclude<PlayCanonBeatStatus, 'pending'>;
+
+export type PlayCanonBeatSource =
+  | { kind: 'sourceBacked'; sourceId: string; path: string; contentHash: string; quote: string }
+  | { kind: 'authorProvided'; providedAt: string };
+
+export interface PlayCanonBeatSeed {
+  id: string;
+  label: string;
+  expectedWhen?: string;
+  source: PlayCanonBeatSource;
+}
+
+export interface PlayCanonBeat extends PlayCanonBeatSeed {
+  status: PlayCanonBeatStatus;
+  visibility: PlayEventVisibility;
+  changedAtTurnId?: string;
+  causeEventIds: string[];
+  note?: string;
+  scheduledEventId?: string;
+}
+
+export interface PlayCanonBeatChangeRecord {
+  id: string;
+  beatId: string;
+  from: PlayCanonBeatStatus;
+  to: PlayCanonBeatTerminalStatus;
+  reason: string;
+  origin: 'referee' | 'manual';
+  turnId: string;
+  eventIds: string[];
+  revision: number;
+}
+
+/** Session-owned record of which canon events happened, changed or were prevented. */
+export interface PlayCanonBeatTable {
+  schemaVersion: 1;
+  protagonistKnowsCanon: boolean;
+  beats: PlayCanonBeat[];
+  changes: PlayCanonBeatChangeRecord[];
+}
+
+export interface PlayCanonBeatCandidate {
+  label: string;
+  quote: string;
+  expectedWhen?: string;
+}
+
+export interface PlayLaunchCanonBeatInput {
+  label: string;
+  expectedWhen?: string;
+  source:
+    | { kind: 'sourceBacked'; sourceId: string; quote: string }
+    | { kind: 'authorProvided' };
+}
+
+export interface PlayLaunchCanonBeatsInput {
+  protagonistKnowsCanon: boolean;
+  beats: PlayLaunchCanonBeatInput[];
+}
+
+export interface PlayLaunchCanonBeats {
+  protagonistKnowsCanon: boolean;
+  beats: PlayCanonBeatSeed[];
+}
+
+export type PlayCanonBeatDirectorOperation =
+  | { type: 'correct'; beatId: string; status: PlayCanonBeatTerminalStatus; reason: string }
+  | {
+      type: 'schedule';
+      beatId: string;
+      trigger: PlayEventTrigger;
+      visibility?: PlayEventVisibility;
+      priority?: number;
+    };
+
+/**
+ * Reads the canon beat table from Play-local state for one lens. The Player
+ * lens gets nothing unless the protagonist knows canon.
+ */
+export function projectPlayCanonBeatTable(
+  playLocalState: Readonly<Record<string, unknown>> | undefined,
+  lens: 'player' | 'director',
+): PlayCanonBeatTable | undefined {
+  const value = playLocalState?.[PLAY_CANON_BEATS_STATE_KEY];
+  if (!isPlayCanonBeatTable(value)) return undefined;
+  if (lens === 'player' && !value.protagonistKnowsCanon) return undefined;
+  return value;
+}
+
+export function isPlayCanonBeatTable(value: unknown): value is PlayCanonBeatTable {
+  const statuses = ['pending', 'occurredAsCanon', 'altered', 'prevented', 'obsolete'];
+  return isRecord(value) &&
+    value.schemaVersion === 1 &&
+    typeof value.protagonistKnowsCanon === 'boolean' &&
+    Array.isArray(value.beats) &&
+    value.beats.length >= 1 &&
+    value.beats.length <= MAX_PLAY_CANON_BEATS &&
+    value.beats.every((beat) =>
+      isPlayCanonBeatSeed(beat) &&
+      statuses.includes(String((beat as unknown as Record<string, unknown>).status)) &&
+      (beat as unknown as Record<string, unknown>).visibility ===
+        (value.protagonistKnowsCanon ? 'playerVisible' : 'playerUnknown') &&
+      isStringArray((beat as unknown as Record<string, unknown>).causeEventIds)) &&
+    Array.isArray(value.changes) &&
+    value.changes.every((change) =>
+      isRecord(change) &&
+      typeof change.id === 'string' &&
+      typeof change.beatId === 'string' &&
+      statuses.includes(String(change.from)) &&
+      statuses.includes(String(change.to)) &&
+      change.to !== 'pending' &&
+      typeof change.reason === 'string' &&
+      (change.origin === 'referee' || change.origin === 'manual') &&
+      typeof change.turnId === 'string' &&
+      isStringArray(change.eventIds) &&
+      Number.isSafeInteger(change.revision));
+}
+
+function isPlayCanonBeatSeed(value: unknown): value is PlayCanonBeatSeed {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.label !== 'string' ||
+    !value.label.trim() ||
+    (value.expectedWhen !== undefined && typeof value.expectedWhen !== 'string') ||
+    !isRecord(value.source)
+  ) return false;
+  const source = value.source;
+  return source.kind === 'authorProvided'
+    ? typeof source.providedAt === 'string'
+    : source.kind === 'sourceBacked' &&
+      typeof source.sourceId === 'string' &&
+      typeof source.path === 'string' &&
+      typeof source.contentHash === 'string' &&
+      /^[a-f0-9]{64}$/u.test(source.contentHash) &&
+      typeof source.quote === 'string' &&
+      source.quote.length > 0;
+}
+
+function isPlayLaunchCanonBeatsInput(value: unknown): value is PlayLaunchCanonBeatsInput {
+  return isRecord(value) &&
+    hasOnlyKnownFields(value, ['protagonistKnowsCanon', 'beats']) &&
+    typeof value.protagonistKnowsCanon === 'boolean' &&
+    Array.isArray(value.beats) &&
+    value.beats.length >= 1 &&
+    value.beats.length <= MAX_PLAY_CANON_BEATS &&
+    value.beats.every((beat) =>
+      isRecord(beat) &&
+      hasOnlyKnownFields(beat, ['label', 'expectedWhen', 'source']) &&
+      isPlayLaunchText(beat.label, 200) &&
+      (beat.expectedWhen === undefined || isPlayLaunchText(beat.expectedWhen, 120)) &&
+      isRecord(beat.source) &&
+      (beat.source.kind === 'authorProvided'
+        ? hasOnlyKnownFields(beat.source, ['kind'])
+        : beat.source.kind === 'sourceBacked' &&
+          hasOnlyKnownFields(beat.source, ['kind', 'sourceId', 'quote']) &&
+          isPlayLaunchSafeId(beat.source.sourceId) &&
+          isPlayLaunchText(beat.source.quote, 240)));
+}
+
+function isPlayLaunchCanonBeats(value: unknown): value is PlayLaunchCanonBeats {
+  return isRecord(value) &&
+    hasOnlyKnownFields(value, ['protagonistKnowsCanon', 'beats']) &&
+    typeof value.protagonistKnowsCanon === 'boolean' &&
+    Array.isArray(value.beats) &&
+    value.beats.length >= 1 &&
+    value.beats.length <= MAX_PLAY_CANON_BEATS &&
+    value.beats.every((beat, index) =>
+      isPlayCanonBeatSeed(beat) &&
+      hasOnlyKnownFields(beat as unknown as Record<string, unknown>, ['id', 'label', 'expectedWhen', 'source']) &&
+      beat.id === `canon-beat-${index + 1}`);
+}
+
+/** The frozen beats must be exactly what was requested, plus host-added evidence. */
+function doPlayLaunchCanonBeatsMatch(
+  frozen: PlayLaunchCanonBeats | undefined,
+  requested: PlayLaunchCanonBeatsInput | undefined,
+): boolean {
+  if (!frozen || !requested) return frozen === undefined && requested === undefined;
+  return frozen.protagonistKnowsCanon === requested.protagonistKnowsCanon &&
+    frozen.beats.length === requested.beats.length &&
+    frozen.beats.every((beat, index) => {
+      const input = requested.beats[index]!;
+      return beat.label === input.label &&
+        beat.expectedWhen === input.expectedWhen &&
+        beat.source.kind === input.source.kind &&
+        (beat.source.kind !== 'sourceBacked' || input.source.kind !== 'sourceBacked' ||
+          (beat.source.sourceId === input.source.sourceId &&
+            beat.source.quote === input.source.quote));
+    });
+}
 
 export interface PlayLaunchSourceInput {
   sourceId: string;
@@ -1099,6 +1303,8 @@ export interface PlayLaunchPackagePreviewInput {
   entryPoint: PlayLaunchEntryPointInput;
   identity: PlayLaunchIdentityInput;
   participantRoles: PlayLaunchParticipantRoleInput[];
+  /** Immersive Journey only. Omitted when the session tracks no canon beats. */
+  canonBeats?: PlayLaunchCanonBeatsInput;
 }
 
 export interface PlayLaunchSource {
@@ -1142,6 +1348,7 @@ export interface PlayLaunchPackage {
   entryPoint: PlayLaunchEntryPointInput;
   identity: PlayLaunchIdentityInput;
   participantRoles: PlayLaunchParticipantRoleInput[];
+  canonBeats?: PlayLaunchCanonBeats;
   diagnostics: PlayLaunchDiagnostic[];
   canonical: false;
 }
@@ -1157,6 +1364,109 @@ export interface PlayLaunchPackageCreateResult {
 
 export interface PlayLaunchPackageReadResult {
   launchPackage: PlayLaunchPackage;
+}
+
+export type PlayLaunchReuseSourceStatus =
+  | 'unchanged'
+  | 'changed'
+  | 'missing'
+  | 'invalid';
+
+export interface PlayLaunchReuseSourceCheck {
+  sourceId: string;
+  path: string;
+  role: PlayLaunchSourceRole;
+  status: PlayLaunchReuseSourceStatus;
+  frozenContentHash?: string;
+  currentContentHash?: string;
+  message?: string;
+}
+
+export interface PlayLaunchReuseQuickJourneyForm {
+  title: string;
+  sceneStart: string;
+  userPersona?: string;
+  characters: string[];
+  eventPolicy: PlayEventPolicy;
+  worldMomentum?: PlayWorldMomentum;
+}
+
+export interface PlayLaunchReuseQuickRehearsalForm {
+  title: string;
+  opening: string;
+  location: string;
+  atmosphere: string;
+  objective: string;
+  risk: string;
+  eventPolicy: PlayEventPolicy;
+  participants: Array<{
+    participantRef: string;
+    displayName: string;
+    position: string;
+    currentGoal: string;
+    initialKnowledge: string;
+  }>;
+}
+
+/** The opening of an existing session, used only to prefill a brand-new one. */
+export type PlayLaunchReuseSeed =
+  | {
+      kind: 'guided';
+      sourceSessionId: string;
+      sourceSessionTitle: string;
+      purpose: PlaySessionPurpose;
+      launch: PlayLaunchPackagePreviewInput;
+      sources: PlayLaunchReuseSourceCheck[];
+    }
+  | {
+      kind: 'quickJourney';
+      sourceSessionId: string;
+      sourceSessionTitle: string;
+      purpose: 'immersiveJourney';
+      form: PlayLaunchReuseQuickJourneyForm;
+    }
+  | {
+      kind: 'quickRehearsal';
+      sourceSessionId: string;
+      sourceSessionTitle: string;
+      purpose: 'sceneRehearsal';
+      form: PlayLaunchReuseQuickRehearsalForm;
+    };
+
+export const PLAY_RELATIONSHIP_PROTAGONIST = '@protagonist' as const;
+
+export type PlayRelationshipLens = 'player' | 'director';
+
+export interface PlayRelationshipEntry {
+  id: string;
+  source: 'event' | 'pressure';
+  turn: number;
+  revision: number;
+  artifactId?: string;
+  eventId?: string;
+  pressureId?: string;
+  title: string;
+  summary: string;
+  visibility: PlayEventVisibility;
+  pressureStatus?: { from?: PlayPressureStatus; to: PlayPressureStatus };
+  /** Director lens only. */
+  reason?: string;
+}
+
+export interface PlayRelationshipThread {
+  key: string;
+  participants: string[];
+  entries: PlayRelationshipEntry[];
+}
+
+/** Read-only projection of relationship changes on the selected branch. */
+export interface PlayRelationshipTimeline {
+  sessionId: string;
+  revision: number;
+  selectedHead?: string;
+  lens: PlayRelationshipLens;
+  threads: PlayRelationshipThread[];
+  canonical: false;
 }
 
 export interface StartPlaySessionFromLaunchPackageInput {
@@ -1243,7 +1553,8 @@ export type PlayOutcomeItemKind =
   | 'goalAssessment'
   | 'participantFootprint'
   | 'worldChange'
-  | 'writingMaterial';
+  | 'writingMaterial'
+  | 'canonDivergence';
 export type PlayOutcomeConfidence = 'confirmed' | 'inferred' | 'authorProvided';
 export type PlayOutcomeGoalStatus = 'reached' | 'partial' | 'missed' | 'changed';
 export type PlayOutcomeTag =
@@ -2084,6 +2395,8 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
     launchPackage: PlayLaunchPackage,
   ): Promise<PlayLaunchPackageCreateResult>;
   getPlayLaunchPackage(id: string): Promise<PlayLaunchPackageReadResult>;
+  /** Reads a session's opening to prefill a new launch; never mutates that session. */
+  getPlayLaunchReuseSeed(sessionId: string): Promise<{ seed: PlayLaunchReuseSeed }>;
   startPlaySessionFromLaunchPackage(
     input: StartPlaySessionFromLaunchPackageInput,
   ): Promise<{ session: PlaySession; files: string[] }>;
@@ -2109,6 +2422,11 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
   getPlaySession(id: string): Promise<{ session: PlaySession }>;
   previewPlaySessionMigration(id: string): Promise<{ preview: PlaySessionMigrationPreview | null }>;
   confirmPlaySessionMigration(id: string, input: PlaySessionMigrationConfirmation): Promise<{ session: PlaySession }>;
+  getPlayRelationshipTimeline(
+    id: string,
+    lens: PlayRelationshipLens,
+    signal?: AbortSignal,
+  ): Promise<{ timeline: PlayRelationshipTimeline }>;
   getPlaySessionDetail(id: string, options?: {
     limit?: number;
     transcriptCursor?: string;
@@ -2210,6 +2528,17 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
     content: string;
     createdAt?: string;
     baseRevision?: number;
+  }): Promise<{ session: PlaySession }>;
+  /** Lists verbatim beats the author can tick from one timeline file. Read-only. */
+  listPlayCanonBeatCandidates(path: string): Promise<{
+    path: string;
+    contentHash: string;
+    candidates: PlayCanonBeatCandidate[];
+  }>;
+  /** Corrects a canon beat or turns a pending one into a scheduled event (Director only). */
+  applyPlayCanonBeatOperation(id: string, input: {
+    baseRevision: number;
+    operation: PlayCanonBeatDirectorOperation;
   }): Promise<{ session: PlaySession }>;
   addPlayObservation(id: string, observation: {
     summary: string;
@@ -2895,6 +3224,13 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       );
       return parsePlayLaunchPackageReadResponse(value, setupId);
     },
+    getPlayLaunchReuseSeed: async (sessionId) => {
+      const id = requireSafePlayClientId(sessionId, 'Play session id');
+      const value = await requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(id)}/launch-reuse`,
+      );
+      return parsePlayLaunchReuseSeedResponse(value, id);
+    },
     startPlaySessionFromLaunchPackage: async (input) => {
       const normalized = normalizePlayLaunchSessionStartRequest(input);
       const value = await requestJson<unknown>('/api/workspace/play-sessions', {
@@ -2950,6 +3286,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
       requestJson<unknown>(
         `/api/workspace/play-sessions/${encodeURIComponent(id)}`,
       ).then((value) => parsePlaySessionResponse(value, id)),
+    getPlayRelationshipTimeline: (id, lens, signal) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      if (lens !== 'player' && lens !== 'director') {
+        throw new Error('Play relationship lens is invalid.');
+      }
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/relationships?lens=${lens}`,
+        { signal },
+      ).then((value) => parsePlayRelationshipTimelineResponse(value, sessionId, lens));
+    },
     getPlaySessionDetail: (id, options = {}) => {
       const sessionId = requireSafePlayClientId(id, 'Play session id');
       const query = normalizePlaySessionDetailQuery(options);
@@ -3136,6 +3482,39 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
           body: turn,
         },
       ).then((value) => parsePlaySessionResponse(value, id)),
+    listPlayCanonBeatCandidates: (path) =>
+      requestJson<unknown>('/api/workspace/play-setups/canon-beat-candidates', {
+        method: 'POST',
+        body: { path },
+      }).then((value) => {
+        if (
+          !isRecord(value) ||
+          !hasOnlyKnownFields(value, ['path', 'contentHash', 'candidates']) ||
+          value.path !== path ||
+          !isSha256Hex(value.contentHash) ||
+          !Array.isArray(value.candidates) ||
+          !value.candidates.every((candidate) =>
+            isRecord(candidate) &&
+            hasOnlyKnownFields(candidate, ['label', 'quote', 'expectedWhen']) &&
+            isPlayLaunchText(candidate.label, 200) &&
+            isPlayLaunchText(candidate.quote, 240) &&
+            (candidate.expectedWhen === undefined || isPlayLaunchText(candidate.expectedWhen, 120)))
+        ) {
+          throw new Error('Play canon beat candidates returned an invalid payload.');
+        }
+        return value as unknown as {
+          path: string;
+          contentHash: string;
+          candidates: PlayCanonBeatCandidate[];
+        };
+      }),
+    applyPlayCanonBeatOperation: (id, input) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      return requestJson<unknown>(
+        `/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/canon-beats`,
+        { method: 'POST', body: input },
+      ).then((value) => parsePlaySessionResponse(value, sessionId));
+    },
     addPlayObservation: (id, observation) => {
       for (const key of ['sourceTurnIds', 'sourceEventIds'] as const) {
         const refs = observation[key];
@@ -5035,7 +5414,8 @@ function isPlayOutcomeItemKind(value: unknown): value is PlayOutcomeItemKind {
     || value === 'goalAssessment'
     || value === 'participantFootprint'
     || value === 'worldChange'
-    || value === 'writingMaterial';
+    || value === 'writingMaterial'
+    || value === 'canonDivergence';
 }
 
 function isPlayOutcomeConfidence(value: unknown): value is PlayOutcomeConfidence {
@@ -5310,6 +5690,196 @@ function parsePlayLaunchPackageReadResponse(
     throw new Error('Play launch package request returned an invalid payload.');
   }
   return value as unknown as PlayLaunchPackageReadResult;
+}
+
+function parsePlayLaunchReuseSeedResponse(
+  value: unknown,
+  sessionId: string,
+): { seed: PlayLaunchReuseSeed } {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['seed']) ||
+    !isPlayLaunchReuseSeed(value.seed) ||
+    value.seed.sourceSessionId !== sessionId
+  ) {
+    throw new Error('Play launch reuse request returned an invalid payload.');
+  }
+  return value as unknown as { seed: PlayLaunchReuseSeed };
+}
+
+function isPlayLaunchReuseSeed(value: unknown): value is PlayLaunchReuseSeed {
+  if (
+    !isRecord(value) ||
+    typeof value.sourceSessionId !== 'string' ||
+    typeof value.sourceSessionTitle !== 'string'
+  ) return false;
+  const base = ['kind', 'sourceSessionId', 'sourceSessionTitle', 'purpose'];
+  if (value.kind === 'guided') {
+    if (
+      !hasOnlyKnownFields(value, [...base, 'launch', 'sources']) ||
+      !isPlayLaunchPackagePreviewInput(value.launch) ||
+      value.launch.id !== undefined ||
+      value.launch.createdAt !== undefined ||
+      value.launch.purpose !== value.purpose ||
+      !Array.isArray(value.sources) ||
+      value.sources.length !== value.launch.sources.length
+    ) return false;
+    const launchSources = value.launch.sources;
+    return value.sources.every((check, index) =>
+      isRecord(check) &&
+      hasOnlyKnownFields(check, [
+        'sourceId',
+        'path',
+        'role',
+        'status',
+        'frozenContentHash',
+        'currentContentHash',
+        'message',
+      ]) &&
+      check.sourceId === launchSources[index]?.sourceId &&
+      check.path === launchSources[index]?.path &&
+      check.role === launchSources[index]?.role &&
+      (check.status === 'unchanged' || check.status === 'changed' ||
+        check.status === 'missing' || check.status === 'invalid') &&
+      (check.frozenContentHash === undefined || isSha256Hex(check.frozenContentHash)) &&
+      (check.currentContentHash === undefined || isSha256Hex(check.currentContentHash)) &&
+      (check.message === undefined || typeof check.message === 'string') &&
+      (check.status !== 'unchanged' ||
+        (check.frozenContentHash !== undefined &&
+          check.frozenContentHash === check.currentContentHash)) &&
+      (check.status !== 'changed' ||
+        (check.currentContentHash !== undefined &&
+          check.frozenContentHash !== check.currentContentHash)) &&
+      ((check.status !== 'missing' && check.status !== 'invalid') ||
+        check.currentContentHash === undefined));
+  }
+  if (value.kind === 'quickJourney') {
+    const form = value.form;
+    return hasOnlyKnownFields(value, [...base, 'form']) &&
+      value.purpose === 'immersiveJourney' &&
+      isRecord(form) &&
+      hasOnlyKnownFields(form, [
+        'title',
+        'sceneStart',
+        'userPersona',
+        'characters',
+        'eventPolicy',
+        'worldMomentum',
+      ]) &&
+      typeof form.title === 'string' &&
+      typeof form.sceneStart === 'string' &&
+      (form.userPersona === undefined || typeof form.userPersona === 'string') &&
+      isStringArray(form.characters) &&
+      isPlayEventPolicy(form.eventPolicy) &&
+      (form.worldMomentum === undefined || isPlayWorldMomentum(form.worldMomentum));
+  }
+  if (value.kind === 'quickRehearsal') {
+    const form = value.form;
+    return hasOnlyKnownFields(value, [...base, 'form']) &&
+      value.purpose === 'sceneRehearsal' &&
+      isRecord(form) &&
+      hasOnlyKnownFields(form, [
+        'title',
+        'opening',
+        'location',
+        'atmosphere',
+        'objective',
+        'risk',
+        'eventPolicy',
+        'participants',
+      ]) &&
+      (['title', 'opening', 'location', 'atmosphere', 'objective', 'risk'] as const)
+        .every((field) => typeof form[field] === 'string') &&
+      isPlayEventPolicy(form.eventPolicy) &&
+      Array.isArray(form.participants) &&
+      form.participants.every((participant) =>
+        isRecord(participant) &&
+        hasOnlyKnownFields(participant, [
+          'participantRef',
+          'displayName',
+          'position',
+          'currentGoal',
+          'initialKnowledge',
+        ]) &&
+        Object.values(participant).every((field) => typeof field === 'string'));
+  }
+  return false;
+}
+
+function parsePlayRelationshipTimelineResponse(
+  value: unknown,
+  sessionId: string,
+  lens: PlayRelationshipLens,
+): { timeline: PlayRelationshipTimeline } {
+  const timeline = isRecord(value) ? value.timeline : undefined;
+  const isStatus = (status: unknown): boolean =>
+    status === 'latent' || status === 'active' || status === 'resolved';
+  const isEntry = (entry: unknown): boolean =>
+    isRecord(entry) &&
+    hasOnlyKnownFields(entry, [
+      'id',
+      'source',
+      'turn',
+      'revision',
+      'artifactId',
+      'eventId',
+      'pressureId',
+      'title',
+      'summary',
+      'visibility',
+      'pressureStatus',
+      'reason',
+    ]) &&
+    typeof entry.id === 'string' &&
+    (entry.source === 'event' || entry.source === 'pressure') &&
+    Number.isSafeInteger(entry.turn) &&
+    Number.isSafeInteger(entry.revision) &&
+    (entry.artifactId === undefined || typeof entry.artifactId === 'string') &&
+    (entry.eventId === undefined || typeof entry.eventId === 'string') &&
+    (entry.pressureId === undefined || typeof entry.pressureId === 'string') &&
+    typeof entry.title === 'string' &&
+    typeof entry.summary === 'string' &&
+    (entry.visibility === 'playerVisible' || entry.visibility === 'rumor' ||
+      entry.visibility === 'playerUnknown') &&
+    (entry.pressureStatus === undefined || (
+      isRecord(entry.pressureStatus) &&
+      hasOnlyKnownFields(entry.pressureStatus, ['from', 'to']) &&
+      (entry.pressureStatus.from === undefined || isStatus(entry.pressureStatus.from)) &&
+      isStatus(entry.pressureStatus.to)
+    )) &&
+    (entry.reason === undefined || typeof entry.reason === 'string') &&
+    // The Player lens must never carry hidden entries or referee-side causes.
+    (lens === 'director' ||
+      (entry.visibility !== 'playerUnknown' && entry.reason === undefined));
+  if (
+    !isRecord(value) ||
+    !hasOnlyKnownFields(value, ['timeline']) ||
+    !isRecord(timeline) ||
+    !hasOnlyKnownFields(timeline, [
+      'sessionId',
+      'revision',
+      'selectedHead',
+      'lens',
+      'threads',
+      'canonical',
+    ]) ||
+    timeline.sessionId !== sessionId ||
+    !Number.isSafeInteger(timeline.revision) ||
+    (timeline.selectedHead !== undefined && typeof timeline.selectedHead !== 'string') ||
+    timeline.lens !== lens ||
+    timeline.canonical !== false ||
+    !Array.isArray(timeline.threads) ||
+    !timeline.threads.every((thread) =>
+      isRecord(thread) &&
+      hasOnlyKnownFields(thread, ['key', 'participants', 'entries']) &&
+      typeof thread.key === 'string' &&
+      isStringArray(thread.participants) &&
+      Array.isArray(thread.entries) &&
+      thread.entries.every(isEntry))
+  ) {
+    throw new Error('Play relationship timeline returned an invalid payload.');
+  }
+  return value as unknown as { timeline: PlayRelationshipTimeline };
 }
 
 function parsePlayLaunchSessionCreateResponse(
@@ -5842,7 +6412,12 @@ function hasConsistentPlayV2Artifact(
     artifact.eventIds.length !== 0 ||
     artifact.dueScheduledEventIds.length !== 0 ||
     artifact.observationIds.length !== 0 ||
-    Object.keys(artifact.stateDelta).length !== 0
+    // Only a director note may carry state, and then only the canon beat table.
+    !(Object.keys(artifact.stateDelta).length === 0 || (
+      isPlayDirectorNoteArtifact(artifact) &&
+      isDeepEqualJson(Object.keys(artifact.stateDelta), [PLAY_CANON_BEATS_STATE_KEY]) &&
+      isPlayCanonBeatTable(artifact.stateDelta[PLAY_CANON_BEATS_STATE_KEY])
+    ))
   ) {
     return false;
   }
@@ -5901,7 +6476,8 @@ function hasConsistentPlayV2Artifact(
         : 'playerVisible';
   for (const key of Object.keys(artifact.stateDelta)) {
     expectedVisibility[key] = key === 'worldMomentum' ||
-        key === PLAY_KNOWLEDGE_STATE_KEY
+        key === PLAY_KNOWLEDGE_STATE_KEY ||
+        key === PLAY_CANON_BEATS_STATE_KEY
       ? 'playerUnknown'
       : settlementVisibility;
   }
@@ -5948,11 +6524,17 @@ function hasConsistentPlayV2Artifact(
           artifact.suggestedActions,
           predecessorSuggestedActions,
         ) ||
+        // A director note may add scheduled events it sources itself; nothing else may move.
         !isDeepEqualJson(
-          artifact.scheduledEventSnapshots,
+          artifact.scheduledEventSnapshots.filter((event) =>
+            predecessorSchedulesById.has(event.id) ||
+            !hasCurrentArtifactScheduleEvidence(event, artifact)),
           predecessorSchedules,
         )
       )) ||
+    // A canon beat table exists from session creation or never.
+    Object.hasOwn(predecessorState, PLAY_CANON_BEATS_STATE_KEY) !==
+      Object.hasOwn(artifact.playLocalStateSnapshot, PLAY_CANON_BEATS_STATE_KEY) ||
     !isDeepEqualJson(artifact.dueScheduledEventIds, expectedDueIds) ||
     predecessorSchedules.some((event) => !currentSchedulesById.has(event.id)) ||
     artifact.scheduledEventSnapshots.some((event) =>
@@ -6291,12 +6873,23 @@ function hasCurrentArtifactScheduleEvidence(
   artifact: PlayTurnArtifact,
 ): boolean {
   const refereeMessage = artifact.messages[1];
-  return artifact.artifactKind === 'worldSettlement' &&
-    refereeMessage?.speaker === 'world-referee' &&
-    scheduledEvent.sourceTurnId === refereeMessage.id &&
+  const sourceMessageId = isPlayDirectorNoteArtifact(artifact)
+    ? artifact.messages[0]?.id
+    : artifact.artifactKind === 'worldSettlement' && refereeMessage?.speaker === 'world-referee'
+      ? refereeMessage.id
+      : undefined;
+  return sourceMessageId !== undefined &&
+    scheduledEvent.sourceTurnId === sourceMessageId &&
     isNonEmptyString(scheduledEvent.changeReason) &&
     scheduledEvent.scheduledAtRevision === artifact.revision &&
     scheduledEvent.scheduledAtTurn === artifact.worldClock?.turn;
+}
+
+/** A transcriptAppend authored by the `director` speaker. */
+function isPlayDirectorNoteArtifact(artifact: PlayTurnArtifact): boolean {
+  return artifact.artifactKind === 'transcriptAppend' &&
+    artifact.messages.length === 1 &&
+    artifact.messages[0]?.speaker === 'director';
 }
 
 function hasCurrentArtifactScheduleResolution(
@@ -7202,7 +7795,11 @@ function isPlayLaunchPackagePreviewInput(
       'entryPoint',
       'identity',
       'participantRoles',
+      'canonBeats',
     ]) ||
+    (value.canonBeats !== undefined && (
+      value.purpose !== 'immersiveJourney' || !isPlayLaunchCanonBeatsInput(value.canonBeats)
+    )) ||
     (value.id !== undefined && !isPlayLaunchSafeId(value.id)) ||
     (value.createdAt !== undefined && !isPlayLaunchText(value.createdAt, 128)) ||
     !isPlayLaunchText(value.title, 200) ||
@@ -7251,9 +7848,13 @@ function isPlayLaunchPackageEnvelope(value: unknown): value is PlayLaunchPackage
       'entryPoint',
       'identity',
       'participantRoles',
+      'canonBeats',
       'diagnostics',
       'canonical',
     ]) ||
+    (value.canonBeats !== undefined && (
+      value.purpose !== 'immersiveJourney' || !isPlayLaunchCanonBeats(value.canonBeats)
+    )) ||
     value.schemaVersion !== 1 ||
     !isPlayLaunchSafeId(value.id) ||
     !isPlayLaunchText(value.createdAt, 128) ||
@@ -7517,6 +8118,7 @@ function doesPlayLaunchPreviewMatchRequest(
     !isDeepEqualJson(launchPackage.entryPoint, input.entryPoint) ||
     !isDeepEqualJson(launchPackage.identity, input.identity) ||
     !isDeepEqualJson(launchPackage.participantRoles, input.participantRoles) ||
+    !doPlayLaunchCanonBeatsMatch(launchPackage.canonBeats, input.canonBeats) ||
     launchPackage.sourceBase.activatedSources.length !== input.sources.length
   ) return false;
   return launchPackage.sourceBase.activatedSources.every((source, index) => {
@@ -7623,7 +8225,8 @@ function isPlayLaunchDiagnosticCode(
     value === 'sourceTooLarge' ||
     value === 'binarySource' ||
     value === 'participantWithoutCharacterSource' ||
-    value === 'participantCharacterMismatch';
+    value === 'participantCharacterMismatch' ||
+    value === 'canonBeatQuoteMissing';
 }
 
 function isPlayLaunchBudgetLayer(value: unknown): boolean {

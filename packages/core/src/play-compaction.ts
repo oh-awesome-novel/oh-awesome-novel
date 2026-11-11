@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { PlaySession } from './play-session.js';
 import { getPlayFrozenSystemPrompt } from './play-turn-prompt.js';
+import { PLAY_CANON_BEATS_STATE_KEY } from './play-canon-beats.js';
+
+/** The host carries the canon beat table into the next phase itself; the model never restates it. */
+function archivedState(session: PlaySession): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(session.playLocalState)
+    .filter(([key]) => key !== PLAY_CANON_BEATS_STATE_KEY));
+}
 
 export interface PlayCompactionData {
   version: 1;
@@ -93,7 +100,7 @@ export function buildPlayCompactionPrompt(session: PlaySession, evidenceTurnIds 
     'unresolvedThreads 只能且必须包含白名单里全部历史存在逐字引文的未结线索；缺少字面历史依据必须报错修正，不得补写或静默省略。不得把已经解决的旧承诺列为未结线索。resourceState 必须逐项完整保留当前状态，包括不可逆伤势、已消耗资源与未兑现约定。',
     `当前字段证据白名单: ${JSON.stringify(currentCompactionEvidence(session))}`,
     `turnsCovered 必须为 ${session.selectedTurnIds.length}.`,
-    `resourceState: ${JSON.stringify(session.playLocalState)}`,
+    `resourceState: ${JSON.stringify(archivedState(session))}`,
     `当前待触发事件: ${JSON.stringify(session.scheduledEvents.filter(event => event.status === 'scheduled'))}`,
     `窗口内分支事件: ${JSON.stringify({ ids: evidenceTurnIds, events: selectedEvents({ ...session, selectedTurnIds: evidenceTurnIds }) })}`].join('\n');
 }
@@ -113,7 +120,7 @@ export function auditPlayCompaction(session: PlaySession, data: PlayCompactionDa
   if (data.turnsCovered !== session.selectedTurnIds.length) errors.push('Covered turns differ from selected branch.');
   // Canonical JSON comparison makes object key order irrelevant while retaining exact values.
   const stable = (v: unknown): string => JSON.stringify(v, (_k, value) => record(value) ? Object.fromEntries(Object.entries(value).sort(([a],[b]) => a.localeCompare(b))) : value);
-  if (stable(data.resourceState) !== stable(session.playLocalState)) errors.push('Resource/state ledger changed or omitted facts.');
+  if (stable(data.resourceState) !== stable(archivedState(session))) errors.push('Resource/state ledger changed or omitted facts.');
   const verifiedQuote = (quote: string | undefined): boolean => Boolean(quote) && [...quote!].length <= 80 && quotedVerbatim(history, quote!);
   for (const raw of data.chronicle) {
     const entry = chronicleEntry(raw);

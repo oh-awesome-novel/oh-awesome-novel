@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, useId, useTemplateRef } from 'vue';
+import { computed, nextTick, onMounted, useId, useTemplateRef } from 'vue';
 
 import type {
   FileTreeNode,
@@ -9,9 +9,11 @@ import type {
 import { useWorkspaceApi } from '../../../composables/useWorkspaceApi';
 import {
   usePlayGuidedStart,
+  type PlayGuidedReuseSeed,
   type PlayGuidedStartApi,
   type PlayGuidedStartStep,
 } from '../../../composables/usePlayGuidedStart';
+import PlayGuidedCanonBeats from './PlayGuidedCanonBeats.vue';
 import PlayGuidedCastStep from './PlayGuidedCastStep.vue';
 import PlayGuidedEntryStep from './PlayGuidedEntryStep.vue';
 import PlayGuidedIdentityStep from './PlayGuidedIdentityStep.vue';
@@ -25,8 +27,11 @@ const props = withDefaults(defineProps<{
   filesError?: string;
   api?: PlayGuidedStartApi;
   disabled?: boolean;
+  /** Another session's frozen opening to prefill from. Read once on mount. */
+  seed?: PlayGuidedReuseSeed;
 }>(), {
   api: undefined,
+  seed: undefined,
   disabled: false,
   filesLoading: false,
   filesError: undefined,
@@ -56,6 +61,21 @@ const {
   requestError,
   announcement,
   canStart,
+  timelineSources,
+  canonBeats,
+  canonCandidates,
+  canonBeatLimitReached,
+  protagonistKnowsCanon,
+  loadCanonCandidates,
+  isCanonCandidateSelected,
+  toggleCanonCandidate,
+  addManualCanonBeat,
+  removeCanonBeat,
+  setProtagonistKnowsCanon,
+  reuseSourceTitle,
+  reuseChecks,
+  applySeed,
+  previewSeededLaunch,
   toggleSource,
   updateEntry,
   toggleEntrySource,
@@ -88,6 +108,20 @@ const steps: Array<{ id: PlayGuidedStartStep; label: string }> = [
   { id: 'cast', label: '人物' },
   { id: 'review', label: '确认' },
 ];
+
+const reuseStatusLabels = {
+  changed: '内容已变化',
+  missing: '文件已不存在',
+  invalid: '文件现在无法使用',
+} as const;
+
+onMounted(async () => {
+  if (!props.seed) return;
+  applySeed(props.seed);
+  if (!props.filesLoading && !props.filesError && await previewSeededLaunch()) {
+    await focusStepPanel();
+  }
+});
 
 async function advance(): Promise<void> {
   if (await nextStep()) await focusStepPanel();
@@ -142,6 +176,33 @@ async function focusStepPanel(): Promise<void> {
       </ol>
     </nav>
 
+    <aside v-if="reuseSourceTitle" class="reuse-notice" aria-label="开局复用">
+      <p>
+        已用「{{ reuseSourceTitle }}」的开局预填，来源已按当前文件重新核对。
+        确认后创建的是全新会话，与原会话互不影响。
+      </p>
+      <ul v-if="reuseChecks.length" class="reuse-checks">
+        <li v-for="check in reuseChecks" :key="check.sourceId">
+          <code>{{ check.path }}</code>
+          <span>{{ reuseStatusLabels[check.status] }}</span>
+          <template v-if="check.status === 'missing'">
+            <span>已从本次开局移除</span>
+          </template>
+          <template v-else-if="check.selected">
+            <span>{{ check.status === 'changed' ? '将沿用现在的内容' : '保留会导致无法创建' }}</span>
+            <button
+              type="button"
+              :disabled="busy"
+              @click="toggleSource(check.sourceId, false)"
+            >
+              移除此来源
+            </button>
+          </template>
+          <span v-else>已移除</span>
+        </li>
+      </ul>
+    </aside>
+
     <p v-if="requestError && currentStep !== 'review'" class="request-error" role="alert">
       {{ requestError }} 请重新预览后再试。
     </p>
@@ -174,7 +235,24 @@ async function focusStepPanel(): Promise<void> {
         @back="back"
         @next="advance"
         @cancel="cancel"
-      />
+      >
+        <!-- Canon beats exist only for an Immersive Journey. -->
+        <PlayGuidedCanonBeats
+          v-if="purpose === 'immersiveJourney'"
+          :timeline-sources="timelineSources"
+          :beats="canonBeats"
+          :candidates="canonCandidates"
+          :protagonist-knows-canon="protagonistKnowsCanon"
+          :limit-reached="canonBeatLimitReached"
+          :disabled="busy"
+          :is-selected="isCanonCandidateSelected"
+          @load="loadCanonCandidates"
+          @toggle="toggleCanonCandidate"
+          @add-manual="addManualCanonBeat"
+          @remove="removeCanonBeat"
+          @set-knows="setProtagonistKnowsCanon"
+        />
+      </PlayGuidedEntryStep>
       <PlayGuidedIdentityStep
         v-else-if="currentStep === 'identity'"
         :purpose="purpose"
@@ -307,6 +385,35 @@ nav .current {
   background: var(--play-surface, var(--editor-surface));
   color: var(--play-danger, var(--editor-danger));
   font-size: 12px;
+}
+
+.reuse-notice {
+  display: grid;
+  gap: 6px;
+  margin: 12px 18px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--play-line, var(--editor-hairline));
+  background: var(--play-surface, var(--editor-surface));
+  font-size: 12px;
+}
+
+.reuse-notice p,
+.reuse-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reuse-checks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.reuse-checks span {
+  color: var(--play-muted, var(--editor-muted));
 }
 
 .source-status {

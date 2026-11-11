@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatPlayWorldActivity } from '../../composables/playTerms';
-import { computed, shallowRef, toRef, watch } from 'vue';
+import { computed, nextTick, shallowRef, toRef, watch } from 'vue';
 
 import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
@@ -15,6 +15,9 @@ import PlayTranscript from './PlayTranscript.vue';
 import VisualNovelStage from './VisualNovelStage.vue';
 import PlayPhaseMemory from './PlayPhaseMemory.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
+import PlayRelationshipPanel from './PlayRelationshipPanel.vue';
+import PlayCanonBeatPanel from './PlayCanonBeatPanel.vue';
+import { projectPlayCanonBeatTable } from '@oh-awesome-novel/client';
 import PlayContextInspector from './context/PlayContextInspector.vue';
 import PlayMessageLog from './message-log/PlayMessageLog.vue';
 import DomainUsageInspector from '../usage/DomainUsageInspector.vue';
@@ -28,8 +31,11 @@ import type {
   PlayAdoptionSeed,
 } from '../../composables/usePlayAdoptionPreview';
 import { canSubmitPlayChoiceDirectly, usePlayWorkspace } from '../../composables/usePlayWorkspace';
+import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
 import type {
   FileTreeNode,
+  PlayCanonBeatDirectorOperation,
+  PlayLaunchReuseSeed,
   PlaySession,
   WorkspaceSummary,
 } from '../../composables/useWorkspaceApi';
@@ -61,6 +67,12 @@ const launchOpen = shallowRef(false);
 const visualNovelOpen = shallowRef(false);
 const importOpen = shallowRef(false);
 const importBusy = shallowRef(false);
+const workspaceApi = useWorkspaceApi();
+const launchSeed = shallowRef<PlayLaunchReuseSeed>();
+const launchSeedLoading = shallowRef(false);
+const launchSeedError = shallowRef('');
+// Remounts the flow per open, so a seed prefills exactly one launch.
+const launchKey = shallowRef(0);
 
 const {
   observation,
@@ -265,29 +277,108 @@ function chooseCustomVisualAction(text: string, basedOn?: string): void {
   });
 }
 
+// The Player lens gets no table at all unless the protagonist knows canon.
+const canonBeatTable = computed(() => projectPlayCanonBeatTable(
+  (displaySession.value ?? selectedSession.value)?.playLocalState,
+  showSpoilers.value ? 'director' : 'player',
+));
+const canonBeatBusy = shallowRef(false);
+const canonBeatError = shallowRef('');
+
+/** A Director-only correction or beat-to-schedule conversion, committed on the selected branch. */
+async function applyCanonBeatOperation(operation: PlayCanonBeatDirectorOperation): Promise<void> {
+  const session = selectedSession.value;
+  if (!session || !showSpoilers.value || interactionBlocked.value || canonBeatBusy.value) return;
+  canonBeatBusy.value = true;
+  canonBeatError.value = '';
+  try {
+    const result = await workspaceApi.applyPlayCanonBeatOperation(session.id, {
+      baseRevision: session.revision,
+      operation,
+    });
+    replaceSession(result.session);
+  } catch (cause) {
+    canonBeatError.value = `原作节点没有保存：${cause instanceof Error ? cause.message : String(cause)}`;
+    // A refused write usually means the session moved on; reload so a retry uses the current revision.
+    void refreshSessions();
+  } finally {
+    canonBeatBusy.value = false;
+  }
+}
+
+const relationshipBranchKey = computed(() =>
+  `${selectedSession.value?.revision ?? -1}:${(displaySession.value ?? selectedSession.value)?.selectedTurnIds.at(-1) ?? ''}`);
+
+/** Jumps to an event card, paging earlier events in when the card is not loaded yet. */
+async function focusPlayEvent(eventId: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await nextTick();
+    const card = document.getElementById(`play-event-${eventId}`);
+    if (card) {
+      card.scrollIntoView({ block: 'center' });
+      card.focus();
+      return;
+    }
+    if (!eventWindow.value?.hasMoreBefore || !await loadEarlierEvents()) return;
+  }
+}
+
+function focusPlayTurn(artifactId: string): void {
+  const node = [...document.querySelectorAll<HTMLElement>('[data-worldline-checkpoint]')]
+    .find((candidate) => candidate.dataset.worldlineCheckpoint === artifactId);
+  node?.scrollIntoView({ block: 'center' });
+  node?.focus();
+}
+
 function openLaunch(): void {
   importOpen.value = false;
-  if (!interactionBlocked.value) launchOpen.value = true;
+  if (interactionBlocked.value) return;
+  launchSeed.value = undefined;
+  launchSeedError.value = '';
+  launchKey.value += 1;
+  launchOpen.value = true;
+}
+
+/**
+ * Opens the launch flow prefilled from an existing session's opening. The
+ * source session is only read; whatever is created is an unrelated new session.
+ */
+async function reuseLaunch(sessionId: string): Promise<void> {
+  if (interactionBlocked.value || launchSeedLoading.value) return;
+  launchSeedLoading.value = true;
+  launchSeedError.value = '';
+  try {
+    const { seed } = await workspaceApi.getPlayLaunchReuseSeed(sessionId);
+    importOpen.value = false;
+    launchSeed.value = seed;
+    launchKey.value += 1;
+    launchOpen.value = true;
+  } catch (cause) {
+    launchSeedError.value = `无法读取这个会话的开局：${cause instanceof Error ? cause.message : String(cause)}`;
+  } finally {
+    launchSeedLoading.value = false;
+  }
 }
 
 function cancelLaunch(): void {
   launchOpen.value = false;
+  launchSeed.value = undefined;
 }
 
 function openSession(id: string): void {
   importOpen.value = false;
-  launchOpen.value = false;
+  cancelLaunch();
   selectSession(id);
 }
 
 async function createQuickSession(input: PlaySessionCreateRequest): Promise<void> {
-  if (await createSession(input)) launchOpen.value = false;
+  if (await createSession(input)) cancelLaunch();
 }
 
 function acceptGuidedSession(session: PlaySession): void {
   importOpen.value = false;
   registerCreatedSession(session);
-  launchOpen.value = false;
+  cancelLaunch();
 }
 </script>
 
@@ -301,6 +392,15 @@ function acceptGuidedSession(session: PlaySession): void {
       </div>
       <div class="play-workspace-status">
         <button class="play-import-button" type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; launchOpen = false">导入角色卡</button>
+        <button
+          v-if="selectedSession && !launchOpen && !importOpen"
+          class="play-import-button play-reuse-launch"
+          type="button"
+          :disabled="interactionBlocked || importBusy || launchSeedLoading"
+          @click="reuseLaunch(selectedSession.id)"
+        >
+          以此开局再开一局
+        </button>
         <span v-if="selectedSession && !launchOpen">
           {{ formatPlayWorldActivity(selectedSession.eventPolicy) }}
         </span>
@@ -323,6 +423,7 @@ function acceptGuidedSession(session: PlaySession): void {
     </header>
 
     <p v-if="error" class="play-workspace-error" role="alert">{{ error }}</p>
+    <p v-if="launchSeedError" class="play-workspace-error" role="alert">{{ launchSeedError }}</p>
     <p v-if="migration.notice.value" role="status">{{ migration.notice.value }}</p>
 
     <div class="play-workspace-grid">
@@ -334,6 +435,7 @@ function acceptGuidedSession(session: PlaySession): void {
         :busy="interactionBlocked || importBusy"
         :refresh-disabled="refreshBlocked || importBusy"
         @select-session="openSession"
+        @reuse-launch="reuseLaunch"
         @new-session="openLaunch"
         @refresh="refreshSessions"
       />
@@ -351,7 +453,9 @@ function acceptGuidedSession(session: PlaySession): void {
 
       <PlayLaunchFlow
         v-else-if="launchOpen"
+        :key="launchKey"
         class="play-launch-stage"
+        :seed="launchSeed"
         :files="files"
         :files-loading="filesLoading"
         :files-error="filesError"
@@ -587,6 +691,25 @@ function acceptGuidedSession(session: PlaySession): void {
           :pressures="visiblePressures"
           :agendas="visibleAgendas"
           :sources="selectedSession.activatedSources"
+        />
+        <PlayCanonBeatPanel
+          :table="canonBeatTable"
+          :director-lens="showSpoilers"
+          :checkpoints="historyCheckpoints"
+          :disabled="interactionBlocked"
+          :busy="canonBeatBusy"
+          :error="canonBeatError"
+          @operate="applyCanonBeatOperation"
+          @focus-event="focusPlayEvent"
+          @focus-turn="focusPlayTurn"
+        />
+        <PlayRelationshipPanel
+          :session-id="selectedSession.id"
+          :branch-key="relationshipBranchKey"
+          :lens="showSpoilers ? 'director' : 'player'"
+          :paused="interactionBlocked"
+          @focus-event="focusPlayEvent"
+          @focus-turn="focusPlayTurn"
         />
         <PlayEventFeed
           v-model:show-spoilers="showSpoilers"

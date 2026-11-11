@@ -45,6 +45,7 @@ import type {
 } from './useWorkspaceApi';
 
 const PLAY_WORLD_MOMENTUM_STATE_KEY = 'worldMomentum';
+const PLAY_CANON_BEATS_STATE_KEY = 'canonBeats';
 
 export interface PlaySessionCreateInput {
   title: string;
@@ -948,7 +949,9 @@ export function buildPlayStateEntryViews(
 ): PlayStateEntryView[] {
   return Object.entries(state ?? {})
     .filter(([key]) =>
-      key !== PLAY_WORLD_MOMENTUM_STATE_KEY && key !== PLAY_KNOWLEDGE_STATE_KEY,
+      key !== PLAY_WORLD_MOMENTUM_STATE_KEY && key !== PLAY_KNOWLEDGE_STATE_KEY &&
+      // Canon beats have their own panel and their own per-lens projection.
+      key !== PLAY_CANON_BEATS_STATE_KEY,
     )
     .filter(([key]) => showSpoilers || visibility?.[key] === 'playerVisible')
     .map(([key, value]) => ({
