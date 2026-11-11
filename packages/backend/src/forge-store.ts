@@ -44,11 +44,11 @@ export async function listForgeDrafts(root: string): Promise<ForgeDraft[]> {
   return drafts.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || b.revision - a.revision).slice(0, 100);
 }
 export async function deleteForgeDraft(root: string, id: string): Promise<void> {
-  await withForgeDraftLock(root, id, async () => {
-    const dir = await directory(root);
-    await unlink(join(dir, `${id}.yaml`)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+  assertForgeId(id);
+  const dir = await directory(root);
+  // Callers hold the draft lock (see withForgeDraftLock); it is not reentrant.
+  await unlink(join(dir, `${id}.yaml`)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
   });
 }
 export async function saveForgeDraft(root: string, draft: ForgeDraft): Promise<void> {

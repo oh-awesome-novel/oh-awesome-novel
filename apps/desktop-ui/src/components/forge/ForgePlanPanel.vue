@@ -18,8 +18,25 @@ function markDirty(): void {
   emit('dirty', true);
 }
 
+/** Rows added but left blank are dropped so a half-finished edit does not fail validation. */
+function withoutBlankRows(plan: any): any {
+  const filled = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+  const textRows = (list: unknown) => Array.isArray(list) ? list.filter(filled) : list;
+  const objectRows = (list: unknown) => Array.isArray(list) ? list.filter(row => row && Object.values(row).some(filled)) : list;
+  for (const character of plan.characters ?? []) {
+    character.aliases = textRows(character.aliases);
+    character.clarifications = objectRows(character.clarifications);
+    character.resources = objectRows(character.resources);
+    for (const facet of character.facets ?? []) facet.dialogue = textRows(facet.dialogue);
+    for (const trait of [...(character.palette?.mainTones ?? []), ...(character.palette?.accents ?? [])]) trait.behaviors = textRows(trait.behaviors);
+  }
+  if (plan.world) for (const key of ['rules', 'factions', 'history']) plan.world[key] = textRows(plan.world[key]);
+  for (const place of plan.places ?? []) { place.characters = textRows(place.characters); place.events = textRows(place.events); }
+  return plan;
+}
+
 function save(): void {
-  emit('save', JSON.parse(JSON.stringify(edited.value)));
+  emit('save', withoutBlankRows(JSON.parse(JSON.stringify(edited.value))));
   dirty.value = false;
   emit('dirty', false);
 }
@@ -144,6 +161,17 @@ function removePlace(index: number | string): void {
               type="text"
               @change="char.aliases = ($event.target as HTMLInputElement).value.split(/[、,，]/).map(s => s.trim()).filter(Boolean); markDirty();"
             />
+          </label>
+          <label>
+            <span>立绘性别（用于出图标签）</span>
+            <select
+              :value="char.genderKind ?? 'other'"
+              @change="char.genderKind = ($event.target as HTMLSelectElement).value; markDirty();"
+            >
+              <option value="girl">女性 (1girl)</option>
+              <option value="boy">男性 (1boy)</option>
+              <option value="other">其他 / 不指定</option>
+            </select>
           </label>
         </div>
         <div class="form-row">

@@ -101,7 +101,7 @@ describe('Forge cross-process draft locks', () => {
     const old = new Date(Date.now() - 4 * 60 * 1000);
     await utimes(h.lock, old, old);
     expect((await h.edit('不应覆盖')).status).toBe(409);
-    expect((await h.app.request('/draft', { method: 'DELETE' })).status).toBe(409);
+    expect((await h.app.request('/draft', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedWorkspaceRoot: h.root, expectedRevision: 0 }) })).status).toBe(409);
     expect(await readFile(h.lock, 'utf8')).toBe(original);
     await finish(child, 'release');
     expect((await h.edit('作者后续编辑', 1)).status).toBe(200);

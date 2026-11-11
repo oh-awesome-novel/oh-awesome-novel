@@ -78,9 +78,13 @@ describe('guided Forge wizard', () => {
     await wrapper.get('.discuss-panel form').trigger('submit');
     await flushPromises();
     expect(api.discussForgeDraft).toHaveBeenCalledWith('forge-one', expect.objectContaining({
-      selection: { questionId: 'q1', optionIndices: [0] },
+      selections: [{ questionId: 'q1', optionIndices: [0] }],
       expectedRevision: 2,
     }));
+    // Option text is resolved by the host from the stored draft, not echoed in the message.
+    const input = api.discussForgeDraft.mock.calls[0]![1];
+    expect(input.message).toBe('');
+    expect(input.selection).toBeUndefined();
     wrapper.unmount();
   });
 
@@ -149,7 +153,11 @@ describe('guided Forge wizard', () => {
     const wrapper = await loaded();
     await button(wrapper, '删除草稿').trigger('click');
     await flushPromises();
-    expect(api.deleteForgeDraft).toHaveBeenCalledWith('forge-one');
+    // The first click only asks for confirmation.
+    expect(api.deleteForgeDraft).not.toHaveBeenCalled();
+    await button(wrapper, '确认删除？不可撤销').trigger('click');
+    await flushPromises();
+    expect(api.deleteForgeDraft).toHaveBeenCalledWith('forge-one', { expectedRevision: 2, expectedWorkspaceRoot: '/novel' });
     wrapper.unmount();
   });
 
@@ -181,6 +189,32 @@ describe('guided Forge wizard', () => {
     await button(wrapper, '一键开演').trigger('click');
     await flushPromises();
     expect(wrapper.emitted('playSessionCreated')).toEqual([['play-one']]);
+    wrapper.unmount();
+  });
+
+  it('lists edited canonical files and hands off only after the author confirms', async () => {
+    api.readForgeDraft.mockResolvedValue({ draft: { ...draft(), stage: 'proposed', pendingActionId: 'pa-one' } });
+    api.readPendingAction.mockResolvedValue({ pendingAction: { status: 'accepted' } });
+    const wrapper = await loaded();
+    api.handoffForgeDraft.mockRejectedValueOnce(Object.assign(new Error('Accepted Forge files changed after review'), {
+      code: 'forge_files_changed', details: { paths: ['characters/lin/profile.md'] },
+    }));
+    await button(wrapper, '一键开演').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('.changed-files').text()).toContain('characters/lin/profile.md');
+    api.handoffForgeDraft.mockResolvedValue({ draft: draft(), sessionId: 'play-one' });
+    await button(wrapper, '确认，用当前文件开演').trigger('click');
+    await flushPromises();
+    expect(api.handoffForgeDraft).toHaveBeenLastCalledWith('forge-one', expect.objectContaining({ mode: 'play', acceptChangedFiles: true }));
+    expect(wrapper.emitted('playSessionCreated')).toEqual([['play-one']]);
+    expect(wrapper.find('.changed-files').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('loads the draft named by initialDraftId once opened', async () => {
+    const wrapper = mount(ForgeWizardModal, { props: { workspaceRoot: '/novel', providerConfigured: true, initialDraftId: 'forge-one' } });
+    await flushPromises();
+    expect(api.readForgeDraft).toHaveBeenCalledWith('forge-one');
     wrapper.unmount();
   });
 

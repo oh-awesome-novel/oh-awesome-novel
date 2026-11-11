@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, shallowRef, toRef } from 'vue';
+import { reactive, shallowRef, toRef, watch } from 'vue';
 import ForgeDiscussPanel from './ForgeDiscussPanel.vue';
 import ForgeBriefPanel from './ForgeBriefPanel.vue';
 import ForgePlanPanel from './ForgePlanPanel.vue';
@@ -7,7 +7,7 @@ import { useForge } from '../../composables/useForge';
 import { useWorkspaceDialog } from '../../composables/useWorkspaceDialog';
 import { scanLocalNovelLint } from '@oh-awesome-novel/core/novel-lint-rules';
 
-const props = defineProps<{ workspaceRoot: string; providerConfigured: boolean }>();
+const props = defineProps<{ workspaceRoot: string; providerConfigured: boolean; initialDraftId?: string }>();
 const emit = defineEmits<{
   close: [];
   configureProvider: [];
@@ -22,6 +22,8 @@ const idea = shallowRef('');
 const planDirty = shallowRef(false);
 const editingChunkKey = shallowRef<string | null>(null);
 const chunkEdits = reactive<Record<string, string>>({});
+/** Deleting a draft cannot be undone, so the button asks for a second click. */
+const confirmingDelete = shallowRef(false);
 
 const { keydown } = useWorkspaceDialog(panel, () => emit('close'));
 const {
@@ -31,6 +33,7 @@ const {
   error,
   accepted,
   pendingStatus,
+  changedFiles,
   canHandoff,
   refreshList,
   read,
@@ -93,6 +96,22 @@ async function saveChunk(key: string): Promise<void> {
   }
 }
 
+// Opened from an approval banner: load that draft once the initial list refresh settles.
+let initialDraftId = props.initialDraftId;
+watch(busy, isBusy => {
+  if (isBusy || !initialDraftId) return;
+  const id = initialDraftId; initialDraftId = undefined;
+  void read(id);
+}, { immediate: true });
+
+watch(() => draft.value?.id, () => { confirmingDelete.value = false; });
+
+async function removeDraft(id: string): Promise<void> {
+  if (!confirmingDelete.value) { confirmingDelete.value = true; return; }
+  confirmingDelete.value = false;
+  await deleteDraft(id);
+}
+
 function select(event: Event) {
   const id = (event.target as HTMLSelectElement).value;
   if (id) void read(id);
@@ -127,7 +146,10 @@ function select(event: Event) {
         </select>
         <button type="button" :disabled="busy" @click="refreshList">刷新列表</button>
         <button v-if="draft" type="button" :disabled="busy" @click="read(draft.id)">重新载入</button>
-        <button v-if="draft" type="button" :disabled="busy" class="danger-btn" @click="deleteDraft(draft.id)">删除草稿</button>
+        <button v-if="draft" type="button" :disabled="busy" class="danger-btn" @click="removeDraft(draft.id)">
+          {{ confirmingDelete ? '确认删除？不可撤销' : '删除草稿' }}
+        </button>
+        <button v-if="draft && confirmingDelete" type="button" :disabled="busy" @click="confirmingDelete = false">取消</button>
       </div>
 
       <p v-if="error" role="alert">{{ error }}；如版本已变化，请重新载入草稿后再操作。</p>
@@ -175,7 +197,15 @@ function select(event: Event) {
           :disabled="busy || !providerConfigured || planDirty"
           @click="mutate('write')"
         >
-          核准方案并分块撰写
+          {{ draft.chunks ? '继续撰写缺失分块' : '核准方案并分块撰写' }}
+        </button>
+        <button
+          v-if="draft.plan && draft.chunks"
+          type="button"
+          :disabled="busy || !providerConfigured || planDirty"
+          @click="mutate('write', { force: true })"
+        >
+          全部重新撰写
         </button>
 
         <section v-if="draft.chunks" aria-label="生成结果">
@@ -234,6 +264,12 @@ function select(event: Event) {
           </p>
           <button type="button" :disabled="!canHandoff" @click="handoff('play')">一键开演</button>
           <button type="button" :disabled="!canHandoff" @click="handoff('writing')">一键入书</button>
+          <div v-if="changedFiles.length" role="alert" class="changed-files">
+            <p>以下已入库文件在审批后被修改过，开演 / 入书会使用当前内容：</p>
+            <ul><li v-for="path in changedFiles" :key="path"><code>{{ path }}</code></li></ul>
+            <button type="button" :disabled="!canHandoff" @click="handoff('play', true)">确认，用当前文件开演</button>
+            <button type="button" :disabled="!canHandoff" @click="handoff('writing', true)">确认，用当前文件入书</button>
+          </div>
         </section>
       </template>
     </section>
@@ -241,6 +277,13 @@ function select(event: Event) {
 </template>
 
 <style scoped>
+.changed-files {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+}
+
 .forge-backdrop {
   position: fixed;
   inset: 0;

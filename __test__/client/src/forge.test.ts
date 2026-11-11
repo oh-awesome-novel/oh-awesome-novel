@@ -37,8 +37,8 @@ describe('Forge client boundaries', () => {
       method: 'PATCH',
       body: { expectedRevision: 1, expectedWorkspaceRoot: '/novel', chunks: { opening: '夜。' } },
     });
-    const del = await api.deleteForgeDraft('forge-one');
+    const del = await api.deleteForgeDraft('forge-one', { expectedRevision: 2, expectedWorkspaceRoot: '/novel' });
     expect(del).toEqual({ ok: true });
-    expect(request).toHaveBeenCalledWith('/api/forge/drafts/forge-one', { method: 'DELETE' });
+    expect(request).toHaveBeenCalledWith('/api/forge/drafts/forge-one', { method: 'DELETE', body: { expectedRevision: 2, expectedWorkspaceRoot: '/novel' } });
   });
 });

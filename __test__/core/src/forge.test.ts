@@ -115,4 +115,14 @@ describe('guided Forge contracts', () => {
     expect(() => parseForgePlan(p)).toThrow();
     expect(() => parseForgePlan(p, { authorEdit: true })).not.toThrow();
   });
+  it('keeps facet kinds valid and distinct for author edits and validates genderKind', () => {
+    const unknownKind = plan();
+    (unknownKind.characters[0].facets[0] as { kind: string }).kind = 'mystery';
+    expect(() => parseForgePlan(unknownKind, { authorEdit: true })).toThrow('Invalid character facet.');
+    const gendered = plan();
+    (gendered.characters[0] as { genderKind?: string }).genderKind = 'girl';
+    expect(parseForgePlan(gendered).characters[0].genderKind).toBe('girl');
+    (gendered.characters[0] as { genderKind?: string }).genderKind = 'female';
+    expect(() => parseForgePlan(gendered)).toThrow('Invalid character genderKind.');
+  });
 });

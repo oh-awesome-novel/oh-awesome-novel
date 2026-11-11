@@ -132,15 +132,28 @@ describe('Forge approval and persistence boundary', () => {
     let writes = 0;
     const h = await setup(async prompt => {
       if (prompt.includes('整理为可编辑的设定方案')) return JSON.stringify(plan());
-      if (prompt.includes('只撰写已由作者核准方案')) return ++writes === 3 ? 'Malformed block' : '<content>船靠岸了。</content>';
+      if (prompt.includes('只撰写已由作者核准方案')) {
+        if (++writes === 3) return 'Malformed block';
+        const ids = [...prompt.matchAll(/<content id="([^"]+)">正文/g)].map(match => match[1]);
+        return ids.length ? ids.map(id => `<content id="${id}">船靠岸了。</content>`).join('') : '<content>船靠岸了。</content>';
+      }
       return discussion();
     });
     expect((await h.op('plan')).response.status).toBe(200);
     const before = structuredClone(h.getDraft());
     expect((await h.op('write')).response.status).toBe(422);
     await h.reload();
-    expect(h.getDraft()).toEqual(before);
-    expect(h.getDraft().chunks).toBeUndefined();
+    // The plan, stage and revision are unchanged; the two completed kinds are kept for a resume.
+    expect(h.getDraft()).toMatchObject({ revision: before.revision, stage: 'plan', plan: before.plan });
+    expect(Object.keys(h.getDraft().chunks ?? {})).toEqual(['world', 'places:pier']);
+    // A retry generates only the missing kinds.
+    const resumed = await h.op('write');
+    expect(resumed.response.status, JSON.stringify(resumed.result)).toBe(200);
+    expect(writes).toBe(3 + 4);
+    expect(h.getDraft().stage).toBe('written');
+    // force regenerates every block.
+    expect((await h.op('write', { force: true })).response.status).toBe(200);
+    expect(writes).toBe(7 + 6);
   });
   it('recovers a persisted preview after promotion fails without creating another proposal', async () => {
     const h = await setup(); await h.written();
@@ -203,7 +216,14 @@ describe('Forge approval and persistence boundary', () => {
     const again = await h.op('handoff', { mode: 'play' });
     expect(again.result.sessionId).toBe(play.result.sessionId);
     await writeFile(join(h.root, 'characters/lin/profile.md'), '# Author changed this\n');
-    expect((await h.op('handoff', { mode: 'writing' })).response.status).toBe(409);
+    const refused = await h.op('handoff', { mode: 'writing' });
+    expect(refused.response.status).toBe(409);
+    expect(refused.result).toMatchObject({ code: 'forge_files_changed', details: { paths: ['characters/lin/profile.md'] } });
+    // Edits that keep the character name are not silently accepted either.
+    await writeFile(join(h.root, 'characters/lin/profile.md'), '# 林\n\n完全不同的档案。\n');
+    expect((await h.op('handoff', { mode: 'play' })).response.status).toBe(409);
+    const confirmed = await h.op('handoff', { mode: 'writing', acceptChangedFiles: true });
+    expect(confirmed.response.status, JSON.stringify(confirmed.result)).toBe(200);
   });
   it('rejects proposals without canonical writes and allows revising a rejected draft', async () => {
     const h = await setup(); await h.written();
@@ -257,7 +277,10 @@ describe('Forge approval and persistence boundary', () => {
     expect(h.getDraft().chunks?.opening).toBe('新的开场白。');
 
     const draftId = h.getDraft().id;
-    const delRes = await h.app.request(`/drafts/${draftId}`, { method: 'DELETE' });
+    const del = (body: Record<string, unknown>) => h.app.request(`/drafts/${draftId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await del({ expectedWorkspaceRoot: '/elsewhere', expectedRevision: h.getDraft().revision })).status).toBe(409);
+    expect((await del({ expectedWorkspaceRoot: h.root, expectedRevision: h.getDraft().revision + 1 })).status).toBe(409);
+    const delRes = await del({ expectedWorkspaceRoot: h.root, expectedRevision: h.getDraft().revision });
     expect(delRes.status).toBe(200);
     const getRes = await h.app.request(`/drafts/${draftId}`);
     expect(getRes.status).toBe(422);
@@ -265,6 +288,7 @@ describe('Forge approval and persistence boundary', () => {
   it('persists T03, T04, and roster profile metadata into canonical files', () => {
     const p = plan();
     p.characters[0]!.name = '少女林';
+    p.characters[0]!.genderKind = 'girl';
     p.characters[0]!.choice = { dilemma: '留或走', decision: '留下来', sacrifice: '自由', consequence: '被困渡口' };
     p.characters[0]!.resources = [{ name: '铜钱', initial: '三文', cost: '每晚一文', settlement: '归零即死' }];
     const chunks = Object.fromEntries(forgeChunkKeys(p).map(k => [k, `${k} 正文`]));
@@ -280,7 +304,12 @@ describe('Forge approval and persistence boundary', () => {
     expect(roster.content).toContain('id: lin');
     expect(roster.content).toContain('name: 少女林');
     expect(roster.content).toContain('genderKind: girl');
-    expect(roster.content).toContain('fixedBooruTags: 1girl, lin');
+    expect(roster.content).toContain('fixedBooruTags: 1girl');
+    expect(roster.content).not.toContain('1girl, lin');
+    // Personality palette never leaks into outfit fields; gender is never guessed from text.
+    expect(roster.content).not.toContain('害怕失约');
+    const unspecified = forgeCanonicalFiles(plan(), Object.fromEntries(forgeChunkKeys(plan()).map(k => [k, `${k} 正文`])));
+    expect(unspecified.find(f => f.path.endsWith('roster-profile.yaml'))!.content).toContain('genderKind: other');
   });
   it('recovers from orphaned stale lock leases automatically', async () => {
     const h = await setup();
@@ -312,7 +341,8 @@ describe('Forge approval and persistence boundary', () => {
       const old = new Date(Date.now() - 4 * 60 * 1000);
       await utimes(lock, old, old);
       const response = operation === 'delete'
-        ? await h.app.request(`/drafts/${id}`, { method: 'DELETE' })
+        ? await h.app.request(`/drafts/${id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expectedWorkspaceRoot: h.root, expectedRevision: h.getDraft().revision }) })
         : (await h.op('edit', { edits: [{ key: 'stage', value: '作者的新舞台', locked: true }] })).response;
       expect(response.status).toBe(409);
       expect(await readFile(lock, 'utf8')).toBe(owner);
@@ -336,5 +366,29 @@ describe('Forge approval and persistence boundary', () => {
     expect(await readFile(lock, 'utf8')).toBe(owner);
     await h.reload();
     expect(h.getDraft().revision).toBe(0);
+  });
+  it('stores author-edited plans that only meet the structural contract', async () => {
+    const h = await setup();
+    const edited = plan();
+    edited.characters[0]!.facets = [{ ...edited.characters[0]!.facets[0]!, dialogue: ['只有一句。', '  '] }];
+    edited.characters[0]!.palette.mainTones = [];
+    edited.places = [];
+    edited.world.rules = [''];
+    const saved = await h.op('edit', { plan: edited });
+    expect(saved.response.status, JSON.stringify(saved.result)).toBe(200);
+    await h.reload();
+    expect(h.getDraft().plan).toMatchObject({ places: [], world: { rules: [] } });
+    expect((h.getDraft().plan as ForgePlan).characters[0]!.facets[0]!.dialogue).toEqual(['只有一句。']);
+    const duplicate = plan();
+    duplicate.characters[0]!.facets = [duplicate.characters[0]!.facets[0]!, duplicate.characters[0]!.facets[0]!];
+    expect((await h.op('edit', { plan: duplicate })).response.status).toBe(422);
+  });
+  it('refuses to delete a draft whose review is pending', async () => {
+    const h = await setup(); await h.written();
+    expect((await h.op('propose')).response.status).toBe(200);
+    const response = await h.app.request(`/drafts/${h.getDraft().id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedWorkspaceRoot: h.root, expectedRevision: h.getDraft().revision }) });
+    expect(response.status).toBe(409);
+    expect((await h.app.request(`/drafts/${h.getDraft().id}`)).status).toBe(200);
   });
 });
