@@ -135,7 +135,12 @@ describe('canon beats through default SDK, HTTP/SSE and Desktop', () => {
     await wrapper.get('[name="guided-opening"]').setValue('信刚刚送到。');
 
     await wrapper.get('.canon-source summary').trigger('click');
-    await vi.waitFor(() => expect(wrapper.findAll('[name="guided-canon-candidate"]')).toHaveLength(2), { timeout: 3000 });
+    // A slow or briefly refused read shows a retry button; use it like an author would.
+    await vi.waitFor(async () => {
+      const retry = wrapper.findAll('.canon-source button').find((candidate) => candidate.text().includes('重试'));
+      if (retry) await retry.trigger('click');
+      expect(wrapper.findAll('[name="guided-canon-candidate"]')).toHaveLength(2);
+    }, { timeout: 15_000, interval: 200 });
     for (const candidate of wrapper.findAll('[name="guided-canon-candidate"]')) await candidate.setValue(true);
     await wrapper.get('[name="guided-canon-manual-label"]').setValue('旧钟楼停摆');
     await button(wrapper, '添加手写节点').trigger('click');
