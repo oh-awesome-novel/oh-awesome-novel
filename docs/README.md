@@ -131,6 +131,6 @@ docs/
 
 2026-11-10 按 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md) 新增 [1450–1510](tasks/README.md#planned-tasks) 七项 Planned；1390、1400 已于 2026-11-09 交付，当前任务统计为 62 Completed、6 Needs Review、10 Planned。[1410](tasks/1410.md) 材料采纳工作台的主要功能同日交付，状态为 Needs Review。同日追加的 [1520](tasks/1520.md) 回合候选项已交付协议与界面部分，状态为 Needs Review。
 
-2026-11-12 按 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md) 新增 [1530–1570](tasks/README.md#planned-tasks) 五项 Planned。同日按 [Play 角色对话 GalGame 化规划](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md) 与 [角色立绘生图模块规划](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md) 再新增 1580–1650 八项 Planned，当前任务统计为 72 Completed、6 Needs Review、13 Planned。
+2026-11-12 按 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md) 新增 [1530–1570](tasks/README.md#planned-tasks) 五项 Planned。同日按 [Play 角色对话 GalGame 化规划](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md) 与 [角色立绘生图模块规划](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md) 再新增 1580–1650 八项 Planned，随后新增 [1660](tasks/1660.md) Play 道具表，当前任务统计为 72 Completed、6 Needs Review、14 Planned。
 
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。

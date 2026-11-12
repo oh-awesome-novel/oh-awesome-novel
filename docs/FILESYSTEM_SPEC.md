@@ -92,7 +92,7 @@ my-novel/
 │
 ├── state/
 │   ├── characters.yaml
-│   ├── inventory.yaml
+│   ├── inventory.yaml        （未实现：没有读写与校验；Play 道具见 tasks/1660）
 │   └── locations.yaml
 │
 ├── timeline/
