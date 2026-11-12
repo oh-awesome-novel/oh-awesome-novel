@@ -879,6 +879,9 @@ export function usePlayWorkspace(
   };
 }
 
+/** Session and turn state shared by the stage and workbench presentations of Play. */
+export type PlayWorkspaceState = ReturnType<typeof usePlayWorkspace>;
+
 export function isPlayProvenanceInSelectedBranch(
   fact: Pick<PlayObservation | PlayAdoptionCandidate, 'sourceTurnIds' | 'sourceEventIds'>,
   selectedMessageIds: ReadonlySet<string>,

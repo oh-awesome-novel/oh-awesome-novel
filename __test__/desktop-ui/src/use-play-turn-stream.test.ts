@@ -653,6 +653,7 @@ describe('usePlayTurnStream', () => {
   it('keeps touched Play components on the neutral shared design tokens', async () => {
     const componentUrls = [
       '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue',
+      '../../../apps/desktop-ui/src/components/play/PlayWorkbenchShell.vue',
       '../../../apps/desktop-ui/src/components/play/PlayTranscript.vue',
       '../../../apps/desktop-ui/src/components/play/PlayComposer.vue',
       '../../../apps/desktop-ui/src/components/play/PlayTimeAdvanceControl.vue',

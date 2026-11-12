@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { nextTick, shallowRef } from 'vue';
 
-const props = defineProps<{ choices: string[]; disabled: boolean }>();
+const props = defineProps<{
+  choices: string[];
+  disabled: boolean;
+  /** The host owns the action input: "改一改 / 自己写" ask for it instead of opening the editor here. */
+  externalEditor?: boolean;
+}>();
 const emit = defineEmits<{
   /** An option taken as written. */
   choose: [text: string];
   /** The author's own text; `basedOn` names the option it was edited from, if any. */
   custom: [text: string, basedOn?: string];
+  /** With `externalEditor`: open the host's input, prefilled from `basedOn` when given. */
+  edit: [basedOn?: string];
 }>();
 
 const editing = shallowRef<{ basedOn?: string }>();
@@ -15,6 +22,7 @@ const input = shallowRef<HTMLTextAreaElement>();
 
 async function openEditor(basedOn?: string): Promise<void> {
   if (props.disabled) return;
+  if (props.externalEditor) { emit('edit', basedOn); return; }
   editing.value = basedOn === undefined ? {} : { basedOn };
   draft.value = basedOn ?? '';
   await nextTick();
