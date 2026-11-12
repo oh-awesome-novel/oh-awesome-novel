@@ -1,5 +1,6 @@
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { listChapterPositions, nextChapterPath, WritingCommandTargetError } from '@oh-awesome-novel/core';
+import type { ChapterPosition } from '@oh-awesome-novel/core';
+export { nextChapterPath, WritingCommandTargetError } from '@oh-awesome-novel/core';
 
 import {
   NOVEL_COPILOT_QUICK_COMMANDS,
@@ -33,10 +34,6 @@ export interface WritingCommandTargets {
   exactWritablePaths: string[];
   /** Author-facing explanation of why these targets were chosen. */
   note: string;
-}
-
-export class WritingCommandTargetError extends Error {
-  readonly code = 'WRITING_COMMAND_TARGET_INVALID';
 }
 
 /**
@@ -121,42 +118,6 @@ export async function resolveWritingCommandTargets(input: {
     default:
       return undefined;
   }
-}
-
-interface ChapterPosition {
-  volume: number;
-  chapter: number;
-}
-
-/** Numbered chapter files in numeric order; `0000.md` is volume metadata. */
-async function listChapterPositions(workspaceRoot: string): Promise<ChapterPosition[]> {
-  const positions: ChapterPosition[] = [];
-  const volumes = await readDirectoryEntries(join(workspaceRoot, 'chapters'));
-  for (const volume of volumes) {
-    if (!volume.isDirectory() || !/^\d{4}$/u.test(volume.name)) continue;
-    const files = await readDirectoryEntries(join(workspaceRoot, 'chapters', volume.name));
-    const chapters = files.filter((file) => file.isFile() && /^\d{4}\.md$/u.test(file.name) && file.name !== '0000.md');
-    if (!chapters.length) positions.push({ volume: Number(volume.name), chapter: 0 });
-    for (const file of chapters) {
-      positions.push({ volume: Number(volume.name), chapter: Number(file.name.slice(0, 4)) });
-    }
-  }
-  return positions.sort((a, b) => a.volume - b.volume || a.chapter - b.chapter);
-}
-
-async function readDirectoryEntries(path: string) {
-  try {
-    return await readdir(path, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-}
-
-export function nextChapterPath(chapters: readonly ChapterPosition[]): string {
-  const latest = chapters.at(-1);
-  if (!latest) return 'chapters/0001/0001.md';
-  return `chapters/${pad(latest.volume, '卷号')}/${pad(latest.chapter + 1, '章号')}.md`;
 }
 
 function activeVolume(chapters: readonly ChapterPosition[], selectedPaths: readonly string[]): string {

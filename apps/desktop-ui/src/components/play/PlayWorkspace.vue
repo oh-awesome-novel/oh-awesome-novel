@@ -656,6 +656,8 @@ function acceptGuidedSession(session: PlaySession): void {
         <PlayMessageLog :session-id="selectedSession.id" />
         <DomainUsageInspector :workspace-key="workspace.path" :scope="{ domain: 'play', sessionId: selectedSession.id }" :lens="usageLens" :operation-id="activeUsagePresentation?.operationId" :refresh-key="usageRefreshKey" />
         <PlayOutcomePanel
+          :workspace-root="workspace.path"
+          @review-pending-action="emit('pendingActionCreated'); emit('reviewPendingAction', $event)"
           :session="selectedSession"
           :show-spoilers="showSpoilers"
           :disabled="outcomeDisabled"
@@ -887,6 +889,8 @@ function acceptGuidedSession(session: PlaySession): void {
           </template>
         </PlayAdoptionPanel>
         <PlayOutcomePanel
+          :workspace-root="workspace.path"
+          @review-pending-action="emit('pendingActionCreated'); emit('reviewPendingAction', $event)"
           ref="comparisonOutcomePanel"
           :session="selectedSession"
           :show-spoilers="showSpoilers"

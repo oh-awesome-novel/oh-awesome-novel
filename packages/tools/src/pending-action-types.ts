@@ -1,3 +1,5 @@
+import { normalizePlayChapterIntent } from '@oh-awesome-novel/core';
+import type { PlayChapterWritingBinding } from '@oh-awesome-novel/core';
 import {
   normalizeWorkspaceRelativePath,
   sha256Text,
@@ -72,6 +74,7 @@ export type PendingActionSource =
     };
 
 export type PendingActionOrigin =
+  | ({ readonly kind: 'playChapterWriting' } & Readonly<PlayChapterWritingBinding>)
   | { readonly kind: 'forge'; readonly draftId: string; readonly revision: number; readonly previewId: string }
   | { readonly kind: 'novelLint'; readonly targetPath: string; readonly sourceHash: string }
   | {
@@ -318,6 +321,11 @@ export function parsePendingAction(
     || changes.some((change) => change.operation === 'delete'))) {
     invalidSchema('Forge requires its matching preview identity and create/update targets.');
   }
+  const playChapterProducer = source.kind === 'deterministic-builder' && source.producer === 'play-chapter-writing';
+  if ((playChapterProducer || origin?.kind === 'playChapterWriting') && (!playChapterProducer || origin?.kind !== 'playChapterWriting' || source.capability !== 'chapter.edit'
+    || allowedTargets.length !== 1 || allowedTargets[0] !== origin.targetPath || changes.length !== 1 || changes[0]!.path !== origin.targetPath || changes[0]!.operation !== 'create')) {
+    invalidSchema('Play chapter writing requires its matching source binding and one new chapter.');
+  }
   const lintProducer = source.kind === 'deterministic-builder' && source.producer === 'novel-lint';
   if ((lintProducer || origin?.kind === 'novelLint') && (!lintProducer || origin?.kind !== 'novelLint'
     || !['chapter.edit', 'character.edit', 'world.edit'].includes(source.capability)
@@ -503,6 +511,20 @@ export function parsePendingActionOrigin(value: unknown): PendingActionOrigin {
     assertOpaquePendingActionId(value.draftId, 'Forge draft id');
     assertOpaquePendingActionId(value.previewId, 'Forge preview id');
     assertNonNegativeInteger(value.revision, 'Forge draft revision');
+  } else if (value.kind === 'playChapterWriting') {
+    assertExactFields(value, ['kind', 'attachmentId', 'reportFingerprint', 'selectionHash', 'lens', 'targetPath', 'chapterInventoryHash', 'contextFingerprint', 'contextFiles', 'intent']);
+    assertOpaquePendingActionId(value.attachmentId, 'Play writing attachment');
+    if (value.lens !== 'player' && value.lens !== 'director') invalidSchema('Invalid Play chapter lens.');
+    if (typeof value.targetPath !== 'string' || !/^chapters\/(?!0000)\d{4}\/(?!0000)\d{4}\.md$/u.test(value.targetPath)) invalidSchema('Invalid Play chapter target.');
+    for (const key of ['reportFingerprint', 'selectionHash', 'chapterInventoryHash', 'contextFingerprint']) assertSha256(value[key], key);
+    if (!Array.isArray(value.contextFiles) || value.contextFiles.length > 32) invalidSchema('Invalid Play writing context files.');
+    for (const file of value.contextFiles) {
+      if (!isRecord(file)) invalidSchema('Invalid Play writing context file.');
+      assertExactFields(file, ['path', 'sourceHash']);
+      if (typeof file.path !== 'string' || file.path.length > 1000 || file.path.startsWith('/') || file.path.includes('..') || file.path.includes('\\')) invalidSchema('Invalid Play writing context path.');
+      assertSha256(file.sourceHash, 'Play writing context source hash');
+    }
+    normalizePlayChapterIntent(value.intent);
   } else if (value.kind === 'novelLint') {
     assertExactFields(value, ['kind', 'targetPath', 'sourceHash']);
     assertCanonicalTargetPath(value.targetPath);

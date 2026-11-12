@@ -1,3 +1,4 @@
+import { assertPlayChapterWritingFresh } from './play-chapter-writing';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
 import {
@@ -427,6 +428,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
   async #validateAction(action: PendingAction): Promise<{ policy: WorkspaceChangePolicy; summarySource?: SummaryGenerationSource }> {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
     let summarySource: SummaryGenerationSource | undefined;
+    if (action.origin?.kind === 'playChapterWriting') await assertPlayChapterWritingFresh(this.#workspaceRoot, action);
     if (action.origin?.kind === 'summaryGeneration') {
       summarySource = await assertSummaryGenerationActionFresh(this.#workspaceRoot, action);
     }

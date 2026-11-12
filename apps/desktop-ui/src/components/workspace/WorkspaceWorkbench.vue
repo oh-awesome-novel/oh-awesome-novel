@@ -78,6 +78,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   updateLeftOverlayOpen: [open: boolean];
   updateSidebarTab: [tab: 'files' | 'chapters' | 'history'];
   openFile: [path: string];
@@ -242,6 +243,7 @@ const emit = defineEmits<{
       @refresh-writing-profiles="emit('refreshWritingProfiles')"
       @writing-profile-state-changed="emit('writingProfileStateChanged', $event)"
       @forge-handoff="emit('forgeHandoff', $event)"
+      @chapter-handoff="emit('chapterHandoff', $event)"
     />
   </div>
 </template>

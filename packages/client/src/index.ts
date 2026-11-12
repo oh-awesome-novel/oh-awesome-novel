@@ -1,3 +1,6 @@
+import { createPlayChapterWritingClient } from './play-chapter-writing';
+import type { PlayChapterWritingClientMethods } from './play-chapter-writing';
+export * from './play-chapter-writing';
 import { assertPlaySourceGrantTarget, normalizePlayOriginWork, normalizePlaySourceGrant, normalizePlayCrossoverContext, validatePlayLaunchCrossover } from '@oh-awesome-novel/core/play-crossover';
 import type { PlayOriginWork, PlayCrossoverContract, PlaySourceKnowledgeGrantRecord, PlayLearnSourceKnowledgeChange } from '@oh-awesome-novel/core/play-crossover';
 export type { PlayOriginWork, PlayCrossoverContract, PlayCrossoverContext, PlaySourceKnowledgeGrantRecord } from '@oh-awesome-novel/core/play-crossover';
@@ -2229,7 +2232,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
+export interface OanClient extends PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2711,6 +2714,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
 
   return {
     ...playRehearsalClient,
+    ...createPlayChapterWritingClient(requestJson, fetcher, backendBaseUrl),
     ...createForgeClientMethods(requestJson),
     ...createUsageInspectorClientMethods(requestJson),
     backendBaseUrl,

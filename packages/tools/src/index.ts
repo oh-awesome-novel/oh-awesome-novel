@@ -345,3 +345,5 @@ export { prepareGitCommitPreview } from './git-reviewed-commit';
 export type { GitCommitPreview, GitDiffPreview, ReviewedGitCommitInput } from './git-reviewed-commit';
 
 export * from './novel-lint-change-producer';
+
+export * from './play-chapter-writing';

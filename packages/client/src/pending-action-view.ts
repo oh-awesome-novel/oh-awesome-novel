@@ -1,3 +1,5 @@
+import { normalizePlayChapterIntent } from '@oh-awesome-novel/core/play-chapter-writing-contract';
+import type { PlayChapterWritingBinding } from '@oh-awesome-novel/core/play-chapter-writing-contract';
 export const PENDING_ACTION_RESET_REQUIRED_CODE =
   'UNSUPPORTED_PENDING_ACTION_SCHEMA' as const;
 export const INVALID_PENDING_ACTION_VIEW_CODE =
@@ -20,6 +22,7 @@ export class PendingActionViewParseError extends Error {
 }
 
 export type PublicPendingActionOrigin =
+  | ({ readonly kind: 'playChapterWriting' } & Readonly<PlayChapterWritingBinding>)
   | { readonly kind: 'forge'; readonly draftId: string; readonly revision: number; readonly previewId: string }
   | { readonly kind: 'novelLint'; readonly targetPath: string; readonly sourceHash: string }
   | {
@@ -493,6 +496,15 @@ function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrig
     if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0) invalid('Invalid Forge revision.');
     return deepFreeze({ kind: 'forge', draftId: assertOpaqueId(value.draftId, 'Forge draft id'),
       previewId: assertOpaqueId(value.previewId, 'Forge preview id'), revision: value.revision as number });
+  }
+  if (value.kind === 'playChapterWriting') {
+    assertExactFields(value, ['kind', 'attachmentId', 'reportFingerprint', 'selectionHash', 'lens', 'targetPath', 'chapterInventoryHash', 'contextFingerprint', 'contextFiles', 'intent']);
+    if (typeof value.attachmentId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(value.attachmentId) || value.attachmentId.includes('..') ||
+      (value.lens !== 'player' && value.lens !== 'director') || typeof value.targetPath !== 'string' || !/^chapters\/(?!0000)\d{4}\/(?!0000)\d{4}\.md$/u.test(value.targetPath)) throw new Error('Invalid Play chapter origin.');
+    for (const key of ['reportFingerprint', 'selectionHash', 'chapterInventoryHash', 'contextFingerprint']) assertHash(value[key], key);
+    if (!Array.isArray(value.contextFiles) || value.contextFiles.length > 32 || value.contextFiles.some(file => !isRecord(file) || typeof file.path !== 'string' || file.path.startsWith('/') || file.path.includes('..') || file.path.length > 1000)) throw new Error('Invalid Play writing context.');
+    for (const file of value.contextFiles) { assertExactFields(file as Record<string, unknown>, ['path', 'sourceHash']); assertHash((file as Record<string, unknown>).sourceHash, 'context source hash'); }
+    return deepFreeze({ ...value, intent: normalizePlayChapterIntent(value.intent) }) as unknown as PublicPendingActionOrigin;
   }
   if (value.kind === 'novelLint') {
     assertExactFields(value, ['kind', 'targetPath', 'sourceHash']);

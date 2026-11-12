@@ -2255,3 +2255,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export { generateNovelLintReview } from './novel-lint';
+export { generatePlayChapterDraft } from './play-chapter-writing';

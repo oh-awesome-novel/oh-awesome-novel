@@ -1,3 +1,6 @@
+import { createPlayChapterWritingHandlers } from './play-chapter-writing';
+import { generatePlayChapterDraft } from '@oh-awesome-novel/agent';
+import { assertPlayChapterWritingFresh } from '@oh-awesome-novel/tools';
 import { selectPlayPhaseEvidence } from '@oh-awesome-novel/agent';
 import { playArchiveQuestion, playPhaseOverview } from './play-phase-memory.js';
 import { buildPlayPhaseCatalog, recallPlayPhase } from '@oh-awesome-novel/core';
@@ -537,6 +540,16 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       return { ...(providerConfig ? { providerConfig } : {}), resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
     },
   });
+  const playChapterWriting = createPlayChapterWritingHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getStore: async root => (await getPendingActionServices(state, root)).store,
+    async generate(value) {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('请先配置模型，再生成章节。');
+      return generatePlayChapterDraft({ ...value, providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver() });
+    },
+  });
   const novelLint = createNovelLintHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     getStore: async (root) => (await getPendingActionServices(state, root)).store,
@@ -763,6 +776,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
   app.post('/api/workspace/manuscript/import/preview', (context) => manuscriptImport.preview(context));
+  app.post('/api/workspace/play-chapter/target', c => playChapterWriting.target(c));
+  app.post('/api/workspace/play-chapter/generate', c => playChapterWriting.generate(c));
+  app.post('/api/workspace/play-chapter/:id/propose', c => playChapterWriting.propose(c, c.req.param('id')));
   app.post('/api/workspace/novel-lint/scan', (c) => novelLint.scan(c));
   app.post('/api/workspace/novel-lint/review', (c) => novelLint.review(c));
   app.post('/api/workspace/novel-lint/propose', (c) => novelLint.propose(c));
@@ -6817,7 +6833,7 @@ async function assertPendingActionOriginFresh(
     await assertForgeActionFresh(workspaceRoot, action);
     return;
   }
-  if (origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
+  if (origin.kind === 'playChapterWriting' || origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
     // ChangeMaterializer always validates this origin and its complete input
     // read set before invoking the host hook. Avoid scanning it twice.
     return;
@@ -6855,6 +6871,7 @@ async function assertPreparedPendingActionOriginFresh(
     await assertForgePreviewFresh(workspaceRoot, preview);
     return;
   }
+  if (origin.kind === 'playChapterWriting') { await assertPlayChapterWritingFresh(workspaceRoot, preview); return; }
   if (origin.kind === 'novelLint') {
     if (preview.allowedTargets.length !== 1 || preview.allowedTargets[0] !== origin.targetPath
       || preview.changes.length !== 1 || preview.changes[0]?.operation !== 'update'

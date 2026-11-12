@@ -16,6 +16,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   accept: [action: PendingActionView];
   reject: [action: PendingActionView];
   quickCommit: [action: PendingActionView];
@@ -64,6 +65,7 @@ const batchBusy = computed(() => props.actions.some((action) => action.decision 
         @review="emit('review', $event)"
         @open-diff="emit('openDiff', $event)"
         @forge-handoff="emit('forgeHandoff', $event)"
+      @chapter-handoff="emit('chapterHandoff', $event)"
       />
     </div>
     <p v-else class="empty-copy">No pending actions.</p>

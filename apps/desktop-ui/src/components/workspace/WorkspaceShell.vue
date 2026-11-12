@@ -464,6 +464,12 @@ function openForgeSession(sessionId: string) {
   emit('selectMode', 'play');
 }
 
+async function handleChapterHandoff(input: { path: string; mode: 'open' | 'settle' }) {
+  if (props.mode !== 'writing') emit('selectMode', 'writing');
+  if (input.mode === 'settle') await settleChapter(input.path);
+  else await openFile(input.path);
+}
+
 async function handleForgeHandoff(input: { draftId: string; revision: number; mode: 'play' | 'writing' }) {
   try {
     const res = await oanClient.handoffForgeDraft(input.draftId, {
@@ -695,6 +701,7 @@ function activateForgeWritingSources(paths: string[]) {
       @select-right-tab="layout.openRightPanel($event)"
       @close-right="layout.rightShown.value = false"
       @forge-handoff="handleForgeHandoff"
+      @chapter-handoff="handleChapterHandoff"
     />
 
     <div v-show="mode === 'play'" class="workspace-play-workbench">
@@ -752,6 +759,7 @@ function activateForgeWritingSources(paths: string[]) {
           @refresh-writing-profiles="loadWritingProfiles"
           @writing-profile-state-changed="updateWritingProfileState"
           @forge-handoff="handleForgeHandoff"
+      @chapter-handoff="handleChapterHandoff"
         />
       </div>
     </div>

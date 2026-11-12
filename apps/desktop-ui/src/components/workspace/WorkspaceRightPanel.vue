@@ -40,6 +40,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   selectTab: [tab: WorkspaceRightTab];
   close: [];
   acceptPendingAction: [action: PendingActionView];
@@ -81,6 +82,7 @@ const emit = defineEmits<{
       :actions="pendingActions"
       :selected-action="selectedPendingAction"
       @forge-handoff="emit('forgeHandoff', $event)"
+      @chapter-handoff="emit('chapterHandoff', $event)"
     />
     <ApprovalTab
       v-else-if="activeTab === 'approval'"
@@ -95,6 +97,7 @@ const emit = defineEmits<{
       @review="emit('reviewPendingAction', $event)"
       @open-diff="emit('openPendingActionDiff', $event)"
       @forge-handoff="emit('forgeHandoff', $event)"
+      @chapter-handoff="emit('chapterHandoff', $event)"
     />
     <ProjectHealthTab
       v-else-if="activeTab === 'health'"
