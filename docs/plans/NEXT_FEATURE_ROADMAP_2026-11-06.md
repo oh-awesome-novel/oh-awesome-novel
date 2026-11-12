@@ -123,6 +123,8 @@
 | 参考版本比较/回滚面板、跨 reference 技法比较 | 多版本或多作品对照使用足够频繁 | Git/accepted bundle 为权威；不另造作品版本数据库 |
 | Provider 协议失败的定向修正 | 收集到可重现的 native-tool/history 错误样本 | 可见、有界、按 SDK/官方协议验证；不伪造 thinking signature，不隐藏无限重试 |
 
+2026-11-12 更新：“PDF/EPUB/DOCX 等导入”（仅导入部分）与“参考版本比较/回滚面板、跨 reference 技法比较”已立项为 [1570](../tasks/1570.md)、[1550](../tasks/1550.md)、[1560](../tasks/1560.md)，连同 1410 留下的跨 reference 人物合并，见 [综漫多来源素材规划](CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md)。“独立补充行动建议与带要求 Retry”已由 1450 交付。其余候选仍在池中。
+
 Extension/dynamic Tool 注册继续暂缓。生图、TTS、LAN/移动端/跨设备同步、社区和市场、商业/连载运营、通用 DAG/多 Agent、后台自动写作均不进入本轮六项范围。Play 可以独立用于游玩与探索，回流 Writing 始终可选。
 
 ## 7. 实施约束
