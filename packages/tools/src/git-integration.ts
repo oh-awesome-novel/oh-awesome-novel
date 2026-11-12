@@ -901,7 +901,7 @@ async function readGitVersion(): Promise<
   | { available: false; error: GitCommandError }
 > {
   try {
-    const { stdout } = await execFileAsync('git', ['--version']);
+    const { stdout } = await execFileAsync('git', ['--version'], { env: gitProcessEnv() });
     return { available: true, version: stdout.trim() };
   } catch (error) {
     return {
@@ -909,6 +909,13 @@ async function readGitVersion(): Promise<
       error: toGitCommandError(error),
     };
   }
+}
+
+/** Git error classification matches untranslated stderr, so Git must not
+ * localize its messages (macOS Git follows the system language even when no
+ * LANG/LC_* variable is set). A UTF-8 locale keeps hooks and SSH on UTF-8. */
+function gitProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...env, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8', LANGUAGE: 'en' };
 }
 
 async function runGit(
@@ -923,7 +930,7 @@ async function runGit(
   try {
     const { stdout, stderr } = await execFileAsync('git', ['--no-optional-locks', '--literal-pathspecs', '-C', workspaceRoot, ...args], {
       maxBuffer: 20 * 1024 * 1024,
-      ...(env ? { env } : {}),
+      env: gitProcessEnv(env),
       ...(timeout === undefined ? {} : { timeout }),
     });
     return { ok: true, stdout, stderr };
