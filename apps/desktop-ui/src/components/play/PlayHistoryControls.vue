@@ -26,12 +26,14 @@ const props = withDefaults(defineProps<{
   notice: string;
   /** Director view: guided Retry notes may be shown. */
   directorLens?: boolean;
+  retryDraft?: { checkpointId: string; guidance: string; nonce: number };
 }>(), {
   retryingArtifactId: '',
   namingCheckpointId: '',
   retryDisabled: false,
   retryDisabledReason: '配置模型后才能重演这一回合。',
   directorLens: false,
+  retryDraft: undefined,
 });
 
 const emit = defineEmits<{
@@ -187,6 +189,7 @@ function checkpointDepthOf(checkpoint: HistoryCheckpoint): number {
         :retry-disabled-reason="retryDisabledReason"
         :blocked="blocked"
         :director-lens="directorLens"
+        :retry-draft="retryDraft"
         @restore="emit('restore', $event)"
         @retry="forwardRetry"
         @name="forwardName"

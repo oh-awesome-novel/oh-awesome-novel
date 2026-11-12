@@ -32,12 +32,15 @@ const props = withDefaults(defineProps<{
   blocked: boolean;
   /** Director view; only then may the guided Retry note be shown. */
   directorLens?: boolean;
+  /** Opens this node's Retry confirmation with editable guidance; a new `nonce` re-opens it. */
+  retryDraft?: { checkpointId: string; guidance: string; nonce: number };
 }>(), {
   retryingCheckpointId: '',
   namingCheckpointId: '',
   retryDisabled: false,
   retryDisabledReason: '配置模型后才能重演这一回合。',
   directorLens: false,
+  retryDraft: undefined,
 });
 
 const emit = defineEmits<{
@@ -178,6 +181,22 @@ async function requestAction(kind: PendingActionKind): Promise<void> {
   await nextTick();
   confirmActionButton.value?.focus();
 }
+
+// "带着这条意见重演": the opinion lands in the guidance box, where the author can rewrite it.
+watch(
+  () => props.retryDraft?.nonce,
+  async () => {
+    const draft = props.retryDraft;
+    if (!draft || draft.checkpointId !== checkpointId.value) return;
+    if (!props.checkpoint.retryable || isActionUnavailable('retry')) return;
+    naming.value = false;
+    pendingAction.value = 'retry';
+    guidanceDraft.value = draft.guidance;
+    await nextTick();
+    node.value?.scrollIntoView?.({ block: 'center' });
+    confirmActionButton.value?.focus();
+  },
+);
 
 async function cancelAction(): Promise<void> {
   const action = pendingAction.value;

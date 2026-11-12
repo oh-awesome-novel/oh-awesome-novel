@@ -1,3 +1,4 @@
+export { runPlayCharacterCheck } from './play-character-check.js';
 export { selectPlayPhaseEvidence } from './play-phase-recall.js';
 export { generateForgeText } from './forge-generation.js';
 export { runUsageCacheProbeCall } from './usage-cache-probe.js';

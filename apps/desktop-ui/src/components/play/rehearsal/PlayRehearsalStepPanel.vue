@@ -9,17 +9,21 @@ import type {
   PlayRehearsalStepView,
 } from './types';
 
-const { steps, run, canStop, steerPending } = defineProps<{
+const { steps, run, canStop, steerPending, checkDisabled = false, checkingStepRef = '' } = defineProps<{
   steps: readonly Readonly<PlayRehearsalStepView>[];
   run?: Readonly<PlayRehearsalStepRunView>;
   canStop: boolean;
   /** Director intent waiting to redirect the step being generated. */
   steerPending?: string;
+  checkDisabled?: boolean;
+  /** Step whose in-character check is running. */
+  checkingStepRef?: string;
 }>();
 
 const emit = defineEmits<{
   stopStep: [];
   steerStep: [intent: string];
+  checkStep: [stepRef: string];
 }>();
 
 const steerText = shallowRef('');
@@ -99,6 +103,18 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
           </section>
         </div>
         <p v-else class="play-rehearsal-step-empty">还没有准备叙述段落。</p>
+
+        <button
+          v-if="step.blocks.length && (step.status === 'provisional' || step.status === 'selected')"
+          class="play-rehearsal-step-check"
+          type="button"
+          :disabled="checkDisabled || Boolean(checkingStepRef)"
+          :data-check-step="step.id"
+          title="一次只读的模型调用：指出哪句话不像这个角色，并附角色资料里的依据。"
+          @click="emit('checkStep', step.id)"
+        >
+          {{ checkingStepRef === step.id ? '正在检查…' : '检查角色贴合度' }}
+        </button>
 
         <small v-if="step.variantOf" class="play-rehearsal-variant-ref">
           {{ step.variantOf }} 的另一结果
@@ -313,6 +329,16 @@ function blockKindLabel(kind: PlayRehearsalNarrativeBlockKind): string {
   background: var(--play-canvas, var(--editor-canvas));
   color: var(--play-ink, var(--editor-ink));
 }
+.play-rehearsal-step-check {
+  justify-self: end;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  background: none;
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 11px;
+}
+
 .play-rehearsal-steer {
   display: flex;
   gap: 6px;

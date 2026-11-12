@@ -51,6 +51,10 @@ const props = defineProps<{
   memoryRebuilding?: boolean;
   memoryError?: string;
   steerPending?: string;
+  checkDisabled?: boolean;
+  checkingStepRef?: string;
+  /** "带着这条意见重演": opens the redirect form for one step with editable intent. */
+  redirectRequest?: { stepRef: string; intent: string; nonce: number };
 }>();
 
 const emit = defineEmits<{
@@ -58,6 +62,7 @@ const emit = defineEmits<{
   generateStep: [];
   stopStep: [];
   steerStep: [intent: string];
+  checkStep: [stepRef: string];
   accept: [stepRef: string];
   retry: [stepRef: string];
   intervene: [draft: PlayDirectorInterventionDraft];
@@ -146,8 +151,18 @@ function launch(): void {
   }
 }
 
+const redirectSeed = shallowRef<{ stepRef: string; intent: string; nonce: number }>();
+watch(() => props.redirectRequest?.nonce, () => {
+  const request = props.redirectRequest;
+  if (!request || props.busy || !showDirectorControls.value || !props.capabilities.canModify) return;
+  redirectSeed.value = request;
+  interventionMode.value = 'modify';
+});
+
 function openIntervention(mode: PlayDirectorPanelMode): void {
-  if (!props.busy) interventionMode.value = mode;
+  if (props.busy) return;
+  redirectSeed.value = undefined;
+  interventionMode.value = mode;
 }
 
 function closeIntervention(): void {
@@ -220,8 +235,11 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
           :run="stepRun"
           :can-stop="capabilities.canStopStep"
           :steer-pending="steerPending"
+          :check-disabled="checkDisabled"
+          :checking-step-ref="checkingStepRef"
           @stop-step="emit('stopStep')"
           @steer-step="emit('steerStep', $event)"
+          @check-step="emit('checkStep', $event)"
         />
 
         <div
@@ -289,6 +307,7 @@ function submitIntervention(draft: PlayDirectorInterventionDraft): void {
       :participants="queue"
       :active-step-ref="activeStep?.id"
       :busy="busy"
+      :redirect-seed="redirectSeed"
       @close="closeIntervention"
       @submit="submitIntervention"
     />
