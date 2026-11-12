@@ -1,3 +1,6 @@
+import { createChapterReviewHandlers } from './chapter-review';
+import { generateChapterReview, generateChapterReviewRevision } from '@oh-awesome-novel/agent';
+import { assertChapterReviewActionFresh } from '@oh-awesome-novel/tools';
 import { createPlayChapterWritingHandlers } from './play-chapter-writing';
 import { generatePlayChapterDraft } from '@oh-awesome-novel/agent';
 import { assertPlayChapterWritingFresh } from '@oh-awesome-novel/tools';
@@ -540,6 +543,21 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       return { ...(providerConfig ? { providerConfig } : {}), resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
     },
   });
+  const chapterReviews = createChapterReviewHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state), getStore: async root => (await getPendingActionServices(state, root)).store,
+    async review(value) {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('请先配置审稿模型。');
+      return generateChapterReview({ ...value, providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver() });
+    },
+    async revise(value) {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      if (!providerConfig) throw new Error('请先配置修订模型。');
+      return generateChapterReviewRevision({ ...value, providerConfig, resolveModel: options.resolveModel ?? createAiSdkProviderResolver() });
+    },
+  });
   const playChapterWriting = createPlayChapterWritingHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     getStore: async root => (await getPendingActionServices(state, root)).store,
@@ -776,6 +794,11 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
   app.post('/api/workspace/manuscript/import/preview', (context) => manuscriptImport.preview(context));
+  app.post('/api/workspace/chapter-reviews/list', c => chapterReviews.list(c));
+  app.post('/api/workspace/chapter-reviews/generate', c => chapterReviews.generate(c));
+  app.post('/api/workspace/chapter-reviews/:id/read', c => chapterReviews.read(c, c.req.param('id')));
+  app.post('/api/workspace/chapter-reviews/:id/decisions', c => chapterReviews.decide(c, c.req.param('id')));
+  app.post('/api/workspace/chapter-reviews/:id/revise', c => chapterReviews.revise(c, c.req.param('id')));
   app.post('/api/workspace/play-chapter/target', c => playChapterWriting.target(c));
   app.post('/api/workspace/play-chapter/generate', c => playChapterWriting.generate(c));
   app.post('/api/workspace/play-chapter/:id/propose', c => playChapterWriting.propose(c, c.req.param('id')));
@@ -6833,7 +6856,7 @@ async function assertPendingActionOriginFresh(
     await assertForgeActionFresh(workspaceRoot, action);
     return;
   }
-  if (origin.kind === 'playChapterWriting' || origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
+  if (origin.kind === 'chapterReview' || origin.kind === 'playChapterWriting' || origin.kind === 'chapterSettlement' || origin.kind === 'summaryGeneration' || origin.kind === 'manuscriptImport' || origin.kind === 'tavernImport') {
     // ChangeMaterializer always validates this origin and its complete input
     // read set before invoking the host hook. Avoid scanning it twice.
     return;
@@ -6871,6 +6894,7 @@ async function assertPreparedPendingActionOriginFresh(
     await assertForgePreviewFresh(workspaceRoot, preview);
     return;
   }
+  if (origin.kind === 'chapterReview') { await assertChapterReviewActionFresh(workspaceRoot, preview); return; }
   if (origin.kind === 'playChapterWriting') { await assertPlayChapterWritingFresh(workspaceRoot, preview); return; }
   if (origin.kind === 'novelLint') {
     if (preview.allowedTargets.length !== 1 || preview.allowedTargets[0] !== origin.targetPath

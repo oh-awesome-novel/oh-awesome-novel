@@ -1,3 +1,4 @@
+import { assertChapterReviewActionFresh } from './chapter-review';
 import { assertPlayChapterWritingFresh } from './play-chapter-writing';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
@@ -428,6 +429,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
   async #validateAction(action: PendingAction): Promise<{ policy: WorkspaceChangePolicy; summarySource?: SummaryGenerationSource }> {
     await assertRepositoryBaseline(this.#workspaceRoot, action.repository);
     let summarySource: SummaryGenerationSource | undefined;
+    if (action.origin?.kind === 'chapterReview') await assertChapterReviewActionFresh(this.#workspaceRoot, action);
     if (action.origin?.kind === 'playChapterWriting') await assertPlayChapterWritingFresh(this.#workspaceRoot, action);
     if (action.origin?.kind === 'summaryGeneration') {
       summarySource = await assertSummaryGenerationActionFresh(this.#workspaceRoot, action);
@@ -550,6 +552,7 @@ class FileChangeMaterializer implements ChangeMaterializer {
             `No policy-bound final validator exists for ${change.path}.`,
           );
         }
+        if (action.origin?.kind === 'chapterReview') await assertChapterReviewActionFresh(this.#workspaceRoot, action, draft!);
         if (action.origin?.kind === 'summaryGeneration') {
           let document: SummaryDocument | undefined;
           try {

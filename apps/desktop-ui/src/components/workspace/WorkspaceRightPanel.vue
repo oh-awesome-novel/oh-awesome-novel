@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ApprovalTab from './ApprovalTab.vue';
 import DiffReviewTab from './DiffReviewTab.vue';
+import ChapterReviewWorkbench from '../editor/ChapterReviewWorkbench.vue';
 import WritingLintBar from '../editor/WritingLintBar.vue';
 import FileViewer from './FileViewer.vue';
 import GitReviewTab from './GitReviewTab.vue';
@@ -40,6 +41,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  openEvidence: [input: { path: string; line: number }];
   chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   selectTab: [tab: WorkspaceRightTab];
   close: [];
@@ -73,6 +75,9 @@ const emit = defineEmits<{
       :loading="fileLoading"
       :error="fileError"
     />
+    <ChapterReviewWorkbench v-if="workspacePath && /^chapters\/\d{4}\/\d{4}\.md$/.test(activeFilePath)"
+      :workspace-root="workspacePath" :path="activeFilePath" :source-version="fileContent" :disabled="fileLoading || Boolean(fileError)"
+      @review-pending-action="emit('reviewPendingActionId', $event)" @open-evidence="emit('openEvidence', $event)" />
     <WritingLintBar v-if="/^(chapters|characters|world)\//.test(activeFilePath) && activeFilePath.endsWith('.md')"
       :key="activeFilePath + fileContent" :path="activeFilePath" :workspace-root="workspacePath ?? ''"
       :disabled="fileLoading || Boolean(fileError)" @review-pending-action="emit('reviewPendingActionId', $event)" />
@@ -123,3 +128,8 @@ const emit = defineEmits<{
     />
   </section>
 </template>
+
+<style scoped>
+.file-review-with-lint { min-height: 0; overflow: auto; }
+.file-review-with-lint :deep(.viewer-pane) { min-height: 240px; max-height: 50vh; }
+</style>

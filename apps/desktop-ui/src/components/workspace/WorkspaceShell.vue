@@ -702,6 +702,7 @@ function activateForgeWritingSources(paths: string[]) {
       @close-right="layout.rightShown.value = false"
       @forge-handoff="handleForgeHandoff"
       @chapter-handoff="handleChapterHandoff"
+      @open-evidence="openFile($event.path, $event.line)"
     />
 
     <div v-show="mode === 'play'" class="workspace-play-workbench">
@@ -760,6 +761,7 @@ function activateForgeWritingSources(paths: string[]) {
           @writing-profile-state-changed="updateWritingProfileState"
           @forge-handoff="handleForgeHandoff"
       @chapter-handoff="handleChapterHandoff"
+      @open-evidence="openFile($event.path, $event.line)"
         />
       </div>
     </div>

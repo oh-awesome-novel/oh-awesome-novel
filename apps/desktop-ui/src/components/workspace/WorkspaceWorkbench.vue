@@ -78,6 +78,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  openEvidence: [input: { path: string; line: number }];
   chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   updateLeftOverlayOpen: [open: boolean];
   updateSidebarTab: [tab: 'files' | 'chapters' | 'history'];
@@ -244,6 +245,7 @@ const emit = defineEmits<{
       @writing-profile-state-changed="emit('writingProfileStateChanged', $event)"
       @forge-handoff="emit('forgeHandoff', $event)"
       @chapter-handoff="emit('chapterHandoff', $event)"
+      @open-evidence="emit('openEvidence', $event)"
     />
   </div>
 </template>

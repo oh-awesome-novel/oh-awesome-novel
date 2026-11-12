@@ -1,3 +1,4 @@
+import type { ChapterReviewOrigin } from '@oh-awesome-novel/core/chapter-review-contract';
 import { normalizePlayChapterIntent } from '@oh-awesome-novel/core/play-chapter-writing-contract';
 import type { PlayChapterWritingBinding } from '@oh-awesome-novel/core/play-chapter-writing-contract';
 export const PENDING_ACTION_RESET_REQUIRED_CODE =
@@ -22,6 +23,7 @@ export class PendingActionViewParseError extends Error {
 }
 
 export type PublicPendingActionOrigin =
+  | ChapterReviewOrigin
   | ({ readonly kind: 'playChapterWriting' } & Readonly<PlayChapterWritingBinding>)
   | { readonly kind: 'forge'; readonly draftId: string; readonly revision: number; readonly previewId: string }
   | { readonly kind: 'novelLint'; readonly targetPath: string; readonly sourceHash: string }
@@ -496,6 +498,21 @@ function parsePublicPendingActionOrigin(value: unknown): PublicPendingActionOrig
     if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0) invalid('Invalid Forge revision.');
     return deepFreeze({ kind: 'forge', draftId: assertOpaqueId(value.draftId, 'Forge draft id'),
       previewId: assertOpaqueId(value.previewId, 'Forge preview id'), revision: value.revision as number });
+  }
+  if (value.kind === 'chapterReview') {
+    assertExactFields(value, ['kind', 'reportId', 'decisionRevision', 'targetPath', 'sourceHash', 'contextFingerprint', 'findingIds', 'edits']);
+    if (typeof value.reportId !== 'string' || !/^review-[A-Za-z0-9-]{1,100}$/u.test(value.reportId) || !Number.isSafeInteger(value.decisionRevision) || (value.decisionRevision as number) < 0 ||
+      typeof value.targetPath !== 'string' || !/^chapters\/(?!0000)\d{4}\/(?!0000)\d{4}\.md$/u.test(value.targetPath) || !Array.isArray(value.findingIds) || !value.findingIds.length || value.findingIds.length > 60 || value.findingIds.some(id => typeof id !== 'string' || !/^finding-[a-f0-9]{24}$/u.test(id)) ||
+      !Array.isArray(value.edits) || !value.edits.length || value.edits.length > 60) invalid('Invalid chapter review origin.');
+    assertHash(value.sourceHash, 'Chapter review source hash'); assertHash(value.contextFingerprint, 'Chapter review context hash');
+    let previousEnd = 0;
+    for (const edit of value.edits) {
+      if (!isRecord(edit)) invalid('Invalid chapter review origin.');
+      assertExactFields(edit, ['anchorId', 'start', 'end', 'length', 'hash']);
+      if (typeof edit.anchorId !== 'string' || edit.anchorId.length > 200 || !Number.isSafeInteger(edit.start) || !Number.isSafeInteger(edit.end) || !Number.isSafeInteger(edit.length) || (edit.start as number) < previousEnd || (edit.end as number) <= (edit.start as number) || (edit.length as number) < 0 || (edit.length as number) > 30000) invalid('Invalid chapter review origin.');
+      assertHash(edit.hash, 'Chapter review replacement hash'); previousEnd = edit.end as number;
+    }
+    return deepFreeze(structuredClone(value)) as unknown as ChapterReviewOrigin;
   }
   if (value.kind === 'playChapterWriting') {
     assertExactFields(value, ['kind', 'attachmentId', 'reportFingerprint', 'selectionHash', 'lens', 'targetPath', 'chapterInventoryHash', 'contextFingerprint', 'contextFiles', 'intent']);

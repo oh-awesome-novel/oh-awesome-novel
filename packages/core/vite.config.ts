@@ -4,6 +4,7 @@ export default defineConfig({
   pack: {
     entry: {
       index: "src/index.ts",
+      "chapter-review-contract": "src/chapter-review-contract.ts",
       "play-chapter-writing-contract": "src/play-chapter-writing-contract.ts",
       "play-crossover": "src/play-crossover.ts",
       "novel-lint-rules": "src/novel-lint-rules.ts",
