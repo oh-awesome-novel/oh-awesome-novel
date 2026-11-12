@@ -33,6 +33,8 @@ export function analyzeRevisionImpact(input: {
     if (buckets[item.kind].length < 300) buckets[item.kind].push({ id, ...item, reason: clip(item.reason, 600), location: clip(item.location, 500), evidence: clip(item.evidence, 600) });
   };
   for (const source of input.comparisons.filter(source => source.change !== 'unchanged')) {
+    // Without an old version the dependency is still registered, but nothing proves this edit touched it.
+    const uncompared = source.change === 'unknown';
     const chapterId = /^chapters\/((?!0000)\d{4}\/(?!0000)\d{4})\.md$/u.exec(source.path)?.[1];
     if (chapterId) {
       const coverage = afterChapters.find(item => item.chapterId === chapterId);
@@ -42,7 +44,7 @@ export function analyzeRevisionImpact(input: {
         if (!assessment || assessment.status === 'missing') { gaps.add(`${source.path} 尚无可核验的${key === 'summary' ? '章摘要' : '章状态'}记录。`); continue; }
         if (!assessment.sourceHash) { gaps.add(`${assessment.path} 缺少可核验的章级来源证据。`); continue; }
         if (assessment.status === 'unverified') gaps.add(`${assessment.path} 的来源关系已登记，但目前无法验证内容。`);
-        add({ kind: 'derived', sourcePath: source.path, path: assessment.path, reason: '该章级记录登记了正文来源；状态由现有 freshness evaluator 核对。',
+        add({ kind: 'derived', sourcePath: source.path, path: assessment.path, reason: uncompared ? `该章级记录登记了正文来源；${UNCOMPARED}` : '该章级记录登记了正文来源；状态由现有 freshness evaluator 核对。',
           location: 'chapterRef / sourceHash', evidence: `正文来源 SHA-256: ${assessment.sourceHash}`, evidenceHash: digest(files.get(assessment.path)!),
           status: assessment.status, ...(old?.[key] ? { beforeStatus: old[key].status } : {}) });
       }
@@ -52,7 +54,7 @@ export function analyzeRevisionImpact(input: {
           const parsed = parseSummaryDocument(content, assessment.path); if (!parsed) { gaps.add(`${assessment.path} 是未登记来源的作者文字。`); continue; }
           const previous = beforeAggregate.find(item => item.path === assessment.path);
           add({ kind: 'derived', sourcePath: source.path, path: assessment.path,
-            reason: input.complete ? '摘要的覆盖范围包含该章节所在范围；正文变化会传递到卷/全书来源核验。' : '摘要覆盖此范围，但扫描不完整，不能断言本次变化是否使其失效。',
+            reason: uncompared ? `摘要的覆盖范围包含该章节所在范围；${UNCOMPARED}` : input.complete ? '摘要的覆盖范围包含该章节所在范围；正文变化会传递到卷/全书来源核验。' : '摘要覆盖此范围，但扫描不完整，不能断言本次变化是否使其失效。',
             location: 'oan:summary:v1 / chapterIds / sourceFingerprint', evidence: `登记 ${parsed.document.chapterIds.length} 章；来源 fingerprint: ${parsed.document.sourceFingerprint}`,
             evidenceHash: digest(content), status: input.complete ? assessment.status : 'unverified', ...(previous ? { beforeStatus: previous.status } : {}) });
         } catch { gaps.add(`${assessment.path} 的受管来源区块不可验证。`); }
@@ -83,5 +85,6 @@ export function analyzeRevisionImpact(input: {
   const items = [...buckets.derived, ...buckets.reference, ...buckets.generationRead, ...buckets.mention].slice(0, 300);
   return { items, counts, omittedItems: Object.values(counts).reduce((a, b) => a + b, 0) - items.length, gaps: [...gaps].slice(0, 40) };
 }
+const UNCOMPARED = '变更前版本无法比较，不能断言本次修改是否影响它；状态只反映当前文件，仅供人工复核。';
 function digest(text: string): string { return createHash('sha256').update(text).digest('hex'); }
 function clip(value: string, max: number): string { return value.length > max ? `${value.slice(0, max - 1)}…` : value; }

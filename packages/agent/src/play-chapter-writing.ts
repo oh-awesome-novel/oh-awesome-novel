@@ -3,6 +3,7 @@ import { streamText } from 'ai';
 import { parsePlayChapterDraft } from '@oh-awesome-novel/core';
 import type { LlmProviderConfig, PlayChapterIntent, PlayChapterDraft } from '@oh-awesome-novel/core';
 import type { AiSdkProviderResolver } from './index';
+import { parseModelJson } from './model-json';
 import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
 
 export async function generatePlayChapterDraft(input: {
@@ -33,7 +34,7 @@ export async function generatePlayChapterDraft(input: {
     }
     if (input.abortSignal.aborted) throw new Error('已取消转写。');
     if (streamError || await result.finishReason !== 'stop') throw new Error('章节生成未完整结束，请重试。');
-    const draft = parsePlayChapterDraft(JSON.parse(text), input.items.map(item => item.id));
+    const draft = parsePlayChapterDraft(parseModelJson(text), input.items.map(item => item.id));
     succeeded = true;
     return draft;
   } finally {

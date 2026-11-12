@@ -72,6 +72,8 @@ it('degrades when Git and history are absent and skips oversized trees with an e
     await rm(join(f.root, '.git'), { recursive: true });
     const result = await createRevisionImpactReport(f.root, { kind: 'git', path: impactPath, ref: 'HEAD' });
     expect(result.report.comparisons[0]!.change).toBe('unknown'); expect(result.report.coverage.gaps.join('')).toContain('Git');
+    const uncompared = result.report.items.filter(item => item.kind === 'derived'); expect(uncompared).toHaveLength(4);
+    expect(uncompared.every(item => item.reason.includes('变更前版本无法比较') && item.beforeStatus === undefined)).toBe(true);
     await mkdir(join(f.root, 'world/large')); await Promise.all(Array.from({ length: 1005 }, (_, i) => writeFile(join(f.root, `world/large/${i}.md`), '# 记录\n内容')));
     const snapshot = await readRevisionImpactSnapshot(f.root, [impactPath]); expect(snapshot.files.length).toBe(1000); expect(snapshot.coverage.complete).toBe(false); expect(snapshot.coverage.gaps.join('')).toContain('上限');
     expect(await readFile(join(f.root, impactPath), 'utf8')).toBe(impactText);

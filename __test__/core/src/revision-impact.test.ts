@@ -26,3 +26,12 @@ it('bounds a large possible-match set and never labels partial aggregate coverag
   expect(result.items.length).toBeLessThanOrEqual(300); expect(result.omittedItems).toBeGreaterThan(800);
   expect(result.items.find(i => i.path === 'summaries/global.md')?.status).toBe('unverified');
 });
+it('marks derived dependencies as uncompared when the old version is unknown', () => {
+  const files = impactFiles().filter(file => !file.path.includes('0001/0002'));
+  const { beforeText: _beforeText, ...unknown } = { ...comparison, beforeKnown: false, beforeHash: null, afterHash: impactHash(impactText), oldTextAvailable: false, change: 'unknown' as const };
+  const derived = analyzeRevisionImpact({ comparisons: [unknown], files, complete: true, references: [], generations: [] }).items.filter(item => item.kind === 'derived');
+  expect(derived).toHaveLength(4);
+  expect(derived.every(item => item.reason.includes('变更前版本无法比较') && item.beforeStatus === undefined)).toBe(true);
+  const known = analyzeRevisionImpact({ comparisons: [comparison], files, complete: true, references: [], generations: [] }).items;
+  expect(known.some(item => item.reason.includes('无法比较'))).toBe(false);
+});

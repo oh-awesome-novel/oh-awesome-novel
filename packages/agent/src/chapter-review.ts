@@ -3,6 +3,7 @@ import { generateText } from 'ai';
 import { chapterReviewBasis, chapterReviewSource, REVIEW_DIMENSIONS, selectedChapterReviewAnchors } from '@oh-awesome-novel/core';
 import type { ChapterReviewReport, LlmProviderConfig } from '@oh-awesome-novel/core';
 import type { AiSdkProviderResolver } from './index';
+import { parseModelJson } from './model-json';
 import { extractAiSdkUsageFields, recordSpecializedModelUsageTurn } from './usage-governance';
 
 export async function generateChapterReview(input: {
@@ -40,5 +41,5 @@ async function run(input: { workspaceRoot: string; path: string; providerConfig:
     systemPrompt: '', userPrompt: prompt, sourceId: kind, sourceKind: kind, sourcePath: input.path, sourceHash: hash,
     rawUsage: extractAiSdkUsageFields(result.usage), finishReason: result.finishReason, outcome: result.finishReason === 'stop' ? 'completed' : 'failed' });
   if (input.abortSignal.aborted || result.finishReason !== 'stop' || result.text.length > 300_000) throw new Error('审稿模型未完整结束，请重试。');
-  return JSON.parse(result.text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, ''));
+  return parseModelJson(result.text);
 }
