@@ -1,8 +1,10 @@
 # 截图与更新说明
 
-本文档的界面截图采集于 **2026 年 10 月 1 日至 5 日**，来自仓库中的真实桌面前端和本地后端。10月1–2日使用 `examples/simple-novel` 的独立临时副本，10月5日使用全新空白临时小说；截图不包含私人小说、真实 API Key 或个人全局配置。
+本文档的界面截图采集于 **2026 年 10 月 1 日至 11 月 12 日**，来自仓库中的真实桌面前端和本地后端。10 月 1–2 日使用 `examples/simple-novel` 的独立临时副本，10 月 5 日使用全新空白临时小说，11 月的采集也使用隔离演示数据；截图不包含私人小说、真实 API Key 或个人全局配置。
 
 10 月 2 日基于 `c7701d8` 重新构建后端，补齐搜索、正文导出、上下文与用量、正常 Git 历史和章节结算审批截图。新增截图来自独立浏览器窗口，保留实际中英文界面；较大的截图可点击指南下方的原图链接查看。
+
+11 月 12 日按 `1b9ad8e` 构建实际应用，补拍近期 Play、Writing 与参考素材功能。图片裁剪到对应操作面板，保留真实文字与状态；没有用合成界面替代应用截图。
 
 ## 已收录的界面
 
@@ -22,6 +24,17 @@
 | [场景试演步骤](/screenshots/play-rehearsal-steps.jpg) | 角色行动顺序与一个尚未提交的角色步骤（受控演示模型）；2026-11-10 |
 | [带要求重演](/screenshots/play-retry-guidance.jpg) | 导演视角下世界线显示重演要求（受控演示模型）；2026-11-10 |
 | [带回写作表单](/screenshots/play-adoption-form.jpg) | 时间线采纳表单与实际 diff，尚未创建待确认改动；2026-11-10 |
+| [复用开局](/screenshots/play-launch-reuse.jpg) | 来源重新核对后的只读确认页，尚未创建新会话；2026-11-12 |
+| [原作走向与关系](/screenshots/play-canon-relationships.jpg) | 当前分支的节点状态、依据和关系事件（受控演示回合）；2026-11-12 |
+| [世界线比较](/screenshots/play-worldline-compare.jpg) | 两条演示分支的行动、地点状态和独有事件差异；2026-11-12 |
+| [综漫融合契约](/screenshots/play-crossover-contract.jpg) | 两部演示作品的融合方式、初始认知与规则裁定表单，未创建会话；2026-11-12 |
+| [角色贴合度](/screenshots/play-character-check.jpg) | 受控意见经过逐字引文核验，尚未重演或保存观察笔记；2026-11-12 |
+| [阶段历史查回](/screenshots/play-phase-recall.jpg) | 确定性关键词检索当前分支原文，未调用模型筛选证据；2026-11-12 |
+| [Play 用量检查器](/screenshots/play-usage-inspector.jpg) | 真实记录链路展示受控模型的固定 token 字段，不代表真实消耗；2026-11-12 |
+| [Play 转章节 Diff](/screenshots/play-chapter-diff.jpg) | 新建下一章的真实待审批候选，未 Accept；2026-11-12 |
+| [审稿依据与裁决](/screenshots/chapter-review-evidence.jpg) | 原句、世界规则依据、允许修订行及作者“保留原文”的裁决；2026-11-12 |
+| [修改影响分组](/screenshots/revision-impact.jpg) | 旧 Git 版本与当前角色卡比较，区分来源依赖、引用和历史读取；2026-11-12 |
+| [参考素材预检](/screenshots/reference-adoption-preflight.jpg) | 类型筛选、目标映射和非法目标提示；2026-11-12 |
 | [Git 面板](/screenshots/git.jpg) | 临时副本尚未初始化 Git 的提示 |
 | [正文搜索](/screenshots/search-results.jpg) | 搜索“米拉”的真实结果；2026-10-02 |
 | [正文导出](/screenshots/manuscript-export.jpg) | Markdown / TXT 下载入口和导出范围说明；2026-10-02 |
@@ -39,6 +52,10 @@
 2026-10-05另行验收作者旧稿导入：从空临时小说开始，使用显式输入的两章演示文字，真实执行预览、重复章号冲突、重映射、创建PendingAction和Accept。Accept前章节目录为空，之后两章原文保留；关闭autoCommit时Git仍仅有基线提交。没有配置或调用模型，也没有修改仓库示例小说。
 
 2026-11-10 的推演截图在示例小说的临时副本上采集，界面为中文作者语言。引导开局、新建会话与场景表单不涉及模型。场景试演步骤、带要求重演和带回写作三张图中的叙述、角色步骤与候选行动来自受控演示模型（后端测试用的固定回复），不是真实模型的输出，只用于展示界面和流程；回合、存档点、结果报告与采纳预览均由真实后端按正常流程生成。采集中创建的待确认改动没有被接受，示例小说的正式文件没有改变。
+
+2026-11-12 使用独立临时 Git 仓库「雾港来信 · 文档演示」，通过正常 Client / HTTP / SDK 链路创建回合、恢复起点形成分支、生成报告、角色检查和章节候选；模型边界使用 `MockLanguageModelV4` 固定回复。用量字段同样来自该受控模型，不能作为真实 provider 或缓存账单证据。章节转写和局部修订只创建 PendingAction，没有 Accept，演示正文保持原样。
+
+参考素材截图使用同一临时工作区中的原创短文本，通过既有 Backend 测试的受控生成回调完成拆解；仅接受了演示参考资料的发布。素材采纳演示先被非法目标拦下，改为合法目标后通过预检并生成真实 Diff，未接受写入小说的候选。所有候选与内部记录均由产品公开接口产生，没有手写内部 JSON 来伪造成功状态。
 :::
 
 ![写作工作区截图](/screenshots/workspace.jpg)
@@ -106,6 +123,21 @@ VITE_OAN_BACKEND_PROXY_TARGET=http://127.0.0.1:3317 \
 
 若要补充模型生成的拆书、完整上下文与 Actual 用量或 Play 回合，应另用有授权的演示模型和示例数据，并按产品的审批流程操作。
 
-## 待补：共创工坊与新 Play/LINT 操作
+### 5. 近期功能的受控演示
 
-Forge、剧情归档、视觉小说、本地图片与 LINT 的文字指南已按本次实现更新。现有 Play 截图早于这些入口；尚未加入它们的完整应用演示截图。测试夹具的 Chromium 截图只用于交互检查，不作为真实模型成功或正式入库的截图证据。
+11 月 12 日的演示组合参照以下已有根目录测试，使用公开包入口搭建临时数据、真实后端和原有前端。只在模型或专用生成回调边界提供固定回复，不在浏览器中替换 API 响应、界面文字或审批状态。
+
+| 操作 | 仓库内的复现参考 |
+| --- | --- |
+| 原作节点、关系、检查与比较 | `__test__/desktop-ui/src/play-canon-beats-sdk-journey.test.ts`、`play-relationship-panel-sdk-journey.test.ts`、`play-character-check-sdk-journey.test.ts`、`play-worldline-compare-journey.test.ts` |
+| 融合契约、开局复用 | `__test__/desktop-ui/src/play-crossover-journey.test.ts`、`play-launch-reuse-journey.test.ts` |
+| 用量与阶段回忆 | `__test__/desktop-ui/src/domain-usage-sdk-journey.test.ts` |
+| 转章节、审稿 | `__test__/desktop-ui/src/play-chapter-writing-journey.test.ts`、`chapter-review-journey.test.ts` |
+| 影响分析 | `__test__/backend/src/revision-impact.test.ts` |
+| 参考素材预检、采纳预览 | `__test__/backend/src/reference-deconstruction-full.test.ts` 中的 Story Material adoption / preflight 用例 |
+
+启动演示前后核对临时仓库的 tracked 文件状态；采纳预览和 PendingAction 不能改变正式目标。若为了展示已发布参考材料而 Accept，必须仅操作隔离演示仓库，并在图注写清接受了什么。不要把受控回复的流程验证描述为真实模型的文学质量验收。
+
+## 待补：共创工坊与视觉小说/LINT 操作
+
+Forge、剧情归档预览、视觉小说、本地图片与 LINT 仍缺完整应用演示截图。11 月 12 日已补阶段原文检索等近期入口，不代表这些旧待补项也已完成；测试或演示夹具的截图不作为真实模型成功或正式入库的证据。

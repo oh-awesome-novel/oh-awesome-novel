@@ -38,6 +38,18 @@ Vite+ 1.4.0 是项目 devDependency，版本写入 `package-lock.json`；不需�
 
 本地页面链接使用相对 Markdown 链接，例如 `[认识工作区](./guide/workspace.md)`。新增页面后，把它加入 `.vitepress/config.mts` 的侧边栏。
 
+### 按提交检查遗漏
+
+查看最近一批功能的提交与 Wiki 变更，合并提交按功能去重，修复、测试和未来规划不要求机械地修改使用指南：
+
+```sh
+git log --first-parent --no-merges -20 --oneline
+git log -12 --oneline -- wiki
+git show --stat <提交号>
+```
+
+逐项检查“操作步骤是否更新、旧限制是否仍成立、是否有对应实拍图”。只有文字改动并不代表截图同步；功能修复若改变刷新、过期或错误处理，也要复核相应说明。未实现的规划不要写成当前可用功能。补图后更新 `screenshots.md` 的日期、清单和演示边界。
+
 ## 更新界面截图
 
 截图应来自当前应用的真实界面。使用独立的演示工作区与全局配置目录，不加载私人小说、真实 API Key 或用户正在使用的数据。具体清单和运行记录见[截图说明](./screenshots.md)。
