@@ -1,11 +1,15 @@
 import {
   computed,
   readonly,
+  onScopeDispose,
+  getCurrentScope,
   shallowRef,
   toValue,
   type MaybeRefOrGetter,
 } from 'vue';
 
+import type { PlayOriginWork, PlayCrossoverContract } from '@oh-awesome-novel/client';
+import { collectPlayOriginWorks, normalizePlayCrossoverContract } from '@oh-awesome-novel/core/play-crossover';
 import type { OanClient } from '@oh-awesome-novel/client';
 import { normalizePlayIsoWorldTime } from '@oh-awesome-novel/client';
 
@@ -36,6 +40,7 @@ export type {
 
 export type PlayGuidedStartStep =
   | 'sources'
+  | 'crossover'
   | 'entry'
   | 'identity'
   | 'cast'
@@ -50,7 +55,7 @@ export type PlayGuidedStartApi = Pick<
   | 'previewPlayLaunchPackage'
   | 'createPlayLaunchPackage'
   | 'startPlaySessionFromLaunchPackage'
-> & Partial<Pick<OanClient, 'listPlayCanonBeatCandidates'>>;
+> & Partial<Pick<OanClient, 'listPlayCanonBeatCandidates' | 'listReferences' | 'listReferenceMaterialAdoptionRecords'>>;
 
 export const MAX_GUIDED_CANON_BEATS = 24;
 
@@ -73,6 +78,7 @@ export interface PlayGuidedCanonCandidates {
 }
 
 export interface PlayGuidedSourceOption {
+  originWork?: PlayOriginWork;
   sourceId: string;
   name: string;
   path: string;
@@ -117,6 +123,7 @@ export type PlayGuidedParticipantPatch = Partial<
 
 export interface PlayGuidedStartErrors {
   sources?: string;
+  crossover?: string;
   title?: string;
   label?: string;
   opening?: string;
@@ -179,11 +186,66 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   const reuseSourceTitle = shallowRef<string>();
   const reuseProblems = shallowRef<Array<Omit<PlayGuidedReuseCheck, 'selected'>>>([]);
 
-  const sourceOptions = computed(() => flattenFiles(toValue(options.tree)));
+  const sourceWorks = shallowRef<Record<string, PlayOriginWork>>({});
+  const crossoverDraft = shallowRef<Omit<PlayCrossoverContract, 'works'>>({ fusion: 'merged', knowledge: 'isolated', rulePrecedence: [] });
+  const originSuggestionNotice = shallowRef('');
+  const originSuggestionsLoading = shallowRef(false);
+  let originRequest = 0;
+  if (getCurrentScope()) onScopeDispose(() => { originRequest++; });
+  const sourceOptions = computed(() => flattenFiles(toValue(options.tree)).map(source => ({ ...source, ...(sourceWorks.value[source.sourceId] ? { originWork: sourceWorks.value[source.sourceId] } : {}) })));
   const selectedSources = computed(() => {
     const ids = new Set(selectedSourceIds.value);
     return sourceOptions.value.filter((source) => ids.has(source.sourceId));
   });
+  const crossoverWorks = computed(() => collectPlayOriginWorks(selectedSources.value));
+  const hasCrossover = computed(() => crossoverWorks.value.length >= 2);
+  const activeSteps = computed<readonly PlayGuidedStartStep[]>(() => hasCrossover.value ? ['sources', 'crossover', 'entry', 'identity', 'cast', 'review'] : steps);
+  const crossoverError = computed(() => {
+    if (!hasCrossover.value) return undefined;
+    try { normalizePlayCrossoverContract({ ...crossoverDraft.value, works: crossoverWorks.value }); return undefined; }
+    catch (error) { return error instanceof Error ? error.message : '请检查融合契约。'; }
+  });
+  function setSourceWork(sourceId: string, titleValue: string, suggested?: PlayOriginWork): void {
+    if (creating.value || previewing.value) return;
+    const title = titleValue.trim().slice(0, 120);
+    const next = { ...sourceWorks.value };
+    if (!title) delete next[sourceId];
+    else next[sourceId] = Object.values(next).find(work => work.title === title) ?? suggested ?? { id: `work-${crypto.randomUUID()}`, title };
+    sourceWorks.value = next;
+    const ids = new Set(crossoverWorks.value.map(work => work.id));
+    crossoverDraft.value = { ...crossoverDraft.value, rulePrecedence: crossoverDraft.value.rulePrecedence.filter(rule => ids.has(rule.winner)) };
+    invalidatePreview();
+  }
+  function updateCrossover(patch: Partial<Omit<PlayCrossoverContract, 'works'>>): void {
+    if (creating.value || previewing.value) return;
+    crossoverDraft.value = { ...crossoverDraft.value, ...patch }; invalidatePreview();
+  }
+  async function prefillSourceWorks(): Promise<void> {
+    if (!options.api.listReferences || !options.api.listReferenceMaterialAdoptionRecords || originSuggestionsLoading.value) return;
+    const epoch = ++originRequest; const selected = [...selectedSources.value];
+    originSuggestionsLoading.value = true; originSuggestionNotice.value = '';
+    const startingWorks = { ...sourceWorks.value };
+    try {
+      const references = (await options.api.listReferences()).references.slice(0, 32);
+      const matches = new Map<string, PlayOriginWork[]>();
+      for (const reference of references) {
+        if (epoch !== originRequest) return;
+        try {
+          const records = await options.api.listReferenceMaterialAdoptionRecords(reference.id);
+          for (const source of selected) if (records.records.some(record => record.status === 'accepted' && record.targets.some(target => target.path === source.path && target.operation !== 'delete'))) {
+            matches.set(source.sourceId, [...matches.get(source.sourceId) ?? [], { id: sourceIdForPath(`reference-${reference.id}`), title: reference.title }]);
+          }
+        } catch { /* Unpublished/cleared reference data cannot establish provenance. */ }
+      }
+      if (epoch !== originRequest) return;
+      let count = 0;
+      for (const [id, works] of matches) if (works.length === 1 && !startingWorks[id] && !sourceWorks.value[id] && selectedSourceIds.value.includes(id)) {
+        setSourceWork(id, works[0]!.title, works[0]); count++;
+      }
+      originSuggestionNotice.value = `已预填 ${count} 个来源，请检查作品名称后继续；无记录或有多个出处的来源需手动标注。仅检查仍保留记录的前 32 部参考作品。`;
+    } catch { if (epoch === originRequest) originSuggestionNotice.value = '采用记录暂时不可用，可以直接手动标注。'; }
+    finally { if (epoch === originRequest) originSuggestionsLoading.value = false; }
+  }
   const characterSources = computed(() =>
     selectedSources.value.filter((source) => source.role === 'character'));
   const timelineSources = computed(() =>
@@ -199,9 +261,9 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   ));
   const errors = computed<PlayGuidedStartErrors>(() => {
     if (!validationVisible.value[currentStep.value]) return {};
-    return errorsForStep(currentStep.value, rawErrors.value);
+    return currentStep.value === 'crossover' ? { crossover: crossoverError.value } : errorsForStep(currentStep.value, rawErrors.value);
   });
-  const stepNumber = computed(() => steps.indexOf(currentStep.value) + 1);
+  const stepNumber = computed(() => activeSteps.value.indexOf(currentStep.value) + 1);
   const reuseChecks = computed<PlayGuidedReuseCheck[]>(() => {
     const selected = new Set(selectedSources.value.map((source) => source.sourceId));
     return reuseProblems.value.map((check) => ({
@@ -380,12 +442,12 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   }
 
   async function nextStep(): Promise<boolean> {
-    if (currentStep.value === 'review') return false;
+    if (currentStep.value === 'review' || originSuggestionsLoading.value) return false;
     validationVisible.value = {
       ...validationVisible.value,
       [currentStep.value]: true,
     };
-    if (stepHasErrors(currentStep.value, rawErrors.value)) {
+    if (currentStep.value === 'crossover' && crossoverError.value || stepHasErrors(currentStep.value, rawErrors.value)) {
       announcement.value = validationMessage(currentStep.value);
       return false;
     }
@@ -394,17 +456,17 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
       return previewLaunchPackage();
     }
 
-    const nextIndex = steps.indexOf(currentStep.value) + 1;
-    currentStep.value = steps[nextIndex]!;
+    const nextIndex = activeSteps.value.indexOf(currentStep.value) + 1;
+    currentStep.value = activeSteps.value[nextIndex]!;
     announcement.value = stepAnnouncement(currentStep.value);
     return true;
   }
 
   function previousStep(): boolean {
-    const currentIndex = steps.indexOf(currentStep.value);
+    const currentIndex = activeSteps.value.indexOf(currentStep.value);
     if (currentIndex <= 0) return false;
     if (currentStep.value === 'review') invalidatePreview();
-    currentStep.value = steps[currentIndex - 1]!;
+    currentStep.value = activeSteps.value[currentIndex - 1]!;
     announcement.value = stepAnnouncement(currentStep.value);
     return true;
   }
@@ -478,6 +540,10 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     const worldTime = entry.worldTime?.value ?? '';
 
     selectedSourceIds.value = [...new Set(idByOldId.values())];
+    sourceWorks.value = Object.fromEntries(launch.sources.flatMap(source => source.originWork && idByOldId.has(source.sourceId) ? [[idByOldId.get(source.sourceId)!, structuredClone(source.originWork)]] : []));
+    if (launch.crossover) {
+      const { works: _works, ...contract } = structuredClone(launch.crossover); crossoverDraft.value = contract;
+    }
     entryDraft.value = {
       title: launch.title,
       label: entry.label,
@@ -565,6 +631,8 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   }
 
   function reset(): void {
+    originRequest++; sourceWorks.value = {}; crossoverDraft.value = { fusion: 'merged', knowledge: 'isolated', rulePrecedence: [] };
+    originSuggestionsLoading.value = false; originSuggestionNotice.value = '';
     canonBeats.value = [];
     canonCandidates.value = {};
     protagonistKnowsCanon.value = true;
@@ -618,6 +686,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
         path: source.path,
         role: source.role,
         reason: `Guided Start ${source.role} source`,
+        ...(source.originWork ? { originWork: { ...source.originWork } } : {}),
       })),
       entryPoint: {
         id: 'entry-guided-1',
@@ -667,6 +736,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
             : [],
         };
       }),
+      ...(hasCrossover.value ? { crossover: { ...structuredClone(crossoverDraft.value), works: structuredClone(crossoverWorks.value) } } : {}),
       // Absent unless the author picked beats, so other launches are unchanged.
       ...(purpose.value === 'immersiveJourney' && canonBeats.value.length
         ? {
@@ -687,6 +757,8 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
 
   return {
     currentStep: readonly(currentStep),
+    activeSteps, hasCrossover, crossoverWorks, crossoverDraft: readonly(crossoverDraft), setSourceWork, updateCrossover, prefillSourceWorks,
+    originSuggestionsLoading: readonly(originSuggestionsLoading), originSuggestionNotice: readonly(originSuggestionNotice),
     stepNumber,
     sourceOptions,
     selectedSourceIds: readonly(selectedSourceIds),
@@ -911,6 +983,7 @@ function validationMessage(step: PlayGuidedStartStep): string {
 function stepAnnouncement(step: PlayGuidedStartStep): string {
   const labels: Record<PlayGuidedStartStep, string> = {
     sources: 'Sources',
+    crossover: '融合契约',
     entry: 'Entry',
     identity: 'Identity',
     cast: 'Cast',

@@ -19,6 +19,7 @@ import {
   createPlayCanonBeatTable,
 } from './play-canon-beats.js';
 import { buildPlayFrozenSystemPrompt } from './play-turn-prompt.js';
+import { createPlayCrossoverContext, PLAY_CROSSOVER_METADATA_KEY } from './play-crossover.js';
 
 export const PLAY_LAUNCH_SESSION_METADATA_KEY = 'playLaunch' as const;
 
@@ -44,6 +45,8 @@ export function createPlaySessionFromLaunchPackage(
   options: CreatePlaySessionFromLaunchPackageOptions,
 ): PlaySession {
   assertLaunchPackageCanStart(launchPackage);
+  const crossover = createPlayCrossoverContext(launchPackage);
+  const knowledgeEvidence = createKnowledgeEvidence(launchPackage);
   const worldClock = createLaunchWorldClock(launchPackage);
   const activatedSources = launchPackage.sourceBase.activatedSources.map(
     toActivatedSource,
@@ -84,9 +87,9 @@ export function createPlaySessionFromLaunchPackage(
           displayName: participant.displayName,
           ...(participant.position ? { position: participant.position } : {}),
           ...(participant.currentGoal ? { currentGoal: participant.currentGoal } : {}),
-          initialKnowledgeEvidenceRefs: createParticipantEvidenceRefs(participant),
+          initialKnowledgeEvidenceRefs: knowledgeEvidence.filter(evidence => evidence.participantRef === participant.participantRef).map(evidence => evidence.id),
         })),
-        initialKnowledgeEvidence: createKnowledgeEvidence(launchPackage),
+        initialKnowledgeEvidence: knowledgeEvidence,
       } satisfies CreatePlaySceneRehearsalSessionInput)
     : createPlaySessionDraft(common);
 
@@ -118,8 +121,9 @@ export function createPlaySessionFromLaunchPackage(
     },
     metadataExtensions: {
       ...session.metadataExtensions,
-      ...(launchPackage.canonBeats
-        ? { frozenSystemPrompt: buildPlayFrozenSystemPrompt({ ...common, playLocalState }) }
+      ...(crossover ? { [PLAY_CROSSOVER_METADATA_KEY]: crossover } : {}),
+      ...(launchPackage.canonBeats || crossover
+        ? { frozenSystemPrompt: buildPlayFrozenSystemPrompt({ ...common, playLocalState, metadataExtensions: crossover ? { [PLAY_CROSSOVER_METADATA_KEY]: crossover } : {} }) }
         : {}),
       [PLAY_LAUNCH_SESSION_METADATA_KEY]: createLaunchMetadata(launchPackage),
     },
@@ -210,6 +214,7 @@ function toActivatedSource(
   }
   return {
     sourceId: source.sourceId,
+    ...(source.originWork ? { originWork: source.originWork } : {}),
     path: source.path,
     ...(source.objectId ? { objectId: source.objectId } : {}),
     contentHash: source.contentHash,
@@ -282,8 +287,11 @@ function createKnowledgeEvidence(
   const sourceById = new Map(
     launchPackage.sourceBase.activatedSources.map((source) => [source.sourceId, source]),
   );
-  return launchPackage.participantRoles.flatMap((participant) =>
+  const crossover = createPlayCrossoverContext(launchPackage);
+  const authored = launchPackage.participantRoles.flatMap((participant) =>
     participant.initialKnowledge.flatMap<PlaySceneKnowledgeEvidence>((knowledge) => {
+      const allowed = crossover?.participants.find(p => p.participantRef === participant.participantRef)?.sourceIds;
+      if (allowed && knowledge.sourceRefs.some(id => !allowed.includes(id))) return [];
       if (!knowledge.sourceRefs.length) {
         return [{
           id: knowledge.id,
@@ -318,15 +326,13 @@ function createKnowledgeEvidence(
         };
       });
     }));
-}
-
-function createParticipantEvidenceRefs(
-  participant: PlayLaunchPackage['participantRoles'][number],
-): string[] {
-  return participant.initialKnowledge.flatMap((knowledge) =>
-    knowledge.sourceRefs.length <= 1
-      ? [knowledge.id]
-      : knowledge.sourceRefs.map((_, index) => `${knowledge.id}-${index + 1}`));
+  if (!crossover) return authored;
+  return [...authored, ...crossover.participants.flatMap((participant, pi) =>
+    crossover.sources.flatMap<PlaySceneKnowledgeEvidence>((source, si) => !participant.sourceIds.includes(source.sourceId) ? [] : [{
+      id: `crossover-source-${pi + 1}-${si + 1}`, participantRef: participant.participantRef,
+      visibility: 'playerUnknown', fact: source.excerpt,
+      provenance: { kind: 'sourceBacked', sourceId: source.sourceId, sourcePath: source.path, contentHash: source.contentHash, sourceFactRef: source.sourceId },
+    }]))];
 }
 
 function createLaunchMetadata(

@@ -1,3 +1,4 @@
+import type { PlayOriginWork } from './play-crossover.js';
 import type { StageSnapshot } from './text-speaker-parser.js';
 import type {
   ContextBudgetLayer,
@@ -191,6 +192,7 @@ export interface PlayAdoptionDraft {
 }
 
 export interface PlayActivatedSource {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path?: string;
   /** Stable object identity captured by a source-backed Guided Start. */

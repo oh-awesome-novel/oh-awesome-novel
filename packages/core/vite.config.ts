@@ -4,6 +4,7 @@ export default defineConfig({
   pack: {
     entry: {
       index: "src/index.ts",
+      "play-crossover": "src/play-crossover.ts",
       "novel-lint-rules": "src/novel-lint-rules.ts",
       "text-speaker-parser": "src/text-speaker-parser.ts",
       "novel-copilot-contract": "src/novel-copilot-contract.ts",

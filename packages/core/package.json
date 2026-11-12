@@ -26,6 +26,7 @@
     "vite-plus": "1.4.0"
   },
   "exports": {
+    "./play-crossover": { "types": "./dist/play-crossover.d.mts", "import": "./dist/play-crossover.mjs" },
     "./novel-copilot-contract": {
       "types": "./dist/novel-copilot-contract.d.mts",
       "import": "./dist/novel-copilot-contract.mjs"

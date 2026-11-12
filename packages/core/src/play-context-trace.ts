@@ -1,3 +1,5 @@
+import { normalizePlayOriginWork } from './play-crossover.js';
+import type { PlayOriginWork } from './play-crossover.js';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -40,6 +42,7 @@ export interface PlayContextWindowTrace {
 }
 
 export interface PlayContextSourceTrace {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path?: string;
   role?: 'chapter' | 'character' | 'world' | 'timeline' | 'state' | 'other';
@@ -308,6 +311,7 @@ function normalizeSourceTrace(value: unknown): PlayContextSourceTrace {
   const record = requireRecord(value, 'Play context source trace');
   assertOnlyKnownFields(record, [
     'sourceId',
+    'originWork',
     'path',
     'role',
     'trust',
@@ -359,6 +363,7 @@ function normalizeSourceTrace(value: unknown): PlayContextSourceTrace {
   }
   return {
     sourceId: requireString(record.sourceId, 'Play context sourceId'),
+    ...(record.originWork === undefined ? {} : { originWork: normalizePlayOriginWork(record.originWork) }),
     ...(record.path === undefined
       ? {}
       : { path: requireString(record.path, 'Play context source path') }),

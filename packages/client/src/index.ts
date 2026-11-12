@@ -1,3 +1,6 @@
+import { assertPlaySourceGrantTarget, normalizePlayOriginWork, normalizePlaySourceGrant, normalizePlayCrossoverContext, validatePlayLaunchCrossover } from '@oh-awesome-novel/core/play-crossover';
+import type { PlayOriginWork, PlayCrossoverContract, PlaySourceKnowledgeGrantRecord, PlayLearnSourceKnowledgeChange } from '@oh-awesome-novel/core/play-crossover';
+export type { PlayOriginWork, PlayCrossoverContract, PlayCrossoverContext, PlaySourceKnowledgeGrantRecord } from '@oh-awesome-novel/core/play-crossover';
 import { parsePhaseOverview, parsePhaseRecall } from './play-phase-memory';
 import { parsePlayWorldlineComparison } from './play-worldline-compare';
 import type { PlayWorldlineComparison, PlayWorldlineCompareQuery } from './play-worldline-compare';
@@ -821,7 +824,8 @@ export interface PlayParticipantKnowledgeGrantRecord {
 }
 export type PlayKnowledgeRecord =
   | PlayEventRevealRecord
-  | PlayParticipantKnowledgeGrantRecord;
+  | PlayParticipantKnowledgeGrantRecord
+  | PlaySourceKnowledgeGrantRecord;
 export interface PlayKnowledgeState {
   schemaVersion: 1;
   records: PlayKnowledgeRecord[];
@@ -840,7 +844,8 @@ export interface PlayGrantParticipantKnowledgeChange {
 }
 export type PlayKnowledgeChange =
   | PlayRevealEventKnowledgeChange
-  | PlayGrantParticipantKnowledgeChange;
+  | PlayGrantParticipantKnowledgeChange
+  | PlayLearnSourceKnowledgeChange;
 export interface PlayKnowledgeRevealCandidate {
   subjectEventId: string;
   currentPlayerProjection: 'playerUnknown' | 'rumor';
@@ -866,7 +871,7 @@ export type PlayKnowledgeProjection =
     }
   | {
       lens: 'player';
-      kind: 'participantGrant';
+      kind: 'participantGrant' | 'sourceGrant';
       visible: false;
     };
 export type PlayTimeAdvanceUnit = 'minute' | 'hour' | 'day';
@@ -1017,6 +1022,7 @@ export interface PlayScheduledEvent {
 }
 
 export interface PlayActivatedSource {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path?: string;
   objectId?: string;
@@ -1046,7 +1052,9 @@ export type PlayLaunchDiagnosticCode =
   | 'binarySource'
   | 'participantWithoutCharacterSource'
   | 'participantCharacterMismatch'
-  | 'canonBeatQuoteMissing';
+  | 'canonBeatQuoteMissing'
+  | 'crossoverSourceUnassigned'
+  | 'crossoverRulesUnresolved';
 
 export const PLAY_CANON_BEATS_STATE_KEY = 'canonBeats' as const;
 export const MAX_PLAY_CANON_BEATS = 24;
@@ -1252,6 +1260,7 @@ function doPlayLaunchCanonBeatsMatch(
 }
 
 export interface PlayLaunchSourceInput {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path: string;
   role: PlayLaunchSourceRole;
@@ -1302,6 +1311,7 @@ export interface PlayLaunchParticipantRoleInput {
 }
 
 export interface PlayLaunchPackagePreviewInput {
+  crossover?: PlayCrossoverContract;
   id?: string;
   createdAt?: string;
   title: string;
@@ -1318,6 +1328,7 @@ export interface PlayLaunchPackagePreviewInput {
 }
 
 export interface PlayLaunchSource {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path: string;
   objectId?: string;
@@ -1344,6 +1355,7 @@ export interface PlayLaunchDiagnostic {
 }
 
 export interface PlayLaunchPackage {
+  crossover?: PlayCrossoverContract;
   schemaVersion: 1;
   id: string;
   createdAt: string;
@@ -1851,6 +1863,7 @@ export interface PlayContextWindowTrace {
 }
 
 export interface PlayContextSourceTrace {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path?: string;
   role?: PlayLaunchSourceRole;
@@ -6072,7 +6085,7 @@ function isPlaySessionV4Envelope(
     && isUniqueSafePlayIdArray(value.selectedTurnIds)
     && isNonNegativeSafeInteger(value.branchSnapshotRequiredFromRevision)
     && isPlayBranchBaseSnapshotEnvelope(value.branchBaseSnapshot)
-    && isRecord(value.metadataExtensions)
+    && isRecord(value.metadataExtensions) && isCrossoverMetadata(value.metadataExtensions)
     && isRecord(value.playLocalState)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
     && hasValidPlayReservedState(
@@ -6092,7 +6105,8 @@ function isPlaySessionV4Envelope(
     && Array.isArray(value.adoptionCandidates)
     && value.adoptionCandidates.every(isPlayAdoptionCandidateEnvelope)
     && hasUniqueEntityIds(value.adoptionCandidates)
-    && hasConsistentPlaySessionFacts(value as unknown as PlaySessionV4);
+    && hasConsistentPlaySessionFacts(value as unknown as PlaySessionV4)
+    && hasValidCrossoverState(value);
 }
 
 function hasConsistentPlaySessionFacts(session: PlaySession): boolean {
@@ -6730,6 +6744,11 @@ function hasValidPlayKnowledgeTransition(
     if (record.id !== `knowledge-${artifact.revision}-${index + 1}`) {
       return false;
     }
+    if (record.kind === 'sourceGrant') {
+      const event = eventsById.get(record.learnedByEventId);
+      if (record.learnedAtTurnId !== refereeTurnId || !artifact.eventIds.includes(record.learnedByEventId) || event?.kind !== 'informationSpread') return false;
+      continue;
+    }
     if (record.kind === 'participantGrant') {
       if (record.grantedAtTurnId !== refereeTurnId) return false;
       continue;
@@ -7239,8 +7258,9 @@ function isPlaySessionSelectedSnapshot(
     && value.selectedTurnIds.length === summary.selectedTurnCount
     && value.selectedTurnIds.at(-1) === summary.selectedArtifactId
     && isNonNegativeSafeInteger(value.branchSnapshotRequiredFromRevision)
-    && isRecord(value.metadataExtensions)
+    && isRecord(value.metadataExtensions) && isCrossoverMetadata(value.metadataExtensions)
     && isRecord(value.playLocalState)
+    && hasValidCrossoverState(value)
     && isPlayVisibilityMap(value.playLocalStateVisibility)
     && [...Object.keys(value.playLocalState)].sort().join('\0') ===
       [...Object.keys(value.playLocalStateVisibility)].sort().join('\0')
@@ -7329,13 +7349,14 @@ function isPlayContextSourceTrace(value: unknown): value is PlayContextSourceTra
   if (!isRecord(value) || !hasOnlyKnownFields(value, [
     'sourceId', 'path', 'role', 'trust', 'budgetLayer', 'semanticBoundary',
     'expectedContentHash', 'actualContentHash', 'driftState', 'outcome',
-    'selectedCharacterCount', 'omissionReason',
+    'selectedCharacterCount', 'omissionReason', 'originWork',
   ])) return false;
   const validOmission = [
     'sourceCountLimit', 'excerptCharacterLimit', 'canonicalDrift', 'missing',
     'invalid', 'empty', 'notSelected', 'unsafe',
   ].includes(value.omissionReason as string);
   return isNonEmptyString(value.sourceId)
+    && (value.originWork === undefined || isOriginWork(value.originWork))
     && value.sourceId.length <= 256
     && (value.path === undefined || isNonEmptyString(value.path))
     && (value.role === undefined || [
@@ -7828,6 +7849,7 @@ function isPlayLaunchPackagePreviewInput(
       'identity',
       'participantRoles',
       'canonBeats',
+      'crossover',
     ]) ||
     (value.canonBeats !== undefined && (
       value.purpose !== 'immersiveJourney' || !isPlayLaunchCanonBeatsInput(value.canonBeats)
@@ -7853,7 +7875,7 @@ function isPlayLaunchPackagePreviewInput(
   const sources = value.sources as PlayLaunchSourceInput[];
   const sourceIds = new Set(sources.map((source) => source.sourceId));
   const participants = value.participantRoles as PlayLaunchParticipantRoleInput[];
-  return isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
+  return isCrossoverSelection(sources, value.crossover) && isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
     && (value.purpose !== 'sceneRehearsal' || participants.length > 0)
     && hasKnownPlayLaunchSourceRefs(value.entryPoint, participants, sourceIds)
     && participants.every((participant) =>
@@ -7881,6 +7903,7 @@ function isPlayLaunchPackageEnvelope(value: unknown): value is PlayLaunchPackage
       'identity',
       'participantRoles',
       'canonBeats',
+      'crossover',
       'diagnostics',
       'canonical',
     ]) ||
@@ -7921,7 +7944,7 @@ function isPlayLaunchPackageEnvelope(value: unknown): value is PlayLaunchPackage
   const participants = value.participantRoles as PlayLaunchParticipantRoleInput[];
   const participantIds = new Set(participants.map((item) => item.participantRef));
   const diagnostics = value.diagnostics as PlayLaunchDiagnostic[];
-  return isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
+  return isCrossoverSelection(sources, value.crossover) && isPlayLaunchIdentityPurposePair(value.purpose, value.identity)
     && (value.purpose !== 'sceneRehearsal' || participants.length > 0)
     && hasKnownPlayLaunchSourceRefs(value.entryPoint, participants, sourceIds)
     && participants.every((participant) =>
@@ -7952,7 +7975,8 @@ function isPlayLaunchPackageEnvelope(value: unknown): value is PlayLaunchPackage
 
 function isPlayLaunchSourceInput(value: unknown): value is PlayLaunchSourceInput {
   return isRecord(value)
-    && hasOnlyKnownFields(value, ['sourceId', 'path', 'role', 'reason'])
+    && hasOnlyKnownFields(value, ['sourceId', 'path', 'role', 'reason', 'originWork'])
+    && (value.originWork === undefined || isOriginWork(value.originWork))
     && isPlayLaunchSafeId(value.sourceId)
     && isPlayLaunchSourcePath(value.path)
     && isPlayLaunchSourceRole(value.role)
@@ -7975,9 +7999,11 @@ function isPlayLaunchSource(value: unknown): value is PlayLaunchSource {
       'status',
       'contentHash',
       'excerpt',
+      'originWork',
     ]) ||
     !isPlayLaunchSafeId(value.sourceId) ||
     !isPlayLaunchSourcePath(value.path) ||
+    (value.originWork !== undefined && !isOriginWork(value.originWork)) ||
     !isPlayLaunchSourceRole(value.role) ||
     !doesPlayLaunchPathMatchRole(value.path, value.role) ||
     !isPlayLaunchText(value.reason, 500) ||
@@ -8150,6 +8176,7 @@ function doesPlayLaunchPreviewMatchRequest(
     !isDeepEqualJson(launchPackage.entryPoint, input.entryPoint) ||
     !isDeepEqualJson(launchPackage.identity, input.identity) ||
     !isDeepEqualJson(launchPackage.participantRoles, input.participantRoles) ||
+    !isDeepEqualJson(launchPackage.crossover, input.crossover) ||
     !doPlayLaunchCanonBeatsMatch(launchPackage.canonBeats, input.canonBeats) ||
     launchPackage.sourceBase.activatedSources.length !== input.sources.length
   ) return false;
@@ -8159,6 +8186,7 @@ function doesPlayLaunchPreviewMatchRequest(
       source.sourceId === requested.sourceId &&
       source.path === requested.path &&
       source.role === requested.role &&
+      isDeepEqualJson(source.originWork, requested.originWork) &&
       source.reason === (requested.reason ??
         `Guided Start ${requested.role} source`);
   });
@@ -8258,7 +8286,9 @@ function isPlayLaunchDiagnosticCode(
     value === 'binarySource' ||
     value === 'participantWithoutCharacterSource' ||
     value === 'participantCharacterMismatch' ||
-    value === 'canonBeatQuoteMissing';
+    value === 'canonBeatQuoteMissing' ||
+    value === 'crossoverSourceUnassigned' ||
+    value === 'crossoverRulesUnresolved';
 }
 
 function isPlayLaunchBudgetLayer(value: unknown): boolean {
@@ -8399,6 +8429,7 @@ function hasConsistentPlayLaunchSessionMetadata(
 function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSource {
   if (!isRecord(value) || !hasOnlyKnownFields(value, [
     'sourceId',
+    'originWork',
     'path',
     'objectId',
     'contentHash',
@@ -8422,6 +8453,7 @@ function isPlayActivatedSourceEnvelope(value: unknown): value is PlayActivatedSo
   );
   return isNonEmptyString(value.sourceId)
     && (!guided || isPlayLaunchSafeId(value.sourceId))
+    && (value.originWork === undefined || isOriginWork(value.originWork))
     && (value.path === undefined || isNonEmptyString(value.path))
     && (value.objectId === undefined || isPlayLaunchObjectId(value.objectId))
     && guidedIdentityValid
@@ -8599,6 +8631,7 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
   const interventionRefs = new Set<string>();
   const projections = new Map<string, PlayKnowledgePlayerProjection>();
   const subjectCounts = new Map<string, number>();
+  const sourceGrants = new Set<string>();
   let previousRevision = -1;
   let previousLocalIndex = 0;
 
@@ -8623,6 +8656,13 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
       return false;
     }
     recordIds.add(record.id);
+    if (record.kind === 'sourceGrant') {
+      const target = `${record.participantRef}:${record.sourceId}`;
+      if (sourceGrants.has(target)) return false;
+      sourceGrants.add(target);
+      if (record.learnedAtTurnId !== `turn-${revision}-referee` || !record.learnedByEventId.startsWith(`turn-${revision}-event-`)) return false;
+      previousRevision = revision; previousLocalIndex = localIndex; continue;
+    }
     if (record.kind === 'participantGrant') {
       const turnMatch = /^turn-(0|[1-9][0-9]*)-referee$/u.exec(
         record.grantedAtTurnId,
@@ -8655,6 +8695,7 @@ function isPlayKnowledgeState(value: unknown): value is PlayKnowledgeState {
 }
 
 function isPlayKnowledgeRecord(value: unknown): value is PlayKnowledgeRecord {
+  if (isRecord(value) && value.kind === 'sourceGrant') { try { normalizePlaySourceGrant(value); return true; } catch { return false; } }
   return isRecord(value) && value.kind === 'participantGrant'
     ? isPlayParticipantKnowledgeGrantRecord(value)
     : isPlayEventRevealRecord(value);
@@ -9120,4 +9161,31 @@ export { parseNovelLintScan, parseNovelLintReview } from './novel-lint';
 function parseCanonicalWritingSelection(value: unknown): { sourcePaths: string[] } {
   if (!isRecord(value) || !Array.isArray(value.sourcePaths) || value.sourcePaths.length > 16 || new Set(value.sourcePaths).size !== value.sourcePaths.length || !value.sourcePaths.every(path => typeof path === 'string' && /^(?:characters\/[a-zA-Z0-9_-]+\/(?:profile\.md|roster-profile\.yaml)|world\/(?:rules\.md|places\/[a-zA-Z0-9_-]+\.md))$/.test(path))) throw new Error('Invalid canonical Writing selection response.');
   return { sourcePaths: [...value.sourcePaths] };
+}
+
+function isOriginWork(value: unknown): value is PlayOriginWork {
+  try { normalizePlayOriginWork(value); return true; } catch { return false; }
+}
+function isCrossoverSelection(sources: readonly { originWork?: PlayOriginWork }[], value: unknown): boolean {
+  try { validatePlayLaunchCrossover(sources, value); return true; } catch { return false; }
+}
+function isCrossoverMetadata(value: unknown): boolean {
+  if (!isRecord(value) || value.playCrossover === undefined) return true;
+  try { normalizePlayCrossoverContext(value.playCrossover); return true; } catch { return false; }
+}
+
+function hasValidCrossoverState(value: Record<string, unknown>): boolean {
+  try {
+    const metadata = isRecord(value.metadataExtensions) ? value.metadataExtensions : {};
+    const context = metadata.playCrossover === undefined ? undefined : normalizePlayCrossoverContext(metadata.playCrossover);
+    const states = [value.playLocalState, ...(Array.isArray(value.turnArtifacts) ? value.turnArtifacts.map(a => isRecord(a) ? a.playLocalStateSnapshot : undefined) : []), isRecord(value.branchBaseSnapshot) ? value.branchBaseSnapshot.playLocalState : undefined];
+    for (const state of states) {
+      if (!isRecord(state) || !isRecord(state.playKnowledge) || !Array.isArray(state.playKnowledge.records)) continue;
+      for (const record of state.playKnowledge.records) if (isRecord(record) && record.kind === 'sourceGrant') {
+        if (value.schemaVersion === 5) return false;
+        const grant = normalizePlaySourceGrant(record); assertPlaySourceGrantTarget(context, grant.participantRef, grant.sourceId);
+      }
+    }
+    return true;
+  } catch { return false; }
 }

@@ -5530,6 +5530,7 @@ async function loadPlayActivatedSourceContext(
     const drift = driftById.get(source.sourceId)!;
     const traceBase = {
       sourceId: source.sourceId,
+      ...(source.originWork ? { originWork: source.originWork } : {}),
       ...(source.path ? { path: source.path } : {}),
       ...(source.role ? { role: source.role } : {}),
       trust: source.trust,

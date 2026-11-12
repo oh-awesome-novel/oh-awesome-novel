@@ -175,7 +175,7 @@ export function aggregatePlayTurnAttemptSettlement(
     agendaChanges.push(...structuredClone(contribution.agendaChanges));
     scheduledEventChanges.push(...structuredClone(contribution.scheduledEventChanges));
     for (const change of contribution.knowledgeChanges) {
-      if (change.type === 'grantParticipantKnowledge') {
+      if (change.type === 'grantParticipantKnowledge' || change.type === 'learnSource') {
         throw new PlayTurnAttemptError(
           'invalidTransition',
           `Actor step ${step.id} cannot forge a Director participant knowledge grant.`,

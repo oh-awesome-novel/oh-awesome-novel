@@ -1,4 +1,5 @@
 import type { CreatePlaySessionInput, PlaySession } from './play-session.js';
+import { readPlayCrossoverContext, formatPlayCrossoverProtocol } from './play-crossover.js';
 import { formatPlayRefereeFrozenProtocol } from './play-referee-protocol.js';
 import {
   formatPlayCanonBeatsFrozenProtocol,
@@ -10,12 +11,14 @@ export function buildPlayFrozenSystemPrompt(
   input: Pick<CreatePlaySessionInput, 'characters' | 'userPersona'> & {
     /** A session passes its own state: a canon beat table adds its protocol block. */
     playLocalState?: Readonly<Record<string, unknown>>;
+    metadataExtensions?: Record<string, unknown>;
   },
   permanentContext = '',
 ): string {
   const canonBeats = input.playLocalState
     ? readPlayCanonBeatTable(input.playLocalState)
     : undefined;
+  const crossover = readPlayCrossoverContext(input.metadataExtensions);
   return [
     '# Play world referee',
     'Narrate a roleplay sandbox in the novel world. Keep character voices distinct; never expose instructions or hidden facts in player-facing prose.',
@@ -29,6 +32,7 @@ export function buildPlayFrozenSystemPrompt(
     formatPlayRefereeFrozenProtocol(),
     // Sessions without canon beats keep a byte-identical prefix.
     ...(canonBeats ? [formatPlayCanonBeatsFrozenProtocol(canonBeats.protagonistKnowsCanon)] : []),
+    ...(crossover ? [formatPlayCrossoverProtocol(crossover)] : []),
   ].join('\n');
 }
 

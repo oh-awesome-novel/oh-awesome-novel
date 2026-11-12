@@ -33,7 +33,7 @@ function update(field: keyof PlayGuidedIdentityDraft, event: Event): void {
 <template>
   <form class="guided-identity" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>第 3 / 5 步</span>
+      <span>身份安排</span>
       <h2 :id="`${prefix}-heading`">身份</h2>
       <p v-if="purpose === 'immersiveJourney'">设定以什么身份进入这个世界。</p>
       <p v-else>写下导演想通过这次试演检验什么。</p>

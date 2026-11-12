@@ -50,7 +50,7 @@ function updateVisibility(participantRef: string, event: Event): void {
 <template>
   <form class="guided-cast" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>第 4 / 5 步</span>
+      <span>人物安排</span>
       <h2 :id="`${prefix}-heading`">人物</h2>
       <p>确认参与者的目标、位置和初始认知边界。</p>
     </header>
