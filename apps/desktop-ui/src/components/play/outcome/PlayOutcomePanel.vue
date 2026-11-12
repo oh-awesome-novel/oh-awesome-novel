@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, toRef, useTemplateRef } from 'vue';
 
+import PlayChapterWritingPanel from './PlayChapterWritingPanel.vue';
 import PlayOutcomeReportView from './PlayOutcomeReportView.vue';
 import PlayWritingReferenceAudit from './PlayWritingReferenceAudit.vue';
 import type { PlayAdoptionSeed } from '../../../composables/usePlayAdoptionPreview';
@@ -9,6 +10,7 @@ import type { PlaySession } from '../../../composables/useWorkspaceApi';
 
 const props = defineProps<{
   session: PlaySession;
+  workspaceRoot?: string;
   showSpoilers: boolean;
   disabled: boolean;
   disabledReason?: string;
@@ -17,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   updateShowSpoilers: [show: boolean];
   writingReferencesUpdated: [];
+  reviewPendingAction: [id: string];
   prepareAdoption: [seed: PlayAdoptionSeed];
 }>();
 
@@ -65,6 +68,7 @@ async function generateAndFocus(): Promise<void> {
     reportHeading.value?.focus();
   }
 }
+defineExpose({ generateAndFocus });
 </script>
 
 <template>
@@ -137,6 +141,13 @@ async function generateAndFocus(): Promise<void> {
       @toggle-selection="toggleItemSelection"
       @prepare-adoption="emit('prepareAdoption', $event)"
       @create-writing-reference="createWritingReference"
+    />
+
+    <PlayChapterWritingPanel
+      v-if="report && workspaceRoot" :workspace-root="workspaceRoot" :session-id="session.id" :revision="session.revision"
+      :report-fingerprint="reportFingerprint" :selected-item-ids="selectedItemIds" :lens="projection"
+      :disabled="disabled || actionsDisabled || panelBusy"
+      @review="emit('reviewPendingAction', $event)" @attachment-created="refreshAttachments(); emit('writingReferencesUpdated')"
     />
 
     <PlayWritingReferenceAudit

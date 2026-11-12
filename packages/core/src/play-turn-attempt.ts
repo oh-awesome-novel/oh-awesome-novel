@@ -621,7 +621,7 @@ export function addPlayTurnAttemptStep(
     );
   }
   const attemptedParticipantGrant = step.settlementContribution.knowledgeChanges.find(
-    (change) => change.type === 'grantParticipantKnowledge',
+    (change) => change.type === 'grantParticipantKnowledge' || change.type === 'learnSource',
   );
   if (attemptedParticipantGrant) {
     throw new PlayTurnAttemptError(

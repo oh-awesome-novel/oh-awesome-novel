@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { RevisionImpactRepair } from '@oh-awesome-novel/client';
 import type { ChatStatus, UIMessage } from 'ai';
 import CopilotPanel from './CopilotPanel.vue';
 import WorkspaceLeftHoverRail from './WorkspaceLeftHoverRail.vue';
@@ -78,6 +79,9 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  impactRepair: [input: RevisionImpactRepair];
+  openEvidence: [input: { path: string; line: number }];
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   updateLeftOverlayOpen: [open: boolean];
   updateSidebarTab: [tab: 'files' | 'chapters' | 'history'];
   openFile: [path: string];
@@ -242,6 +246,9 @@ const emit = defineEmits<{
       @refresh-writing-profiles="emit('refreshWritingProfiles')"
       @writing-profile-state-changed="emit('writingProfileStateChanged', $event)"
       @forge-handoff="emit('forgeHandoff', $event)"
+      @chapter-handoff="emit('chapterHandoff', $event)"
+      @open-evidence="emit('openEvidence', $event)"
+      @impact-repair="emit('impactRepair', $event)"
     />
   </div>
 </template>

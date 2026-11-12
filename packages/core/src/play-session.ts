@@ -1,3 +1,4 @@
+import { normalizePlayOriginWork, readPlayCrossoverContext } from './play-crossover.js';
 import { normalizeRosterCharacter } from './character-roster.js';
 import { createStageSnapshot } from './text-speaker-parser.js';
 import { buildPlayFrozenSystemPrompt, getPlayFrozenSystemPrompt, isPlayCompactionActive } from './play-turn-prompt.js';
@@ -1669,6 +1670,7 @@ export const settlePlayWorldRefereeSettlement = (
           existingFacts.selectedEventIds.has(event.id)),
         currentEvents: events,
         changes: settlement.knowledgeChanges,
+        crossover: input.session.schemaVersion === 4 ? readPlayCrossoverContext(input.session.metadataExtensions) : undefined,
         revision,
         refereeTurnId,
       })
@@ -3668,6 +3670,7 @@ function assertActivatedSource(source: PlayActivatedSource): PlayActivatedSource
   return {
     ...source,
     sourceId: source.sourceId.trim(),
+    ...(source.originWork === undefined ? {} : { originWork: normalizePlayOriginWork(source.originWork) }),
     ...(source.path === undefined ? {} : { path: source.path.trim() }),
     ...(source.objectId === undefined ? {} : { objectId: source.objectId.trim() }),
     reason: source.reason.trim(),

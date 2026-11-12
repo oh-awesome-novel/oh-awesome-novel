@@ -215,6 +215,8 @@ describe('in-character check through default SDK, HTTP/SSE and Desktop', () => {
 
     // Lens isolation: the Player-lens report is not shown in the Director view, and a
     // Director-lens report never reaches the Player view.
+    // The toggle only renders once the refreshed history has loaded hidden content; wait for that state, not a fixed delay.
+    await vi.waitFor(() => expect(wrapper.find('[aria-label^="开启导演视角"]').exists()).toBe(true), { timeout: 10_000, interval: 100 });
     await wrapper.get('[aria-label^="开启导演视角"]').trigger('click');
     await vi.waitFor(() => expect(wrapper.find('.play-character-check-report').exists()).toBe(false));
     await vi.waitFor(async () => {

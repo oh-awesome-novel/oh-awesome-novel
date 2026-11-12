@@ -363,6 +363,7 @@ export function projectContextTrace(
         ? source.path ?? source.sourceId
         : `启用的来源 ${index + 1}`,
       outcome: source.outcome,
+      ...(source.originWork ? { workLabel: directorLens ? source.originWork.title : `作品 ${[...new Set(trace.sources.flatMap(s => s.originWork?.id ?? []))].indexOf(source.originWork.id) + 1}` } : {}),
       ...(source.omissionReason
         ? { reason: directorLens ? source.omissionReason : '本回合未选用' }
         : {}),

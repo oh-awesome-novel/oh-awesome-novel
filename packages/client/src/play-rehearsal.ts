@@ -2045,6 +2045,7 @@ function hasUniqueKnowledgeChanges(
   const subjectEventIds = new Set<string>();
   const interventionRefs = new Set<string>();
   for (const change of changes) {
+    if (change.type === 'learnSource') return false;
     if (change.type === 'grantParticipantKnowledge') {
       if (interventionRefs.has(change.interventionRef)) return false;
       interventionRefs.add(change.interventionRef);

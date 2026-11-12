@@ -451,6 +451,7 @@ export function createCharacterPerceptionPackage(
     visibleEventRefs?: string[];
     observedNarrativeBlockRefs?: string[];
     grantedKnowledgeEvidence?: PlayParticipantKnowledgeEvidence[];
+    allowedSceneSourceIds?: string[];
   } = {},
 ): CharacterPerceptionPackage {
   const sidecar = normalizePlaySceneRehearsalSidecar(sidecarValue);
@@ -473,13 +474,14 @@ export function createCharacterPerceptionPackage(
     options.sceneRevision ?? 0,
     'perception sceneRevision',
   );
-  const location = sidecar.sceneContract.location
+  const sceneVisible = (value: PlaySceneValue | undefined) => !options.allowedSceneSourceIds || value?.provenance.kind !== 'sourceBacked' || value.provenance.sourceRefs.every(id => options.allowedSceneSourceIds!.includes(id));
+  const location = sidecar.sceneContract.location && sceneVisible(sidecar.sceneContract.location)
     ? structuredClone(sidecar.sceneContract.location)
     : undefined;
-  const atmosphere = sidecar.sceneContract.atmosphere
+  const atmosphere = sidecar.sceneContract.atmosphere && sceneVisible(sidecar.sceneContract.atmosphere)
     ? structuredClone(sidecar.sceneContract.atmosphere)
     : undefined;
-  const trigger = sidecar.sceneContract.trigger
+  const trigger = sidecar.sceneContract.trigger && sceneVisible(sidecar.sceneContract.trigger)
     ? structuredClone(sidecar.sceneContract.trigger)
     : undefined;
   return normalizeCharacterPerceptionPackage({

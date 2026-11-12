@@ -34,7 +34,7 @@ function sourceStatus(
 <template>
   <section class="guided-review" aria-labelledby="guided-review-heading">
     <header>
-      <span>第 5 / 5 步</span>
+      <span>开局确认</span>
       <h2 id="guided-review-heading">确认</h2>
       <p>创建推演之前先核对来源依据。</p>
     </header>
@@ -92,6 +92,11 @@ function sourceStatus(
       </ul>
     </section>
 
+    <section v-if="preview.crossover" aria-label="确认融合契约">
+      <h3>融合契约</h3>
+      <p>{{ preview.crossover.works.map(work => work.title).join('、') }} · {{ { merged: '世界融合', visitor: '单向来客', layered: '并存叠层' }[preview.crossover.fusion] }} · {{ preview.crossover.knowledge === 'isolated' ? '初始认知隔离' : '初始认知互知' }}</p>
+      <ul><li v-for="(rule, index) in preview.crossover.rulePrecedence" :key="index">{{ rule.topic }}：以 {{ preview.crossover.works.find(work => work.id === rule.winner)?.title }} 为准。{{ rule.note }}</li></ul>
+    </section>
     <section class="source-evidence" aria-labelledby="guided-review-sources-heading">
       <h3 id="guided-review-sources-heading">来源依据</h3>
       <ul>
@@ -100,6 +105,7 @@ function sourceStatus(
             <summary>
               <span>
                 <strong>{{ source.path }}</strong>
+                <small v-if="source.originWork">所属作品：{{ source.originWork.title }}</small>
                 <small>{{ source.role }} · {{ sourceStatus(source) }}</small>
               </span>
             </summary>

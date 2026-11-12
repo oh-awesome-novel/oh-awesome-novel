@@ -13,6 +13,7 @@ import {
   type PlayGuidedStartApi,
   type PlayGuidedStartStep,
 } from '../../../composables/usePlayGuidedStart';
+import PlayGuidedCrossoverStep from './PlayGuidedCrossoverStep.vue';
 import PlayGuidedCanonBeats from './PlayGuidedCanonBeats.vue';
 import PlayGuidedCastStep from './PlayGuidedCastStep.vue';
 import PlayGuidedEntryStep from './PlayGuidedEntryStep.vue';
@@ -47,6 +48,7 @@ const workspaceApi = useWorkspaceApi();
 const api: PlayGuidedStartApi = props.api ?? workspaceApi;
 const {
   currentStep,
+  activeSteps, hasCrossover, crossoverWorks, crossoverDraft, setSourceWork, updateCrossover, prefillSourceWorks, originSuggestionsLoading, originSuggestionNotice,
   sourceOptions,
   selectedSourceIds,
   selectedSources,
@@ -101,13 +103,8 @@ const busy = computed(() =>
     || Boolean(props.filesError)
     || previewing.value
     || creating.value);
-const steps: Array<{ id: PlayGuidedStartStep; label: string }> = [
-  { id: 'sources', label: '来源' },
-  { id: 'entry', label: '入场' },
-  { id: 'identity', label: '身份' },
-  { id: 'cast', label: '人物' },
-  { id: 'review', label: '确认' },
-];
+const stepLabels: Record<PlayGuidedStartStep, string> = { sources: '来源', crossover: '融合契约', entry: '入场', identity: '身份', cast: '人物', review: '确认' };
+const steps = computed(() => activeSteps.value.map(id => ({ id, label: stepLabels[id] })));
 
 const reuseStatusLabels = {
   changed: '内容已变化',
@@ -218,11 +215,21 @@ async function focusStepPanel(): Promise<void> {
         v-if="currentStep === 'sources'"
         :sources="sourceOptions"
         :selected-source-ids="selectedSourceIds"
+        :has-crossover="hasCrossover"
+        :suggestions-loading="originSuggestionsLoading"
+        :suggestion-notice="originSuggestionNotice"
+        @set-work="setSourceWork"
+        @prefill="prefillSourceWorks"
         :error="errors.sources"
         :disabled="busy"
         @toggle="toggleSource"
         @next="advance"
         @cancel="cancel"
+      />
+      <PlayGuidedCrossoverStep
+        v-else-if="currentStep === 'crossover'"
+        :works="crossoverWorks" :draft="crossoverDraft" :disabled="busy" :error="errors.crossover"
+        @update="updateCrossover" @back="back" @next="advance" @cancel="cancel"
       />
       <PlayGuidedEntryStep
         v-else-if="currentStep === 'entry'"
@@ -342,7 +349,7 @@ nav {
 
 nav ol {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   margin: 0;
   padding: 0;
   list-style: none;

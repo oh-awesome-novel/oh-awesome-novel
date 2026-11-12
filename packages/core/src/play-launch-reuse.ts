@@ -186,6 +186,7 @@ export function toPlayLaunchPackagePreviewInput(
     density: launchPackage.eventPolicy.density,
     sources: launchPackage.sourceBase.activatedSources.map((source) => ({
       sourceId: source.sourceId,
+      ...(source.originWork ? { originWork: source.originWork } : {}),
       path: source.path,
       role: source.role,
       reason: source.reason,
@@ -193,6 +194,7 @@ export function toPlayLaunchPackagePreviewInput(
     entryPoint: launchPackage.entryPoint,
     identity: launchPackage.identity,
     participantRoles: launchPackage.participantRoles,
+    ...(launchPackage.crossover ? { crossover: structuredClone(launchPackage.crossover) } : {}),
     ...(launchPackage.canonBeats
       ? { canonBeats: toPlayLaunchCanonBeatsInput(launchPackage.canonBeats) }
       : {}),

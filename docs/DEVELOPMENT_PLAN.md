@@ -233,7 +233,7 @@ Status: In progress（1390、1400 已交付）。Tasks：[1390](tasks/1390.md)�
 
 ## M16. Play Canon Rewrite And Crossover Experience
 
-Status: Planned。Tasks：[1450](tasks/1450.md)–[1520](tasks/1520.md)，范围、顺序与默认决定见 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)。
+Status: In progress（1450–1510 已交付，1520 的真实模型/SDK 旅程仍需复核）。Tasks：[1450](tasks/1450.md)–[1520](tasks/1520.md)，范围、顺序与默认决定见 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)。
 
 目标：补上定位中“改写原作剧情”与“综漫”的一等支持，并消除 Play 日常使用的摩擦。先交付 1520（回合候选项）、1450（带要求的重演）与 1460（采纳表单、中文界面），再交付 1480（原作节点表与偏离账本）；1490 世界线比较、1500 综漫融合契约、1510 角色贴合度检查与 1470 按使用反馈排序。新增状态全部属于 Play 会话，正式写入仍只走既有审批链路；涉及结算协议、artifact 或 Launch Package 字段的变更先更新 [PLAY_MODE_SPEC](PLAY_MODE_SPEC.md)。
 

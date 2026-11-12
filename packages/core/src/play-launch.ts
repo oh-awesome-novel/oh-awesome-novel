@@ -1,3 +1,5 @@
+import { normalizePlayOriginWork, validatePlayLaunchCrossover } from './play-crossover.js';
+import type { PlayOriginWork, PlayCrossoverContract } from './play-crossover.js';
 import { isTavernInteractionSourcePath } from './tavern-play.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -54,7 +56,9 @@ export type PlayLaunchDiagnosticCode =
   | 'binarySource'
   | 'participantWithoutCharacterSource'
   | 'participantCharacterMismatch'
-  | 'canonBeatQuoteMissing';
+  | 'canonBeatQuoteMissing'
+  | 'crossoverSourceUnassigned'
+  | 'crossoverRulesUnresolved';
 
 /** One canon beat as the author picked or typed it, before the host freezes evidence. */
 export interface PlayLaunchCanonBeatInput {
@@ -77,6 +81,7 @@ export interface PlayLaunchCanonBeats {
 }
 
 export interface PlayLaunchSourceInput {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path: string;
   role: PlayLaunchSourceRole;
@@ -127,6 +132,7 @@ export interface PlayLaunchParticipantRoleInput {
 }
 
 export interface PlayLaunchPackagePreviewInput {
+  crossover?: PlayCrossoverContract;
   id?: string;
   createdAt?: string;
   title: string;
@@ -143,6 +149,7 @@ export interface PlayLaunchPackagePreviewInput {
 }
 
 export interface PlayLaunchSource {
+  originWork?: PlayOriginWork;
   sourceId: string;
   path: string;
   objectId?: string;
@@ -169,6 +176,7 @@ export interface PlayLaunchDiagnostic {
 }
 
 export interface PlayLaunchPackage {
+  crossover?: PlayCrossoverContract;
   schemaVersion: typeof PLAY_LAUNCH_PACKAGE_SCHEMA_VERSION;
   id: string;
   createdAt: string;
@@ -212,6 +220,16 @@ export async function previewPlayLaunchPackage(
   const sources = await Promise.all(input.sources.map((source, index) =>
     inspectPlayLaunchSource(workspaceRoot, source, index)));
   const diagnostics = sources.flatMap((result) => result.diagnostics);
+  if (input.crossover) {
+    for (const { source } of sources.filter(item => !item.source.originWork)) diagnostics.push({
+      id: `diagnostic-crossover-${source.sourceId}`, code: 'crossoverSourceUnassigned', severity: 'warning',
+      message: '此来源未标注所属作品；隔离模式下不会作为角色初始资料。', sourceId: source.sourceId, path: source.path,
+    });
+    const worldWorks = new Set(sources.filter(item => item.source.role === 'world' && item.source.originWork).map(item => item.source.originWork!.id));
+    if (worldWorks.size >= 2 && !input.crossover.rulePrecedence.length) diagnostics.push({
+      id: 'diagnostic-crossover-rules', code: 'crossoverRulesUnresolved', severity: 'warning', message: '多部作品提供世界规则，但尚未填写规则裁定；可继续开局。',
+    });
+  }
   const sourceIds = new Set(input.sources.map((source) => source.sourceId));
 
   for (const participant of input.participantRoles) {
@@ -283,6 +301,7 @@ export async function previewPlayLaunchPackage(
     entryPoint: input.entryPoint,
     identity: input.identity,
     participantRoles: input.participantRoles,
+    ...(input.crossover ? { crossover: input.crossover } : {}),
     ...(canonBeats ? { canonBeats } : {}),
     diagnostics,
     canonical: false,
@@ -450,10 +469,12 @@ async function inspectPlayLaunchPackageEvidence(
       path: source.path,
       role: source.role,
       reason: source.reason,
+      ...(source.originWork ? { originWork: source.originWork } : {}),
     })),
     entryPoint: launchPackage.entryPoint,
     identity: launchPackage.identity,
     participantRoles: launchPackage.participantRoles,
+    ...(launchPackage.crossover ? { crossover: launchPackage.crossover } : {}),
     ...(launchPackage.canonBeats
       ? { canonBeats: toPlayLaunchCanonBeatsInput(launchPackage.canonBeats) }
       : {}),
@@ -587,6 +608,7 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
     'identity',
     'participantRoles',
     'canonBeats',
+    'crossover',
     'diagnostics',
     'canonical',
   ], 'Play launch package');
@@ -665,6 +687,7 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
   }
   const identity = normalizeIdentity(record.identity);
   assertIdentityMatchesPurpose(purpose, identity);
+  const crossover = validatePlayLaunchCrossover(sources, record.crossover);
   const canonBeats = record.canonBeats === undefined
     ? undefined
     : normalizeLaunchCanonBeats(record.canonBeats, purpose, sources);
@@ -698,6 +721,7 @@ export function normalizePlayLaunchPackage(value: unknown): PlayLaunchPackage {
     entryPoint,
     identity,
     participantRoles: participants,
+    ...(crossover ? { crossover } : {}),
     ...(canonBeats ? { canonBeats } : {}),
     diagnostics,
     canonical: false,
@@ -802,6 +826,7 @@ function normalizePlayLaunchPackagePreviewInput(
     'identity',
     'participantRoles',
     'canonBeats',
+    'crossover',
   ], 'Play launch preview input');
   if (record.startMode !== 'guided') {
     throw new Error('Play launch preview startMode must be guided.');
@@ -813,6 +838,7 @@ function normalizePlayLaunchPackagePreviewInput(
     throw new Error('Guided Start supports at most 24 source selections.');
   }
   const sources = record.sources.map(normalizeSourceInput);
+  const crossover = validatePlayLaunchCrossover(sources, record.crossover);
   assertUnique(sources.map((source) => source.sourceId), 'source id');
   assertUnique(sources.map((source) => source.path), 'source path');
 
@@ -840,6 +866,7 @@ function normalizePlayLaunchPackagePreviewInput(
     entryPoint,
     identity,
     participantRoles: normalizeParticipants(record.participantRoles),
+    ...(crossover ? { crossover } : {}),
     ...(record.canonBeats === undefined
       ? {}
       : { canonBeats: normalizeLaunchCanonBeatsInput(record.canonBeats, purpose) }),
@@ -859,6 +886,7 @@ async function inspectPlayLaunchSource(
     ...(objectId ? { objectId } : {}),
     role: source.role,
     reason: source.reason ?? `Guided Start ${source.role} source`,
+    ...(source.originWork ? { originWork: source.originWork } : {}),
     budgetLayer: source.role === 'chapter' ? 'L2' : 'L1',
     semanticBoundary: 'compressible',
     trust: isTavernInteractionSourcePath(source.path) ? 'interactionHint' : 'canonical',
@@ -994,6 +1022,7 @@ function normalizePlayLaunchSource(value: unknown): PlayLaunchSource {
     'status',
     'contentHash',
     'excerpt',
+    'originWork',
   ], 'Play launch source');
   const status = normalizeSourceStatus(record.status);
   const contentHash = record.contentHash === undefined
@@ -1011,6 +1040,7 @@ function normalizePlayLaunchSource(value: unknown): PlayLaunchSource {
   return {
     sourceId: assertSafePlayLaunchId(record.sourceId, 'source id'),
     path: normalizeSourcePath(record.path),
+    ...(record.originWork === undefined ? {} : { originWork: normalizePlayOriginWork(record.originWork) }),
     ...(record.objectId === undefined
       ? {}
       : { objectId: normalizeObjectId(record.objectId) }),
@@ -1029,12 +1059,13 @@ function normalizeSourceInput(value: unknown): PlayLaunchSourceInput {
   const record = requireRecord(value, 'Play launch source input');
   assertOnlyKnownFields(
     record,
-    ['sourceId', 'path', 'role', 'reason'],
+    ['sourceId', 'path', 'role', 'reason', 'originWork'],
     'Play launch source input',
   );
   return {
     sourceId: assertSafePlayLaunchId(record.sourceId, 'source id'),
     path: normalizeSourcePath(record.path),
+    ...(record.originWork === undefined ? {} : { originWork: normalizePlayOriginWork(record.originWork) }),
     role: normalizeSourceRole(record.role),
     ...(record.reason === undefined
       ? {}
@@ -1303,7 +1334,9 @@ function normalizeDiagnosticCode(value: unknown): PlayLaunchDiagnosticCode {
     value !== 'binarySource' &&
     value !== 'participantWithoutCharacterSource' &&
     value !== 'participantCharacterMismatch' &&
-    value !== 'canonBeatQuoteMissing'
+    value !== 'canonBeatQuoteMissing' &&
+    value !== 'crossoverSourceUnassigned' &&
+    value !== 'crossoverRulesUnresolved'
   ) {
     throw new Error('Play launch diagnostic code is invalid.');
   }

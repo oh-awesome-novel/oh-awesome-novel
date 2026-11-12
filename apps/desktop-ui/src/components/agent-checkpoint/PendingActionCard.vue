@@ -13,6 +13,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   accept: [action: PendingActionView];
   reject: [action: PendingActionView];
   quickCommit: [action: PendingActionView];
@@ -115,6 +116,12 @@ function operationLabel(operation: 'create' | 'update' | 'delete'): string {
       <button class="ghost-button" type="button" @click="diffOpen = !diffOpen; emit('openDiff', action)">
         Diff
       </button>
+    </div>
+
+    <div v-if="action.origin?.kind === 'playChapterWriting' && (action.status === 'accepted' || action.decision === 'accepted')" class="chapter-handoff-banner">
+      <p>章节已保存。可以打开正文，或显式整理本章的摘要与派生记录。</p>
+      <button type="button" @click="emit('chapterHandoff', { path: action.origin.targetPath, mode: 'open' })">打开章节</button>
+      <button type="button" @click="emit('chapterHandoff', { path: action.origin.targetPath, mode: 'settle' })">整理本章</button>
     </div>
 
     <div

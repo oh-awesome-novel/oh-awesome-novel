@@ -1,3 +1,5 @@
+import { assertPlaySourceGrantTarget, normalizePlayLearnSourceChange, normalizePlaySourceGrant } from './play-crossover.js';
+import type { PlayCrossoverContext, PlaySourceKnowledgeGrantRecord, PlayLearnSourceKnowledgeChange } from './play-crossover.js';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
@@ -52,7 +54,8 @@ export interface PlayParticipantKnowledgeGrantRecord {
 
 export type PlayKnowledgeRecord =
   | PlayEventRevealRecord
-  | PlayParticipantKnowledgeGrantRecord;
+  | PlayParticipantKnowledgeGrantRecord
+  | PlaySourceKnowledgeGrantRecord;
 
 export interface PlayKnowledgeState {
   schemaVersion: typeof PLAY_KNOWLEDGE_STATE_SCHEMA_VERSION;
@@ -75,7 +78,8 @@ export interface PlayGrantParticipantKnowledgeChange {
 
 export type PlayKnowledgeChange =
   | PlayRevealEventKnowledgeChange
-  | PlayGrantParticipantKnowledgeChange;
+  | PlayGrantParticipantKnowledgeChange
+  | PlayLearnSourceKnowledgeChange;
 
 export interface PlayKnowledgeRevealCandidate {
   subjectEventId: string;
@@ -103,11 +107,12 @@ export type PlayKnowledgeProjection =
     }
   | {
       lens: 'player';
-      kind: 'participantGrant';
+      kind: 'participantGrant' | 'sourceGrant';
       visible: false;
     };
 
 export interface ApplyPlayKnowledgeChangesInput {
+  crossover?: PlayCrossoverContext;
   playLocalState: Record<string, unknown>;
   selectedAncestorEvents: readonly PlayWorldEvent[];
   currentEvents: readonly PlayWorldEvent[];
@@ -167,7 +172,7 @@ export function normalizePlayKnowledgeState(value: unknown): PlayKnowledgeState 
       throw new Error(`Play knowledge state contains duplicate record id: ${record.id}.`);
     }
     recordIds.add(record.id);
-    if (record.kind === 'participantGrant') {
+    if (record.kind !== 'eventReveal') {
       continue;
     }
     if (revealingEventIds.has(record.revealedByEventId)) {
@@ -225,6 +230,11 @@ export function normalizePlayKnowledgeChanges(
   const changedSubjectIds = new Set<string>();
   const interventionRefs = new Set<string>();
   for (const change of changes) {
+    if (change.type === 'learnSource') {
+      const key = `${change.participantRef}:${change.sourceId}`;
+      if (interventionRefs.has(key)) throw new Error('同一人物不能在一回合重复获知来源。');
+      interventionRefs.add(key); continue;
+    }
     if (change.type === 'grantParticipantKnowledge') {
       if (interventionRefs.has(change.interventionRef)) {
         throw new Error(
@@ -343,6 +353,15 @@ export function applyPlayKnowledgeChanges(
   const records = previous.records.map(clonePlayKnowledgeRecord);
   const usedRevealingEventIds = new Set<string>();
   for (const [changeIndex, change] of changes.entries()) {
+    if (change.type === 'learnSource') {
+      assertPlaySourceGrantTarget(input.crossover, change.participantRef, change.sourceId);
+      if (records.some(record => record.kind === 'sourceGrant' && record.participantRef === change.participantRef && record.sourceId === change.sourceId)) throw new Error('人物已在本分支获知该来源。');
+      const event = input.currentEvents[change.eventRef - 1];
+      if (!event || event.kind !== 'informationSpread') throw new Error('跨作品认知需要本回合 informationSpread 事件。');
+      records.push({ id: createPlayKnowledgeRecordId(input.revision, changeIndex + 1), kind: 'sourceGrant', participantRef: change.participantRef, sourceId: change.sourceId,
+        learnedAtTurnId: refereeTurnId, learnedByEventId: event.id, canonical: false });
+      continue;
+    }
     if (change.type === 'grantParticipantKnowledge') {
       records.push({
         id: createPlayKnowledgeRecordId(input.revision, changeIndex + 1),
@@ -483,6 +502,12 @@ export function assertPlayKnowledgeTransition(
         `${input.revision}.`,
       );
     }
+    if (record.kind === 'sourceGrant') {
+      const event = currentEvents.find(event => event.id === record.learnedByEventId);
+      if (record.learnedAtTurnId !== refereeTurnId || !event || event.kind !== 'informationSpread' ||
+          replayRecords.some(r => r.kind === 'sourceGrant' && r.participantRef === record.participantRef && r.sourceId === record.sourceId)) throw new Error('跨作品认知缺少本回合依据或重复授予。');
+      replayRecords.push(record); continue;
+    }
     if (record.kind === 'participantGrant') {
       if (record.grantedAtTurnId !== refereeTurnId) {
         throw new Error(
@@ -567,7 +592,20 @@ export function assertPlayKnowledgeHistory(
   const localRecordCounts = new Map<number, number>();
   let previousRevealRevision = -1;
 
+  const sourceGrants = new Set<string>();
   for (const record of state.records) {
+    if (record.kind === 'sourceGrant') {
+      const event = selectedEventsById.get(record.learnedByEventId);
+      const key = `${record.participantRef}:${record.sourceId}`;
+      if (!event || event.kind !== 'informationSpread' || event.turnId !== record.learnedAtTurnId || sourceGrants.has(key)) throw new Error('跨作品认知不属于当前分支或重复。');
+      sourceGrants.add(key);
+      const revision = event.worldClock.revision;
+      if (revision < previousRevealRevision) throw new Error('跨作品认知顺序无效。');
+      previousRevealRevision = revision;
+      const localIndex = (localRecordCounts.get(revision) ?? 0) + 1; localRecordCounts.set(revision, localIndex);
+      if (record.id !== createPlayKnowledgeRecordId(revision, localIndex)) throw new Error('跨作品认知 id 必须由宿主生成。');
+      continue;
+    }
     if (record.kind === 'participantGrant') {
       const revisionMatch = /^turn-(\d+)-referee$/u.exec(record.grantedAtTurnId);
       const grantRevision = revisionMatch ? Number(revisionMatch[1]) : Number.NaN;
@@ -663,8 +701,8 @@ export function projectPlayKnowledgeRecord(
 ): PlayKnowledgeProjection {
   const record = normalizePlayKnowledgeRecord(value);
   if (lens === 'author') return { lens, record };
-  if (record.kind === 'participantGrant') {
-    return { lens, kind: 'participantGrant', visible: false };
+  if (record.kind !== 'eventReveal') {
+    return { lens, kind: record.kind, visible: false };
   }
   return projectPlayEventRevealRecord(record, lens);
 }
@@ -690,6 +728,7 @@ function normalizePlayKnowledgeRecord(value: unknown): PlayKnowledgeRecord {
   if (!isRecord(value)) {
     throw new Error('Every Play knowledge record must be an object.');
   }
+  if (value.kind === 'sourceGrant') return normalizePlaySourceGrant(value);
   return value.kind === 'participantGrant'
     ? normalizePlayParticipantKnowledgeGrantRecord(value)
     : normalizePlayEventRevealRecord(value);
@@ -798,6 +837,7 @@ function normalizePlayKnowledgeChange(value: unknown): PlayKnowledgeChange {
   if (!isRecord(value)) {
     throw new Error('Every Play knowledge change must be an object.');
   }
+  if (value.type === 'learnSource') return normalizePlayLearnSourceChange(value);
   if (value.type === 'grantParticipantKnowledge') {
     assertOnlyKnownFields(value, [
       'type',

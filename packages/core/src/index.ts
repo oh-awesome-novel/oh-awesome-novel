@@ -1298,3 +1298,13 @@ export * from './forge-writer';
 export * from './forge-draft';
 
 export * from './play-phase-memory.js';
+export * from './play-worldline-compare.js';
+export * from './play-crossover.js';
+export * from './chapter-target.js';
+export * from './play-chapter-writing-contract.js';
+
+export * from './chapter-review-contract.js';
+export * from './chapter-review.js';
+export * from './chapter-review-store.js';
+export * from './revision-impact-contract.js';
+export * from './revision-impact.js';

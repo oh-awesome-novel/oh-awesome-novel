@@ -10,6 +10,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   forgeHandoff: [input: { draftId: string; revision: number; mode: 'play' | 'writing' }];
 }>();
 
@@ -56,6 +57,11 @@ const isForgeAccepted = computed(() => {
       </div>
     </div>
 
+    <div v-if="action?.origin?.kind === 'playChapterWriting' && action.status === 'accepted'" class="chapter-handoff-banner">
+      <p>章节已保存。下一步可由你决定是否整理本章。</p>
+      <button type="button" @click="emit('chapterHandoff', { path: action.origin.targetPath, mode: 'open' })">打开章节</button>
+      <button type="button" @click="emit('chapterHandoff', { path: action.origin.targetPath, mode: 'settle' })">整理本章</button>
+    </div>
     <PendingActionDiffViewer
       v-if="action"
       :diff="action.diff"

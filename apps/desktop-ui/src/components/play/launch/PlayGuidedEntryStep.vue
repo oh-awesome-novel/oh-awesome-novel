@@ -56,7 +56,7 @@ function toggleSource(sourceId: string, event: Event): void {
 <template>
   <form class="guided-entry" :aria-labelledby="`${prefix}-heading`" @submit.prevent="emit('next')">
     <header>
-      <span>第 2 / 5 步</span>
+      <span>入场安排</span>
       <h2 :id="`${prefix}-heading`">入场</h2>
       <p>描述开场边界。修改过的值会标为作者提供。</p>
     </header>

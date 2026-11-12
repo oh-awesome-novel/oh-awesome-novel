@@ -1,3 +1,4 @@
+import { readPlayCrossoverContext } from '@oh-awesome-novel/core';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -755,6 +756,7 @@ async function performPlayRedirectIntervention(input: {
     target.participantRef,
     {
       sceneRevision: session.revision,
+      allowedSceneSourceIds: readPlayCrossoverContext(session.metadataExtensions)?.participants.find(p => p.participantRef === target.participantRef)?.sourceIds,
       worldClock: session.worldClock,
       visibleEventRefs: visibleEvents.map((event) => event.id),
       observedNarrativeBlockRefs: selectedVisibleBlocks.map((block) => block.id),
@@ -1081,6 +1083,7 @@ function createStepStreamResponse(input: {
           input.participantRef,
           {
             sceneRevision: session.revision,
+            allowedSceneSourceIds: readPlayCrossoverContext(session.metadataExtensions)?.participants.find(p => p.participantRef === input.participantRef)?.sourceIds,
             worldClock: session.worldClock,
             visibleEventRefs: visibleEvents.map((event) => event.id),
             observedNarrativeBlockRefs: selectedVisibleBlocks.map((block) => block.id),
@@ -1479,6 +1482,7 @@ function createRehearsalContextSourceTraces(
   }
   return session.activatedSources.map((source): PlayContextSourceTrace => ({
     sourceId: source.sourceId,
+    ...(source.originWork ? { originWork: source.originWork } : {}),
     ...(source.path ? { path: source.path } : {}),
     ...(source.role ? { role: source.role } : {}),
     trust: source.trust,
@@ -1663,7 +1667,7 @@ function assertProvisionalSettlementContribution(
   }).map((candidate) => candidate.subjectEventId));
   const matchedRevealEventIndexes = new Set<number>();
   for (const change of contribution.knowledgeChanges) {
-    if (change.type === 'grantParticipantKnowledge') {
+    if (change.type === 'grantParticipantKnowledge' || change.type === 'learnSource') {
       throw new PlayRehearsalRequestError(
         422,
         'invalid_rehearsal_effect',

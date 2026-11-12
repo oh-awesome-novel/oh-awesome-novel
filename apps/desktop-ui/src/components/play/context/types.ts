@@ -1,6 +1,7 @@
 export type PlayContextSourceOutcome = 'selected' | 'omitted';
 
 export interface PlayContextSourceTraceView {
+  workLabel?: string;
   id: string;
   label: string;
   outcome: PlayContextSourceOutcome;

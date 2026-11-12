@@ -1,3 +1,4 @@
+import { assertPlaySourceGrantTarget, readPlayCrossoverContext } from './play-crossover.js';
 import { assertPlayEventStateDeltaRefs, normalizePlayStateDeltaRefs } from './play-event-evidence.js';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -73,6 +74,7 @@ export interface PlayBranchBaseSnapshot {
 }
 
 export interface MaterializePlayTurnFactsInput {
+  metadataExtensions?: Record<string, unknown>;
   revision: number;
   transcript: PlayTranscriptTurn[];
   turnArtifacts: PlayTurnArtifact[];
@@ -220,6 +222,13 @@ export function materializePlayTurnFacts(
     rehearsalScenes: session.rehearsalScenes,
   });
 
+  const crossover = readPlayCrossoverContext(session.metadataExtensions);
+  for (const state of [branchBaseSnapshot.playLocalState, session.playLocalState, ...turnArtifacts.flatMap(artifact => artifact.playLocalStateSnapshot ? [artifact.playLocalStateSnapshot] : [])]) {
+    for (const record of readPlayKnowledgeState(state).records) if (record.kind === 'sourceGrant') {
+      if (session.sceneRehearsal) throw new Error('场景试演通过 Director 知识授予获得跨作品资料。');
+      assertPlaySourceGrantTarget(crossover, record.participantRef, record.sourceId);
+    }
+  }
   return {
     ...validated,
     turnArtifacts,
