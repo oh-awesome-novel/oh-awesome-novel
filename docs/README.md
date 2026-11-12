@@ -74,6 +74,8 @@ docs/
 - [plans/NEXT_FEATURE_ROADMAP_2026-11-06.md](plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)：下一阶段功能路线图，逐项去重参考项目建议，规划 1390–1440 的长局 Play、素材采纳、转写、审稿与修改影响分析。
 - [plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)：Play 模式强化规划（已立项为 1450–1520；1520 已部分交付，其余为 Planned）：五项体验改进与五项新功能设计，包括回合候选项、原作节点表与偏离账本、世界线比较、综漫融合契约和角色贴合度检查。
 - [plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md)：综漫多来源素材规划（已立项为 1530–1570，均为 Planned）：作品登记与归属、跨作品人物对照与合并采用、参考材料版本比较与重新采用、跨作品技法对照、EPUB/DOCX/PDF 导入。
+- [plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md)：Play 角色对话 GalGame 化规划（已立项为 1580–1620，均为 Planned）：舞台模式与专业模式拆分、沉浸阅读控制、立绘描述与预设立绘集、显式说话人与立绘标注、舞台模式逐句流式。
+- [plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md)：角色立绘生图模块规划（已立项为 1630–1650，均为 Planned）：经审批的图片文件变更（需 ADR 0005）、ComfyUI 与在线生图服务适配器、立绘生图工作台。生图是独立模块，Play 运行中不调用。
 - [plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md](plans/PLAY_MODE_WORLD_EVENTS_UPGRADE_PLAN.md)：Play 世界事件（M1–M5）。
 - [plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md](plans/PLAY_MODE_GUIDED_ENTRY_AND_CHARACTER_REHEARSAL_UPGRADE_PLAN.md)：Play 引导入场与角色推演（F1–F4）。
 - [plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md](plans/REFERENCE_WORK_DEEP_DECONSTRUCTION_UPGRADE_PLAN.md)：参考作品深度拆解（D0–D5）。
@@ -129,6 +131,6 @@ docs/
 
 2026-11-10 按 [Play 模式强化规划](plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md) 新增 [1450–1510](tasks/README.md#planned-tasks) 七项 Planned；1390、1400 已于 2026-11-09 交付，当前任务统计为 62 Completed、6 Needs Review、10 Planned。[1410](tasks/1410.md) 材料采纳工作台的主要功能同日交付，状态为 Needs Review。同日追加的 [1520](tasks/1520.md) 回合候选项已交付协议与界面部分，状态为 Needs Review。
 
-2026-11-12 按 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md) 新增 [1530–1570](tasks/README.md#planned-tasks) 五项 Planned，当前任务统计为 72 Completed、6 Needs Review、5 Planned。
+2026-11-12 按 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md) 新增 [1530–1570](tasks/README.md#planned-tasks) 五项 Planned。同日按 [Play 角色对话 GalGame 化规划](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md) 与 [角色立绘生图模块规划](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md) 再新增 1580–1650 八项 Planned，当前任务统计为 72 Completed、6 Needs Review、13 Planned。
 
 2026-10-15 第一梯队收尾：[0580](tasks/0580.md) 远端同步 preflight 与结构化失败、[1230](tasks/1230.md) 缺失 receipt 的可操作恢复与 terminal/receipt 一致性、[1110](tasks/1110.md) G7 Reference/Play 跨管线 usage 与 egress 记录、[1120](tasks/1120.md) 在线 Play 锁 tombstone 保留及延迟竞争者回归均已交付并有分层测试；三份 Needs Review task 的设备断电、商业 provider 与远端鉴权/多平台验收仍以各自 Remaining 为准。

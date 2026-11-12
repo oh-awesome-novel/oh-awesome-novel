@@ -125,6 +125,8 @@
 
 2026-11-12 更新：“PDF/EPUB/DOCX 等导入”（仅导入部分）与“参考版本比较/回滚面板、跨 reference 技法比较”已立项为 [1570](../tasks/1570.md)、[1550](../tasks/1550.md)、[1560](../tasks/1560.md)，连同 1410 留下的跨 reference 人物合并，见 [综漫多来源素材规划](CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md)。“独立补充行动建议与带要求 Retry”已由 1450 交付。其余候选仍在池中。
 
+同日另有两项与本节原有边界不同的作者决定：“结构化 VN 叙事/场景协议”以较轻的行内标注形式立项为 [1610](../tasks/1610.md)，并由 [1620](../tasks/1620.md) 在舞台模式有意放宽“不提前释放未经校验的正文”，见 [Play 角色对话 GalGame 化规划](PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md)；生图作为独立的素材准备模块立项为 1630–1650，见 [角色立绘生图模块规划](PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md)，Play 运行中仍不调用生图，TTS 仍不做。
+
 Extension/dynamic Tool 注册继续暂缓。生图、TTS、LAN/移动端/跨设备同步、社区和市场、商业/连载运营、通用 DAG/多 Agent、后台自动写作均不进入本轮六项范围。Play 可以独立用于游玩与探索，回流 Writing 始终可选。
 
 ## 7. 实施约束
