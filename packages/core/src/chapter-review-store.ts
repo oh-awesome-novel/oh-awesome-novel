@@ -20,13 +20,15 @@ export async function readChapterReviewReport(root: string, id: string): Promise
     !Array.isArray(report.basisPaths) || report.basisPaths.length > 16 || !Array.isArray(report.sourceFiles) || report.sourceFiles.length > 48) throw new Error('审稿报告合同无效。');
   return report as unknown as ChapterReviewReport;
 }
-export async function listChapterReviewReports(root: string, path: string): Promise<{ reports: ChapterReviewReport[]; omittedCount: number }> {
+export async function listChapterReviewReports(root: string, path?: string, options: { scanLimit?: number } = {}): Promise<{ reports: ChapterReviewReport[]; omittedCount: number }> {
+  const limit = options.scanLimit ?? 200;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('审稿报告扫描上限无效。');
   let directory: string;
   try { directory = await reportDirectory(root, false); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reports: [], omittedCount: 0 }; throw error; }
   const entries = (await readdir(directory)).filter(name => /^review-[A-Za-z0-9-]+\.json$/u.test(name)).sort().reverse();
-  const reports: ChapterReviewReport[] = []; let omittedCount = Math.max(0, entries.length - 200);
-  for (const name of entries.slice(0, 200)) {
-    try { const report = await readChapterReviewReport(root, name.slice(0, -5)); if (report.path === path) reports.push(report); }
+  const reports: ChapterReviewReport[] = []; let omittedCount = Math.max(0, entries.length - limit);
+  for (const name of entries.slice(0, limit)) {
+    try { const report = await readChapterReviewReport(root, name.slice(0, -5)); if (path === undefined || report.path === path) reports.push(report); }
     catch { omittedCount++; }
   }
   omittedCount += Math.max(0, reports.length - 20);

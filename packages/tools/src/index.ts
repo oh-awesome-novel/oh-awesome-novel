@@ -309,6 +309,7 @@ export {
   listGitCommits,
   readPendingActionCommitAtHead,
   readRepositoryBaseline,
+  readGitFileVersion,
   assertRepositoryBaseline,
   readGitStatus,
   showGitCommit,
@@ -349,3 +350,4 @@ export * from './novel-lint-change-producer';
 export * from './play-chapter-writing';
 
 export * from './chapter-review';
+export * from './revision-impact';

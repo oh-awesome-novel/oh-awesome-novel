@@ -16,6 +16,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  impact: [actionId: string];
   chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   accept: [action: PendingActionView];
   reject: [action: PendingActionView];
@@ -69,6 +70,9 @@ const batchBusy = computed(() => props.actions.some((action) => action.decision 
       />
     </div>
     <p v-else class="empty-copy">No pending actions.</p>
+    <div v-for="action in actions.filter(item => item.status === 'accepted' || item.decision === 'accepted')" :key="`impact-${action.id}`">
+      <button class="secondary-button" type="button" @click="emit('impact', action.id)">分析已接受修改的影响 · {{ action.title }}</button>
+    </div>
   </section>
 </template>
 

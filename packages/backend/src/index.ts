@@ -1,3 +1,4 @@
+import { createRevisionImpactHandlers } from './revision-impact';
 import { createChapterReviewHandlers } from './chapter-review';
 import { generateChapterReview, generateChapterReviewRevision } from '@oh-awesome-novel/agent';
 import { assertChapterReviewActionFresh } from '@oh-awesome-novel/tools';
@@ -543,6 +544,7 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       return { ...(providerConfig ? { providerConfig } : {}), resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
     },
   });
+  const revisionImpacts = createRevisionImpactHandlers(() => requireActiveWorkspaceRoot(options, state));
   const chapterReviews = createChapterReviewHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state), getStore: async root => (await getPendingActionServices(state, root)).store,
     async review(value) {
@@ -794,6 +796,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.get('/api/workspace/status', (context) => handleWorkspaceStatus(options, state, context));
   app.post('/api/workspace/manuscript/import/preview', (context) => manuscriptImport.preview(context));
+  app.post('/api/workspace/revision-impacts/create', c => revisionImpacts(c, 'create'));
+  app.post('/api/workspace/revision-impacts/list', c => revisionImpacts(c, 'list'));
+  app.post('/api/workspace/revision-impacts/:id/read', c => revisionImpacts(c, 'read', c.req.param('id')));
   app.post('/api/workspace/chapter-reviews/list', c => chapterReviews.list(c));
   app.post('/api/workspace/chapter-reviews/generate', c => chapterReviews.generate(c));
   app.post('/api/workspace/chapter-reviews/:id/read', c => chapterReviews.read(c, c.req.param('id')));

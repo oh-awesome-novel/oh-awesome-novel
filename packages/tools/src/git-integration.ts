@@ -298,6 +298,27 @@ export async function assertRepositoryBaseline(
   }
 }
 
+/** Bounded, literal, read-only version lookup used by author impact comparisons. */
+export async function readGitFileVersion(workspaceRoot: string, path: string, revision: string): Promise<{ ref: string; hash: string | null; content?: string }> {
+  validateWorkspaceRelativePaths(workspaceRoot, [path], true);
+  if (revision.length > 120 || !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?:[~^][0-9]{0,4})?$/u.test(revision) || revision.includes('..')) throw new Error('Git 比较版本无效。');
+  await readRepositoryBaseline(workspaceRoot);
+  const commit = await runGit(workspaceRoot, ['rev-parse', '--verify', `${revision}^{commit}`], undefined, 5000);
+  if (!commit.ok || !/^[a-f0-9]{40,64}$/u.test(commit.stdout.trim())) throw new Error('找不到选定的 Git commit。');
+  const ref = commit.stdout.trim();
+  const tree = await runGit(workspaceRoot, ['ls-tree', '-z', ref, '--', path], undefined, 5000);
+  if (!tree.ok) throw gitResultError(tree.error);
+  if (!tree.stdout) return { ref, hash: null };
+  const match = /^(100644|100755)\s+blob\s+([a-f0-9]{40,64})\t([^\0]+)\0$/u.exec(tree.stdout);
+  if (!match || match[3] !== path) throw new Error('Git 比较对象不是普通文件。');
+  const size = await runGit(workspaceRoot, ['cat-file', '-s', match[2]!], undefined, 5000);
+  if (!size.ok || !/^\d+\s*$/u.test(size.stdout) || Number(size.stdout) > 2 * 1024 * 1024) throw new Error('Git 比较文件超过 2 MiB 上限。');
+  const { stdout } = await execFileAsync('git', ['--no-optional-locks', '--literal-pathspecs', '-C', workspaceRoot, 'cat-file', 'blob', match[2]!], { encoding: 'buffer', maxBuffer: 2 * 1024 * 1024, timeout: 5000, env: gitProcessEnv() });
+  const hash = createHash('sha256').update(stdout).digest('hex');
+  try { const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(stdout); return content.includes('\0') ? { ref, hash } : { ref, hash, content }; }
+  catch { return { ref, hash }; }
+}
+
 export async function gitDiff(workspaceRoot: string, files?: string[]): Promise<string> {
   const status = await readGitStatus(workspaceRoot);
   if (!status.repository || status.status === 'unknown') {

@@ -1,3 +1,6 @@
+import { createRevisionImpactClient } from './revision-impact';
+import type { RevisionImpactClientMethods } from './revision-impact';
+export * from './revision-impact';
 import { createChapterReviewClient } from './chapter-review';
 import type { ChapterReviewClientMethods } from './chapter-review';
 export * from './chapter-review';
@@ -2235,7 +2238,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
+export interface OanClient extends RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2718,6 +2721,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
   return {
     ...playRehearsalClient,
     ...createChapterReviewClient(requestJson),
+    ...createRevisionImpactClient(requestJson),
     ...createPlayChapterWritingClient(requestJson, fetcher, backendBaseUrl),
     ...createForgeClientMethods(requestJson),
     ...createUsageInspectorClientMethods(requestJson),

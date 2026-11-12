@@ -159,9 +159,53 @@ export function validateFinalObjectTreeReferences(input: {
   }
 }
 
-function structuredValue(path: string, content: string): Record<string, unknown> | undefined {
+export interface NovelObjectReferenceEvidence { path: string; namespace: string; targetId: string; location: string }
+export function inspectNovelObjectEvidence(path: string, content: string): { identities: Array<{ namespace: string; id: string }>; names: string[]; references: NovelObjectReferenceEvidence[]; truncated: boolean } {
+  const identities: Array<{ namespace: string; id: string }> = []; const references: NovelObjectReferenceEvidence[] = [];
+  const chapter = /^chapters\/((?!0000)\d{4}\/(?!0000)\d{4})\.md$/u.exec(path);
+  const character = /^characters\/([^/]+)\//u.exec(path); const world = /^world\/(.+)\.(?:md|ya?ml)$/u.exec(path);
+  if (chapter) identities.push({ namespace: 'chapter', id: chapter[1]! });
+  if (character) identities.push({ namespace: 'character', id: character[1]! });
+  if (world) identities.push({ namespace: 'world', id: world[1]! });
+  const value = structuredValue(path, content, true);
+  const names = [typeof value?.name === 'string' ? value.name : '', typeof value?.title === 'string' ? value.title : '',
+    ...(Array.isArray(value?.aliases) ? value.aliases.filter((v): v is string => typeof v === 'string') : []),
+    /^#[ \t]+(.+)$/mu.exec(content)?.[1] ?? '', ...identities.map(identity => identity.id)];
+  const add = (namespace: Namespace, value: unknown, location: string) => {
+    if (typeof value === 'string') references.push({ path, namespace, targetId: value, location });
+  };
+  const domain = /^(?:state|timeline|foreshadow)\//u.test(path);
+  const visit = (v: unknown, location: string): void => {
+    if (Array.isArray(v)) { v.forEach((item, i) => visit(item, `${location}[${i}]`)); return; }
+    if (!isRecord(v)) return;
+    for (const [field, child] of Object.entries(v)) {
+      const next = location ? `${location}.${field}` : field;
+      const namespace = Object.hasOwn(EXPLICIT_REFERENCES, field) ? EXPLICIT_REFERENCES[field] : domain && Object.hasOwn(DOMAIN_REFERENCES, field) ? DOMAIN_REFERENCES[field] : undefined;
+      if (namespace) {
+        if (ARRAY_REFERENCE_FIELDS.has(field) && Array.isArray(child)) child.forEach((id, i) => add(namespace, id, `${next}[${i}]`));
+        else if (!ARRAY_REFERENCE_FIELDS.has(field)) add(namespace, child, next);
+      }
+      visit(child, next);
+    }
+  };
+  if (value) {
+    visit(value, '');
+    if (chapter) for (const [field, namespace] of [['characters', 'character'], ['locations', 'world']] as const) {
+      if (Array.isArray(value[field])) value[field].forEach((id: unknown, i: number) => add(namespace, id, `${field}[${i}]`));
+    }
+    if (character && value.firstAppearance !== undefined) add('chapter', value.firstAppearance, 'firstAppearance');
+    if (world && value.parentId !== undefined) add('world', value.parentId, 'parentId');
+    if (path.startsWith('state/') && isRecord(value.characters)) for (const id of Object.keys(value.characters)) add('character', id, `characters.${id}`);
+    for (const key of path.startsWith('timeline/') ? ['events', 'arcs', 'timeline'] : path.startsWith('foreshadow/') ? ['foreshadow', 'active', 'resolved', 'entries'] : []) {
+      if (Array.isArray(value[key])) for (const item of value[key]) if (isRecord(item) && typeof item.id === 'string') identities.push({ namespace: path.startsWith('foreshadow/') ? 'foreshadow' : key === 'arcs' ? 'arc' : 'event', id: item.id });
+    }
+  }
+  return { identities: identities.slice(0, 1000), names: [...new Set(names.map(name => name.trim()).filter(name => name.length >= 2 && name.length <= 64))].slice(0, 12), references: references.slice(0, 2000), truncated: identities.length > 1000 || references.length > 2000 };
+}
+
+function structuredValue(path: string, content: string, allowYml = false): Record<string, unknown> | undefined {
   let yaml: string;
-  if (path.endsWith('.yaml')) yaml = content;
+  if (path.endsWith('.yaml') || allowYml && path.endsWith('.yml')) yaml = content;
   else if (path.endsWith('.md')) {
     const lines = content.replace(/\r\n/gu, '\n').split('\n');
     if (lines[0] !== '---') return undefined;

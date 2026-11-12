@@ -1306,3 +1306,5 @@ export * from './play-chapter-writing-contract.js';
 export * from './chapter-review-contract.js';
 export * from './chapter-review.js';
 export * from './chapter-review-store.js';
+export * from './revision-impact-contract.js';
+export * from './revision-impact.js';

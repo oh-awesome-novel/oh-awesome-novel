@@ -114,4 +114,29 @@ describe('Workspace search to right viewer routing', () => {
     expect(wrapper.get('.file-node-button-active').text()).toContain('0001.md');
     await wrapper.get('[aria-label="全部收齐"]').trigger('click'); expect(wrapper.find('.file-node-button-active').exists()).toBe(false); wrapper.unmount();
   });
+  it('opens impact review without generation and prefills only the explicitly selected repair workflow', async () => {
+    const workspace = { name: 'alpha', novelName: 'Alpha', path: '/novels/alpha', valid: true };
+    const wrapper = mount(WorkspaceShell, { props: { workspace, providerConfigured: true, theme: 'dark', startGuide: false, mode: 'writing' }, global: { stubs: { PlayWorkspace: true, WorkspaceToolbar: true, WorkspaceWorkbench: true } } });
+    await flushPromises(); const workbench = wrapper.getComponent(WorkspaceWorkbench);
+    workbench.vm.$emit('impactRepair', { kind: 'review', path: 'chapters/0001/0001.md' }); await flushPromises();
+    expect(workbench.props()).toMatchObject({ activeFilePath: 'chapters/0001/0001.md', rightTab: 'file', queuedPrompt: '' });
+    for (const [kind, path, queuedPrompt] of [['settleChapter', 'chapters/0001/0001.md', '/整理本章'], ['summarizeVolume', 'summaries/volume/0001.md', '/整理本卷'], ['summarizeGlobal', 'summaries/global.md', '/整理全书']]) {
+      workbench.vm.$emit('impactRepair', { kind, path }); await flushPromises();
+      expect(workbench.props()).toMatchObject({ activeFilePath: path, queuedPrompt, chatMessages: [] });
+      workbench.vm.$emit('promptConsumed'); await flushPromises();
+    }
+    api.getWorkspaceFile.mockRejectedValueOnce(new Error('File was removed'));
+    workbench.vm.$emit('impactRepair', { kind: 'settleChapter', path: 'chapters/0001/0001.md' }); await flushPromises();
+    expect(workbench.props('queuedPrompt')).toBe(''); wrapper.unmount();
+  });
+  it('does not queue an impact repair into a newly selected workspace', async () => {
+    const workspace = { name: 'alpha', novelName: 'Alpha', path: '/novels/alpha', valid: true };
+    const wrapper = mount(WorkspaceShell, { props: { workspace, providerConfigured: true, theme: 'dark', startGuide: false, mode: 'writing' }, global: { stubs: { PlayWorkspace: true, WorkspaceToolbar: true, WorkspaceWorkbench: true } } });
+    await flushPromises(); let resolve!: (value: unknown) => void;
+    api.getWorkspaceFile.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    wrapper.getComponent(WorkspaceWorkbench).vm.$emit('impactRepair', { kind: 'summarizeVolume', path: 'summaries/volume/0001.md' }); await flushPromises();
+    await wrapper.setProps({ workspace: { ...workspace, path: '/novels/beta' } });
+    resolve({ path: 'summaries/volume/0001.md', content: 'Old summary' }); await flushPromises();
+    expect(wrapper.getComponent(WorkspaceWorkbench).props()).toMatchObject({ queuedPrompt: '', activeFilePath: '', fileContent: '' }); wrapper.unmount();
+  });
 });

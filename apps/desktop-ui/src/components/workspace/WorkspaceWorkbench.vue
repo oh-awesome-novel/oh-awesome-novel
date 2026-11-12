@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { RevisionImpactRepair } from '@oh-awesome-novel/client';
 import type { ChatStatus, UIMessage } from 'ai';
 import CopilotPanel from './CopilotPanel.vue';
 import WorkspaceLeftHoverRail from './WorkspaceLeftHoverRail.vue';
@@ -78,6 +79,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  impactRepair: [input: RevisionImpactRepair];
   openEvidence: [input: { path: string; line: number }];
   chapterHandoff: [input: { path: string; mode: 'open' | 'settle' }];
   updateLeftOverlayOpen: [open: boolean];
@@ -246,6 +248,7 @@ const emit = defineEmits<{
       @forge-handoff="emit('forgeHandoff', $event)"
       @chapter-handoff="emit('chapterHandoff', $event)"
       @open-evidence="emit('openEvidence', $event)"
+      @impact-repair="emit('impactRepair', $event)"
     />
   </div>
 </template>

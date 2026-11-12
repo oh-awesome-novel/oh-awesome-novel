@@ -7,6 +7,7 @@ export type WorkspaceRightTab =
   | 'approval'
   | 'health'
   | 'git'
+  | 'impact'
   | 'profiles'
   | 'references';
 export type WorkspaceSidebarTab = 'files' | 'chapters' | 'history';
@@ -29,6 +30,7 @@ const WORKSPACE_RIGHT_TABS: readonly WorkspaceRightTab[] = [
   'approval',
   'health',
   'git',
+  'impact',
   'profiles',
   'references',
 ];

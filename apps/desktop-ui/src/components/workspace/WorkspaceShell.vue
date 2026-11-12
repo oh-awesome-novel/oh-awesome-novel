@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { RevisionImpactRepair } from '@oh-awesome-novel/client';
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from 'vue';
 
 import ForgeWizardModal from '../forge/ForgeWizardModal.vue';
@@ -428,6 +429,16 @@ async function acceptDerivedPendingActions(actions: PendingActionView[]) {
   await refreshAfterPendingAction();
 }
 
+async function repairRevisionImpact(input: RevisionImpactRepair) {
+  if (input.kind === 'open') { await openFile(input.path, input.line); return; }
+  const epoch = workspaceEpoch;
+  if (props.mode !== 'writing') emit('selectMode', 'writing');
+  await openFile(input.path, input.line);
+  if (epoch !== workspaceEpoch || activeFilePath.value !== input.path || fileLoading.value || fileError.value) return;
+  if (input.kind === 'review') return;
+  openCopilot(input.kind === 'settleChapter' ? '/整理本章' : input.kind === 'summarizeVolume' ? '/整理本卷' : '/整理全书');
+}
+
 async function settleChapter(path: string) {
   if (props.mode !== 'writing') emit('selectMode', 'writing');
   await openFile(path);
@@ -703,6 +714,7 @@ function activateForgeWritingSources(paths: string[]) {
       @forge-handoff="handleForgeHandoff"
       @chapter-handoff="handleChapterHandoff"
       @open-evidence="openFile($event.path, $event.line)"
+      @impact-repair="repairRevisionImpact"
     />
 
     <div v-show="mode === 'play'" class="workspace-play-workbench">
@@ -762,6 +774,7 @@ function activateForgeWritingSources(paths: string[]) {
           @forge-handoff="handleForgeHandoff"
       @chapter-handoff="handleChapterHandoff"
       @open-evidence="openFile($event.path, $event.line)"
+      @impact-repair="repairRevisionImpact"
         />
       </div>
     </div>

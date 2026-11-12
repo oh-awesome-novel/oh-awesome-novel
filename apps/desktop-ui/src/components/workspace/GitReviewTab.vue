@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { RevisionImpactSource } from '@oh-awesome-novel/client';
+const emit = defineEmits<{ impact: [source: RevisionImpactSource] }>();
+function canAnalyze(path: string) { return /^(chapters|characters|world|outline|state|timeline|foreshadow|summaries)\/.+\.(md|ya?ml)$/.test(path); }
 import { useGitReview } from '../../composables/useGitReview';
 const props = withDefaults(defineProps<{ workspacePath?: string }>(), { workspacePath: '' });
 const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessage, syncStatus, previewReady, dirtyFiles,
@@ -44,6 +47,7 @@ const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessag
         <div v-for="file in status.files" :key="file.path" class="git-file-row">
           <span>{{ file.raw.slice(0, 2) }}</span>
           <strong>{{ file.originalPath ? `${JSON.stringify(file.originalPath)} → ` : '' }}{{ JSON.stringify(file.path) }}</strong>
+          <button v-if="canAnalyze(file.path)" class="ghost-button" type="button" @click="emit('impact', { kind: 'git', path: file.path, ref: 'HEAD' })">分析相对 HEAD 的影响</button>
         </div>
       </div>
 
@@ -92,6 +96,7 @@ const { status, commits, selectedCommit, dirtyDiff, loading, error, commitMessag
         <div v-for="file in selectedCommit.files" :key="`${file.status}:${file.path}`" class="git-file-row">
           <span>{{ file.status }}</span>
           <strong>{{ file.originalPath ? `${JSON.stringify(file.originalPath)} → ` : '' }}{{ JSON.stringify(file.path) }}</strong>
+          <button v-if="canAnalyze(file.path)" class="ghost-button" type="button" @click="emit('impact', { kind: 'git', path: file.path, ref: selectedCommit.hash })">此版本 → 工作区影响</button>
         </div>
       </div>
       <pre class="diff-preview">{{ selectedCommit.diff }}</pre>
