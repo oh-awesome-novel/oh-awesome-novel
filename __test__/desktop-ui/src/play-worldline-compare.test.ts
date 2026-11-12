@@ -73,3 +73,15 @@ it('clears results after busy or source changes and surfaces unavailable/error r
   await choose(wrapper); expect(wrapper.get('[role="alert"]').text()).toBe('读取失败');
   wrapper.unmount();
 });
+
+it('keeps a same-revision read across transient background loading without exposing busy actions', async () => {
+  let resolve!: (value: unknown) => void;
+  const { wrapper } = mountPanel(vi.fn(() => new Promise(r => { resolve = r; })) as never);
+  await choose(wrapper);
+  await wrapper.setProps({ disabled: true });
+  resolve(result); await flushPromises();
+  expect(wrapper.find('.compare-sides').exists()).toBe(false);
+  await wrapper.setProps({ disabled: false });
+  expect(wrapper.find('.compare-sides').exists()).toBe(true);
+  wrapper.unmount();
+});

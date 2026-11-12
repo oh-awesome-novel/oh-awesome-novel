@@ -36,7 +36,9 @@ function reset(): void {
   request?.abort(); request = undefined;
   result.value = undefined; error.value = ''; loading.value = false; confirmation.value = undefined;
 }
-watch(() => [props.workspaceKey, props.sessionId, props.revision, props.lens, props.disabled], reset);
+// Background read windows also disable actions. They do not invalidate this
+// immutable comparison; only its identity/revision/lens does. Hide it while busy.
+watch(() => [props.workspaceKey, props.sessionId, props.revision, props.lens], reset);
 watch(() => [props.workspaceKey, props.sessionId], () => {
   left.value = ''; right.value = ''; names.value = { left: '', right: '' };
 });
@@ -105,7 +107,7 @@ function name(side: 'left' | 'right'): void {
       <button type="submit" :disabled="unavailable || !left || !right || left === right">{{ loading ? '正在比较…' : '比较这两个节点' }}</button>
     </form>
     <p v-if="error" role="alert">{{ error }}</p>
-    <template v-if="result">
+    <template v-if="result && !disabled">
       <p v-if="result.unavailableReason" role="status">{{ result.unavailableReason }}</p>
       <template v-else>
         <p>共同起点：{{ title(result.commonAncestor!) }} · {{ lens === 'director' ? '导演视角' : '参与者视角' }}</p>
