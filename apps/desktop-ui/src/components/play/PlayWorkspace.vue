@@ -17,7 +17,10 @@ import PlayPhaseMemory from './PlayPhaseMemory.vue';
 import PlayWorldHud from './PlayWorldHud.vue';
 import PlayRelationshipPanel from './PlayRelationshipPanel.vue';
 import PlayCanonBeatPanel from './PlayCanonBeatPanel.vue';
-import { projectPlayCanonBeatTable } from '@oh-awesome-novel/client';
+import PlayCharacterCheckPanel from './PlayCharacterCheckPanel.vue';
+import { PLAY_CHARACTER_CHECK_CATEGORY_LABELS, formatPlayCharacterCheckGuidance, projectPlayCanonBeatTable } from '@oh-awesome-novel/client';
+import type { PlayCharacterCheckFinding, PlayCharacterCheckReportView, PlayCharacterCheckTarget } from '@oh-awesome-novel/client';
+import { usePlayCharacterCheck } from '../../composables/usePlayCharacterCheck';
 import PlayContextInspector from './context/PlayContextInspector.vue';
 import PlayMessageLog from './message-log/PlayMessageLog.vue';
 import DomainUsageInspector from '../usage/DomainUsageInspector.vue';
@@ -306,6 +309,81 @@ async function applyCanonBeatOperation(operation: PlayCanonBeatDirectorOperation
   }
 }
 
+// In-character check (1510): advisory reports kept beside the session, one lens at a time.
+const characterCheck = usePlayCharacterCheck({
+  client: workspaceApi,
+  scope: computed(() => {
+    const session = selectedSession.value;
+    if (!session || migration.preview.value) return undefined;
+    if (session.schemaVersion === 5) {
+      const attempt = rehearsalAttempt.value;
+      return { sessionId: session.id, lens: rehearsalLens.value, branchKey: `${attempt?.id ?? ''}:${attempt?.revision ?? ''}:${attempt?.status ?? ''}` };
+    }
+    return {
+      sessionId: session.id,
+      lens: showSpoilers.value ? 'director' as const : 'player' as const,
+      branchKey: `${session.revision}:${(displaySession.value ?? session).selectedTurnIds.join('/')}`,
+    };
+  }),
+  blocked: interactionBlocked,
+});
+const checkingMessageId = computed(() => {
+  const target = characterCheck.running.value;
+  return target?.kind === 'turnMessage' ? target.messageId : '';
+});
+const checkingStepRef = computed(() => {
+  const target = characterCheck.running.value;
+  return target?.kind === 'rehearsalStep' ? target.stepRef : '';
+});
+const characterCheckLabels = computed<Record<string, string>>(() => ({
+  ...Object.fromEntries(historyCheckpoints.value.flatMap((checkpoint) => checkpoint.artifactId
+    ? [[checkpoint.artifactId, checkpoint.name?.trim() || `第 ${checkpoint.worldTurn} 回合`]]
+    : [])),
+  ...Object.fromEntries(rehearsalSteps.value.map((step) => [step.id, `${step.participantName} 的试演步骤`])),
+}));
+const retryDraft = shallowRef<{ checkpointId: string; guidance: string; nonce: number }>();
+const rehearsalRedirect = shallowRef<{ stepRef: string; intent: string; nonce: number }>();
+const characterCheckNotice = shallowRef('');
+const journeyRetryDisabledReason = computed(() => !providerConfigured.value
+  ? '配置模型后才能重演。'
+  : interactionBlocked.value ? '另一个操作正在进行。' : '');
+const rehearsalRetryDisabledReason = computed(() => !rehearsalCapabilities.value.canModify || rehearsalBusy.value
+  ? '当前不能修改这个试演步骤。'
+  : '');
+
+function checkRehearsalStep(stepRef: string): void {
+  const attempt = rehearsalAttempt.value;
+  if (attempt) void characterCheck.check({ kind: 'rehearsalStep', attemptId: attempt.id, stepRef });
+}
+
+/** "带着这条意见重演": hands editable text to the existing guided Retry box or rehearsal redirect form. */
+function retryWithFinding(report: PlayCharacterCheckReportView, finding: PlayCharacterCheckFinding): void {
+  if (report.stale) return;
+  characterCheckNotice.value = '';
+  const guidance = formatPlayCharacterCheckGuidance(finding);
+  const nonce = Date.now();
+  if (report.target.kind === 'turn') {
+    retryDraft.value = { checkpointId: report.target.turnId, guidance, nonce };
+  } else {
+    rehearsalRedirect.value = { stepRef: report.target.stepRef, intent: guidance, nonce };
+  }
+}
+
+function noteFinding(_report: PlayCharacterCheckReportView, finding: PlayCharacterCheckFinding): void {
+  const opened = observation.prefill({
+    summary: `角色贴合度（${PLAY_CHARACTER_CHECK_CATEGORY_LABELS[finding.category]}）：${finding.character} — ${finding.note}`,
+    evidence: finding.quote,
+    sourceTurnId: finding.segmentId,
+  });
+  characterCheckNotice.value = opened
+    ? '已把这条意见填入下方的观察笔记表单，修改后保存。'
+    : '这条消息不在已载入的记录里。请先载入更早的记录，再记为观察笔记。';
+}
+
+function focusCheckTarget(target: PlayCharacterCheckTarget): void {
+  if (target.kind === 'turn') focusPlayTurn(target.turnId);
+}
+
 const relationshipBranchKey = computed(() =>
   `${selectedSession.value?.revision ?? -1}:${(displaySession.value ?? selectedSession.value)?.selectedTurnIds.at(-1) ?? ''}`);
 
@@ -520,6 +598,10 @@ function acceptGuidedSession(session: PlaySession): void {
           :recovering="rehearsalRecovering"
           :announcement="rehearsalAnnouncement"
           :error="rehearsalError"
+          :check-disabled="rehearsalBusy"
+          :checking-step-ref="checkingStepRef"
+          :redirect-request="rehearsalRedirect"
+          @check-step="checkRehearsalStep"
           @start-attempt="startRehearsalAttempt"
           @generate-step="generateRehearsalStep"
           @stop-step="stopRehearsalStep"
@@ -534,6 +616,19 @@ function acceptGuidedSession(session: PlaySession): void {
           @rebuild-memory="rebuildRehearsalMemory"
           @reconcile-step="reconcileRehearsalStep"
           @configure-provider="emit('configureProvider')"
+        />
+        <PlayCharacterCheckPanel
+          :reports="characterCheck.reports.value"
+          :running="Boolean(characterCheck.running.value)"
+          :error="characterCheck.error.value"
+          :lens="rehearsalLens"
+          :target-labels="characterCheckLabels"
+          :retry-disabled-reason="rehearsalRetryDisabledReason"
+          :can-note="false"
+          :disabled="rehearsalBusy"
+          @retry-with="retryWithFinding"
+          @focus-target="focusCheckTarget"
+          @cancel="characterCheck.cancel"
         />
         <PlayContextInspector
           :traces="contextTraces"
@@ -604,7 +699,11 @@ function acceptGuidedSession(session: PlaySession): void {
           :loading-earlier="loadingEarlierTranscript"
           :provisional="provisionalTurn"
           :announcement="turnAnnouncement || historyWindowAnnouncement"
+          :checkable="selectedSession.schemaVersion === 4"
+          :check-disabled="interactionBlocked || Boolean(historyRetryingArtifactId)"
+          :checking-message-id="checkingMessageId"
           @load-earlier="loadEarlierTranscript"
+          @check-character="characterCheck.check({ kind: 'turnMessage', messageId: $event })"
         />
 
         <div v-if="!providerConfigured" class="play-provider-gate">
@@ -677,10 +776,25 @@ function acceptGuidedSession(session: PlaySession): void {
           :blocked="interactionBlocked"
           :director-lens="showSpoilers"
           :notice="historyNotice"
+          :retry-draft="retryDraft"
           @restore="restoreCheckpoint"
           @retry="retryCheckpoint"
           @name="renameCheckpoint"
         />
+        <PlayCharacterCheckPanel
+          :reports="characterCheck.reports.value"
+          :running="Boolean(characterCheck.running.value)"
+          :error="characterCheck.error.value"
+          :lens="showSpoilers ? 'director' : 'player'"
+          :target-labels="characterCheckLabels"
+          :retry-disabled-reason="journeyRetryDisabledReason"
+          :disabled="interactionBlocked"
+          @retry-with="retryWithFinding"
+          @note="noteFinding"
+          @focus-target="focusCheckTarget"
+          @cancel="characterCheck.cancel"
+        />
+        <p v-if="characterCheckNotice" class="play-character-check-notice" role="status">{{ characterCheckNotice }}</p>
         <PlayWorldHud
           :clock="displaySession?.worldClock ?? selectedSession.worldClock"
           :policy="selectedSession.eventPolicy"

@@ -53,6 +53,17 @@ export function usePlayObservation(options: {
   function cancel() {
     if (!saving.value) reset();
   }
+  /** Opens the form with editable text for one source message; false when that message is not loaded. */
+  function prefill(draft: { summary: string; evidence: string; sourceTurnId: string }): boolean {
+    if (options.blocked.value || saving.value || !sources.value.some((source) => source.id === draft.sourceTurnId)) return false;
+    reset();
+    notice.value = '';
+    summary.value = draft.summary;
+    evidence.value = draft.evidence;
+    sourceTurnId.value = draft.sourceTurnId;
+    open.value = true;
+    return true;
+  }
   async function save() {
     const session = options.session.value;
     if (!session || session.schemaVersion !== 4 || !canSave.value || saving.value) return;
@@ -85,6 +96,6 @@ export function usePlayObservation(options: {
   return {
     open: readonly(open), summary, evidence, sourceTurnId,
     saving: readonly(saving), error: readonly(error), notice: readonly(notice),
-    sources, canSave, start, cancel, save,
+    sources, canSave, start, cancel, save, prefill,
   };
 }

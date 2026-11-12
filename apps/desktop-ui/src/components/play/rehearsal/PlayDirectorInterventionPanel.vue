@@ -22,6 +22,8 @@ const props = defineProps<{
   participants: readonly Readonly<PlayRehearsalActorQueueItem>[];
   activeStepRef?: string;
   busy: boolean;
+  /** Opens "修改" as a redirect of one step with editable director intent. */
+  redirectSeed?: { stepRef: string; intent: string; nonce: number };
 }>();
 
 const emit = defineEmits<{
@@ -84,11 +86,21 @@ watch(
   () => props.mode,
   async () => {
     resetFormDefaults();
+    applyRedirectSeed();
     await nextTick();
     heading.value?.focus();
   },
   { immediate: true },
 );
+
+function applyRedirectSeed(): void {
+  const seed = props.redirectSeed;
+  if (!seed || props.mode !== 'modify' || !liveSteps.value.some((step) => step.id === seed.stepRef)) return;
+  modifyMode.value = 'redirectStep';
+  targetStepRef.value = seed.stepRef;
+  directorIntent.value = seed.intent;
+}
+watch(() => props.redirectSeed?.nonce, applyRedirectSeed);
 
 watch(liveSteps, () => {
   if (!liveSteps.value.some((step) => step.id === targetStepRef.value)) {

@@ -1,4 +1,11 @@
 import { parsePhaseOverview, parsePhaseRecall } from './play-phase-memory';
+import { parsePlayCharacterCheckList, parsePlayCharacterCheckResult } from './play-character-check';
+import type { PlayCharacterCheckInput, PlayCharacterCheckLens, PlayCharacterCheckReportView } from './play-character-check';
+export { PLAY_CHARACTER_CHECK_CATEGORY_LABELS, formatPlayCharacterCheckGuidance, samePlayCharacterCheckTarget } from './play-character-check';
+export type {
+  PlayCharacterCheckCategory, PlayCharacterCheckFinding, PlayCharacterCheckInput, PlayCharacterCheckLens,
+  PlayCharacterCheckReport, PlayCharacterCheckReportView, PlayCharacterCheckTarget,
+} from './play-character-check';
 import type { PlayPhaseOverview, PlayPhaseQuery, PlayPhaseRecall } from './play-phase-memory';
 export type { PlayPhaseOverview, PlayPhaseQuery, PlayPhaseRecall } from './play-phase-memory';
 import { parseNovelLintScan, parseNovelLintReview } from './novel-lint';
@@ -2517,6 +2524,9 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   /** Read-only extra action suggestions; never changes the session. */
+  /** One explicit read-only model call; the verified report is stored beside the session, never in it. */
+  requestPlayCharacterCheck(id: string, input: PlayCharacterCheckInput, signal?: AbortSignal): Promise<PlayCharacterCheckReportView>;
+  listPlayCharacterChecks(id: string, lens: PlayCharacterCheckLens, signal?: AbortSignal): Promise<PlayCharacterCheckReportView[]>;
   requestPlayExtraSuggestions(
     id: string,
     input: PlayExtraSuggestionsInput,
@@ -3457,6 +3467,14 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         streamOptions,
         artifactId,
       ),
+    requestPlayCharacterCheck: (id, input, signal) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/character-checks`,
+      { method: 'POST', body: { target: input.target, lens: input.lens }, signal },
+    ).then(value => parsePlayCharacterCheckResult(value, id, input)),
+    listPlayCharacterChecks: (id, lens, signal) => requestJson<unknown>(
+      `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/character-checks?lens=${lens}`,
+      { signal },
+    ).then(value => parsePlayCharacterCheckList(value, id, lens)),
     requestPlayExtraSuggestions: (id, input, signal) => requestJson<unknown>(
       `/api/workspace/play-sessions/${encodeURIComponent(requireSafePlayClientId(id, 'Play session id'))}/suggestions`,
       {

@@ -203,6 +203,38 @@ canonBeats:
 
 **阶段归档。** 开启新阶段时宿主克隆整个会话，节点表完整带入。归档提示与 `resourceState` 审计不包含 `canonBeats`，不要求模型复述。
 
+### 角色贴合度检查（In-character Check）
+
+[1510](tasks/1510.md) 交付。作者在一个已提交的沉浸推演回合，或场景试演当前 attempt 的一个角色步骤上显式发起；每次点击最多一次只读模型调用。结果是带引文的意见，不打分、不阻断任何操作、不自动重演或改写。
+
+**入口。** `POST /api/workspace/play-sessions/:id/character-checks` 接收 `{ target, lens }`，不接受其他字段；`GET` 同一路径加 `?lens=player|director` 列出该视角的报告。`target` 是 `{ kind: 'turn', turnId }`、`{ kind: 'turnMessage', messageId }`（宿主解析为选中分支上包含该消息的回合，报告里统一记为 `turn`）或 `{ kind: 'rehearsalStep', attemptId, stepRef }`。调用方不能自带材料。
+
+**固定材料。** 由宿主构造，模型不拿到别的会话内容、兄弟分支或内部路径：
+
+- 叙述：回合里说话人不是 `user` / `director` 的已提交消息；试演步骤的 narrative blocks。
+- 沉浸推演的角色资料只取会话创建时冻结进 `frozenSystemPrompt` 的角色块（`characters/<id>/` 下的来源、`role: character` 的来源、导入角色卡的会话内来源）和 `characterRoster` 的名册档案（姓名、别名、外貌与着装）。只识别宿主自己写下的块头，不重新读取正式文件，因此来源漂移不影响检查。
+- 场景试演的角色资料是 sidecar 里该参与者的试演设定与 `initialKnowledgeEvidence` 事实，加名册档案。
+- 出场判断：名册与会话角色按姓名、别名是否出现在叙述里；叙述中宿主能识别出说话人、但会话没有任何资料的角色记为 `noReference`。
+
+**视角。** `lens: 'player'` 时，试演步骤的 `directorOnly` / `playerUnknown` 段落和 `playerUnknown` 事实不进入材料，结果因而也不可能引用它们。沉浸推演的已提交叙述与冻结角色来源本身都是参与者可见内容，两种视角的材料相同。列表接口只返回所请求视角的报告，Desktop 的参与者视角不加载导演视角的报告。
+
+**体积上限。** 叙述加角色资料上限 48,000 字。叙述必须完整放入，放不下时不发起检查（422 `narrativeTooLarge`）。资料按整块取舍，按角色轮流放入；放不下的块整块省略，并在报告的 `omissions` 里逐条写明省略了谁的哪份资料、多少字。不按字符截断。资料全部被省略的角色记为 `omitted`，与 `noReference` 区分。
+
+**回复与核对。** 模型只输出一个 `oan-play-character-check` 代码块：`{"findings":[{ character, quote, category, evidence, note }]}`，`category` 是 `voice`（声线）/ `motivation`（动机）/ `knowledge`（认知）/ `relationship`（关系）。宿主逐条核对：`quote` 必须是某一条被检查消息（或段落）的逐字子串；`evidence` 必须是该角色某一块资料的逐字子串；角色必须是本次带资料的角色。核对不过、结构不合法、重复或超过 12 条的意见丢弃，计入 `discardedCount`。整个回复不是合法 JSON 或缺少 `findings` 时返回 422 `invalidResponse`，不重试。
+
+**没有可对照的角色时** 不调用模型，直接返回只含角色状态的报告。`noReference` 在界面上显示为“无可对照资料”，不显示为“没有问题”。
+
+**存储。** 报告写在 `.oan/sessions/.play-checks/<session-id>/character-checks.json`（`.oan/sessions/` 已被 `.gitignore` 忽略），整文件经临时文件替换。它不进入 session 快照、turn artifact、rehearsal evidence、采纳证据闭包、导出或 Git，不推进 revision；删除该文件只丢失过往意见。同一目标同一视角的新报告替换旧报告，每个会话最多保留 60 份。取消、provider 失败、格式错误或检查期间分支变化都不留下报告。
+
+**过期。** 回合报告记录检查时从根到该回合的选中路径 `branchTurnIds`；当前选中路径不再以它为前缀（Restore / Retry 离开该回合）即为过期。试演步骤的报告在 attempt 结束、被取消、不再是当前 attempt，或该步骤被替换后过期。过期只是读取时计算出的 `stale` 标记，报告本身不改。过期报告的“带着这条意见重演”入口禁用。
+
+**出口。** 每条意见两个出口，都只是预填，不自动执行：
+
+- 带着这条意见重演：回合报告把可改写的文字放进 [带指引的重演](#带指引的重演guided-retry) 的指引框（上限 500 字），确认后走普通的带指引 Retry；试演步骤把文字放进“修改 → 改变走向”的导演意图。
+- 记为观察笔记：预填现有观察笔记表单，来源消息是包含该原句的消息，保存走普通 observation 写入。场景试演会话没有观察笔记，不提供这个出口。
+
+**用量。** 检查作为 `stage: characterCheck` 的 Play 用量记录出现在用量检查器里。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：

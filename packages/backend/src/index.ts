@@ -7,6 +7,8 @@ export { playContextHistory, stablePlayHistoryWindow } from './play-context-hist
 import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 export { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
 import { askInPlayContext } from './play-context-question.js';
+import { createPlayCharacterCheckHandlers } from './play-character-check.js';
+export type { PlayCharacterCheckReportView } from './play-character-check.js';
 export { askInPlayContext } from './play-context-question.js';
 import { freezePlayPermanentContext } from './play-frozen-context.js';
 export { freezePlayPermanentContext } from './play-frozen-context.js';
@@ -525,6 +527,15 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
       return () => { state.activePlayTurns.delete(key); };
     },
   });
+  const playCharacterCheck = createPlayCharacterCheckHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    isSessionBusy: (root, id) => state.workspaceTransitionActive || state.activePlayTurns.has(createPlayTurnLockKey(root, id)),
+    async getModelRuntime() {
+      await ensureProviderConfigLoaded(options, state);
+      const providerConfig = options.providerConfig ?? getDefaultLlmProviderConfig(state.providerConfigState);
+      return { ...(providerConfig ? { providerConfig } : {}), resolveModel: options.resolveModel ?? createAiSdkProviderResolver() };
+    },
+  });
   const novelLint = createNovelLintHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     getStore: async (root) => (await getPendingActionServices(state, root)).store,
@@ -996,6 +1007,8 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   });
   app.post('/api/workspace/play-sessions/:id/suggestions', (context) =>
     handlePlayExtraSuggestions(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace/play-sessions/:id/character-checks', (context) => playCharacterCheck.list(context, context.req.param('id') ?? ''));
+  app.post('/api/workspace/play-sessions/:id/character-checks', (context) => playCharacterCheck.run(context, context.req.param('id') ?? ''));
   app.post('/api/workspace/play-sessions/:id/compact', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, false));
   app.post('/api/workspace/play-sessions/:id/compact/continue', (context) => handlePlayCompaction(options, state, context.req.param('id'), context, true));
   app.post('/api/workspace/play-sessions/:id/attempts', (context) =>

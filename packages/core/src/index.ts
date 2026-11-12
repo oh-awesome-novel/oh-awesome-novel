@@ -1276,6 +1276,7 @@ export * from './play-turn-prompt.js';
 export * from './play-referee-protocol.js';
 export * from './play-turn-choices.js';
 export * from './play-extra-suggestions.js';
+export * from './play-character-check.js';
 export * from './play-compaction.js';
 
 export * from './novel-lint.js';

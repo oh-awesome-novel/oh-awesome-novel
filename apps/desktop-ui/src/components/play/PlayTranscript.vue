@@ -13,14 +13,23 @@ const props = withDefaults(defineProps<{
   totalCount?: number;
   hasMoreBefore?: boolean;
   loadingEarlier?: boolean;
+  /** Offer "检查角色贴合度" on committed narrative messages. */
+  checkable?: boolean;
+  checkDisabled?: boolean;
+  /** Message whose in-character check is running. */
+  checkingMessageId?: string;
 }>(), {
   totalCount: undefined,
   hasMoreBefore: false,
   loadingEarlier: false,
+  checkable: false,
+  checkDisabled: false,
+  checkingMessageId: '',
 });
 
 const emit = defineEmits<{
   loadEarlier: [];
+  checkCharacter: [messageId: string];
 }>();
 
 const scrollId = `${useId()}-play-transcript-scroll`;
@@ -44,6 +53,11 @@ function turnClass(speaker: string): string {
     return 'play-turn-narrator';
   }
   return 'play-turn-character';
+}
+
+/** Author input and director records are not referee narrative. */
+function isNarrative(speaker: string): boolean {
+  return !['user', 'player', 'director'].includes(speaker.toLowerCase());
 }
 
 function formatTime(value: string): string {
@@ -95,6 +109,17 @@ function formatTime(value: string): string {
           <time :datetime="turn.createdAt">{{ formatTime(turn.createdAt) }}</time>
         </header>
         <p :data-usage-message="turn.id">{{ turn.content }}</p>
+        <footer v-if="checkable && turn.id && isNarrative(turn.speaker)" class="play-turn-check">
+          <button
+            type="button"
+            :disabled="checkDisabled || Boolean(checkingMessageId)"
+            :data-check-message="turn.id"
+            title="一次只读的模型调用：指出这一回合里哪句话不像这个角色，并附角色资料里的依据。"
+            @click="emit('checkCharacter', turn.id)"
+          >
+            {{ checkingMessageId === turn.id ? '正在检查…' : '检查角色贴合度' }}
+          </button>
+        </footer>
       </article>
 
       <article
@@ -132,6 +157,25 @@ function formatTime(value: string): string {
 </template>
 
 <style scoped>
+.play-turn-check {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.play-turn-check button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  background: none;
+  color: var(--play-muted, var(--editor-muted));
+  font-size: 11px;
+}
+
+.play-turn-check button:not(:disabled):hover {
+  color: var(--play-ink, var(--editor-ink));
+}
+
 .play-transcript-load-earlier {
   min-height: 32px;
   border: 1px solid var(--play-line, var(--editor-hairline));

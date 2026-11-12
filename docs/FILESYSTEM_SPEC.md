@@ -520,7 +520,7 @@ artifact。二者都不能作为 ContextPackage source、sandbox projection targ
 `.oan/sessions/<session-id>/messages.jsonl` 会保留 assistant 的思考内容（`reasoning`）作为调试
 记录；`.oan/sessions/.play-logs/<play-session-id>/messages.jsonl` 是 Play 只追加的调试消息日志
 （作者行动、模型请求、思考、输出与回合结果）。两者都不是事实源：恢复会话、Play 状态与
-projection 都不从中读取思考内容，删除它们不影响任何功能。`.play-logs` 以 `.` 开头，不会被
+projection 都不从中读取思考内容，删除它们不影响任何功能。同级的 `.oan/sessions/.play-checks/<play-session-id>/character-checks.json` 保存角色贴合度检查报告（见 PLAY_MODE_SPEC），同样只是可丢弃的意见，不进入 Play 状态、采纳或导出。`.play-logs` 与 `.play-checks` 以 `.` 开头，不会被
 当作 Copilot session id。
 
 开发迁移 reset 只能在验证 realpath、Git tracked files、Git status 和 canonical SHA-256
