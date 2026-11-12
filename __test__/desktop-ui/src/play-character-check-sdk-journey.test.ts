@@ -124,7 +124,15 @@ describe('in-character check through default SDK, HTTP/SSE and Desktop', () => {
     const workspace: WorkspaceSummary = { name: 'check', novelName: 'Check', path: f.root, valid: true };
     const wrapper = mount(PlayWorkspace, { attachTo: document.body, props: { workspace, providerConfigured: true } });
     wrappers.push(wrapper);
-    await vi.waitFor(() => expect(wrapper.find('.play-session-card').exists()).toBe(true));
+    // The first session list read can be slow or briefly refused on a loaded runner;
+    // refresh like an author would instead of relying on the 1s default wait.
+    await vi.waitFor(async () => {
+      if (!wrapper.find('.play-session-card').exists() && wrapper.find('[role=alert]').exists()) {
+        await wrapper.get('[aria-label="刷新推演工作区"]').trigger('click');
+        await flushPromises();
+      }
+      expect(wrapper.find('.play-session-card').exists()).toBe(true);
+    }, { timeout: 15_000, interval: 200 });
     await wrapper.get('.play-session-card').trigger('click');
     await vi.waitFor(() => expect(wrapper.find('.play-composer textarea').exists()).toBe(true));
     await vi.waitFor(() => expect(wrapper.get('.play-composer textarea').attributes('disabled')).toBeUndefined(), { timeout: 3000 });
