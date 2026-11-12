@@ -36,7 +36,8 @@ Git Diff Human Approval
 - Runtime 学 Aider 的极简循环，不做重型多 Agent 平台。
 - 文件修改核心采用 `bash-tool + just-bash + CandidateChangeSet + PendingAction + ChangeMaterializer`。
 - 模型只能编辑固定的内存投影；Accept 前不得触碰 canonical 文件，Accept 也不得重放 shell 命令。
-- `Sandbox Change Engine` 是唯一正式写入架构；不得恢复私有 patch DSL、双引擎、兼容 reader 或旧记录迁移器。
+- `Sandbox Change Engine` 是唯一正式写入架构；不得恢复私有 patch DSL 或双引擎。
+- 软件尚未进入稳定期，内部数据的 schema 可以按设计需要修改或升版，不必为此保留兼容 reader 或编写旧记录迁移器；这是为了少写兼容代码，不是禁止改 schema。详见下方“内部数据的 schema 变更”。
 
 ## 优先阅读
 
@@ -72,6 +73,16 @@ Git Diff Human Approval
 - 与小说内容相关的数据应优先落到对象文件树，而不是隐藏在运行时状态或私有数据库中。
 - 用户确认前不得写真实目标文件；允许系统内部写入 `workspace/.workspace/change-engine/v1` 的 immutable draft、PendingAction 与 recovery 数据用于审批和崩溃恢复。
 - AI 发起的文件修改在 PendingAction accept 后默认应按配置自动 Git commit；`git.autoCommitOnAccept: false` 时不得自动 commit 或 sync，并应提供用户显式 quick commit 入口。
+
+## 内部数据的 schema 变更
+
+适用于 OAN 自己生成、不属于小说内容的数据：`workspace/.workspace/` 下的 PendingAction、draft、recovery 数据、对话与 Play 会话，以及应用级配置和缓存。
+
+- 稳定期之前，这些数据的 schema 可以直接修改或升版。升版后读不了的旧记录可以丢弃或一次性重置，旧对话和旧会话不保留是可以接受的。
+- 默认不写兼容 reader、迁移器、双写或降级路径；确有必要保留某类旧数据时，在对应 task 中说明理由再做。
+- 会让旧数据失效的变更，要在 task 或设计文档里写明哪些数据会失效；尚未处理的 PendingAction 会被丢弃时，应让作者在界面上看得到，不能静默消失。
+- 以上不适用于小说正式文件（Markdown / YAML / Object File Tree）与 Git 历史。正式文件的格式变更必须先更新 `docs/FILESYSTEM_SPEC.md`，并保证作者已有的文件仍可读取，或经 PendingAction 审批后改写；任何情况下都不得丢弃或静默改写作者的内容。
+- 进入稳定期后本节需要重新评估。
 
 ## 测试放置规则
 
