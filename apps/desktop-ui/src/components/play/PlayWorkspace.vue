@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatPlayWorldActivity } from '../../composables/playTerms';
-import { computed, nextTick, shallowRef, toRef, watch } from 'vue';
+import { computed, nextTick, shallowRef, toRef, useTemplateRef, watch } from 'vue';
 
 import PlayAdoptionDraftForm from './PlayAdoptionDraftForm.vue';
 import PlayAdoptionPanel from './PlayAdoptionPanel.vue';
@@ -8,6 +8,7 @@ import PlayObservationForm from './PlayObservationForm.vue';
 import PlayComposer from './PlayComposer.vue';
 import PlayEventFeed from './PlayEventFeed.vue';
 import PlayHistoryControls from './PlayHistoryControls.vue';
+import PlayWorldlineCompare from './PlayWorldlineCompare.vue';
 import PlaySessionRail from './PlaySessionRail.vue';
 import PlaySessionMigration from './PlaySessionMigration.vue';
 import TavernImportPanel from './TavernImportPanel.vue';
@@ -131,6 +132,18 @@ const {
   submitChoice,
   submitTurn,
 } = usePlayWorkspace(props.workspace.path, providerConfigured);
+
+const comparisonOutcomePanel = useTemplateRef<InstanceType<typeof PlayOutcomePanel>>('comparisonOutcomePanel');
+async function comparisonOutcome(checkpointId: string): Promise<void> {
+  const session = selectedSession.value;
+  if (!session || interactionBlocked.value) return;
+  const current = historyCheckpoints.value.find(node => node.checkpointId === checkpointId)?.status === 'current';
+  if (!current && !await restoreCheckpoint(checkpointId)) return;
+  await nextTick();
+  if (selectedSession.value?.id !== session.id ||
+      (selectedSession.value.selectedTurnIds.at(-1) ?? 'initial-world') !== checkpointId) return;
+  await comparisonOutcomePanel.value?.generateAndFocus();
+}
 
 watch(() => props.requestedSessionId, async (id) => {
   if (!id) return;
@@ -781,6 +794,17 @@ function acceptGuidedSession(session: PlaySession): void {
           @retry="retryCheckpoint"
           @name="renameCheckpoint"
         />
+        <PlayWorldlineCompare
+          :session-id="selectedSession.id"
+          :workspace-key="workspace.path"
+          :revision="selectedSession.revision"
+          :lens="showSpoilers ? 'director' : 'player'"
+          :checkpoints="historyCheckpoints"
+          :disabled="interactionBlocked || historyLoading || Boolean(historyBusyArtifactId || historyRetryingArtifactId || historyNamingCheckpointId)"
+          @restore="restoreCheckpoint"
+          @name="renameCheckpoint"
+          @outcome="comparisonOutcome"
+        />
         <PlayCharacterCheckPanel
           :reports="characterCheck.reports.value"
           :running="Boolean(characterCheck.running.value)"
@@ -863,6 +887,7 @@ function acceptGuidedSession(session: PlaySession): void {
           </template>
         </PlayAdoptionPanel>
         <PlayOutcomePanel
+          ref="comparisonOutcomePanel"
           :session="selectedSession"
           :show-spoilers="showSpoilers"
           :disabled="outcomeDisabled"

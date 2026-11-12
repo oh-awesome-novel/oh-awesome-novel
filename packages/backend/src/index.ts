@@ -97,6 +97,7 @@ import {
   listPlaySessionSummaries,
   listPlayContextTraces,
   listPlaySessionCheckpoints,
+  comparePlayWorldlines,
   listPlayWritingReferenceAttachments,
   listReferenceWorks,
   normalizeLlmProviderConfig,
@@ -1149,6 +1150,30 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     ));
   app.get('/api/workspace/play-sessions/:id/checkpoints', (context) =>
     handleListPlaySessionCheckpoints(options, state, context.req.param('id') ?? '', context));
+  app.get('/api/workspace/play-sessions/:id/worldline-comparison', async (context) => {
+    const root = requireActiveWorkspaceRoot(options, state);
+    const id = context.req.param('id');
+    if (state.activePlayTurns.has(createPlayTurnLockKey(root, id))) {
+      return jsonResponse(context, 409, { error: 'Play session is being modified.' });
+    }
+    const params = new URL(context.req.url).searchParams;
+    const left = params.get('left'); const right = params.get('right');
+    const lens = params.get('lens') ?? 'player';
+    const page = params.get('page') ?? '0';
+    if (!left || !right || !['player', 'director'].includes(lens) || !/^\d{1,6}$/u.test(page) || Number(page) > 100_000 ||
+        [...params.keys()].some(key => !['left', 'right', 'lens', 'page'].includes(key) || params.getAll(key).length !== 1)) {
+      return jsonResponse(context, 400, { error: 'Invalid worldline comparison query.' });
+    }
+    try {
+      return jsonResponse(context, 200, comparePlayWorldlines(await readPlaySessionFiles(root, id), {
+        left, right, lens: lens as 'player' | 'director', page: Number(page),
+      }));
+    } catch (error) {
+      return jsonResponse(context, (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 422, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
   app.post('/api/workspace/play-sessions/:id/checkpoints/:checkpointId/restore', (context) =>
     handleRestorePlaySessionCheckpoint(
       options,

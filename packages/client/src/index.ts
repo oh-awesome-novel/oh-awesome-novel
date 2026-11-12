@@ -1,4 +1,7 @@
 import { parsePhaseOverview, parsePhaseRecall } from './play-phase-memory';
+import { parsePlayWorldlineComparison } from './play-worldline-compare';
+import type { PlayWorldlineComparison, PlayWorldlineCompareQuery } from './play-worldline-compare';
+export type { PlayWorldlineComparison, PlayWorldlineCompareQuery, PlayWorldlineDifference, PlayWorldlineSection } from './play-worldline-compare';
 import { parsePlayCharacterCheckList, parsePlayCharacterCheckResult } from './play-character-check';
 import type { PlayCharacterCheckInput, PlayCharacterCheckLens, PlayCharacterCheckReportView } from './play-character-check';
 export { PLAY_CHARACTER_CHECK_CATEGORY_LABELS, formatPlayCharacterCheckGuidance, samePlayCharacterCheckTarget } from './play-character-check';
@@ -2484,6 +2487,7 @@ export interface OanClient extends PlayRehearsalClientMethods, ForgeClientMethod
     attachment: PlayWritingReferenceAttachment;
   }>;
   listPlayCheckpoints(id: string): Promise<{ checkpoints: PlayCheckpointSummary[] }>;
+  comparePlayWorldlines(id: string, query: PlayWorldlineCompareQuery, signal?: AbortSignal): Promise<PlayWorldlineComparison>;
   restorePlayCheckpoint(
     id: string,
     checkpointId: string,
@@ -3412,6 +3416,16 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
         `/api/workspace/writing-references/${encodeURIComponent(attachmentId)}/detach`,
         { method: 'POST', body: {} },
       ).then((value) => parsePlayWritingReferenceDetachResponse(value, attachmentId));
+    },
+    comparePlayWorldlines: (id, query, signal) => {
+      const sessionId = requireSafePlayClientId(id, 'Play session id');
+      requireSafePlayClientId(query.left, 'Left checkpoint');
+      requireSafePlayClientId(query.right, 'Right checkpoint');
+      const page = query.page ?? 0;
+      if (!['player', 'director'].includes(query.lens) || !Number.isSafeInteger(page) || page < 0 || page > 100_000) throw new Error('Invalid worldline comparison query.');
+      const params = new URLSearchParams({ left: query.left, right: query.right, lens: query.lens, page: String(page) });
+      return requestJson<unknown>(`/api/workspace/play-sessions/${encodeURIComponent(sessionId)}/worldline-comparison?${params}`, { signal })
+        .then(value => parsePlayWorldlineComparison(value, sessionId, query));
     },
     listPlayCheckpoints: (id) =>
       requestJson<unknown>(

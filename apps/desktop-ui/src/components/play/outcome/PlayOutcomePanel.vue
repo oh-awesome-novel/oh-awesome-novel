@@ -65,6 +65,7 @@ async function generateAndFocus(): Promise<void> {
     reportHeading.value?.focus();
   }
 }
+defineExpose({ generateAndFocus });
 </script>
 
 <template>
