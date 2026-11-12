@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import VisualNovelStage from '../../../apps/desktop-ui/src/components/play/VisualNovelStage.vue';
 import VisualNovelTextBox from '../../../apps/desktop-ui/src/components/play/VisualNovelTextBox.vue';
@@ -90,8 +90,9 @@ describe('visual novel stage', () => {
     const wrapper = mount(VisualNovelStage, { props: { sessionId: 'a', scene: '客栈', turns: [turn], choices: ['走进门'], draft: '草稿。', disabled: true } });
     await wrapper.trigger('keydown', { key: '1' });
     expect(wrapper.emitted('choose')).toBeUndefined();
-    await wrapper.findAll('button').find(b => b.text().includes('历史'))!.trigger('click');
-    await wrapper.findAll('button').find(b => b.text().includes('回看'))!.trigger('click');
+    await wrapper.findAll('.vn-menu button').find(b => b.text() === '回看')!.trigger('click');
+    await wrapper.get('.vn-log-line').trigger('click');
+    await flushPromises();
     await wrapper.trigger('keydown', { key: ' ' });
     expect(wrapper.findComponent(VisualNovelTextBox).text()).toContain('雨停。');
     await wrapper.setProps({ sessionId: 'b', draft: undefined, turns: [{ ...turn, id: 'turn-b', stageSnapshot: { ...turn.stageSnapshot, sceneId: '山顶' } }] });

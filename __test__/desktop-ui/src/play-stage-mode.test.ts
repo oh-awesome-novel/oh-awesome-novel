@@ -119,6 +119,10 @@ describe('PlayWorkspace stage and workbench modes', () => {
 
     await switchMode(wrapper, '舞台');
     expect(wrapper.get('.play-stage-shell').text()).toContain('正在演出草稿 · 尚未保存');
+    // The author's own action leads the turn on stage; the draft follows it.
+    expect(wrapper.findComponent(VisualNovelTextBox).props('beat')).toMatchObject({ speaker: '你', text: '推开门', player: true });
+    await wrapper.get('.vn-stage').trigger('keydown', { key: ' ' });
+    await wrapper.get('.vn-stage').trigger('keydown', { key: ' ' });
     expect(wrapper.findComponent(VisualNovelTextBox).props('beat')?.text).toContain('雨还在下');
     expect(wrapper.get<HTMLTextAreaElement>('#play-stage-action-input').element.value).toBe('下一步');
     // An unsaved draft offers no options.
@@ -219,7 +223,7 @@ describe('PlayWorkspace stage and workbench modes', () => {
     expect(calls[2]).toMatchObject({ userText: '翻窗进去', actionKind: 'do', baseRevision: 3 });
 
     // Space / Enter on another stage button stays that button's own key.
-    const history = wrapper.findAll('.vn-stage header button').find(button => button.text() === '历史')!;
+    const history = wrapper.findAll('.vn-stage header button').find(button => button.text() === '回看')!;
     const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     history.element.dispatchEvent(enter);
     expect(enter.defaultPrevented).toBe(false);

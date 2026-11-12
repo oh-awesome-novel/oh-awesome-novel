@@ -100,6 +100,7 @@
 - [1430 Evidence-backed Chapter Review Workbench](1430.md)
 - [1440 Revision Impact Review](1440.md)
 - [1580 Play Stage And Workbench Mode Split](1580.md)
+- [1590 Stage Immersive Reading Controls](1590.md)
 
 ## Needs Review Tasks
 
@@ -118,7 +119,6 @@
 - [1550 Reference Material Revision Compare And Re-adoption](1550.md)
 - [1560 Cross-reference Technique Compare](1560.md)
 - [1570 EPUB, DOCX And PDF Reference Import](1570.md)
-- [1590 Stage Immersive Reading Controls](1590.md)
 - [1600 Character Portrait Descriptions And Prepared Portrait Sets](1600.md)
 - [1610 Explicit Speaker And Portrait Markup](1610.md)
 - [1620 Stage Mode Sentence Streaming](1620.md)
@@ -139,7 +139,9 @@
 
 2026-11-12 交付 [1580](1580.md) 舞台模式与专业模式拆分：同一会话两种呈现随时切换，草稿与进行中回合共享，舞台模式固定玩家视角，v5 只读回放；只改 Desktop UI，验证与未覆盖项见该 task 的 Implementation Notes。1530–1570 与它互不依赖，本次未做。
 
-当前共 **73 Completed、6 Needs Review、13 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400/1420/1430/1440 已交付；1410 的预检、筛选、重映射与采用记录已于 2026-11-10 交付，完整 Desktop 旅程与部分场景待复核（Needs Review）；1360 其余 handoff 与模型验收仍留在原任务。
+同日交付 [1590](1590.md) 舞台沉浸阅读控制：自动、快进、按句回看、隐藏界面、全屏、阅读设置，作者行动上舞台，说话者高亮与淡入淡出；只改 Desktop UI。
+
+当前共 **74 Completed、6 Needs Review、12 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400/1420/1430/1440 已交付；1410 的预检、筛选、重映射与采用记录已于 2026-11-10 交付，完整 Desktop 旅程与部分场景待复核（Needs Review）；1360 其余 handoff 与模型验收仍留在原任务。
 
 2026-11-10 新增 1450–1510 七项 Play 强化任务（九项建议，其中 1460、1470 各合并两项），范围、顺序与依赖见 [Play 模式强化规划](../plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)：先做 1520/1450/1460，再做 1480，其余按使用反馈排序。同日追加 [1520](1520.md) 回合候选项，协议与界面部分已交付。随后同日交付 [1450](1450.md) 带要求重演与补充行动建议、[1460](1460.md) 采纳表单与中文界面，1520 的“生成候选项 / 换一批”已接上；1520 的真实模型验收与三种用法的 SDK 级旅程未做，仍为 Needs Review。
 

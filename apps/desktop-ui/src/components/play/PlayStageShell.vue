@@ -56,6 +56,13 @@ const readOnly = computed(() => selectedSession.value?.schemaVersion !== 4);
 const turns = computed(() => readOnly.value
   ? selectedSession.value?.transcript ?? []
   : displaySession.value?.transcript ?? selectedSession.value?.transcript ?? []);
+// Only a turn still being generated is on stage; a stopped or failed one is taken down,
+// and its action goes back to the input where the author can see it.
+const liveTurn = computed(() => {
+  const run = provisionalTurn.value;
+  if (readOnly.value || !run) return undefined;
+  return ['starting', 'streaming', 'prepared', 'stopping', 'committing'].includes(run.phase) ? run : undefined;
+});
 const status = computed(() =>
   provisionalTurn.value?.statusMessage || turnAnnouncement.value || historyNotice.value || '');
 
@@ -111,8 +118,9 @@ function edit(basedOn?: string): void {
       :scene="selectedSession.sceneStart"
       :turns="turns"
       :choices="readOnly ? [] : suggestedActions.map(action => action.userText)"
-      :draft="readOnly ? undefined : provisionalTurn?.provisionalText"
-      :usage-operation-id="readOnly ? undefined : provisionalTurn?.turnId"
+      :draft="liveTurn?.provisionalText"
+      :draft-action="liveTurn?.userText"
+      :usage-operation-id="liveTurn?.turnId"
       :has-more-before="transcriptWindow?.hasMoreBefore"
       :loading-earlier="loadingEarlierTranscript"
       :disabled="readOnly || interactionBlocked || !providerConfigured"
