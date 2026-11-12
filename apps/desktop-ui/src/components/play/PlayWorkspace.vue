@@ -800,7 +800,7 @@ function acceptGuidedSession(session: PlaySession): void {
           :revision="selectedSession.revision"
           :lens="showSpoilers ? 'director' : 'player'"
           :checkpoints="historyCheckpoints"
-          :disabled="interactionBlocked || historyLoading || Boolean(historyBusyArtifactId || historyRetryingArtifactId || historyNamingCheckpointId)"
+          :disabled="interactionBlocked || historyLoading || Boolean(historyBusyArtifactId || historyRetryingArtifactId || historyNamingCheckpointId) || historyCheckpoints.find(node => node.status === 'current')?.checkpointId !== (selectedSession.selectedTurnIds.at(-1) ?? 'initial-world')"
           @restore="restoreCheckpoint"
           @name="renameCheckpoint"
           @outcome="comparisonOutcome"

@@ -53,7 +53,7 @@ it('Desktop selects two nodes, inspects differences, switches to one and names i
     await panel().get('.compare-confirm button:last-child').trigger('click');
     await vi.waitFor(async () => expect((await client.getPlaySession('compare')).session.selectedTurnIds).toEqual(['turn-artifact-1']));
     await vi.waitFor(() => expect(page.get('[data-worldline-checkpoint="turn-artifact-1"]').attributes('aria-current')).toBe('step'));
-    expect(panel().find('.compare-sides').exists()).toBe(false);
+    await vi.waitFor(() => expect(panel().find('.compare-sides').exists()).toBe(false));
     await vi.waitFor(() => expect(panel().get('select').attributes('disabled')).toBeUndefined());
     await panel().get('.compare-selectors').trigger('submit');
     await vi.waitFor(() => expect(panel().find('.compare-sides').exists()).toBe(true), { timeout: 5000 });

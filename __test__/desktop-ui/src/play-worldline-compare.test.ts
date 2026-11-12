@@ -83,5 +83,7 @@ it('keeps a same-revision read across transient background loading without expos
   expect(wrapper.find('.compare-sides').exists()).toBe(false);
   await wrapper.setProps({ disabled: false });
   expect(wrapper.find('.compare-sides').exists()).toBe(true);
+  await wrapper.setProps({ checkpoints: checkpoints.map(node => ({ ...node, status: node.checkpointId === 'turn-artifact-2' ? 'current' : 'variant' })) as never });
+  expect(wrapper.find('.compare-sides').exists()).toBe(false);
   wrapper.unmount();
 });

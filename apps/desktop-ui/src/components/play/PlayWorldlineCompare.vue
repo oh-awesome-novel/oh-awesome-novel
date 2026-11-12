@@ -38,7 +38,8 @@ function reset(): void {
 }
 // Background read windows also disable actions. They do not invalidate this
 // immutable comparison; only its identity/revision/lens does. Hide it while busy.
-watch(() => [props.workspaceKey, props.sessionId, props.revision, props.lens], reset);
+watch(() => [props.workspaceKey, props.sessionId, props.revision, props.lens,
+  props.checkpoints.find(node => node.status === 'current')?.checkpointId], reset);
 watch(() => [props.workspaceKey, props.sessionId], () => {
   left.value = ''; right.value = ''; names.value = { left: '', right: '' };
 });
