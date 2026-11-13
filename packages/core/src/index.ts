@@ -1315,3 +1315,6 @@ export {
   listPortraitImages, addPortraitImage, readImageAsset, listUnreferencedImageAssets, deleteUnreferencedImageAsset,
 } from './image-assets.js';
 export type { ImageAssetMime, ImageAssetErrorCode, ImageAssetEntry, ImageAssetContent } from './image-assets.js';
+export * from './work-registry.js';
+export * from './work-registry-files.js';
+export * from './reference-character-match.js';

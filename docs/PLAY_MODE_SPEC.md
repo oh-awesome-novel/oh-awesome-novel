@@ -8,6 +8,8 @@ Launch Package schemaVersion 1 的来源可带 `originWork: { id, title }`。作
 
 旧 Launch Package 没有这些字段仍按原合同读取，不补默认契约，不进行迁移。未启用契约的会话保持原有序列化和冻结前缀。作品归属可单独标注；只有两部以上才启用融合。来源未标注作品、多作品都有 world 来源但没有裁定条目，均为非阻断警告，宿主不判断语义冲突。
 
+1530 的正式作品登记见 `works.yaml` 与对象的 `originWorkId`。开局来源选择会预填正式归属，角色同目录的各文件共用 meta 归属；作者仍可调整并确认。显式“预填作品归属”先读正式文件，未标注时才查仍保留的 accepted 采纳记录。`original` 不回退到参考来源；没有清单不创建默认文件，旧 Launch Package 的字段与读取合同不变。
+
 确认开局后在会话 metadata 的 `playCrossover` 冻结契约、来源摘要/hash 与参与者的作品/初始来源边界，进入固定系统前缀。isolated 下初始资料只来自本人作品；未标注的角色不自动得到任意作品的知识。shared 下使用已选来源。作者提供的当前场景与人物意图仍是显式输入。场景试演按此边界构造逐角色的初始感知资料，跨作品资料使用现有 Director 显式知识授予并记录来源回合。
 
 启用契约的沉浸会话允许 `knowledgeChanges` 中 `learnSource: {type, participantRef, sourceId, eventRef}`（eventRef 是本回合 informationSpread 事件的一基位置）。宿主校验参与者、冻结来源、重复授予和事件依据，生成 `playKnowledge` 内的 `sourceGrant`：`id, kind, participantRef, sourceId, learnedAtTurnId, learnedByEventId, canonical:false`。该记录属于原有分支快照，不能通过 stateDelta 伪造；Restore/Retry 不继承兄弟分支的获知。没有融合契约的会话拒绝此变更。Player 通用状态不展示私有的参与者认知。

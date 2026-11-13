@@ -1,3 +1,4 @@
+import { validateWorkRegistryReferences } from '@oh-awesome-novel/core';
 import { parseDocument } from 'yaml';
 
 import type { CandidateFileSnapshot } from './candidate-change-set';
@@ -6,8 +7,8 @@ import type { WorkspaceProjectionPathRule } from './workspace-projection';
 
 /** Host-only closure needed to check both forward references and deleted targets. */
 export const NOVEL_REFERENCE_PROJECTION_RULES: readonly WorkspaceProjectionPathRule[] = Object.freeze(
-  ['chapters', 'characters', 'world', 'state', 'timeline', 'foreshadow']
-    .map((path) => Object.freeze({ kind: 'prefix' as const, path })),
+  [{ kind: 'exact' as const, path: 'works.yaml' }, ...['chapters', 'characters', 'world', 'state', 'timeline', 'foreshadow']
+    .map((path) => Object.freeze({ kind: 'prefix' as const, path }))],
 );
 
 type Namespace = 'character' | 'chapter' | 'world' | 'event' | 'arc' | 'foreshadow';
@@ -41,7 +42,7 @@ const ARRAY_REFERENCE_FIELDS = new Set([
 ]);
 
 export function isNovelReferencePath(path: string): boolean {
-  return /^(?:chapters|characters|world|state|timeline|foreshadow)\//u.test(path);
+  return path === 'works.yaml' || /^(?:chapters|characters|world|state|timeline|foreshadow)\//u.test(path);
 }
 
 /**
@@ -68,6 +69,8 @@ export function validateFinalObjectTreeReferences(input: {
       files.set(path, change.content);
     }
   }
+
+  validateWorkRegistryReferences([...files].map(([path, content]) => ({ path, content })));
 
   const ids: Record<Namespace, Map<string, string>> = {
     character: new Map(), chapter: new Map(), world: new Map(),

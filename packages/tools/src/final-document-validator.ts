@@ -8,6 +8,7 @@ import {
   assertReferenceProgress,
   parseSummaryDocument,
   normalizeRosterCharacter,
+  normalizeWorkRegistry, normalizeReferenceCharacters, validateWorkId,
 } from '@oh-awesome-novel/core';
 
 import {
@@ -22,6 +23,7 @@ export const DEFAULT_MAX_DOCUMENT_NODES = 100_000;
 
 export type FinalDocumentValidatorId =
   | 'chapter-markdown'
+  | 'work-registry'
   | 'character-object'
   | 'world-object'
   | 'state-yaml'
@@ -151,6 +153,7 @@ const FRONTMATTER_KEYS: Record<
     'aliases',
     'category',
     'parentId',
+    'originWorkId',
   ]),
   reference: new Set([
     ...COMMON_FRONTMATTER_KEYS,
@@ -212,6 +215,7 @@ export function getFinalDocumentValidatorIdForPath(
   if (/^world\/.+\.(?:md|yaml)$/u.test(path)) return 'world-object';
   if (/^state\/.+\.yaml$/u.test(path)) return 'state-yaml';
   if (/^timeline\/.+\.yaml$/u.test(path)) return 'timeline-yaml';
+  if (path === 'works.yaml') return 'work-registry';
   if (/^foreshadow\/.+\.yaml$/u.test(path)) return 'foreshadow-yaml';
   if (/^summaries\/.+\.md$/u.test(path)) return 'summary-markdown';
   if (/^outline\/.+\.md$/u.test(path)) return 'outline-markdown';
@@ -260,6 +264,9 @@ export function validateFinalDocument(
   }
 
   switch (validator) {
+    case 'work-registry':
+      normalizeWorkRegistry(parseYamlRecord(path, content));
+      break;
     case 'chapter-markdown':
       validateChapterMarkdown(path, content);
       break;
@@ -402,12 +409,15 @@ function validateCharacterObject(path: string, content: string): void {
       'status',
       'createdAt',
       'updatedAt',
+      'originWorkId', 'referenceCharacters',
     ]);
     assertOnlyAllowedKeys(data, allowed, `${path} root`);
     if (data.id !== characterId) {
       throw new Error(`Character meta id must match path id ${characterId}: ${path}.`);
     }
     assertNonEmptyText(data.name ?? data.displayName, `${path} character name`, 300);
+    if (data.originWorkId !== undefined) validateWorkId(data.originWorkId);
+    if (data.referenceCharacters !== undefined) normalizeReferenceCharacters(data.referenceCharacters);
   } else {
     assertOptionalIdentity(data, ['characterId', 'ownerId'], characterId, path);
   }
@@ -427,10 +437,12 @@ function validateWorldObject(path: string, content: string): void {
     if (parts.frontmatter) {
       assertOptionalIdentity(parts.frontmatter, ['id'], fileId, path, [relativeStem]);
       assertOptionalIdentity(parts.frontmatter, ['objectId', 'entityId'], objectId, path);
+      if (parts.frontmatter.originWorkId !== undefined) validateWorkId(parts.frontmatter.originWorkId);
     }
     return;
   }
   const data = parseYamlRecord(path, content);
+  if (data.originWorkId !== undefined) validateWorkId(data.originWorkId);
   assertOptionalIdentity(data, ['id'], fileId, path, [relativeStem]);
   assertOptionalIdentity(data, ['objectId', 'entityId'], objectId, path);
   validateStructuredValue(data, path);

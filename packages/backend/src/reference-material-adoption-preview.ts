@@ -148,7 +148,7 @@ export async function assertReferenceMaterialAdoptionPreviewCurrent(
   workspaceRoot: string,
   stored: StoredReferenceMaterialAdoptionPreview,
 ): Promise<void> {
-  const selections = stored.context.targets.flatMap((target) =>
+  const selections = stored.context.characterAdoption?.selections ?? stored.context.targets.flatMap((target) =>
     target.entries.map((entry) => ({
       entryId: entry.id,
       targetFile: target.targetFile,

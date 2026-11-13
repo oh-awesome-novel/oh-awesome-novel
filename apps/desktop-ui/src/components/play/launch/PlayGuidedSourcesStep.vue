@@ -37,7 +37,7 @@ function toggle(sourceId: string, event: Event): void {
     </header>
 
     <p v-if="error" :id="`${prefix}-error`" class="field-error" role="alert">{{ error }}</p>
-    <button type="button" :disabled="disabled || suggestionsLoading || !selectedSourceIds.length" @click="emit('prefill')">{{ suggestionsLoading ? '正在查找采用记录…' : '从已采纳材料预填作品归属' }}</button>
+    <button type="button" :disabled="disabled || suggestionsLoading || !selectedSourceIds.length" @click="emit('prefill')">{{ suggestionsLoading ? '正在读取作品归属…' : '预填作品归属' }}</button>
     <p v-if="suggestionNotice" role="status">{{ suggestionNotice }}</p>
     <datalist :id="`${prefix}-works`"><option v-for="title in [...new Set(sources.flatMap(source => source.originWork?.title ?? []))]" :key="title" :value="title"></option></datalist>
 

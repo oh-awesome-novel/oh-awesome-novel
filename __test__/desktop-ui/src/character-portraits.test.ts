@@ -210,8 +210,7 @@ describe('prepared portraits on the stage', () => {
 
   it('shows the default image as the original file, a silhouette with its description, and the old single image', async () => {
     const wrapper = mountStage(sets(sha(ORIGINAL)));
-    await flushPromises();
-    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.findAll('.vn-cast > span')[0]!.find('img').exists()).toBe(true));
     const [nian, lu, old] = wrapper.findAll('.vn-cast > span');
     // The prepared set wins over the launch-time data URL, and the image comes from the asset folder.
     expect(api.readImageAsset).toHaveBeenCalledWith('assets/portraits/nian/casual.png');
@@ -229,8 +228,8 @@ describe('prepared portraits on the stage', () => {
   it('marks an image replaced since the session started, and falls back to a silhouette with the reason when it is gone', async () => {
     api.readImageAsset.mockResolvedValue(new Blob([REPLACED], { type: 'image/png' }));
     const replaced = mountStage(sets(sha(ORIGINAL)));
-    await flushPromises();
-    await flushPromises();
+    // Native WebCrypto work can outlive a fixed number of promise flushes.
+    await vi.waitFor(() => expect(replaced.findAll('.vn-cast > span')[0]!.find('img').exists()).toBe(true));
     const changed = replaced.findAll('.vn-cast > span')[0]!;
     expect(changed.get('img').attributes('src')).toBe('blob:image');
     expect(changed.text()).toContain('开局后已更换');

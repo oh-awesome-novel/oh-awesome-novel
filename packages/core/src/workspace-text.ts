@@ -3,7 +3,7 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 
-const ROOTS = ['chapters', 'characters', 'world', 'state', 'timeline', 'foreshadow', 'summaries', 'outline', '.oan/constitution', '.oan/workflow.yaml'];
+const ROOTS = ['works.yaml', 'chapters', 'characters', 'world', 'state', 'timeline', 'foreshadow', 'summaries', 'outline', '.oan/constitution', '.oan/workflow.yaml'];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 10_000;

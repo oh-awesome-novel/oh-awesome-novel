@@ -368,7 +368,7 @@ export function createReferenceMaterialAdoptionController(
         contextFingerprint,
         previewFingerprint,
       };
-      const baselineFiles = await readCandidateTargetSnapshots(workspaceRoot, targetFiles);
+      const baselineFiles = await readCandidateTargetSnapshots(workspaceRoot, context.targets.map(target => target.targetFile));
       const proposal = createReferenceMaterialAdoptionChangeProposal({
         adoptionContext: context,
         plan: generated.plan,

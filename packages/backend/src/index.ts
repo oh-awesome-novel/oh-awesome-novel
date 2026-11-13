@@ -1,3 +1,4 @@
+import { normalizeCharacterSelectionFields } from '@oh-awesome-novel/core';
 import { createRevisionImpactHandlers } from './revision-impact';
 import { createChapterReviewHandlers } from './chapter-review';
 import { generateChapterReview, generateChapterReviewRevision } from '@oh-awesome-novel/agent';
@@ -37,6 +38,7 @@ import { resolveTavernPlaySourceContent, formatTavernLorebookContext } from '@oh
 import { createManuscriptImportHandlers } from './manuscript-import.js';
 import { createTavernImportHandlers } from './tavern-import.js';
 import { createImageAssetHandlers } from './image-assets.js';
+import { createWorkRegistryHandlers } from './work-registry.js';
 import { createCharacterPortraitHandlers } from './character-portraits.js';
 import { createPlaySessionMigrationHandlers } from './play-session-migration.js';
 import { previewPlaySessionMigration } from '@oh-awesome-novel/core';
@@ -827,6 +829,9 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   app.get('/api/workspace/image-assets/file', (context) => imageAssets.read(context));
   app.delete('/api/workspace/image-assets/file', (context) => imageAssets.remove(context));
   app.get('/api/workspace/image-assets/unreferenced', () => imageAssets.listUnreferenced());
+  const workRegistry = createWorkRegistryHandlers({ getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state), getStore: async root => (await getPendingActionServices(state, root)).store });
+  app.get('/api/workspace/work-registry', context => workRegistry.read(context));
+  app.post('/api/workspace/work-registry/propose', context => workRegistry.propose(context));
   const characterPortraits = createCharacterPortraitHandlers({
     getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
     getStore: async (root) => (await getPendingActionServices(state, root)).store,
@@ -2693,7 +2698,7 @@ async function handlePreflightReferenceMaterialAdoption(
       if (!isRecord(value)) {
         throw new InvalidJsonBodyError(`selections[${index}] must be an object.`);
       }
-      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath']);
+      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath', 'characterDecision', 'relationshipCharacters']);
       if (
         typeof value.entryId !== 'string'
         || typeof value.targetFile !== 'string'
@@ -2707,6 +2712,7 @@ async function handlePreflightReferenceMaterialAdoption(
         );
       }
       return {
+        ...normalizeCharacterSelectionFields(value),
         entryId: value.entryId,
         targetFile: value.targetFile,
         ...(value.targetPath ? { targetPath: value.targetPath } : {}),
@@ -2736,7 +2742,7 @@ async function handleCreateReferenceMaterialAdoptionPreview(
       if (!isRecord(value)) {
         throw new InvalidJsonBodyError(`selections[${index}] must be an object.`);
       }
-      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath']);
+      assertOnlyJsonFields(value, ['entryId', 'targetFile', 'targetPath', 'characterDecision', 'relationshipCharacters']);
       const entryId = getOptionalString(value, 'entryId');
       const targetFile = getOptionalString(value, 'targetFile');
       const targetPath = getOptionalString(value, 'targetPath');
@@ -2745,7 +2751,7 @@ async function handleCreateReferenceMaterialAdoptionPreview(
           `selections[${index}] requires entryId and targetFile.`,
         );
       }
-      return { entryId, targetFile, ...(targetPath ? { targetPath } : {}) };
+      return { ...normalizeCharacterSelectionFields(value), entryId, targetFile, ...(targetPath ? { targetPath } : {}) };
     });
     return controller.createPreview(referenceId, {
       catalogFingerprint,

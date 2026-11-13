@@ -356,3 +356,4 @@ export {
   ROSTER_PORTRAITS_PRODUCER, applyRosterPortraitsEdit, createRosterPortraitsChangeProposal, rosterProfilePath, stripRosterStageFields,
 } from './roster-portraits-change-producer';
 export type { RosterPortraitsEdit } from './roster-portraits-change-producer';
+export * from './work-registry-change-producer';

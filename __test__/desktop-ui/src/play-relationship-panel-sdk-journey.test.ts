@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Vue needs a renderer DOM, while the localhost Hono adapter needs Node Fetch classes.
-vi.hoisted(async () => {
+await vi.hoisted(async () => {
   const http = await import('undici');
   for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]);
 });
@@ -20,6 +20,8 @@ import type { WorkspaceSummary } from '@oh-awesome-novel/client';
 // The Desktop talks to the real HTTP client; nothing about the turn is faked below the model.
 const api = vi.hoisted(() => ({} as Record<string, unknown>));
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
+// Bind every workspace panel to this fixture's real SDK, including shared composables.
+vi.mock('../../../apps/desktop-ui/src/composables/useWorkspaceApi', () => ({ useWorkspaceApi: () => api }));
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
 
 const git = promisify(execFile);

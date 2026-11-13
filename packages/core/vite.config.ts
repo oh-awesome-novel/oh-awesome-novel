@@ -4,6 +4,7 @@ export default defineConfig({
   pack: {
     entry: {
       index: "src/index.ts",
+      "work-registry": "src/work-registry.ts",
       "revision-impact-contract": "src/revision-impact-contract.ts",
       "chapter-review-contract": "src/chapter-review-contract.ts",
       "play-chapter-writing-contract": "src/play-chapter-writing-contract.ts",

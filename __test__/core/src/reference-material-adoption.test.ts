@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
+import { parse, stringify } from 'yaml';
 
 import {
   createReferenceMaterialAdoptionPlan,
@@ -63,6 +64,31 @@ describe('Reference Material adoption plan', () => {
         draft: '# Replacement\n',
       }],
     })).toThrow(/does not match target baseline/u);
+  });
+
+  it('records only adopted entries when sibling character files are skipped', () => {
+    const kept = target('kept', 'characters', 'characters/person/summary.md', false);
+    const skipped = target('skipped', 'characters', 'characters/person/notes.md', false);
+    skipped.entries[0]!.title = 'Skipped alias';
+    const metadata = {
+      ...target('metadata', 'characters', 'characters/person/meta.yaml', false),
+      entries: [],
+      dependsOnEntryIds: [kept.entries[0]!.id, skipped.entries[0]!.id],
+      hostDraft: stringify({ id: 'person', displayName: 'Selected entry', originWorkId: 'work-a', referenceCharacters: [] }),
+    };
+    const context = adoptionContext([kept, skipped, metadata]);
+    const plan = createReferenceMaterialAdoptionPlan(context, { targets: [
+      { targetId: kept.id, decision: 'create', reason: 'selected', draft: '# Adopted\n' },
+      { targetId: skipped.id, decision: 'skip', reason: 'uncertain', draft: null },
+      // A model-supplied metadata draft cannot override the deterministic host draft.
+      { targetId: metadata.id, decision: 'create', reason: 'forged', draft: 'id: other\n' },
+    ] });
+    expect(parse(plan.decisions[2]!.draft!)).toMatchObject({
+      id: 'person', originWorkId: 'work-a', referenceCharacters: [{ name: 'Selected entry', referenceId: context.referenceId }],
+    });
+    expect(parse(plan.decisions[2]!.draft!).referenceCharacters).toHaveLength(1);
+    const allSkipped = createReferenceMaterialAdoptionPlan(context, { targets: [kept, skipped].map(t => ({ targetId: t.id, decision: 'skip', reason: 'uncertain', draft: null })) });
+    expect(allSkipped.decisions.every(d => d.decision === 'skip')).toBe(true);
   });
 });
 

@@ -6,6 +6,7 @@ import { evaluateAggregateSummaries } from './summary-evidence.js';
 import type { FrozenWorkspaceSnapshot } from './chapter-evidence-freshness.js';
 import { readAgentGovernanceHistory } from './agent-usage-store.js';
 import { assertUsageSessionId } from './agent-usage.js';
+import { normalizeWorkRegistry } from './work-registry.js';
 import { readWorkspaceTextFile } from './workspace-text.js';
 
 export type ProjectHealthSeverity = 'info' | 'warning' | 'error';
@@ -59,6 +60,16 @@ export function evaluateProjectHealth(snapshot: FrozenWorkspaceSnapshot, options
     }]),
     ...timelineGaps.map((id): ProjectHealthIssue => ({ id: `timeline-gap:${id}`, severity: 'info', title: 'No timeline event for chapter', detail: `${id} has chapter text but no timeline event.`, path: `chapters/${id}.md` })),
   ];
+  const registryData = readYaml(files.get('works.yaml'));
+  if (registryData !== undefined) {
+    try {
+      const registry = normalizeWorkRegistry(registryData);
+      if (registry.works.length >= 2) for (const id of characterIds) {
+        const meta = readYaml(files.get(`characters/${id}/meta.yaml`));
+        if (record(meta) && meta.originWorkId === undefined) issues.push({ id: `work-attribution:${id}`, severity: 'info', title: '角色归属可核对', detail: `${id} 尚未标注原作；如果是原创人物，可以保持未标注。`, path: `characters/${id}/meta.yaml` });
+      }
+    } catch { issues.push({ id: 'invalid-work-registry', severity: 'warning', title: '作品清单无法读取', detail: '请检查 works.yaml 的字段和唯一 ID。', path: 'works.yaml' }); }
+  }
   if (latestStateStale) issues.push({ id: 'latest-state-stale', severity: 'warning', title: 'Chapter state has stale source evidence', detail: 'At least one settled chapter no longer matches its recorded source hash. Global state is not automatically retracted.', path: 'state/chapters' });
   if (options.pendingActionCount && options.pendingActionCount > 0) issues.push({ id: 'pending-actions', severity: 'info', title: 'PendingAction exists', detail: `${options.pendingActionCount} pending action(s) need review.` });
   return { generatedAt: options.generatedAt ?? '1970-01-01T00:00:00.000Z', missingCharacterCards, chaptersWithoutSummaries, activeHookCount, latestStateStale, timelineGapCount: timelineGaps.length, pendingActionCount: options.pendingActionCount ?? 0, issues, unsettledChapters };
@@ -91,7 +102,7 @@ export async function readProjectHealth(workspaceRoot: string, options: ReadProj
       files.push(file);
     }
   }
-  for (const root of ['characters', 'chapters', 'summaries', 'state', 'foreshadow', 'timeline']) await visit(root);
+  for (const root of ['works.yaml', 'characters', 'chapters', 'summaries', 'state', 'foreshadow', 'timeline']) await visit(root);
   const health = evaluateProjectHealth({ files, directories }, { ...options, generatedAt: options.generatedAt ?? new Date().toISOString() });
   const usageIssues = await inspectWorkspaceUsageHealthIssues(root);
   return usageIssues.length ? { ...health, issues: [...health.issues, ...usageIssues] } : health;
