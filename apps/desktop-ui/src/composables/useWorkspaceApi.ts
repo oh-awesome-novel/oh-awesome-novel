@@ -1,5 +1,7 @@
 import { oanClient } from '../client';
 
+export { COMFY_WORKFLOW_SLOTS } from '@oh-awesome-novel/client';
+
 export type {
   ActiveReferenceDeconstructionRunReadResult,
   CharacterStepDraft,
@@ -166,6 +168,11 @@ export type {
   ProjectionRebuildResult,
   ProjectHealth,
   ProjectHealthIssue,
+  ComfyWorkflowMapping,
+  ComfyWorkflowSlot,
+  ImageProviderKind,
+  ImageProviderSaveInput,
+  ImageProviderView,
   ProviderCheckInput,
   ProviderCheckResult,
   ProviderConfigInput,

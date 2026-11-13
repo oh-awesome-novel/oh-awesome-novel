@@ -66,7 +66,7 @@ M15  Long-session Play And Author Review Workflows (In progress)
 M16  Play Canon Rewrite And Crossover Experience (Planned)
 M17  Crossover Source Material (In progress)
 M18  Play Stage Presentation
-M19  Portrait Image Generation (Planned)
+M19  Portrait Image Generation (In progress)
 ```
 
 ## M0. Documentation Foundation
@@ -258,7 +258,7 @@ Status: Completed（2026-11-12 立项；1580 / 1590 于 2026-11-12、1600 / 1610
 
 ## M19. Portrait Image Generation
 
-Status: Planned（2026-11-12 立项，均未实现）。Tasks：[1630](tasks/1630.md)–[1650](tasks/1650.md)，范围、待定决策与依赖见 [角色立绘生图模块规划](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md)。
+Status: In progress（2026-11-12 立项；1630 于 2026-11-12、1640 于 2026-11-13 交付，1650 待实施）。Tasks：[1630](tasks/1630.md)–[1650](tasks/1650.md)，范围、待定决策与依赖见 [角色立绘生图模块规划](plans/PORTRAIT_IMAGE_GENERATION_PLAN_2026-11-12.md)。
 
 目标：作者在独立页面为角色立绘生成候选图，挑选后存入图片资源目录，并经审批把路径写进角色卡。按作者 2026-11-12 的决定，图片单独存放、不提交 Git，舞台使用原图，Sandbox Change Engine 不改、只审批路径这一行文本；1630 定义图片资源目录及导入、存入、读取规则（只新增不覆盖，Agent 不可见），并先于 M18 的 1600。1640 提供 ComfyUI 与经 AI SDK 的在线服务适配器，并记录外发；1650 是工作台。生图不由 Play 或模型触发；图片只在作者点击采用时存入资源目录，角色卡在 Accept 前不变；密钥、服务地址与工作流不写入小说工作区。
 

@@ -1328,3 +1328,14 @@ export type { ImageAssetMime, ImageAssetErrorCode, ImageAssetEntry, ImageAssetCo
 export * from './work-registry.js';
 export * from './work-registry-files.js';
 export * from './reference-character-match.js';
+export {
+  COMFY_WORKFLOW_SLOTS, IMAGE_GENERATION_LIMITS, IMAGE_PROVIDER_KINDS, ImageGenerationError,
+  composePortraitPrompt, createEmptyImageProviderConfigState, fillComfyWorkflow, inspectComfyWorkflow, isLoopbackHost,
+  normalizeImageProviderBaseUrl, normalizeImageProviderConfig, normalizePortraitImageRequest, parseImageGenerationLogRecord,
+  redactImageProviderConfig, removeImageProviderConfig, upsertImageProviderConfig,
+} from './image-provider.js';
+export type {
+  ComfyWorkflowMapping, ComfyWorkflowSlot, ComfyWorkflowTarget, ImageGenerationErrorCode, ImageGenerationLogRecord,
+  ImageProviderConfig, ImageProviderConfigState, ImageProviderKind, ImageProviderLastError, ImageProviderWorkflow,
+  PortraitImage, PortraitImageRequest, PortraitImageResult, PortraitPromptParts,
+} from './image-provider.js';
