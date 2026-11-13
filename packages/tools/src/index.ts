@@ -302,6 +302,7 @@ export {
   commitPendingActionFiles,
   commitFiles,
   createPendingActionCommitMessage,
+  ensureGitLocalExclude,
   gitDiff,
   initializeWorkspaceRepository,
   gitStatusShort,
@@ -351,3 +352,7 @@ export * from './play-chapter-writing';
 
 export * from './chapter-review';
 export * from './revision-impact';
+export {
+  ROSTER_PORTRAITS_PRODUCER, applyRosterPortraitsEdit, createRosterPortraitsChangeProposal, rosterProfilePath, stripRosterStageFields,
+} from './roster-portraits-change-producer';
+export type { RosterPortraitsEdit } from './roster-portraits-change-producer';

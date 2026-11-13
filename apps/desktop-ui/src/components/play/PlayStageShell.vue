@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue';
+import { computed, shallowRef, useTemplateRef } from 'vue';
+import { readPlaySessionPortraitSets } from '@oh-awesome-novel/client';
 
 import PlayStageActionBar from './PlayStageActionBar.vue';
 import VisualNovelStage from './VisualNovelStage.vue';
@@ -66,6 +67,22 @@ const liveTurn = computed(() => {
 const status = computed(() =>
   provisionalTurn.value?.statusMessage || turnAnnouncement.value || historyNotice.value || '');
 
+/** Characters whose portraits beyond the per-session limit were left out when the session started. */
+const skippedPortraits = computed(() => {
+  const session = selectedSession.value;
+  if (!session) return '';
+  const roster = Array.isArray(session.metadataExtensions.characterRoster) ? session.metadataExtensions.characterRoster as Array<{ id?: unknown; name?: unknown }> : [];
+  return Object.entries(readPlaySessionPortraitSets(session.metadataExtensions.characterPortraitSets))
+    .filter(([, set]) => set.skipped.length > 0)
+    .map(([id, set]) => {
+      const name = roster.find(character => character.id === id)?.name;
+      return `${typeof name === 'string' ? name : id}有 ${set.skipped.length} 套`;
+    })
+    .join('，');
+});
+const skippedDismissedFor = shallowRef('');
+const PORTRAITS_PER_SESSION = 8;
+
 type StageChoice = Pick<PlaySuggestedActionView, 'userText' | 'actionKind' | 'timeAdvance'>;
 
 /** Sends one option as the turn's action; the shared draft is left alone. */
@@ -114,6 +131,7 @@ function edit(basedOn?: string): void {
       :session-id="selectedSession.id"
       :roster="selectedSession.metadataExtensions.characterRoster"
       :portraits="selectedSession.metadataExtensions.characterPortraits"
+      :portrait-sets="selectedSession.metadataExtensions.characterPortraitSets"
       :backgrounds="selectedSession.metadataExtensions.sceneBackgrounds"
       :scene="selectedSession.sceneStart"
       :turns="turns"
@@ -130,6 +148,10 @@ function edit(basedOn?: string): void {
       @close="emit('exit')"
     >
       <template #controls>
+        <p v-if="skippedPortraits && skippedDismissedFor !== selectedSession.id" class="play-stage-readonly" role="note">
+          每个角色最多带 {{ PORTRAITS_PER_SESSION }} 套立绘进一场会话：{{ skippedPortraits }}没有带入。
+          <button type="button" class="play-stage-note-dismiss" @click="skippedDismissedFor = selectedSession.id">知道了</button>
+        </p>
         <p v-if="readOnly" class="play-stage-readonly" role="note">
           场景排练在舞台模式只读回放；继续排练请回到专业模式。
         </p>
@@ -167,6 +189,17 @@ function edit(basedOn?: string): void {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.play-stage-note-dismiss {
+  margin-left: 8px;
+  padding: 2px 8px;
+  color: inherit;
+  border: 1px solid #657181;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
 
 .play-stage-readonly {

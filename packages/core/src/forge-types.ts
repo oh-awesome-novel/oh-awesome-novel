@@ -12,6 +12,8 @@ export interface ForgeCharacterPlan {
   id: string; name: string; aliases: string[];
   /** Optional so older plans stay readable; roster profiles fall back to 'other'. */
   genderKind?: 'girl' | 'boy' | 'other';
+  /** Drafted portrait descriptions, text only; images are added later by the author. */
+  portraits?: Array<{ id: string; label: string; description: string; usage?: string }>;
   palette: { base: string; mainTones: ForgeTrait[]; accents: ForgeTrait[] };
   facets: ForgeFacet[];
   clarifications: Array<{ trait: string; meaning: string; when: string; not: string }>;

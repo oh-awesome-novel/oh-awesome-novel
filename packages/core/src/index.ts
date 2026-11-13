@@ -1285,7 +1285,8 @@ export * from './character-roster.js';
 export * from './text-speaker-parser.js';
 export * from './scene-frame-protocol.js';
 
-export { attachPlayCharacterRoster } from './character-roster-store.js';
+export { attachPlayCharacterRoster, recordPlaySessionPortraitSet } from './character-roster-store.js';
+export type { PlaySessionPortrait, PlaySessionPortraitSet } from './character-roster-store.js';
 
 export * from './forge-types';
 
@@ -1308,3 +1309,9 @@ export * from './chapter-review.js';
 export * from './chapter-review-store.js';
 export * from './revision-impact-contract.js';
 export * from './revision-impact.js';
+export {
+  IMAGE_ASSET_ROOT, PORTRAIT_ASSET_DIRECTORY, IMAGE_ASSET_GITIGNORE_PATTERN, IMAGE_ASSET_MAX_BYTES, IMAGE_ASSET_LIMITS,
+  ImageAssetError, detectImageAssetMime, assertImageAssetPath, isImageAssetPath, portraitAssetDirectory,
+  listPortraitImages, addPortraitImage, readImageAsset, listUnreferencedImageAssets, deleteUnreferencedImageAsset,
+} from './image-assets.js';
+export type { ImageAssetMime, ImageAssetErrorCode, ImageAssetEntry, ImageAssetContent } from './image-assets.js';

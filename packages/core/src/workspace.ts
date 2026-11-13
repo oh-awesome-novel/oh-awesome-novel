@@ -3,6 +3,7 @@ import { basename, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parse, stringify } from 'yaml';
 import { writeFileAtomically } from './atomic-file.js';
+import { IMAGE_ASSET_GITIGNORE_PATTERN } from './image-assets.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -395,11 +396,13 @@ writingProfile:
   await writeFile(join(oanDir, 'config.yaml'), defaultConfig, 'utf-8');
 
   // Approval drafts and chat state are disposable, never novel history.
+  // Image assets live beside the novel but stay out of Git; formal files only record their paths.
   await writeFile(join(rootDir, '.gitignore'), [
     '.DS_Store',
     '/.workspace/',
     '/.oan/sessions/',
     '/.oan/indexes/',
+    IMAGE_ASSET_GITIGNORE_PATTERN,
     '',
   ].join('\n'), 'utf-8');
 

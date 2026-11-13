@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createWorkspaceProjection } from '@oh-awesome-novel/tools';
+import { createWorkspaceProjection, stripRosterStageFields } from '@oh-awesome-novel/tools';
 import { createContextEvidence } from '@oh-awesome-novel/agent';
 import type { RuntimeContextItem } from '@oh-awesome-novel/runtime';
 const CANONICAL_WRITING_SOURCE = /^(?:characters\/[a-zA-Z0-9_-]+\/(?:profile\.md|roster-profile\.yaml)|world\/(?:rules\.md|places\/[a-zA-Z0-9_-]+\.md))$/;
@@ -20,7 +20,8 @@ export async function loadCanonicalWritingContext(workspaceRoot: string, value: 
   const projection = await createWorkspaceProjection({ workspaceRoot, rules: paths.map(path => ({ kind: 'exact', path })), maxFileBytes: 64 * 1024, maxTotalBytes: 256 * 1024 });
   if (projection.baselineFiles.length !== paths.length) throw new Error('A selected canonical writing source no longer exists.');
   return {
-    items: projection.baselineFiles.map(file => ({ kind: 'selected', title: `作者选定设定：${file.path}`, content: file.content,
+    // Portraits and the name plate colour are for the stage; writing context reads no more than before they existed.
+    items: projection.baselineFiles.map(file => ({ ...file, content: file.path.endsWith('/roster-profile.yaml') ? stripRosterStageFields(file.content) : file.content })).map(file => ({ kind: 'selected', title: `作者选定设定：${file.path}`, content: file.content,
       provenance: [createContextEvidence({ sourceId: 'canonicalWritingSource', kind: 'selected', path: file.path, sourceHash: createHash('sha256').update(file.content).digest('hex'), originalChars: file.content.length, budgetLayer: 'L1', semanticBoundary: 'compressible' })] })),
     assertFresh: () => projection.assertFresh(),
   };

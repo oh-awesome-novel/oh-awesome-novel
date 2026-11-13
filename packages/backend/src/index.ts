@@ -36,6 +36,8 @@ import { assertManuscriptImportPreview, assertTavernImportPreviewFresh } from '@
 import { resolveTavernPlaySourceContent, formatTavernLorebookContext } from '@oh-awesome-novel/core';
 import { createManuscriptImportHandlers } from './manuscript-import.js';
 import { createTavernImportHandlers } from './tavern-import.js';
+import { createImageAssetHandlers } from './image-assets.js';
+import { createCharacterPortraitHandlers } from './character-portraits.js';
 import { createPlaySessionMigrationHandlers } from './play-session-migration.js';
 import { previewPlaySessionMigration } from '@oh-awesome-novel/core';
 import type { Server } from 'node:http';
@@ -818,6 +820,19 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
   for (const operation of ['discuss','plan','write','propose','handoff']) {
     app.post(`/api/forge/drafts/:id/${operation}`, context => forge.operation(context,context.req.param('id'),operation));
   }
+  // Image assets: a Git-ignored folder beside the novel. These never create a candidate or PendingAction.
+  const imageAssets = createImageAssetHandlers({ getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state) });
+  app.get('/api/workspace/image-assets/portraits/:characterId', (context) => imageAssets.listPortraits(context, context.req.param('characterId')));
+  app.post('/api/workspace/image-assets/portraits/:characterId', (context) => imageAssets.importPortrait(context, context.req.param('characterId')));
+  app.get('/api/workspace/image-assets/file', (context) => imageAssets.read(context));
+  app.delete('/api/workspace/image-assets/file', (context) => imageAssets.remove(context));
+  app.get('/api/workspace/image-assets/unreferenced', () => imageAssets.listUnreferenced());
+  const characterPortraits = createCharacterPortraitHandlers({
+    getWorkspaceRoot: () => requireActiveWorkspaceRoot(options, state),
+    getStore: async (root) => (await getPendingActionServices(state, root)).store,
+  });
+  app.get('/api/workspace/characters/:characterId/portraits', (context) => characterPortraits.read(context, context.req.param('characterId')));
+  app.post('/api/workspace/characters/:characterId/portraits/propose', (context) => characterPortraits.propose(context, context.req.param('characterId')));
   app.post('/api/workspace/tavern-imports/preview', (context) => tavernImport.preview(context));
   app.post('/api/workspace/tavern-imports/:id/propose', (context) => tavernImport.propose(context, context.req.param('id')));
   app.post('/api/workspace/tavern-imports/:id/play-session', (context) => tavernImport.playSession(context, context.req.param('id')));

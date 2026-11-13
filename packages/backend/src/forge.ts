@@ -321,6 +321,10 @@ export function forgeCanonicalFiles(plan: ForgePlan,chunks:Record<string,string>
           outfitDescription: '',
           outfitTags: '',
         },
+        // Descriptions only: Forge never picks or creates an image.
+        ...(character.portraits?.length
+          ? { portraits: { default: character.portraits[0]!.id, items: character.portraits.map(item => ({ ...item })) } }
+          : {}),
       }),
     });
   }

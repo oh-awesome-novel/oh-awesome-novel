@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { readPlaySessionPortraitSets } from '@oh-awesome-novel/client';
 import { createStageSnapshot, type StageSnapshot, type SpeakerIdentity } from '@oh-awesome-novel/core/text-speaker-parser';
 import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import { PLAY_STAGE_AUTO_MS_PER_CHAR, usePlayStageReadingPrefs } from '../../composables/usePlayStageReadingPrefs';
 import { plainStageText, prefersReducedMotion } from '../../composables/visualNovelText';
 import type { StageBeat } from '../../composables/visualNovelText';
+import ImageAssetView from '../assets/ImageAssetView.vue';
 import VisualNovelChoiceOverlay from './VisualNovelChoiceOverlay.vue';
 import VisualNovelLog from './VisualNovelLog.vue';
 import type { VisualNovelLogGroup } from './VisualNovelLog.vue';
@@ -26,6 +28,8 @@ const props = withDefaults(defineProps<{
   loadingEarlier?: boolean;
   roster?: unknown;
   portraits?: unknown;
+  /** Prepared portraits the session recorded per character: text and image paths, never image bytes. */
+  portraitSets?: unknown;
   backgrounds?: unknown;
   /** Fill the container instead of using the embedded fixed height. */
   fill?: boolean;
@@ -76,6 +80,14 @@ function images(value: unknown): Record<string, string> {
 // Launch-time snapshots of the session; turns reference them by id.
 const portraits = computed(() => images(props.portraits));
 const backgrounds = computed(() => images(props.backgrounds));
+const portraitSets = computed(() => readPlaySessionPortraitSets(props.portraitSets));
+/** Why a prepared portrait's image cannot be shown right now, by character. */
+const portraitProblems = ref<Record<string, string>>({});
+watch(() => [props.sessionId, props.portraitSets], () => { portraitProblems.value = {}; });
+function portraitState(characterId: string, state: 'loading' | 'ready' | 'unavailable', reason?: string): void {
+  const { [characterId]: _previous, ...rest } = portraitProblems.value;
+  portraitProblems.value = state === 'unavailable' ? { ...rest, [characterId]: reason || '图片无法读取。' } : rest;
+}
 
 const stageTurns = computed<StageTurn[]>(() => props.turns.flatMap((turn, index) => {
   if (turn.speaker === 'user') return [];
@@ -121,9 +133,12 @@ const isLast = computed(() => beatIndex.value >= beats.value.length - 1);
 const background = computed(() => snapshot.value.backgroundDataUrl ?? (snapshot.value.backgroundId ? backgrounds.value[snapshot.value.backgroundId] : undefined));
 const cast = computed(() => snapshot.value.activeCharacters.map((character) => {
   const label = character.name ?? roster.value.find(item => item.id === character.characterId)?.name ?? character.characterId;
+  const set = portraitSets.value[character.characterId];
   return {
     ...character,
     label,
+    // A prepared set replaces the single launch-time image; the session's default is the one on stage.
+    prepared: set?.items.find(item => item.id === set.default) ?? set?.items[0],
     portrait: character.portraitDataUrl ?? portraits.value[character.characterId],
     // The author's own action lights nobody up.
     speaking: !beat.value?.player && Boolean(beat.value?.speaker) && (beat.value?.speaker === label || beat.value?.speaker === character.characterId),
@@ -365,8 +380,27 @@ defineExpose({ focus: () => stage.value?.focus() });
       只读回看 <button type="button" @click="backToCurrent">回到当前回合</button>
     </p>
     <TransitionGroup tag="div" name="vn-fade" class="vn-cast" :class="{ focused: someoneSpeaking }" aria-label="在场角色">
-      <span v-for="character in cast" :key="character.characterId" :class="[character.position, { speaking: character.speaking }]">
-        <img v-if="character.portrait" :src="character.portrait" :alt="character.label" />{{ character.label }}
+      <span
+        v-for="character in cast"
+        :key="character.characterId"
+        :class="[character.position, { speaking: character.speaking, prepared: character.prepared }]"
+        :title="character.prepared ? `${character.prepared.label}：${character.prepared.description}` : undefined"
+      >
+        <template v-if="character.prepared">
+          <ImageAssetView
+            v-if="character.prepared.image && !portraitProblems[character.characterId]"
+            :path="character.prepared.image"
+            :alt="`${character.label}（${character.prepared.label}）`"
+            :expected-sha256="character.prepared.sha256"
+            @state="(state, reason) => portraitState(character.characterId, state, reason)"
+          />
+          <span v-else class="vn-silhouette" role="img" :aria-label="`${character.label}（${character.prepared.label}）的剪影：${character.prepared.description}`"></span>
+          {{ character.label }}
+          <small v-if="portraitProblems[character.characterId]" class="vn-portrait-note">图片没有显示：{{ portraitProblems[character.characterId] }}</small>
+        </template>
+        <template v-else>
+          <img v-if="character.portrait" :src="character.portrait" :alt="character.label" />{{ character.label }}
+        </template>
       </span>
     </TransitionGroup>
     <VisualNovelChoiceOverlay v-if="choicesShown && !uiHidden" :choices="choices" :disabled="disabled" :external-editor="externalEditor" @choose="choose" @custom="custom" @edit="edit" />
@@ -423,6 +457,10 @@ button { cursor:pointer; }
 .vn-cast span { border:1px solid #8993a4; border-radius:50% 50% 8px 8px; padding:64px 20px 20px; opacity:.85; transition:opacity .25s ease, transform .25s ease, filter .25s ease; }
 .vn-cast img { display:block; max-height:220px; max-width:150px; object-fit:contain; }
 .vn-cast span:has(img) { padding:0; border:0; }
+.vn-cast span.prepared { display:grid; justify-items:center; gap:4px; padding:0; border:0; text-align:center; }
+.vn-cast span.prepared > :deep(.image-asset-replaced) { border:0; border-radius:0; padding:0; opacity:1; }
+.vn-cast .vn-silhouette { display:block; width:110px; height:200px; padding:0; border:1px dashed #8993a4; border-radius:55px 55px 8px 8px; background:linear-gradient(#3a4558aa, #1b2330aa); opacity:1; }
+.vn-cast .vn-portrait-note { max-width:180px; font-size:11px; line-height:1.4; opacity:.8; overflow-wrap:anywhere; }
 /* While someone speaks, they step forward and the others dim. */
 .vn-cast.focused span { opacity:.45; filter:brightness(.7); }
 .vn-cast.focused .speaking { opacity:1; filter:none; border-color:#e9c983; transform:translateY(-8px) scale(1.04); }

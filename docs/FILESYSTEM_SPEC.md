@@ -113,6 +113,10 @@ my-novel/
 │   └── global.md
 │
 ├── schemas/
+├── assets/                  （图片资源目录：Git 忽略，不是小说内容，见下文）
+│   └── portraits/
+│       └── <character-id>/
+│           └── normal.png
 └── .git/
 ```
 
@@ -242,6 +246,47 @@ relationships:
     type: hatred
     status: active
 ```
+
+### `characters/<id>/roster-profile.yaml`
+
+Play 名册：角色在舞台上的名字、别名与外观。`looks.nameColor` 与 `portraits` 是可选的；没有它们的文件含义不变。
+
+```yaml
+id: nian
+name: 念念
+aliases: [小念]
+genderKind: girl            # girl | boy | other
+isPlayer: false
+looks:
+  fixedBooruTags: 1girl
+  outfitDescription: ""
+  outfitTags: ""
+  refImagePath: characters/nian/normal.png   # 可选，旧的单张图片
+  nameColor: "#E9C983"                        # 可选，舞台名字牌颜色，#RRGGBB
+portraits:                                    # 可选，预设立绘集
+  default: casual
+  items:
+    - id: casual
+      label: 常服
+      description: 米色开衫，袖口挽起。
+      usage: 日常
+      image: assets/portraits/nian/casual.png
+    - id: night
+      label: 夜行
+      description: 黑色斗篷遮住半张脸。
+      prompt:
+        positive: black cloak, night
+        negative: lowres
+```
+
+- `portraits.items` 1 至 24 项。`id` 为 1–32 位 ASCII 字母、数字、`_`、`-`，在角色内唯一；`default` 必须是其中一项的 `id`。
+- `label` 必填，不超过 16 字；`description` 必填，不超过 500 字；`usage` 可选，不超过 200 字。
+- `image` 可选，只写路径，形状见下文 [Image Asset Directory](#image-asset-directory)；校验不要求文件存在。没有 `image` 的立绘在舞台上显示剪影与描述。
+- `prompt` 可选：`positive` 必填，`negative`、`useCharacterTags` 可选，均为纯文本，单项不超过 2000 字。
+- `generation` 可选，记录一张生成图的来源（`provider`、`model`、`seed`、`size`、`workflowHash`、`promptHash`、`generatedAt`），不含密钥与地址。
+- 条目里出现以上之外的字段会被拒绝。
+- `portraits` 与 `looks.refImagePath` 并存时以 `portraits` 为准：新会话不再把 `refImagePath` 的图片存进会话。只有 `refImagePath` 的名册行为不变。
+- `portraits` 与 `looks.nameColor` 只用于舞台显示，不进入 Play 的冻结前缀与回合请求；作者把名册选作写作设定来源时，这两项也会先被去掉再交给模型。
 
 ## World Format
 
@@ -526,6 +571,28 @@ projection 都不从中读取思考内容，删除它们不影响任何功能。
 开发迁移 reset 只能在验证 realpath、Git tracked files、Git status 和 canonical SHA-256
 manifest 后删除上述两个精确目录；不得删除整个 `.oan/`、`.git/` 或任何 canonical
 object tree。
+
+## Image Asset Directory
+
+图片不是小说事实，也不进入 Git。它们放在工作区根下的 `assets/` 文件夹里；正式文件里只记录图片的路径。
+
+```text
+assets/
+└── portraits/
+    └── <character-id>/
+        ├── normal.png
+        └── angry.webp
+```
+
+- `assets/` 是作者可见的普通文件夹：作者可以直接往里放文件，也可以在界面上用“导入图片”把本机图片复制进去。宿主只在作者显式触发时写入，不在后台写图片。
+- **Git 忽略**：新工作区的 `.gitignore` 含 `/assets/`。已有工作区的 `.gitignore` 不会被改写；作者第一次导入图片时，如果 Git 还没有忽略该目录，宿主把 `/assets/` 追加到本机的 `.git/info/exclude`（不进提交）。图片不随 Git 走：换一台机器克隆工作区后图片不在，引用处显示占位并说明原因，这不是错误。
+- **不属于变更引擎**：`assets/` 不在 sandbox projection 的可读、可写范围内，不进入 CandidateChangeSet、PendingAction 与 ChangeMaterializer，不进入 ContextPackage、全局搜索，也不发给任何模型。
+- **路径是唯一的正式记录**：正式文件引用图片时写工作区相对路径，例如 `assets/portraits/nian/normal.png`。路径形状为 `assets/<…>/<文件名>.(png|jpg|jpeg|webp)`，每段只含 ASCII 字母、数字、`_`、`-`、`.`，不以 `.` 开头，不含 `..`。路径的修改是普通的 YAML 文本变更，照常经 PendingAction 与 Git diff 审批；校验只看路径形状，不要求文件存在。
+- **只新增不覆盖**：宿主写入时文件名冲突会自动加 `-2`、`-3`…；同一目录里已有内容相同的文件时复用它。因此路径变更被拒绝时，原来引用的图片不受影响，被拒绝的新图片留在目录里成为未引用文件。
+- **读取**：只读 PNG、JPEG、WebP，文件签名必须与扩展名一致，单文件不超过 16 MiB；拒绝符号链接、硬链接、隐藏路径与越出 `assets/` 的路径。界面显示原图，不缩放、不转码。
+- **清理**：没有被任何正式文本文件（chapters、characters、world、state、timeline、foreshadow、summaries、outline 下的 Markdown / YAML）提到路径的图片可以列出，由作者逐张确认删除；系统不自动删除，仍被引用的图片不能通过界面删除。
+
+既有的 `looks.refImagePath` 与 `world/places/<scene-id>` 场景图不受本节约束，读取方式、位置与 256 KiB 上限见 [PLAY_LOCAL_SCENERY](PLAY_LOCAL_SCENERY.md)。
 
 ## Migration Note
 
