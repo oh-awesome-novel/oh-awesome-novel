@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { gitFileModesMatch } from './filesystem-modes';
 import { promisify } from 'node:util';
 
@@ -253,6 +253,42 @@ export async function readGitStatus(workspaceRoot: string): Promise<GitWorkspace
       error: missingHeadError(),
     } : {}),
   };
+}
+
+/**
+ * Makes sure Git ignores `pattern` in this clone without touching the workspace's tracked
+ * `.gitignore`: when the probe path is not ignored yet, the pattern is appended to the local
+ * `.git/info/exclude`, which is never committed. Outside a Git repository this does nothing.
+ */
+export async function ensureGitLocalExclude(
+  workspaceRoot: string,
+  pattern: string,
+  probePath: string,
+): Promise<'ignored' | 'added' | 'not_repository'> {
+  if (!/^\/[A-Za-z0-9_-]+\/$/u.test(pattern) || !/^[A-Za-z0-9_\/.-]+$/u.test(probePath) || probePath.includes('..')) {
+    throw gitResultError({ code: 'invalid_input', message: 'Unsupported Git exclude pattern.' });
+  }
+  const topLevel = await runGit(workspaceRoot, ['rev-parse', '--show-toplevel']);
+  // A workspace nested inside another repository is left alone: the pattern is rooted at this workspace.
+  if (!topLevel.ok || await realpath(topLevel.stdout.trim()) !== await realpath(workspaceRoot)) return 'not_repository';
+  // check-ignore does not accept the literal-pathspec mode runGit applies; the probe path is plain ASCII.
+  const ignored = await execFileAsync('git', ['--no-optional-locks', '-C', workspaceRoot, 'check-ignore', '-q', '--no-index', '--', probePath], { env: gitProcessEnv() })
+    .then(() => true, (error: { code?: unknown }) => {
+      if (error.code === 1) return false;
+      throw gitResultError(toGitCommandError(error));
+    });
+  if (ignored) return 'ignored';
+  const excludePath = await runGit(workspaceRoot, ['rev-parse', '--git-path', 'info/exclude']);
+  if (!excludePath.ok) return 'not_repository';
+  const absolute = isAbsolute(excludePath.stdout.trim()) ? excludePath.stdout.trim() : join(workspaceRoot, excludePath.stdout.trim());
+  const current = await readFile(absolute, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  if (current.split(/\r?\n/u).includes(pattern)) return 'ignored';
+  await mkdir(dirname(absolute), { recursive: true });
+  await writeFile(absolute, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${pattern}\n`, 'utf8');
+  return 'added';
 }
 
 export async function readRepositoryBaseline(

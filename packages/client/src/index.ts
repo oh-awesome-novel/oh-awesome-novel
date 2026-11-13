@@ -58,6 +58,14 @@ import type { ManuscriptImportInput, ManuscriptImportPreviewResult, ManuscriptIm
 export { MANUSCRIPT_IMPORT_MAX_BYTES, parseManuscriptImportPreviewResult } from './manuscript-import.js';
 export type { ManuscriptImportMapping, ManuscriptImportInput, ManuscriptImportChapter, ManuscriptImportPreview, ManuscriptImportPreviewResult, ManuscriptImportProposalInput } from './manuscript-import.js';
 import { DefaultChatTransport } from 'ai';
+import { createImageAssetClientMethods } from './image-assets.js';
+import type { ImageAssetClientMethods } from './image-assets.js';
+export { IMAGE_ASSET_MAX_BYTES, isImageAssetPath } from './image-assets.js';
+import { createCharacterPortraitClientMethods } from './character-portraits.js';
+import type { CharacterPortraitClientMethods } from './character-portraits.js';
+export { readPlaySessionPortraitSets } from './character-portraits.js';
+export type { CharacterPortraitClientMethods, CharacterPortraitForm, CharacterPortraitItem, CharacterPortraitMissingImage, CharacterPortraitSet, PlaySessionPortraitSetView } from './character-portraits.js';
+export type { ImageAssetClientMethods, ImageAssetEntry, ImageAssetMime } from './image-assets.js';
 import { assertTavernImportInput, assertTavernImportConfirmation, parseTavernImportPreview } from './tavern-import.js';
 import type { TavernImportInput, TavernImportConfirmation, TavernImportPreview } from './tavern-import.js';
 export { TAVERN_JSON_MAX_BYTES, TAVERN_PNG_MAX_BYTES, parseTavernImportPreview } from './tavern-import.js';
@@ -2238,7 +2246,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
+export interface OanClient extends ImageAssetClientMethods, CharacterPortraitClientMethods, RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2723,6 +2731,8 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     ...createChapterReviewClient(requestJson),
     ...createRevisionImpactClient(requestJson),
     ...createPlayChapterWritingClient(requestJson, fetcher, backendBaseUrl),
+    ...createImageAssetClientMethods(requestJson, fetcher, backendBaseUrl),
+    ...createCharacterPortraitClientMethods(requestJson),
     ...createForgeClientMethods(requestJson),
     ...createUsageInspectorClientMethods(requestJson),
     backendBaseUrl,

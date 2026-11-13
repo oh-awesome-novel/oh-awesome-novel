@@ -99,6 +99,10 @@
 - [1420 Play To Chapter Writing Flow](1420.md)
 - [1430 Evidence-backed Chapter Review Workbench](1430.md)
 - [1440 Revision Impact Review](1440.md)
+- [1580 Play Stage And Workbench Mode Split](1580.md)
+- [1590 Stage Immersive Reading Controls](1590.md)
+- [1600 Character Portrait Descriptions And Prepared Portrait Sets](1600.md)
+- [1630 Image Asset Directory And Path-only References](1630.md)
 
 ## Needs Review Tasks
 
@@ -117,12 +121,8 @@
 - [1550 Reference Material Revision Compare And Re-adoption](1550.md)
 - [1560 Cross-reference Technique Compare](1560.md)
 - [1570 EPUB, DOCX And PDF Reference Import](1570.md)
-- [1580 Play Stage And Workbench Mode Split](1580.md)
-- [1590 Stage Immersive Reading Controls](1590.md)
-- [1600 Character Portrait Descriptions And Prepared Portrait Sets](1600.md)
 - [1610 Explicit Speaker And Portrait Markup](1610.md)
 - [1620 Stage Mode Sentence Streaming](1620.md)
-- [1630 Image Asset Directory And Path-only References](1630.md)
 - [1640 Image Generation Provider Config And Adapters](1640.md)
 - [1650 Character Portrait Generation Workbench](1650.md)
 - [1660 Play Item Ledger](1660.md)
@@ -137,7 +137,15 @@
 
 2026-11-12 新增 [1660](1660.md) Play 道具表：会话内带类型的道具与消耗品记录（持有者、数量、得失回合），由宿主校验，创建会话时可选启用。Writing 侧暂不新增正式的道具事实域，`state/inventory.yaml` 仍未实现并已在 FILESYSTEM_SPEC 中标注。尚未实现，需先更新 PLAY_MODE_SPEC。
 
-当前共 **72 Completed、6 Needs Review、14 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400/1420/1430/1440 已交付；1410 的预检、筛选、重映射与采用记录已于 2026-11-10 交付，完整 Desktop 旅程与部分场景待复核（Needs Review）；1360 其余 handoff 与模型验收仍留在原任务。
+2026-11-12 交付 [1580](1580.md) 舞台模式与专业模式拆分：同一会话两种呈现随时切换，草稿与进行中回合共享，舞台模式固定玩家视角，v5 只读回放；只改 Desktop UI，验证与未覆盖项见该 task 的 Implementation Notes。1530–1570 与它互不依赖，本次未做。
+
+同日交付 [1590](1590.md) 舞台沉浸阅读控制：自动、快进、按句回看、隐藏界面、全屏、阅读设置，作者行动上舞台，说话者高亮与淡入淡出；只改 Desktop UI。
+
+同日交付 [1630](1630.md) 图片资源目录：`assets/` 不进 Git、不进变更引擎，提供列出 / 导入 / 读取原图 / 清理未引用的接口和 Play 顶栏的“图片资源”面板。舞台与角色表单按路径显示原图要等 1600，因此该项当时为 Needs Review。
+
+2026-11-13 交付 [1600](1600.md) 角色立绘描述与预设立绘集：名册新增可选 `portraits` 与 `looks.nameColor`，“图片资源”面板里的立绘表单经 PendingAction 保存，新会话记录立绘的描述、路径与哈希（不存图片字节），舞台按路径显示原图并处理缺失、损坏与开局后更换；Forge 可起草立绘描述。Play 冻结前缀与回合请求不变。1630 留下的复核项随之关闭，转为 Completed。
+
+当前共 **76 Completed、6 Needs Review、10 Planned**。下一阶段范围、参考项目去重、依赖和候选池见 [功能路线图](../plans/NEXT_FEATURE_ROADMAP_2026-11-06.md)。1390/1400/1420/1430/1440 已交付；1410 的预检、筛选、重映射与采用记录已于 2026-11-10 交付，完整 Desktop 旅程与部分场景待复核（Needs Review）；1360 其余 handoff 与模型验收仍留在原任务。
 
 2026-11-10 新增 1450–1510 七项 Play 强化任务（九项建议，其中 1460、1470 各合并两项），范围、顺序与依赖见 [Play 模式强化规划](../plans/PLAY_MODE_ENHANCEMENT_PLAN_2026-11-10.md)：先做 1520/1450/1460，再做 1480，其余按使用反馈排序。同日追加 [1520](1520.md) 回合候选项，协议与界面部分已交付。随后同日交付 [1450](1450.md) 带要求重演与补充行动建议、[1460](1460.md) 采纳表单与中文界面，1520 的“生成候选项 / 换一批”已接上；1520 的真实模型验收与三种用法的 SDK 级旅程未做，仍为 Needs Review。
 

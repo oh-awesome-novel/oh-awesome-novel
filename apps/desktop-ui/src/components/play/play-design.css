@@ -1689,3 +1689,23 @@
   cursor: pointer;
 }
 #play-workspace .play-stage-actions > button:disabled { opacity: .5; cursor: default; }
+
+/* Stage / workbench presentation switch */
+#play-workspace .play-mode-switch {
+  display: inline-flex;
+}
+#play-workspace .play-mode-switch button + button {
+  margin-left: -1px;
+}
+#play-workspace .play-workspace-status .play-mode-switch button[aria-pressed='true'] {
+  position: relative;
+  border-color: var(--play-line-strong);
+  background: var(--play-surface-raised);
+  color: var(--play-ink);
+  font-weight: 600;
+}
+
+/* The stage paints its own dark surface; headings on it follow the stage text color. */
+#play-workspace .vn-stage :where(strong) {
+  color: inherit;
+}
