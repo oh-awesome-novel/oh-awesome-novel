@@ -30,7 +30,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { resolveProviderReasoningEffort } from './provider-reasoning.js';
 import { streamText } from 'ai';
-import type { JSONValue } from 'ai';
+import type { ImageModel, JSONValue } from 'ai';
 
 import {
   DEFAULT_WRITING_PROFILE_ID,
@@ -57,6 +57,7 @@ import type {
   ContextSourceId,
   ContextSourceRef,
   ContextTraceEntry,
+  ImageProviderConfig,
   LlmProviderConfig,
   NovelCopilotCapabilityId,
   NovelCopilotQuickCommand,
@@ -253,6 +254,23 @@ export const createAiSdkProviderResolver = (): AiSdkProviderResolver =>
   };
 
 export { resolveProviderReasoningEffort } from './provider-reasoning.js';
+
+export type AiSdkImageModelResolver = (config: ImageProviderConfig) => ImageModel | Promise<ImageModel>;
+
+/**
+ * Online image services go through the AI SDK's image models; ComfyUI has its own
+ * adapter in the backend and never reaches this resolver.
+ */
+export const createAiSdkImageModelResolver = (): AiSdkImageModelResolver =>
+  (config) => {
+    if (config.kind === 'comfyui' || !config.model) {
+      throw new Error('This image service is not an online API.');
+    }
+    const settings = { baseURL: config.baseUrl, ...(config.apiKey ? { apiKey: config.apiKey } : {}) };
+    return config.kind === 'openai'
+      ? createOpenAI(settings).imageModel(config.model)
+      : createOpenAICompatible({ name: config.id, ...settings }).imageModel(config.model);
+  };
 
 function resolveProviderBaseUrl(providerConfig: LlmProviderConfig): string | undefined {
   if (providerConfig.baseUrl?.trim()) {

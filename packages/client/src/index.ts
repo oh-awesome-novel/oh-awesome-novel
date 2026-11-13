@@ -59,6 +59,13 @@ export { MANUSCRIPT_IMPORT_MAX_BYTES, parseManuscriptImportPreviewResult } from 
 export type { ManuscriptImportMapping, ManuscriptImportInput, ManuscriptImportChapter, ManuscriptImportPreview, ManuscriptImportPreviewResult, ManuscriptImportProposalInput } from './manuscript-import.js';
 import { DefaultChatTransport } from 'ai';
 import { createImageAssetClientMethods } from './image-assets.js';
+import { createImageProviderClientMethods } from './image-providers.js';
+import type { ImageProviderClientMethods } from './image-providers.js';
+export { COMFY_WORKFLOW_SLOTS } from './image-providers.js';
+export type {
+  ComfyWorkflowMapping, ComfyWorkflowSlot, GeneratedPortraitImage, ImageGenerationErrorCode, ImageGenerationLogEntry, ImageProviderClientMethods,
+  ImageProviderKind, ImageProviderSaveInput, ImageProviderView, PortraitImageRequestInput,
+} from './image-providers.js';
 import type { ImageAssetClientMethods } from './image-assets.js';
 export { IMAGE_ASSET_MAX_BYTES, isImageAssetPath } from './image-assets.js';
 import { createWorkRegistryClientMethods, type WorkRegistryClientMethods } from './work-registry.js';
@@ -2267,7 +2274,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends WorkRegistryClientMethods, ImageAssetClientMethods, CharacterPortraitClientMethods, RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
+export interface OanClient extends WorkRegistryClientMethods, ImageAssetClientMethods, ImageProviderClientMethods, CharacterPortraitClientMethods, RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2757,6 +2764,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     ...createRevisionImpactClient(requestJson),
     ...createPlayChapterWritingClient(requestJson, fetcher, backendBaseUrl),
     ...createImageAssetClientMethods(requestJson, fetcher, backendBaseUrl),
+    ...createImageProviderClientMethods(requestJson),
     ...createCharacterPortraitClientMethods(requestJson),
     ...createWorkRegistryClientMethods(requestJson),
     ...createForgeClientMethods(requestJson),

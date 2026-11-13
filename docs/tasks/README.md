@@ -105,6 +105,7 @@
 - [1630 Image Asset Directory And Path-only References](1630.md)
 - [1610 Explicit Speaker And Portrait Markup](1610.md)
 - [1620 Stage Mode Sentence Streaming](1620.md)
+- [1640 Image Generation Provider Config And Adapters](1640.md)
 
 - [1530 Work Registry And Origin Attribution](1530.md)
 - [1540 Cross-work Character Match And Merge Adoption](1540.md)
@@ -124,7 +125,6 @@
 - [1550 Reference Material Revision Compare And Re-adoption](1550.md)
 - [1560 Cross-reference Technique Compare](1560.md)
 - [1570 EPUB, DOCX And PDF Reference Import](1570.md)
-- [1640 Image Generation Provider Config And Adapters](1640.md)
 - [1650 Character Portrait Generation Workbench](1650.md)
 - [1660 Play Item Ledger](1660.md)
 
@@ -147,6 +147,8 @@
 2026-11-13 交付 [1600](1600.md) 角色立绘描述与预设立绘集：名册新增可选 `portraits` 与 `looks.nameColor`，“图片资源”面板里的立绘表单经 PendingAction 保存，新会话记录立绘的描述、路径与哈希（不存图片字节），舞台按路径显示原图并处理缺失、损坏与开局后更换；Forge 可起草立绘描述。Play 冻结前缀与回合请求不变。1630 留下的复核项随之关闭，转为 Completed。
 
 2026-11-13 交付 [1610](1610.md) 显式说话人与立绘标注、[1620](1620.md) 舞台模式逐句流式：沉浸推演创建时可选“演出标注”，裁判用 `@角色[立绘]` 标对白行，宿主剥离后保存干净正文并把说话人与立绘写进舞台快照，后续回合的模型历史由宿主加回标记；舞台模式发出的回合带 `presentation: 'stage'`，围栏前按整句放行草稿，专业模式与缺省请求不变。未启用标注的会话在前缀、请求与存储上不变。至此 2026-11-12 GalGame 化规划的 1580–1620 五项全部交付。
+
+2026-11-13 交付 [1640](1640.md) 生图服务配置与适配器：启动页“模型”下新增“生图服务”设置，可接本机 ComfyUI（导入 API 格式工作流并声明占位）或 OpenAI / 兼容 OpenAI 的图片接口（经 AI SDK `generateImage`，不新增依赖）；配置、Key、工作流与请求记录只在全局配置目录，记录不含提示词与密钥。目前只有设置页与统一出图接口，立绘生图工作台是 [1650](1650.md)，仍待实施。
 
 2026-11-13 交付 [1530](1530.md) 作品登记与归属、[1540](1540.md) 跨作品人物对照与合并采用：作品与人物对应写入正式 YAML，登记与采用均经 PendingAction 审批，Play 从正式归属预填。已补齐 1410 的真实 Backend / SDK / Desktop 采用旅程；1410 的其他复核项仍见原 task。
 

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, shallowRef, watch } from 'vue';
 
 import { useWorkspaceApi } from '../../composables/useWorkspaceApi';
+import ImageProviderSettings from './ImageProviderSettings.vue';
 import type {
   ProviderCheckResult,
   ProviderConfigInput,
@@ -877,5 +878,7 @@ function uniqueProviderId(baseId: string, currentId = ''): string {
         </form>
       </section>
     </div>
+
+    <ImageProviderSettings />
   </section>
 </template>

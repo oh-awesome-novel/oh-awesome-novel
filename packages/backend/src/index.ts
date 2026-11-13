@@ -1,5 +1,8 @@
 import { normalizeCharacterSelectionFields } from '@oh-awesome-novel/core';
 import { createRevisionImpactHandlers } from './revision-impact';
+import { createImageGeneration, createImageGenerationHandlers } from './image-generation.js';
+export { createImageGeneration, imageGenerationErrorText, readImageGenerationLog } from './image-generation.js';
+export type { ImageGeneration, ImageGenerationOptions } from './image-generation.js';
 import { createChapterReviewHandlers } from './chapter-review';
 import { generateChapterReview, generateChapterReviewRevision } from '@oh-awesome-novel/agent';
 import { assertChapterReviewActionFresh } from '@oh-awesome-novel/tools';
@@ -215,6 +218,7 @@ import type {
 } from '@oh-awesome-novel/core';
 import {
   createAiSdkProviderResolver,
+  createAiSdkImageModelResolver,
   inferNovelAgentCapability,
   resolveWritingCommandTargets,
   WritingCommandTargetError,
@@ -224,6 +228,7 @@ import {
   streamNovelAgentTurn,
 } from '@oh-awesome-novel/agent';
 import type {
+  AiSdkImageModelResolver,
   AiSdkProviderResolver,
   NovelAgentExternalContext,
 } from '@oh-awesome-novel/agent';
@@ -352,6 +357,10 @@ export interface NovelBackendOptions {
   globalConfigDir?: string;
   providerConfig?: LlmProviderConfig;
   resolveModel?: AiSdkProviderResolver;
+  /** Image model for an online image service; tests pass a mock. */
+  resolveImageModel?: AiSdkImageModelResolver;
+  /** How often a queued ComfyUI prompt is checked, in milliseconds. */
+  comfyPollMs?: number;
   tools?: ToolSet;
   host?: string;
   port?: number;
@@ -773,6 +782,25 @@ export function createNovelHonoApp(options: NovelBackendOptions): NovelHonoApp {
     handleSetDefaultProviderConfig(options, state, context.req.param('id') ?? '', context));
   app.delete('/api/provider-config/:id', (context) =>
     handleDeleteProviderConfig(options, state, context.req.param('id') ?? '', context));
+  // Image generation services: app-level config, never part of a novel workspace.
+  const imageGeneration = createImageGeneration({
+    configDir: () => resolveGlobalConfigDir(options),
+    resolveImageModel: options.resolveImageModel ?? createAiSdkImageModelResolver(),
+    ...(options.comfyPollMs === undefined ? {} : { comfyPollMs: options.comfyPollMs }),
+  });
+  const imageHandlers = createImageGenerationHandlers(imageGeneration);
+  const imageReply = async (context: NovelBackendContext, work: Promise<{ status: number; body: unknown }>): Promise<Response> => {
+    const reply = await work;
+    return jsonResponse(context, reply.status, reply.body);
+  };
+  app.get('/api/image-providers', (context) => imageReply(context, imageHandlers.list()));
+  app.post('/api/image-providers', async (context) => imageReply(context, imageHandlers.save(await readJsonBody(context))));
+  app.delete('/api/image-providers/:id', (context) => imageReply(context, imageHandlers.remove(context.req.param('id') ?? '')));
+  app.post('/api/image-providers/:id/check', (context) => imageReply(context, imageHandlers.check(context.req.param('id') ?? '')));
+  app.post('/api/image-providers/:id/generate', async (context) =>
+    imageReply(context, imageHandlers.generate(context.req.param('id') ?? '', await readJsonBody(context), context.req.raw.signal)));
+  app.get('/api/image-generation/log', (context) =>
+    imageReply(context, imageHandlers.log(Number(context.req.query('limit')) || undefined)));
   app.get('/api/workspace', (context) => handleGetActiveWorkspace(options, state, context));
   app.get('/api/workspace/writing-sources', async (context) => {
     try {
