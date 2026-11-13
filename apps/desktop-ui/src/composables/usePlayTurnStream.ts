@@ -8,9 +8,11 @@ import {
 
 import type {
   PlayActionKind,
+  PlayNarrativeDraftMarkupLine,
   PlayRelativeTimeAdvance,
   PlaySession,
   PlayTurnCancelResult,
+  PlayTurnPresentation,
   PlayTurnDelivery,
   PlayTurnStreamEvent,
   PlayTurnStreamOptions,
@@ -41,6 +43,8 @@ export interface PlayProvisionalTurn {
   retryParentArtifactId?: string;
   phase: PlayTurnRunPhase;
   provisionalText: string;
+  /** Tagged lines of a stage-markup draft, by line of `provisionalText`. */
+  provisionalMarkup?: readonly PlayNarrativeDraftMarkupLine[];
   statusMessage: string;
   error?: string;
 }
@@ -54,13 +58,14 @@ export interface PlayTurnStreamClient {
       timeAdvance?: PlayRelativeTimeAdvance;
       baseRevision?: number;
       delivery?: PlayTurnDelivery;
+      presentation?: PlayTurnPresentation;
     },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   retryPlayWorldRefereeTurn(
     id: string,
     artifactId: string,
-    input: { baseRevision: number; guidance?: string },
+    input: { baseRevision: number; guidance?: string; presentation?: PlayTurnPresentation },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   cancelPlayWorldRefereeTurn(id: string, turnId: string): Promise<PlayTurnCancelResult>;
@@ -69,6 +74,11 @@ export interface PlayTurnStreamClient {
 export interface UsePlayTurnStreamOptions {
   client: PlayTurnStreamClient;
   onCommitted(session: PlaySession): void;
+  /**
+   * The presentation on screen when a turn is sent. It is read once per request and
+   * fixes how that turn's draft is streamed; switching the view later only changes the display.
+   */
+  presentation?(): PlayTurnPresentation | undefined;
 }
 
 export type PlayTurnSubmitOutcome =
@@ -129,6 +139,11 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
     );
   });
 
+  /** The workbench presentation is the server default, so only the stage is named in a request. */
+  function stagePresentation(): { presentation?: 'stage' } {
+    return options.presentation?.() === 'stage' ? { presentation: 'stage' } : {};
+  }
+
   function submit(input: PlayTurnSubmitInput): Promise<PlayTurnSubmitOutcome> {
     return runTurn(
       { ...input, intent: 'submit' },
@@ -140,6 +155,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
           ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
           baseRevision: input.baseRevision,
           ...(input.delivery ? { delivery: input.delivery } : {}),
+          ...stagePresentation(),
         },
         streamOptions,
       ),
@@ -159,6 +175,7 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
         {
           baseRevision: input.baseRevision,
           ...(input.guidance?.trim() ? { guidance: input.guidance.trim() } : {}),
+          ...stagePresentation(),
         },
         streamOptions,
       ),
@@ -395,6 +412,8 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       ...run,
       ...(typeof patch === 'function' ? patch(run) : patch),
     };
+    // Tagged lines index the draft text; they go whenever the draft is withdrawn.
+    if (!nextRun.provisionalText) delete nextRun.provisionalMarkup;
     currentRun.value = nextRun;
     if (usagePresentation.value?.localId === localId && nextRun.turnId) {
       usagePresentation.value = { ...usagePresentation.value, operationId: nextRun.turnId };
@@ -434,6 +453,9 @@ export function usePlayTurnStream(options: UsePlayTurnStreamOptions) {
       case 'play.narrative.delta':
         updateRun(localId, (run) => ({
           provisionalText: `${run.provisionalText}${event.delta}`,
+          ...(event.markup?.length
+            ? { provisionalMarkup: [...(run.provisionalMarkup ?? []), ...event.markup] }
+            : {}),
           ...(isWaitingForServerTruth(run.phase)
             ? {}
             : {

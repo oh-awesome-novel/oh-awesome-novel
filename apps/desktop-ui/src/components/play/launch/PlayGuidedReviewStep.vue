@@ -7,19 +7,22 @@ import type { PlayLaunchPackage } from '../../../composables/usePlayGuidedStart'
 
 import PlayLaunchDiagnostics from './PlayLaunchDiagnostics.vue';
 
-const { purpose, preview, requestError, creating, canStart, disabled } = defineProps<{
+const { purpose, preview, requestError, creating, canStart, disabled, stageMarkup = false } = defineProps<{
   purpose: PlaySessionPurpose;
   preview: DeepReadonly<PlayLaunchPackage>;
   requestError?: string;
   creating: boolean;
   canStart: boolean;
   disabled: boolean;
+  /** Stage markup for the new session; offered for an Immersive Journey only. */
+  stageMarkup?: boolean;
 }>();
 
 const emit = defineEmits<{
   back: [];
   confirm: [];
   cancel: [];
+  'update:stageMarkup': [value: boolean];
 }>();
 
 function sourceStatus(
@@ -127,6 +130,19 @@ function sourceStatus(
         </li>
       </ul>
     </section>
+
+    <label v-if="purpose === 'immersiveJourney'" class="stage-markup-option">
+      <input
+        type="checkbox"
+        :checked="stageMarkup"
+        :disabled="disabled || creating"
+        @change="emit('update:stageMarkup', ($event.target as HTMLInputElement).checked)"
+      >
+      <span>
+        演出标注
+        <small>让裁判在每句对白前标出说话人和立绘，舞台按标注显示名字牌与立绘。只能在创建时选择，之后不能再开启或关闭。</small>
+      </span>
+    </label>
 
     <PlayLaunchDiagnostics :diagnostics="preview.diagnostics" />
 
@@ -292,6 +308,19 @@ button:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--play-focus, var(--editor-focus));
   outline-offset: 2px;
+}
+
+.stage-markup-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px;
+}
+
+.stage-markup-option small {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.75;
 }
 
 @media (max-width: 680px) {

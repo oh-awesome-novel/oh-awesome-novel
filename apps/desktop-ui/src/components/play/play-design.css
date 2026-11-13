@@ -1709,3 +1709,33 @@
 #play-workspace .vn-stage :where(strong) {
   color: inherit;
 }
+
+/* Stage markup (1610): the creation option and the small speaker / portrait tags in the workbench. */
+#play-workspace .play-create-form label.play-stage-markup-option {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px;
+}
+
+#play-workspace .play-create-form label.play-stage-markup-option small {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+#play-workspace .play-turn-markup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#play-workspace .play-turn-markup li {
+  padding: 1px 6px;
+  border: 1px solid var(--play-line, var(--editor-hairline));
+  border-radius: 999px;
+  color: var(--play-muted);
+  font-size: 11px;
+}

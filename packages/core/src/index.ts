@@ -730,8 +730,18 @@ export type {
 export {
   PLAY_SETTLEMENT_FENCE,
   createPlayNarrativeStreamFilter,
+  createPlaySentenceStreamFilter,
 } from './play-narrative-stream.js';
-export type { PlayNarrativeStreamFilter } from './play-narrative-stream.js';
+export type { PlayNarrativeStreamFilter, PlaySentenceStreamFilterOptions } from './play-narrative-stream.js';
+export {
+  PLAY_STAGE_MARKUP_METADATA_KEY, PLAY_STAGE_MARKUP_PROTOCOL_MARKER, PLAY_STAGE_MARKUP_VERSION,
+  createPlayStageMarkupDraftReader, formatPlayStageMarkupFrozenProtocol, parsePlayStageMarkup,
+  readPlayStageCast, readPlayStageMarkup, restorePlayStageMarkup,
+} from './play-stage-markup.js';
+export type {
+  ParsedPlayStageMarkup, PlayStageCastMember, PlayStageCastPortrait, PlayStageMarkupConfig, PlayStageMarkupDraftLine,
+  PlayStageMarkupDraftReader, PlayStageMarkupLine, PlayStageMarkupNotice, PlayStageMarkupNoticeKind,
+} from './play-stage-markup.js';
 export {
   PLAY_REHEARSAL_SCENES_DIRECTORY,
   PLAY_REHEARSAL_SCENE_SCHEMA_VERSION,

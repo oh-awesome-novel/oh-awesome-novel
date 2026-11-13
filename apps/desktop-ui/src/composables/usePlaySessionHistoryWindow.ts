@@ -348,6 +348,16 @@ export function usePlaySessionHistoryWindow(
   }
 }
 
+const STAGE_MARKUP_NOTICE_TEXT = {
+  unknownCharacter: (count: number, sample: string) => `演出标注：${count} 行标了名册里没有的角色（如“${sample}”），这些行改按上下文推断说话人。`,
+  unknownPortrait: (count: number, sample: string) => `演出标注：${count} 行标了不存在的立绘（如 ${sample}），已改用默认立绘。`,
+  malformed: (count: number, sample: string) => `演出标注：${count} 行标注格式不完整（如“${sample}”），已按旁白处理。`,
+} as const;
+
+function formatStageMarkupNotice(notice: NonNullable<PlayTurnContextTrace['stageMarkupNotices']>[number]): string {
+  return STAGE_MARKUP_NOTICE_TEXT[notice.kind](notice.count, notice.sample);
+}
+
 export function projectContextTrace(
   trace: Readonly<PlayTurnContextTrace>,
   directorLens: boolean,
@@ -357,6 +367,9 @@ export function projectContextTrace(
     createdAt: trace.createdAt,
     transcriptWindowLabel: formatTraceWindow(trace.transcriptWindow, '消息'),
     eventWindowLabel: formatTraceWindow(trace.eventWindow, '事件'),
+    ...(trace.stageMarkupNotices?.length
+      ? { stageMarkupNotices: trace.stageMarkupNotices.map(formatStageMarkupNotice) }
+      : {}),
     sources: trace.sources.map((source, index) => ({
       id: directorLens ? source.sourceId : `${trace.artifactId}:source:${index + 1}`,
       label: directorLens

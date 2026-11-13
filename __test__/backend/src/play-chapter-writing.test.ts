@@ -54,3 +54,22 @@ it('does not silently move to a different chapter slot after the target was revi
     await expect(readFile(join(f.root, 'chapters/0001/0002.md'))).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { await backend?.close(); await rm(f.root, { recursive: true, force: true }); }
 });
+it('turns a stage-markup session into a chapter from tag-free text', async () => {
+  const f = await playChapterFixture(false, false, true); let backend: Awaited<ReturnType<typeof startNovelHttpBackend>> | undefined;
+  try {
+    // The session was settled with a tagged line; what it saved carries the speaker, not the tag.
+    const saved = f.session.transcript.at(-1)!;
+    expect(saved.content.startsWith('“STAGE_TAGGED_LINE，给你伞。”')).toBe(true);
+    expect(saved.stageSnapshot?.beats[0]).toMatchObject({ speakerId: '念念', source: 'markup' });
+    const model = chapterModel();
+    backend = await startNovelHttpBackend({ workspaceRoot: f.root, globalConfigDir: join(f.root, 'global'), providerConfig: { id: 'controlled', kind: 'custom', model: 'controlled', baseUrl: 'https://provider.example/v1' }, resolveModel: () => model });
+    const client = createOanClient({ backendBaseUrl: backend.url });
+    const request = { expectedWorkspaceRoot: f.root, attachmentId: f.attachment.id, lens: 'player' as const, intent: chapterIntent };
+    const target = await client.getPlayChapterTarget(request); let preview;
+    for await (const event of client.generatePlayChapter({ ...request, targetPath: target.targetPath, chapterInventoryHash: target.chapterInventoryHash, reportFingerprint: target.reportFingerprint })) if (event.type === 'preview') preview = event.preview;
+    expect(preview?.diff).toContain('雨夜送伞');
+    expect(JSON.stringify(model.doStreamCalls)).not.toContain('@念念');
+    const { pendingAction } = await client.proposePlayChapter(preview!.id, { expectedWorkspaceRoot: f.root, fingerprint: preview!.fingerprint, intent: chapterIntent });
+    expect((await client.acceptPendingAction(pendingAction.id)).pendingAction.status).toBe('accepted');
+  } finally { await backend?.close(); await rm(f.root, { recursive: true, force: true }); }
+}, 15_000);

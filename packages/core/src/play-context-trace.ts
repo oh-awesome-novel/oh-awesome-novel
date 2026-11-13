@@ -13,6 +13,7 @@ import type {
 } from './agent-context-package.js';
 import type { PlaySourceTrust } from './play-types.js';
 import type { PlaySourceDriftState } from './play-source-drift.js';
+import type { PlayStageMarkupNotice } from './play-stage-markup.js';
 
 export const PLAY_CONTEXT_TRACE_SCHEMA_VERSION = 1 as const;
 export const PLAY_CONTEXT_TRACES_DIRECTORY = 'traces' as const;
@@ -66,6 +67,8 @@ export interface PlayTurnContextTrace {
   transcriptWindow: PlayContextWindowTrace;
   eventWindow: PlayContextWindowTrace;
   sources: PlayContextSourceTrace[];
+  /** Stage markup fallbacks of this turn, one entry per kind. Absent when there were none. */
+  stageMarkupNotices?: PlayStageMarkupNotice[];
   canonical: false;
 }
 
@@ -77,6 +80,7 @@ export interface CreatePlayTurnContextTraceInput {
   transcriptLimit: number;
   eventLimit: number;
   sources: PlayContextSourceTrace[];
+  stageMarkupNotices?: PlayStageMarkupNotice[];
 }
 
 export function createPlayTurnContextTrace(
@@ -107,6 +111,7 @@ export function createPlayTurnContextTrace(
       input.eventLimit,
     ),
     sources: input.sources,
+    ...(input.stageMarkupNotices?.length ? { stageMarkupNotices: input.stageMarkupNotices } : {}),
     canonical: false,
   });
 }
@@ -122,6 +127,7 @@ export function normalizePlayTurnContextTrace(value: unknown): PlayTurnContextTr
     'transcriptWindow',
     'eventWindow',
     'sources',
+    'stageMarkupNotices',
     'canonical',
   ], 'Play context trace');
   if (record.schemaVersion !== PLAY_CONTEXT_TRACE_SCHEMA_VERSION) {
@@ -152,8 +158,30 @@ export function normalizePlayTurnContextTrace(value: unknown): PlayTurnContextTr
     transcriptWindow,
     eventWindow,
     sources,
+    ...(record.stageMarkupNotices === undefined
+      ? {}
+      : { stageMarkupNotices: normalizeStageMarkupNotices(record.stageMarkupNotices) }),
     canonical: false,
   };
+}
+
+const STAGE_MARKUP_NOTICE_KINDS = ['unknownCharacter', 'unknownPortrait', 'malformed'] as const;
+function normalizeStageMarkupNotices(value: unknown): PlayStageMarkupNotice[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > STAGE_MARKUP_NOTICE_KINDS.length) {
+    throw new Error('Play context trace stageMarkupNotices is invalid.');
+  }
+  const notices = value.map((item) => {
+    const notice = requireRecord(item, 'Play context trace stage markup notice');
+    assertOnlyKnownFields(notice, ['kind', 'count', 'sample'], 'Play context trace stage markup notice');
+    const kind = STAGE_MARKUP_NOTICE_KINDS.find(known => known === notice.kind);
+    if (!kind || typeof notice.sample !== 'string' || notice.sample.length > 200
+      || typeof notice.count !== 'number' || !Number.isSafeInteger(notice.count) || notice.count < 1) {
+      throw new Error('Play context trace stage markup notice is invalid.');
+    }
+    return { kind, count: notice.count, sample: notice.sample };
+  });
+  assertUnique(notices.map(notice => notice.kind), 'Play context trace stage markup notice kind');
+  return notices;
 }
 
 export function resolvePlayContextTracePath(

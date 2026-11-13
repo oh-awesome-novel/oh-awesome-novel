@@ -1513,6 +1513,8 @@ export interface PlayRelationshipTimeline {
 export interface StartPlaySessionFromLaunchPackageInput {
   launchPackageId: string;
   id?: string;
+  /** Ask the referee to tag each spoken line with its speaker and portrait. Immersive journeys only; cannot be added later. */
+  stageMarkup?: boolean;
 }
 
 export interface PlayLaunchSessionMetadata {
@@ -1906,7 +1908,15 @@ export interface PlayTurnContextTrace {
   transcriptWindow: PlayContextWindowTrace;
   eventWindow: PlayContextWindowTrace;
   sources: PlayContextSourceTrace[];
+  /** Stage markup fallbacks of this turn, one entry per kind. */
+  stageMarkupNotices?: PlayStageMarkupNoticeView[];
   canonical: false;
+}
+
+export interface PlayStageMarkupNoticeView {
+  kind: 'unknownCharacter' | 'unknownPortrait' | 'malformed';
+  count: number;
+  sample: string;
 }
 
 export type PlaySourceDriftState = 'current' | 'changed' | 'missing' | 'invalid';
@@ -2047,6 +2057,8 @@ export type PlayTurnStreamEvent =
       type: 'play.narrative.delta';
       delta: string;
       provisional: true;
+      /** Present only for sessions that enabled stage markup. */
+      markup?: PlayNarrativeDraftMarkupLine[];
     })
   | (PlayTurnStreamEventBase & {
       type: 'play.narrative.reset';
@@ -2094,6 +2106,13 @@ export type PlayTurnCancelResult =
   | { status: 'failed'; committed: false; turnId: string; error: string };
 
 export type PlayTurnDelivery = 'steer' | 'follow_up';
+/**
+ * `stage` releases finished sentences while the referee is still writing; `workbench`
+ * (the default) releases nothing before the settlement boundary.
+ */
+export type PlayTurnPresentation = 'stage' | 'workbench';
+/** A tagged line of a stage-markup draft, by line of the draft text released so far. */
+export interface PlayNarrativeDraftMarkupLine { line: number; speakerId: string; speaker: string; portraitId?: string }
 
 export interface PlayTurnStreamOptions {
   signal?: AbortSignal;
@@ -2457,6 +2476,8 @@ export interface OanClient extends WorkRegistryClientMethods, ImageAssetClientMe
     activatedSources?: PlayActivatedSource[];
     eventPolicy?: Partial<PlayEventPolicy>;
     worldMomentum?: PlayWorldMomentum;
+    /** Ask the referee to tag each spoken line with its speaker and portrait. Cannot be added later. */
+    stageMarkup?: boolean;
   } | CreatePlaySceneRehearsalSessionInput): Promise<{
     session: PlaySession;
     files: string[];
@@ -2550,13 +2571,15 @@ export interface OanClient extends WorkRegistryClientMethods, ImageAssetClientMe
       timeAdvance?: PlayRelativeTimeAdvance;
       /** Marks a steer resend or a queued follow-up in the Play message log. */
       delivery?: PlayTurnDelivery;
+      /** How the draft is streamed; fixed for the turn. Absent means `workbench`. */
+      presentation?: PlayTurnPresentation;
     },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   retryPlayWorldRefereeTurn(
     id: string,
     artifactId: string,
-    input: { baseRevision: number; guidance?: string },
+    input: { baseRevision: number; guidance?: string; presentation?: PlayTurnPresentation },
     options?: PlayTurnStreamOptions,
   ): AsyncIterable<PlayTurnStreamEvent>;
   /** Read-only extra action suggestions; never changes the session. */
@@ -3675,7 +3698,8 @@ async function* streamPlayWorldRefereeTurnWith(
     baseRevision?: number;
     timeAdvance?: PlayRelativeTimeAdvance;
     delivery?: PlayTurnDelivery;
-  } | { baseRevision: number; guidance?: string },
+    presentation?: PlayTurnPresentation;
+  } | { baseRevision: number; guidance?: string; presentation?: PlayTurnPresentation },
   options: PlayTurnStreamOptions = {},
   retrySourceArtifactId?: string,
 ): AsyncIterable<PlayTurnStreamEvent> {
@@ -3994,6 +4018,7 @@ function parsePlayTurnStreamEventPayload(
         : undefined;
     case 'play.narrative.delta':
       return typeof value.delta === 'string' && value.provisional === true
+        && (value.markup === undefined || isPlayNarrativeDraftMarkup(value.markup))
         ? value as unknown as PlayTurnStreamEvent
         : undefined;
     case 'play.narrative.reset':
@@ -5705,7 +5730,8 @@ function normalizePlayLaunchSessionStartRequest(
 ): StartPlaySessionFromLaunchPackageInput {
   if (
     !isRecord(input) ||
-    !hasOnlyKnownFields(input, ['launchPackageId', 'id']) ||
+    !hasOnlyKnownFields(input, ['launchPackageId', 'id', 'stageMarkup']) ||
+    (input.stageMarkup !== undefined && typeof input.stageMarkup !== 'boolean') ||
     !isPlayLaunchSafeId(input.launchPackageId) ||
     (input.id !== undefined && !isPlayLaunchSafeId(input.id))
   ) {
@@ -7332,8 +7358,13 @@ function isPlayTurnContextTrace(
   return isRecord(value)
     && hasOnlyKnownFields(value, [
       'schemaVersion', 'sessionId', 'sessionRevision', 'artifactId', 'createdAt',
-      'transcriptWindow', 'eventWindow', 'sources', 'canonical',
+      'transcriptWindow', 'eventWindow', 'sources', 'stageMarkupNotices', 'canonical',
     ])
+    && (value.stageMarkupNotices === undefined || (Array.isArray(value.stageMarkupNotices)
+      && value.stageMarkupNotices.every(notice => isRecord(notice)
+        && hasOnlyKnownFields(notice, ['kind', 'count', 'sample'])
+        && (notice.kind === 'unknownCharacter' || notice.kind === 'unknownPortrait' || notice.kind === 'malformed')
+        && isNonNegativeSafeInteger(notice.count) && typeof notice.sample === 'string')))
     && value.schemaVersion === 1
     && value.sessionId === sessionId
     && isNonNegativeSafeInteger(value.sessionRevision)
@@ -9063,6 +9094,15 @@ function isSafePlayStatePath(value: unknown): value is string {
   return value.split('.').every((segment) =>
     /^[\p{L}_][\p{L}\p{N}_-]*$/u.test(segment)
     && !UNSAFE_PLAY_STATE_PATH_SEGMENTS.has(segment));
+}
+
+function isPlayNarrativeDraftMarkup(value: unknown): value is PlayNarrativeDraftMarkupLine[] {
+  return Array.isArray(value) && value.length <= 20_000 && value.every(item => isRecord(item)
+    && hasOnlyKnownFields(item, ['line', 'speakerId', 'speaker', 'portraitId'])
+    && isNonNegativeSafeInteger(item.line)
+    && isNonEmptyString(item.speakerId) && item.speakerId.length <= 300
+    && isNonEmptyString(item.speaker) && item.speaker.length <= 300
+    && (item.portraitId === undefined || (typeof item.portraitId === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(item.portraitId))));
 }
 
 function isPlayTurnStreamEventType(value: string): value is PlayTurnStreamEvent['type'] {

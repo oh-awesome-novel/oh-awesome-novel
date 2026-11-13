@@ -23,6 +23,7 @@ function groups(sources: readonly PlayContextSourceTraceView[]) {
         <time :datetime="trace.createdAt">{{ trace.createdAt }}</time>
       </header>
       <p>{{ trace.eventWindowLabel }}</p>
+      <p v-for="notice in trace.stageMarkupNotices ?? []" :key="notice" class="play-context-trace-notice">{{ notice }}</p>
       <section v-for="group in groups(trace.sources)" :key="group.label" class="work-source-group">
         <h4 v-if="group.label">{{ group.label }}</h4>
       <ul>

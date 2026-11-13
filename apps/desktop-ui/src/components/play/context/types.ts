@@ -15,6 +15,8 @@ export interface PlayContextTraceView {
   transcriptWindowLabel: string;
   eventWindowLabel: string;
   sources: PlayContextSourceTraceView[];
+  /** Stage markup fallbacks of the turn, already worded for the author. */
+  stageMarkupNotices?: string[];
 }
 
 export type PlaySourceDriftState = 'current' | 'changed' | 'missing' | 'invalid';

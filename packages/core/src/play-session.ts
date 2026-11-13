@@ -35,6 +35,7 @@ import {
 } from './play-session-durability.js';
 
 import { assertSafePlayNarrativePrefix } from './play-narrative-stream.js';
+import { parsePlayStageMarkup, readPlayStageCast, readPlayStageMarkup } from './play-stage-markup.js';
 import { createPlayAdoptionSourceBase } from './play-adoption.js';
 import {
   PLAY_KNOWLEDGE_STATE_KEY,
@@ -1576,7 +1577,11 @@ export const settlePlayWorldRefereeSettlement = (
   if (!userText) {
     throw new Error('Play turn requires user text.');
   }
-  const narrative = input.narrative.trim();
+  // A stage-markup session saves the tag-free text; the tags only shape the stage snapshot.
+  const stageMarkup = readPlayStageMarkup(input.session.metadataExtensions)
+    ? parsePlayStageMarkup(input.narrative.trim(), readPlayStageCast(input.session.metadataExtensions, input.session.characters))
+    : undefined;
+  const narrative = stageMarkup ? stageMarkup.text : input.narrative.trim();
   if (!narrative) {
     throw new Error('Play world referee settlement requires player-visible narrative.');
   }
@@ -1777,7 +1782,7 @@ export const settlePlayWorldRefereeSettlement = (
       id: refereeTurnId,
       speaker: 'world-referee',
       content: narrative,
-      stageSnapshot: createStageSnapshot(typeof playLocalState.currentScene === 'string' && playLocalStateVisibility.currentScene !== 'playerUnknown' ? playLocalState.currentScene : input.session.sceneStart, narrative, stageRoster(input.session), stageBackgrounds(input.session)),
+      stageSnapshot: createStageSnapshot(typeof playLocalState.currentScene === 'string' && playLocalStateVisibility.currentScene !== 'playerUnknown' ? playLocalState.currentScene : input.session.sceneStart, narrative, stageRoster(input.session), stageBackgrounds(input.session), stageMarkup?.lines),
       createdAt,
     },
   ];

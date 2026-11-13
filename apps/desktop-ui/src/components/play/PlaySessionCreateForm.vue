@@ -50,6 +50,8 @@ const pressureNextConsequence = shallowRef(initialPressure?.nextConsequence ?? '
 const agendaOwner = shallowRef(initialAgenda?.ownerEntityId ?? '');
 const agendaGoal = shallowRef(initialAgenda?.goal ?? '');
 const agendaNextMove = shallowRef(initialAgenda?.nextMove ?? '');
+// Never prefilled: it is a choice about this new session, not part of the opening being reused.
+const stageMarkup = shallowRef(false);
 const pressureSeedTouched = computed(() =>
   pressureLabel.value.trim().length > 0 || pressureNextConsequence.value.trim().length > 0,
 );
@@ -94,6 +96,7 @@ function submitCreate() {
       ...buildPlayEventSettings(eventSettings.value),
     },
     ...(worldMomentum ? { worldMomentum } : {}),
+    ...(stageMarkup.value ? { stageMarkup: true } : {}),
   });
 }
 
@@ -173,6 +176,13 @@ function splitCharacters(value: string): string[] {
       </label>
     </div>
     <PlayEventPolicyFields :value="eventSettings" :disabled="creating" @update="eventSettings = $event" />
+    <label class="play-stage-markup-option">
+      <input v-model="stageMarkup" type="checkbox" :disabled="creating">
+      <span>
+        演出标注
+        <small>让裁判在每句对白前标出说话人和立绘，舞台按标注显示名字牌与立绘。只能在创建时选择，之后不能再开启或关闭。</small>
+      </span>
+    </label>
     <fieldset class="play-world-seed-fields">
       <legend>世界动向种子 <small>可选</small></legend>
       <p>为新世界提供一个正在逼近的压力，或一个 NPC / 组织的下一步。</p>

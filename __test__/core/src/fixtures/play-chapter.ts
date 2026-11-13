@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { createPlaySessionDraft, settlePlayWorldRefereeResponse, restorePlaySessionCheckpoint, writePlaySessionFiles, writePlayOutcomeReport, createPlayWritingReferenceAttachment } from '@oh-awesome-novel/core';
 
 export const chapterIntent = { mustKeep: '保留送伞', mayChange: '调整表达', pov: '第三人称', goal: '两人建立信任', length: '短章' };
-export async function playChapterFixture(autoCommit = false, existing = false) {
+/** `stageMarkup` builds the session with speaker tags enabled (task 1610); its committed text is still tag-free. */
+export async function playChapterFixture(autoCommit = false, existing = false, stageMarkup = false) {
   const root = await mkdtemp(join(tmpdir(), 'oan-play-chapter-')); const git = promisify(execFile);
   await mkdir(join(root, '.oan'), { recursive: true }); await mkdir(join(root, 'world'), { recursive: true });
   await writeFile(join(root, '.oan/config.yaml'), `version: 1\nnovelName: Play Chapter\ngit:\n  autoCommitOnAccept: ${autoCommit}\n`);
@@ -18,7 +19,8 @@ export async function playChapterFixture(autoCommit = false, existing = false) {
   for (const [key, value] of [['user.name', 'Test'], ['user.email', 'test@example.invalid'], ['commit.gpgsign', 'false']]) await git('git', ['-C', root, 'config', key!, value!]);
   await git('git', ['-C', root, 'add', '.']); await git('git', ['-C', root, 'commit', '-m', 'baseline']);
   const initial = createPlaySessionDraft({ id: 'play-chapter', title: '雨夜', sceneStart: '车站', characters: [], activatedSources: [{ sourceId: 'rules', path: 'world/rules.md', contentHash: createHash('sha256').update(rules).digest('hex'), role: 'world', objectId: 'rules', trust: 'canonical', budgetLayer: 'L1', semanticBoundary: 'protected', reason: '世界规则' }] });
-  const settle = (session: typeof initial, text: string, events: unknown[]) => settlePlayWorldRefereeResponse({ session, userText: text, actionKind: 'do', refereeResponse: `私有原始叙述 RAW_TRANSCRIPT_ONLY\n\`\`\`oan-play-settlement\n${JSON.stringify({ events, stateDelta: {}, observations: [], suggestedActions: [] })}\n\`\`\`` });
+  if (stageMarkup) { initial.characters = ['念念']; initial.metadataExtensions.vnStageMarkup = { version: 1 }; }
+  const settle = (session: typeof initial, text: string, events: unknown[]) => settlePlayWorldRefereeResponse({ session, userText: text, actionKind: 'do', refereeResponse: `${stageMarkup ? '@念念 “STAGE_TAGGED_LINE，给你伞。”\n' : ''}私有原始叙述 RAW_TRANSCRIPT_ONLY\n\`\`\`oan-play-settlement\n${JSON.stringify({ events, stateDelta: {}, observations: [], suggestedActions: [] })}\n\`\`\`` });
   const event = (title: string, visibility = 'playerVisible') => ({ kind: 'relationshipChanged', origin: 'npc', title, summary: title, visibility, cause: { reason: 'DIRECTOR_REASON_ONLY' } });
   const abandoned = settle(initial, '走另一条路', [event('SIBLING_ONLY')]);
   const session = settle(restorePlaySessionCheckpoint(abandoned, 'initial-world'), '递伞', [event('送伞并建立信任'), event('HIDDEN_ONLY', 'playerUnknown')]);
