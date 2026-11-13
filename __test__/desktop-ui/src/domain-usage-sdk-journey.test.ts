@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Vue needs a renderer DOM, while the localhost Hono adapter needs Node Fetch classes.
-vi.hoisted(async () => {
+await vi.hoisted(async () => {
   const http = await import('undici');
   for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]);
 });
@@ -22,6 +22,7 @@ import type { OanClient, UsageInspectorScope } from '@oh-awesome-novel/client';
 // Delegate to the real HTTP client. No Inspector records or model events are fabricated here.
 const api = vi.hoisted(() => ({} as Record<string, unknown>));
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
+vi.mock('../../../apps/desktop-ui/src/composables/useWorkspaceApi', () => ({ useWorkspaceApi: () => api }));
 import PlayPhaseMemory from '../../../apps/desktop-ui/src/components/play/PlayPhaseMemory.vue';
 import type { PlaySession } from '@oh-awesome-novel/client';
 import DomainUsageInspector from '../../../apps/desktop-ui/src/components/usage/DomainUsageInspector.vue';

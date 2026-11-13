@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-vi.hoisted(async () => { const http = await import('undici'); for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]); });
+await vi.hoisted(async () => { const http = await import('undici'); for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]); });
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { mount, type VueWrapper } from '@vue/test-utils';
@@ -32,10 +32,15 @@ it('opens an evidence-backed report, persists choices, reviews a scoped draft an
     expect(await readFile(join(f.root, reviewPath), 'utf8')).toBe(reviewText);
     const id = panel.emitted('reviewPendingAction')![0]![0] as string;
     const { pendingAction } = await api.readPendingAction(id);
-    const card = mount(PendingActionCard, { props: { action: pendingAction, onAccept: async () => { const result = await api.acceptPendingAction(id); await card.setProps({ action: result.pendingAction }); } } }); wrappers.push(card);
+    // Await the actual approval and render, rather than vi.waitFor's one-second default.
+    const accepted = Promise.withResolvers<void>();
+    const card = mount(PendingActionCard, { props: { action: pendingAction, onAccept: () => {
+      void api.acceptPendingAction(id).then(result => card.setProps({ action: result.pendingAction })).then(accepted.resolve, accepted.reject);
+    } } }); wrappers.push(card);
     await card.findAll('button').find(button => button.text() === 'Diff')!.trigger('click'); expect(card.text()).toContain('她犹豫片刻');
     await card.findAll('button').find(button => button.text() === 'Accept')!.trigger('click');
-    await vi.waitFor(() => expect(card.text()).toContain('accepted'));
+    await accepted.promise;
+    expect(card.text()).toContain('accepted');
     const content = await readFile(join(f.root, reviewPath), 'utf8'); expect(content).toContain('她笑了。\r\n\r\n她犹豫片刻');
     expect(content.endsWith('最后一句必须保留。\r\n')).toBe(true);
     await panel.setProps({ sourceVersion: content });
