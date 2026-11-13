@@ -1,5 +1,6 @@
 import {
   computed,
+  watch,
   readonly,
   onScopeDispose,
   getCurrentScope,
@@ -55,7 +56,7 @@ export type PlayGuidedStartApi = Pick<
   | 'previewPlayLaunchPackage'
   | 'createPlayLaunchPackage'
   | 'startPlaySessionFromLaunchPackage'
-> & Partial<Pick<OanClient, 'listPlayCanonBeatCandidates' | 'listReferences' | 'listReferenceMaterialAdoptionRecords'>>;
+> & Partial<Pick<OanClient, 'getWorkRegistry' | 'listPlayCanonBeatCandidates' | 'listReferences' | 'listReferenceMaterialAdoptionRecords'>>;
 
 export const MAX_GUIDED_CANON_BEATS = 24;
 
@@ -210,7 +211,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     const title = titleValue.trim().slice(0, 120);
     const next = { ...sourceWorks.value };
     if (!title) delete next[sourceId];
-    else next[sourceId] = Object.values(next).find(work => work.title === title) ?? suggested ?? { id: `work-${crypto.randomUUID()}`, title };
+    else next[sourceId] = suggested ?? Object.values(next).find(work => work.title === title) ?? { id: `work-${crypto.randomUUID()}`, title };
     sourceWorks.value = next;
     const ids = new Set(crossoverWorks.value.map(work => work.id));
     crossoverDraft.value = { ...crossoverDraft.value, rulePrecedence: crossoverDraft.value.rulePrecedence.filter(rule => ids.has(rule.winner)) };
@@ -221,18 +222,31 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     crossoverDraft.value = { ...crossoverDraft.value, ...patch }; invalidatePreview();
   }
   async function prefillSourceWorks(): Promise<void> {
-    if (!options.api.listReferences || !options.api.listReferenceMaterialAdoptionRecords || originSuggestionsLoading.value) return;
+    if (originSuggestionsLoading.value) return;
     const epoch = ++originRequest; const selected = [...selectedSources.value];
     originSuggestionsLoading.value = true; originSuggestionNotice.value = '';
     const startingWorks = { ...sourceWorks.value };
     try {
-      const references = (await options.api.listReferences()).references.slice(0, 32);
       const matches = new Map<string, PlayOriginWork[]>();
+      const attributed = new Set<string>();
+      if (options.api.getWorkRegistry) {
+        const registry = await options.api.getWorkRegistry();
+        if (epoch !== originRequest) return;
+        for (const source of selected) {
+          const path = source.path.startsWith('characters/') ? `characters/${source.path.split('/')[1]}/meta.yaml` : source.path;
+          const attribution = registry.attributions.find(row => row.path === path);
+          if (!attribution?.originWorkId) continue;
+          attributed.add(source.sourceId);
+          const work = registry.registry?.works.find(work => work.id === attribution.originWorkId);
+          if (work) matches.set(source.sourceId, [{ id: work.id, title: work.title }]);
+        }
+      }
+      const references = options.api.listReferences && options.api.listReferenceMaterialAdoptionRecords ? (await options.api.listReferences()).references.slice(0, 32) : [];
       for (const reference of references) {
         if (epoch !== originRequest) return;
         try {
-          const records = await options.api.listReferenceMaterialAdoptionRecords(reference.id);
-          for (const source of selected) if (records.records.some(record => record.status === 'accepted' && record.targets.some(target => target.path === source.path && target.operation !== 'delete'))) {
+          const records = await options.api.listReferenceMaterialAdoptionRecords!(reference.id);
+          for (const source of selected) if (!attributed.has(source.sourceId) && records.records.some(record => record.status === 'accepted' && record.targets.some(target => target.path === source.path && target.operation !== 'delete'))) {
             matches.set(source.sourceId, [...matches.get(source.sourceId) ?? [], { id: sourceIdForPath(`reference-${reference.id}`), title: reference.title }]);
           }
         } catch { /* Unpublished/cleared reference data cannot establish provenance. */ }
@@ -242,10 +256,27 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
       for (const [id, works] of matches) if (works.length === 1 && !startingWorks[id] && !sourceWorks.value[id] && selectedSourceIds.value.includes(id)) {
         setSourceWork(id, works[0]!.title, works[0]); count++;
       }
-      originSuggestionNotice.value = `已预填 ${count} 个来源，请检查作品名称后继续；无记录或有多个出处的来源需手动标注。仅检查仍保留记录的前 32 部参考作品。`;
+      originSuggestionNotice.value = `已预填 ${count} 个来源，请检查作品名称后继续；优先使用正式归属，再检查前 32 部参考作品的采纳记录；原创可不标注。`;
     } catch { if (epoch === originRequest) originSuggestionNotice.value = '采用记录暂时不可用，可以直接手动标注。'; }
     finally { if (epoch === originRequest) originSuggestionsLoading.value = false; }
   }
+  // Canonical attributions prefill on selection; the author can still override them.
+  let canonicalRequest = 0;
+  watch(() => selectedSourceIds.value.join('|'), async () => {
+    if (!options.api.getWorkRegistry) return;
+    const request = ++canonicalRequest;
+    try {
+      const view = await options.api.getWorkRegistry();
+      if (request !== canonicalRequest) return;
+      for (const source of selectedSources.value) {
+        if (sourceWorks.value[source.sourceId]) continue;
+        const path = source.path.startsWith('characters/') ? `characters/${source.path.split('/')[1]}/meta.yaml` : source.path;
+        const id = view.attributions.find(item => item.path === path)?.originWorkId;
+        const work = view.registry?.works.find(item => item.id === id);
+        if (work) setSourceWork(source.sourceId, work.title, { id: work.id, title: work.title });
+      }
+    } catch { /* The explicit prefill button reports read failures; manual labels stay available. */ }
+  });
   const characterSources = computed(() =>
     selectedSources.value.filter((source) => source.role === 'character'));
   const timelineSources = computed(() =>

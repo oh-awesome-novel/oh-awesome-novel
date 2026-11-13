@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef } from 'vue';
 
+import WorkRegistryPanel from './WorkRegistryPanel.vue';
 import ReferenceImportForm from './ReferenceImportForm.vue';
 import ReferenceList from './ReferenceList.vue';
 import ReferenceContextSelectionPanel from './reference/ReferenceContextSelectionPanel.vue';
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>();
 
 const api = useWorkspaceApi();
+const worksOpen = shallowRef(false);
 const references = shallowRef<ReferenceWorkSummary[]>([]);
 const selection = shallowRef<ReferenceContextSelection>();
 const lastImport = shallowRef<ReferenceImportResult>();
@@ -129,6 +131,8 @@ async function createPublishPendingAction(): Promise<void> {
 </script>
 
 <template>
+  <button v-if="workspaceKey" type="button" @click="worksOpen = !worksOpen">作品登记与归属</button>
+  <WorkRegistryPanel v-if="worksOpen && workspaceKey" :workspace-root="workspaceKey" @close="worksOpen = false" @review-pending-action="emit('reviewPendingAction', $event)" />
   <section class="right-tab-panel" aria-label="Reference import">
     <div class="panel-heading">
       <div>

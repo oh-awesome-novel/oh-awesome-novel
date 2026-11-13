@@ -102,7 +102,7 @@ export function formatReferenceMaterialAdoptionPrompt(
       checksumSha256: file.checksumSha256,
       sourceRunId: file.sourceRunId,
     })),
-    targets: context.targets.map((target) => ({
+    targets: context.targets.filter(target => target.hostDraft === undefined).map((target) => ({
       targetId: target.id,
       materialKind: target.materialKind,
       targetFile: target.targetFile,
@@ -110,6 +110,8 @@ export function formatReferenceMaterialAdoptionPrompt(
       targetExisted: target.targetExisted,
       baselineChecksumSha256: target.baselineChecksumSha256,
       baseline: target.baseline,
+      ...(context.characterAdoption?.mergeFiles.includes(target.targetFile) ? { preserveBaseline: true, mergeInstruction: '保留完整已有正文作为前缀，追加来料；矛盾说法并列保留，交给作者审阅。' } : {}),
+      ...(target.materialKind === 'relationships' && context.characterAdoption ? { preserveExistingRelations: '保留已有关系的全部字段。新增或矛盾说法只能追加到原 notes 之后，不覆盖原 type/status。', confirmedCharacters: context.characterAdoption.relationships.filter(r => r.targetFile === target.targetFile).flatMap(r => r.characters) } : {}),
       selectedEntries: target.entries.map((entry) => ({
         id: entry.id,
         materialKind: entry.materialKind,

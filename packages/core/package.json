@@ -26,6 +26,7 @@
     "vite-plus": "1.4.0"
   },
   "exports": {
+    "./work-registry": { "types": "./dist/work-registry.d.mts", "import": "./dist/work-registry.mjs" },
     "./revision-impact-contract": { "types": "./dist/revision-impact-contract.d.mts", "import": "./dist/revision-impact-contract.mjs" },
     "./chapter-review-contract": { "types": "./dist/chapter-review-contract.d.mts", "import": "./dist/chapter-review-contract.mjs" },
     "./play-chapter-writing-contract": { "types": "./dist/play-chapter-writing-contract.d.mts", "import": "./dist/play-chapter-writing-contract.mjs" },

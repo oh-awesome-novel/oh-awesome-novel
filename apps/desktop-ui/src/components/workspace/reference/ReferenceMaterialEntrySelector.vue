@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ReferenceCharacterDecision from './ReferenceCharacterDecision.vue';
+import type { CharacterAdoptionDecision, ReferenceCharacterPreflight, RelationshipCharacterSelection } from '@oh-awesome-novel/client';
 import { computed, reactive, shallowRef, watch } from 'vue';
 
 import type {
@@ -25,6 +27,7 @@ const props = defineProps<{
   /** Issues from the latest preflight, shown next to the entries they name. */
   issues?: readonly ReferenceMaterialAdoptionPreflightIssue[];
   records?: readonly ReferenceMaterialAdoptionRecord[];
+  characterPreflight?: ReferenceCharacterPreflight;
 }>();
 
 const emit = defineEmits<{
@@ -35,6 +38,8 @@ const emit = defineEmits<{
 }>();
 
 interface EntryFormState {
+  characterDecision?: CharacterAdoptionDecision;
+  relationshipCharacters?: RelationshipCharacterSelection[];
   selected: boolean;
   targetFile: string;
   targetPath: string;
@@ -46,6 +51,15 @@ type FlagFilter = 'all' | 'uncertain' | 'selected' | 'adopted' | 'notAdopted';
 
 const form = reactive<Record<string, EntryFormState>>({});
 const query = shallowRef('');
+const characterCheck = shallowRef<ReferenceCharacterPreflight>();
+watch(() => props.characterPreflight, value => {
+  if (!value) return;
+  characterCheck.value = value;
+  for (const match of value.matches) {
+    const state = form[match.entryId];
+    if (state && match.recordedCharacterId && !state.characterDecision) state.targetFile = state.targetFile.replace(/^characters\/[^/]+\//u, `characters/${match.recordedCharacterId}/`);
+  }
+});
 const kindFilter = shallowRef<KindFilter>('all');
 const confidenceFilter = shallowRef<ConfidenceFilter>('all');
 const flagFilter = shallowRef<FlagFilter>('all');
@@ -90,6 +104,8 @@ const selections = computed<ReferenceMaterialAdoptionSelection[]>(() =>
   selectedEntries.value.map((entry) => {
     const state = form[entry.id]!;
     return {
+      ...(state.characterDecision ? { characterDecision: state.characterDecision } : {}),
+      ...(state.relationshipCharacters?.length ? { relationshipCharacters: state.relationshipCharacters } : {}),
       entryId: entry.id,
       targetFile: state.targetFile.trim(),
       ...(entry.materialKind === 'timeline' && state.targetPath.trim()
@@ -112,6 +128,7 @@ const issuesByEntry = computed(() => {
 watch(
   () => props.catalog.fingerprint,
   () => {
+    characterCheck.value = undefined;
     for (const key of Object.keys(form)) delete form[key];
     for (const entry of props.catalog.entries) {
       const defaults = defaultTarget(entry);
@@ -138,6 +155,10 @@ watch(() => JSON.stringify(selections.value), (next, previous) => {
   if (previous !== undefined && next !== previous) emit('change');
 });
 
+function decideCharacter(entryId: string, decision: CharacterAdoptionDecision): void {
+  form[entryId]!.characterDecision = decision;
+  form[entryId]!.targetFile = form[entryId]!.targetFile.replace(/^characters\/[^/]+\//u, `characters/${decision.characterId}/`);
+}
 function requestPreflight(): void {
   if (canPreflight.value) emit('preflight', selections.value);
 }
@@ -327,6 +348,18 @@ function safeSlug(value: string): string {
           移出这一批
         </button>
       </div>
+      <template v-if="form[entry.id]!.selected && characterCheck">
+        <ReferenceCharacterDecision v-for="match in characterCheck.matches.filter(m => m.entryId === entry.id)" :key="match.entryId" :match="match" :entry="entry" :characters="characterCheck.characters" :decision="form[entry.id]!.characterDecision" :disabled="disabled" @decide="decideCharacter(entry.id, $event)" @remove="form[entry.id]!.selected = false" />
+        <fieldset v-if="entry.materialKind === 'relationships'" :disabled="disabled" class="relationship-resolution">
+          <legend>确认关系中的对方人物</legend><p>填写来料姓名；有当前人物对应时可自动解析，也可以指定角色。每个对方各列一行。</p>
+          <div v-for="(person, index) in form[entry.id]!.relationshipCharacters ?? []" :key="index">
+            <label>来料人物名<input v-model="person.name" aria-label="关系来料人物名" /></label>
+            <label>对应角色<select v-model="person.characterId" aria-label="关系对应角色"><option value="">按已确认的人物对应解析</option><option v-for="c in characterCheck.characters" :key="c.id" :value="c.id">{{ c.name }} · {{ c.id }}</option><option v-for="s in selectedEntries.filter(e => e.materialKind === 'characters' && form[e.id]!.characterDecision?.kind !== 'same')" :key="s.id" :value="form[s.id]!.targetFile.split('/')[1]">本批：{{ s.title }}</option></select></label>
+            <button type="button" @click="form[entry.id]!.relationshipCharacters!.splice(index, 1)">移除人物</button>
+          </div>
+          <button type="button" @click="(form[entry.id]!.relationshipCharacters ??= []).push({ name: '', characterId: '' })">添加关系人物</button>
+        </fieldset>
+      </template>
       <ul v-if="form[entry.id]!.selected && issuesByEntry.get(entry.id)" class="material-entry-issues">
         <li
           v-for="issue in issuesByEntry.get(entry.id)"

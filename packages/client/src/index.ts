@@ -61,6 +61,8 @@ import { DefaultChatTransport } from 'ai';
 import { createImageAssetClientMethods } from './image-assets.js';
 import type { ImageAssetClientMethods } from './image-assets.js';
 export { IMAGE_ASSET_MAX_BYTES, isImageAssetPath } from './image-assets.js';
+import { createWorkRegistryClientMethods, type WorkRegistryClientMethods } from './work-registry.js';
+export * from './work-registry.js';
 import { createCharacterPortraitClientMethods } from './character-portraits.js';
 import type { CharacterPortraitClientMethods } from './character-portraits.js';
 export { readPlaySessionPortraitSets } from './character-portraits.js';
@@ -2246,7 +2248,7 @@ export interface AgentChatEditContext {
   readonly exactWritablePaths: readonly string[];
 }
 
-export interface OanClient extends ImageAssetClientMethods, CharacterPortraitClientMethods, RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
+export interface OanClient extends WorkRegistryClientMethods, ImageAssetClientMethods, CharacterPortraitClientMethods, RevisionImpactClientMethods, ChapterReviewClientMethods, PlayChapterWritingClientMethods, PlayRehearsalClientMethods, ForgeClientMethods, UsageInspectorClientMethods {
   listAgentUsageSessions(): Promise<{ sessions: Array<{ id: string; updatedAt: string }> }>;
   getAgentGovernanceHistory(sessionId: string, limit?: number): Promise<AgentGovernanceHistory>;
   readonly backendBaseUrl: string;
@@ -2733,6 +2735,7 @@ export function createOanClient(options: OanClientOptions = {}): OanClient {
     ...createPlayChapterWritingClient(requestJson, fetcher, backendBaseUrl),
     ...createImageAssetClientMethods(requestJson, fetcher, backendBaseUrl),
     ...createCharacterPortraitClientMethods(requestJson),
+    ...createWorkRegistryClientMethods(requestJson),
     ...createForgeClientMethods(requestJson),
     ...createUsageInspectorClientMethods(requestJson),
     backendBaseUrl,
@@ -9211,3 +9214,5 @@ function hasValidCrossoverState(value: Record<string, unknown>): boolean {
     return true;
   } catch { return false; }
 }
+
+export type { CharacterAdoptionDecision, RelationshipCharacterSelection, ReferenceCharacterPreflight, ReferenceCharacterMatch } from './reference-material-adoption.js';

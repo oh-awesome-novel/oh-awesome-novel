@@ -1,3 +1,5 @@
+import type { CharacterAdoptionDecision, RelationshipCharacterSelection, ReferenceCharacterPreflight } from '@oh-awesome-novel/core';
+export type { CharacterAdoptionDecision, RelationshipCharacterSelection, ReferenceCharacterPreflight, ReferenceCharacterMatch } from '@oh-awesome-novel/core';
 import type {
   ReferenceDeconstructionConfidence,
   ReferenceDeconstructionDiagnostic,
@@ -43,6 +45,8 @@ export interface ReferenceMaterialAdoptionCatalog {
 }
 
 export interface ReferenceMaterialAdoptionSelection {
+  characterDecision?: CharacterAdoptionDecision;
+  relationshipCharacters?: RelationshipCharacterSelection[];
   entryId: string;
   targetFile: string;
   targetPath?: string;
@@ -80,6 +84,8 @@ export type ReferenceMaterialAdoptionTargetSuggestions =
   Record<ReferenceStoryMaterialKind, string[]> & { truncated: boolean };
 
 export type ReferenceMaterialAdoptionPreflightIssueCode =
+  | 'characterDecisionRequired'
+  | 'unresolvedRelationship'
   | 'catalogChanged'
   | 'entryNotPublished'
   | 'duplicateEntry'
@@ -103,6 +109,7 @@ export interface ReferenceMaterialAdoptionPreflightIssue {
 }
 
 export interface ReferenceMaterialAdoptionPreflight {
+  characterPreflight?: ReferenceCharacterPreflight;
   schemaVersion: 1;
   referenceId: string;
   catalogFingerprint: string;
@@ -188,7 +195,8 @@ export function assertReferenceMaterialAdoptionPreviewInput(value: unknown): ass
     || !value.selections.length
     || !value.selections.every((selection) =>
       isRecord(selection)
-      && hasFields(selection, ['entryId', 'targetFile', 'targetPath'])
+      && hasFields(selection, ['entryId', 'targetFile', 'targetPath', 'characterDecision', 'relationshipCharacters'])
+      && validCharacterSelection(selection)
       && isSafeId(selection.entryId)
       && isSafePath(selection.targetFile)
       && (selection.targetPath === undefined || isBoundedText(selection.targetPath, 300)))
@@ -224,7 +232,8 @@ export function assertReferenceMaterialAdoptionPreflightInput(
     || value.selections.length > 512
     || !value.selections.every((selection) =>
       isRecord(selection)
-      && hasFields(selection, ['entryId', 'targetFile', 'targetPath'])
+      && hasFields(selection, ['entryId', 'targetFile', 'targetPath', 'characterDecision', 'relationshipCharacters'])
+      && validCharacterSelection(selection)
       && typeof selection.entryId === 'string' && selection.entryId.length <= 200
       && typeof selection.targetFile === 'string' && selection.targetFile.length <= 1_000
       && (selection.targetPath === undefined
@@ -243,8 +252,9 @@ export function parseReferenceMaterialAdoptionPreflightEnvelope(
     !isRecord(preflight)
     || !hasFields(preflight, [
       'schemaVersion', 'referenceId', 'catalogFingerprint', 'status', 'selectionCount',
-      'targetCount', 'materialChars', 'limits', 'targets', 'issues',
+      'targetCount', 'materialChars', 'limits', 'targets', 'issues', 'characterPreflight',
     ])
+    || (preflight.characterPreflight !== undefined && !validCharacterPreflight(preflight.characterPreflight))
     || preflight.schemaVersion !== 1
     || preflight.referenceId !== referenceId
     || !isSha256(preflight.catalogFingerprint)
@@ -331,6 +341,7 @@ export function parseReferenceMaterialAdoptionRecords(
 }
 
 const PREFLIGHT_ISSUE_CODES: readonly string[] = [
+  'characterDecisionRequired', 'unresolvedRelationship',
   'catalogChanged', 'entryNotPublished', 'duplicateEntry', 'illegalTargetPath',
   'targetKindMismatch', 'mixedTarget', 'targetUnreadable', 'tooManySelections',
   'tooManyTargets', 'existingTarget', 'existingCharacter', 'sharedTarget', 'largeBatch',
@@ -632,4 +643,16 @@ function hasFields(value: Record<string, unknown>, allowed: readonly string[]): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validCharacterSelection(selection: Record<string, unknown>): boolean {
+  const decision = selection.characterDecision;
+  if (decision !== undefined && (!isRecord(decision) || !hasFields(decision, ['kind', 'characterId', 'materialHash']) || !['same', 'different'].includes(String(decision.kind)) || !isSafeId(decision.characterId) || !isSha256(decision.materialHash))) return false;
+  const people = selection.relationshipCharacters;
+  return people === undefined || Array.isArray(people) && people.length <= 32 && people.every(person => isRecord(person) && hasFields(person, ['name', 'characterId']) && isBoundedText(person.name, 500) && (person.characterId === '' || isSafeId(person.characterId)));
+}
+function validCharacterPreflight(value: unknown): boolean {
+  return isRecord(value) && hasFields(value, ['matches', 'characters', 'unresolvedRelationships']) && isStringArray(value.unresolvedRelationships)
+    && Array.isArray(value.characters) && value.characters.every(c => isRecord(c) && hasFields(c, ['id', 'name']) && isSafeId(c.id) && isBoundedText(c.name, 500))
+    && Array.isArray(value.matches) && value.matches.every(m => isRecord(m) && hasFields(m, ['entryId', 'materialHash', 'matches', 'suggestedCharacterId', 'recordedCharacterId', 'stale']) && isSafeId(m.entryId) && isSha256(m.materialHash) && typeof m.stale === 'boolean' && isSafeId(m.suggestedCharacterId) && (m.recordedCharacterId === undefined || isSafeId(m.recordedCharacterId)) && Array.isArray(m.matches) && m.matches.every(c => isRecord(c) && hasFields(c, ['characterId', 'name', 'files']) && isSafeId(c.characterId) && isBoundedText(c.name, 500) && Array.isArray(c.files) && c.files.every(f => isRecord(f) && hasFields(f, ['path', 'content', 'truncated']) && isSafePath(f.path) && typeof f.content === 'string' && f.content.length <= 8000 && typeof f.truncated === 'boolean')));
 }

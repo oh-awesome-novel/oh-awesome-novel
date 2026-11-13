@@ -199,6 +199,33 @@ describe('deterministic domain ChangeSet producers', () => {
     expect(proposal).toBeUndefined();
   });
 
+  it.each(['character-target', 'relationship-target'])('preserves conflicting source claims for %s', (targetId) => {
+    const context = adoptionContext();
+    context.targets = context.targets.filter(t => t.id === targetId);
+    const target = context.targets[0]!;
+    target.targetExisted = true;
+    target.baseline = targetId === 'character-target' ? '\n# Existing claim\n' : 'relationships:\n  alice:\n    type: ally\n    notes: Existing claim\n';
+    target.baselineChecksumSha256 = sha256Text(target.baseline);
+    context.characterAdoption = {
+      selections: [], registryFingerprint: SHA_A, metadata: [],
+      mergeFiles: targetId === 'character-target' ? [target.targetFile] : [],
+      relationships: targetId === 'relationship-target' ? [{ targetFile: target.targetFile, characters: [{ name: 'Alice', characterId: 'alice' }] }] : [],
+    };
+    const plan: ReferenceMaterialAdoptionPlan = { decisions: [{
+      targetId, targetFile: target.targetFile, materialKind: target.materialKind,
+      entryIds: target.entries.map(e => e.id), decision: 'update', reason: 'merge',
+      draft: targetId === 'character-target' ? '# Replacement\n' : 'relationships:\n  alice:\n    type: enemy\n    notes: Replacement\n',
+    }] };
+    const compile = () => createReferenceMaterialAdoptionChangeProposal({ adoptionContext: context, plan, context: {
+      sessionId: 'merge-preservation', repository: REPOSITORY, projectionFingerprint: SHA_A,
+      baselineFiles: [{ path: target.targetFile, content: target.baseline }],
+      origin: { kind: 'referenceMaterialAdoption', referenceId: context.referenceId, manifestRevision: context.manifestRevision, sourceChecksumSha256: context.sourceChecksumSha256, contextFingerprint: fingerprintReferenceMaterialAdoptionContext(context), previewFingerprint: SHA_C },
+    } });
+    expect(compile).toThrow(/保留|覆盖/);
+    plan.decisions[0]!.draft = targetId === 'character-target' ? target.baseline + '\nConflicting claim from B.\n' : 'relationships:\n  alice:\n    type: ally\n    notes: Existing claim; B describes an enemy.\n';
+    expect(compile()?.candidate.changes).toHaveLength(1);
+  });
+
   it.each([
     {
       target: 'chapterDraft' as const,

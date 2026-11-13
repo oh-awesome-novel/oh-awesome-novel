@@ -64,7 +64,7 @@ M13  Sandbox Change Engine And Unified Producers
 M14  Core Writing Loop And Proportionate Review
 M15  Long-session Play And Author Review Workflows (In progress)
 M16  Play Canon Rewrite And Crossover Experience (Planned)
-M17  Crossover Source Material (Planned)
+M17  Crossover Source Material (In progress)
 M18  Play Stage Presentation (Planned)
 M19  Portrait Image Generation (Planned)
 ```
@@ -244,9 +244,11 @@ Status: In progress（1450–1510 已交付，1520 的真实模型/SDK 旅程仍
 
 ## M17. Crossover Source Material
 
-Status: Planned（2026-11-12 立项，均未实现）。Tasks：[1530](tasks/1530.md)–[1570](tasks/1570.md)，范围、顺序与默认决定见 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md)。
+Status: In progress（2026-11-13：1530、1540 已交付；1550–1570 待实施）。Tasks：[1530](tasks/1530.md)–[1570](tasks/1570.md)，范围、顺序与默认决定见 [综漫多来源素材规划](plans/CROSSOVER_SOURCE_MATERIAL_PLAN_2026-11-12.md)。
 
 目标：让“综漫”在素材一侧也有一等支持。先交付 1530（作品清单与角色归属成为正式文件，Play 开局预填从这里读）和 1540（从第二部作品采用人物时由作者裁定同一人或另建，再合并采用）；1550 参考材料版本比较与重新采用、1560 跨作品技法对照、1570 EPUB/DOCX/PDF 导入互相独立，按使用反馈排序。每次生成仍只消费一份 reference，不做模型判定的人物同一性或自动冲突消解；新增或扩展的正式文件格式先更新 [FILESYSTEM_SPEC](FILESYSTEM_SPEC.md) 并补齐 final validator，写入仍只走既有审批链路。
+
+2026-11-13 已交付作品登记 / 对象归属、确定性人物对照、作者裁定和合并审批。正式文件、最终树校验、Play 预填与完整 SDK / HTTP / Desktop 旅程见 [1530](tasks/1530.md)、[1540](tasks/1540.md)；关系自然语言由作者列出端点再解析，不自动判断身份或消解冲突。
 
 ## M18. Play Stage Presentation
 

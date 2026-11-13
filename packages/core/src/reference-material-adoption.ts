@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 
-import { parse } from 'yaml';
+import { parse, parseDocument, stringify } from 'yaml';
+import { inspectReferenceCharacterAdoption, materialCharacterHash } from './reference-character-match.js';
+import type { CharacterAdoptionDecision, RelationshipCharacterSelection, ReferenceCharacterPreflight, CharacterAdoptionEvidence } from './reference-character-match.js';
 
 import type {
   ReferenceDeconstructionConfidence,
@@ -61,12 +63,16 @@ export interface ReferenceMaterialAdoptionCatalog {
 }
 
 export interface ReferenceMaterialAdoptionSelection {
+  characterDecision?: CharacterAdoptionDecision;
+  relationshipCharacters?: RelationshipCharacterSelection[];
   entryId: string;
   targetFile: string;
   targetPath?: string;
 }
 
 export interface ReferenceMaterialAdoptionTargetGroup {
+  hostDraft?: string;
+  dependsOnEntryIds?: string[];
   id: string;
   materialKind: ReferenceStoryMaterialKind;
   targetFile: string;
@@ -78,6 +84,7 @@ export interface ReferenceMaterialAdoptionTargetGroup {
 }
 
 export interface ReferenceMaterialAdoptionContext {
+  characterAdoption?: CharacterAdoptionEvidence;
   schemaVersion: typeof REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION;
   referenceId: string;
   referenceTitle: string;
@@ -211,6 +218,8 @@ export async function readReferenceMaterialAdoptionCatalog(
 }
 
 export type ReferenceMaterialAdoptionPreflightIssueCode =
+  | 'characterDecisionRequired'
+  | 'unresolvedRelationship'
   | 'catalogChanged'
   | 'entryNotPublished'
   | 'duplicateEntry'
@@ -243,6 +252,7 @@ export interface ReferenceMaterialAdoptionPreflightTarget {
 }
 
 export interface ReferenceMaterialAdoptionPreflight {
+  characterPreflight?: ReferenceCharacterPreflight;
   schemaVersion: typeof REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION;
   referenceId: string;
   /** The catalog the batch was checked against, which may be newer than the one the author selected from. */
@@ -288,7 +298,8 @@ export async function preflightReferenceMaterialAdoption(input: {
   ) {
     throw new Error('Story Material adoption preflight selections are invalid.');
   }
-  const issues: ReferenceMaterialAdoptionPreflightIssue[] = [];
+  const characterCheck = await inspectReferenceCharacterAdoption(input.workspaceRoot, catalog, input.selections);
+  const issues: ReferenceMaterialAdoptionPreflightIssue[] = [...characterCheck?.issues ?? []];
   if (input.catalogFingerprint !== catalog.fingerprint) {
     issues.push({
       code: 'catalogChanged',
@@ -310,7 +321,7 @@ export async function preflightReferenceMaterialAdoption(input: {
   const seen = new Set<string>();
   const groups = new Map<string, ReferenceMaterialAdoptionPreflightTarget & { conflict: boolean }>();
   let materialChars = 0;
-  for (const selection of input.selections) {
+  for (const selection of characterCheck?.selections ?? input.selections) {
     const entryId = typeof selection?.entryId === 'string' ? selection.entryId : '';
     const entry = catalog.entries.find((candidate) => candidate.id === entryId);
     if (!entry) {
@@ -439,11 +450,13 @@ export async function preflightReferenceMaterialAdoption(input: {
       });
     }
   }
-  if (groups.size > MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS) {
+  for (const meta of characterCheck?.evidence.metadata ?? []) targets.push({ materialKind: 'characters', targetFile: meta.path, entryIds: meta.entryIds, operation: meta.exists ? 'update' : 'create' });
+  const targetCount = groups.size + (characterCheck?.evidence.metadata.length ?? 0);
+  if (targetCount > MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS) {
     issues.push({
       code: 'tooManyTargets',
       severity: 'error',
-      message: `一批最多写入 ${MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS} 个目标文件，当前有 ${groups.size} 个，请分批处理或合并目标。`,
+      message: `一批最多写入 ${MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS} 个目标文件，当前有 ${targetCount} 个，请分批处理或合并目标。`,
       entryIds: [],
     });
   }
@@ -457,6 +470,7 @@ export async function preflightReferenceMaterialAdoption(input: {
   }
 
   return {
+    ...(characterCheck ? { characterPreflight: characterCheck.characterPreflight } : {}),
     schemaVersion: REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION,
     referenceId: catalog.referenceId,
     catalogFingerprint: catalog.fingerprint,
@@ -464,7 +478,7 @@ export async function preflightReferenceMaterialAdoption(input: {
       ? 'ready'
       : 'blocked',
     selectionCount: input.selections.length,
-    targetCount: groups.size,
+    targetCount,
     materialChars,
     limits: {
       selections: MAX_REFERENCE_MATERIAL_ADOPTION_SELECTIONS,
@@ -596,13 +610,15 @@ export async function prepareReferenceMaterialAdoptionContext(input: {
     throw new Error('Story Material adoption entry selections must be unique.');
   }
 
+  const characterCheck = await inspectReferenceCharacterAdoption(input.workspaceRoot, catalog, input.selections);
+  if (characterCheck?.issues.length) throw new Error(characterCheck.issues.map(issue => issue.message).join('\n'));
   const groups = new Map<string, {
     materialKind: ReferenceStoryMaterialKind;
     targetFile: string;
     targetPath?: string;
     entries: ReferenceMaterialAdoptionEntry[];
   }>();
-  for (const selection of input.selections) {
+  for (const selection of characterCheck?.selections ?? input.selections) {
     const entry = catalog.entries.find((candidate) => candidate.id === selection.entryId);
     if (!entry) {
       throw new Error(`Story Material entry is not published: ${selection.entryId}.`);
@@ -660,10 +676,17 @@ export async function prepareReferenceMaterialAdoptionContext(input: {
       entries: group.entries.sort((left, right) => left.id.localeCompare(right.id)),
     });
   }
+  for (const meta of characterCheck?.evidence.metadata ?? []) targets.push({
+    id: `target-meta-${sha256(meta.path).slice(0,24)}`, materialKind: 'characters', targetFile: meta.path,
+    targetExisted: meta.exists, baseline: meta.baseline, baselineChecksumSha256: sha256(meta.baseline),
+    entries: [], hostDraft: meta.content, dependsOnEntryIds: meta.entryIds,
+  });
+  if (targets.length > MAX_REFERENCE_MATERIAL_ADOPTION_TARGETS) throw new Error('人物对应与目标文件合计超过 32 个，请分批采用。');
   targets.sort((left, right) => left.targetFile.localeCompare(right.targetFile));
   const selectedMaterialKinds = new Set(targets.map((target) => target.materialKind));
 
   return {
+    ...(characterCheck ? { characterAdoption: characterCheck.evidence } : {}),
     schemaVersion: REFERENCE_MATERIAL_ADOPTION_SCHEMA_VERSION,
     referenceId: catalog.referenceId,
     referenceTitle: catalog.referenceTitle,
@@ -683,9 +706,30 @@ export function createReferenceMaterialAdoptionPlan(
 ): ReferenceMaterialAdoptionPlan {
   const record = requireRecord(output, 'Reference Material adoption output');
   assertOnlyKnownFields(record, ['targets'], 'Reference Material adoption output');
-  const rawTargets = requireArray(record.targets, 'adoption targets', context.targets.length);
+  const rawTargets = requireArray(record.targets, 'adoption targets');
+  const preserveDraftFor = new Set(context.targets.filter(target =>
+    target.targetExisted && context.characterAdoption?.mergeFiles.includes(target.targetFile)).map(target => target.id));
   const normalized = rawTargets.map((value, index) =>
-    normalizeModelTarget(value, index));
+    normalizeModelTarget(value, index, preserveDraftFor));
+  if (normalized.some(result => !context.targets.some(target => target.id === result.targetId)) || normalized.length > context.targets.length) throw new Error('Reference Material adoption returned an unselected target.');
+  for (const target of context.targets.filter(t => t.hostDraft !== undefined)) {
+    const activeEntries = context.targets.filter(t => t.hostDraft === undefined && normalized.some(r => r.targetId === t.id && r.decision !== 'skip')).flatMap(t => t.entries).filter(e => target.dependsOnEntryIds?.includes(e.id));
+    const active = activeEntries.length > 0;
+    let draft = target.hostDraft!;
+    if (active) {
+      const planned = parse(target.hostDraft!) as Record<string, unknown>;
+      const doc = parseDocument(target.targetExisted ? target.baseline : stringify({ id: target.targetFile.split('/')[1], displayName: activeEntries[0]!.title, ...(planned.originWorkId ? { originWorkId: planned.originWorkId } : {}) }));
+      const prior = (doc.toJS() as { referenceCharacters?: Array<{ referenceId: string; name: string; materialHash: string }> }).referenceCharacters ?? [];
+      const nameKey = (name: string) => name.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
+      const updated = prior.filter(b => b.referenceId !== context.referenceId || !activeEntries.some(e => nameKey(e.title) === nameKey(b.name)));
+      for (const entry of activeEntries) if (!updated.some(b => b.referenceId === context.referenceId && nameKey(b.name) === nameKey(entry.title))) updated.push({ referenceId: context.referenceId, name: entry.title, materialHash: materialCharacterHash(entry) });
+      doc.set('referenceCharacters', doc.createNode(updated));
+      draft = doc.toString();
+    }
+    const deterministic = { targetId: target.id, decision: active ? target.targetExisted ? 'update' as const : 'create' as const : 'skip' as const, reason: '保存已确认的人物对应与作品归属。', ...(active ? { draft } : {}) };
+    const supplied = normalized.findIndex(result => result.targetId === target.id);
+    if (supplied >= 0) normalized[supplied] = deterministic; else normalized.push(deterministic);
+  }
   if (
     new Set(normalized.map((target) => target.targetId)).size !== normalized.length
     || context.targets.some((target) =>
@@ -710,7 +754,7 @@ export function createReferenceMaterialAdoptionPlan(
       materialKind: target.materialKind,
       targetFile: target.targetFile,
       ...(target.targetPath ? { targetPath: target.targetPath } : {}),
-      entryIds: target.entries.map((entry) => entry.id),
+      entryIds: target.dependsOnEntryIds ?? target.entries.map((entry) => entry.id),
       decision: result.decision,
       reason: result.reason,
       ...(result.draft ? { draft: result.draft } : {}),
@@ -913,7 +957,7 @@ function parseMaterialDocument(
   });
 }
 
-function normalizeModelTarget(value: unknown, index: number): ReferenceMaterialAdoptionModelTarget {
+function normalizeModelTarget(value: unknown, index: number, preserveDraftFor: ReadonlySet<string>): ReferenceMaterialAdoptionModelTarget {
   const record = requireRecord(value, `adoption target ${index}`);
   assertOnlyKnownFields(
     record,
@@ -925,14 +969,17 @@ function normalizeModelTarget(value: unknown, index: number): ReferenceMaterialA
     ['create', 'update', 'skip'] as const,
     'adoption decision',
   );
-  const draft = record.draft === undefined || record.draft === null
+  const targetId = requireSafeId(record.targetId, 'targetId');
+  let draft = record.draft === undefined || record.draft === null
     ? undefined
     : requireBoundedText(record.draft, 'adoption draft', 512_000);
+  // Merges retain the author's leading Markdown whitespace as part of the baseline.
+  if (draft && preserveDraftFor.has(targetId)) draft = (record.draft as string).trimEnd();
   if ((decision === 'skip') === Boolean(draft)) {
     throw new Error('Skipped adoption targets must omit draft; changed targets require draft.');
   }
   return {
-    targetId: requireSafeId(record.targetId, 'targetId'),
+    targetId,
     decision,
     reason: requireBoundedText(record.reason, 'adoption reason', 2_000),
     ...(draft ? { draft } : {}),

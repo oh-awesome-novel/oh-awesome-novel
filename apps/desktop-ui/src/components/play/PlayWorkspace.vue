@@ -7,6 +7,7 @@ import PlaySessionMigration from './PlaySessionMigration.vue';
 import PlayStageShell from './PlayStageShell.vue';
 import PlayWorkbenchShell from './PlayWorkbenchShell.vue';
 import TavernImportPanel from './TavernImportPanel.vue';
+import WorkRegistryPanel from '../workspace/WorkRegistryPanel.vue';
 import ImageAssetPanel from '../assets/ImageAssetPanel.vue';
 import PlayTranscript from './PlayTranscript.vue';
 import PlayLaunchFlow from './launch/PlayLaunchFlow.vue';
@@ -49,6 +50,7 @@ const importOpen = shallowRef(false);
 const importBusy = shallowRef(false);
 // The image asset folder view; like the card import it takes the place of the session.
 const assetsOpen = shallowRef(false);
+const worksOpen = shallowRef(false);
 const characterIds = computed(() => (props.files.find(node => node.type === 'directory' && node.path === 'characters')?.children ?? [])
   .filter(node => node.type === 'directory' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(node.name))
   .map(node => node.name));
@@ -101,7 +103,7 @@ const presentation = usePlayPresentationMode(props.workspace.path, selectedSessi
 const presentationMode = presentation.mode;
 /** A session is on screen, as opposed to the launch flow, an import or an upgrade prompt. */
 const sessionSurface = computed(() =>
-  Boolean(selectedSession.value) && !importOpen.value && !assetsOpen.value && !launchOpen.value && !migration.preview.value);
+  Boolean(selectedSession.value) && !importOpen.value && !assetsOpen.value && !worksOpen.value && !launchOpen.value && !migration.preview.value);
 const stageActive = computed(() => sessionSurface.value && presentationMode.value === 'stage');
 // The workbench mounts the first time it is shown and then stays mounted while the stage
 // is in front, so its open forms, running checks and scroll positions survive a switch.
@@ -137,6 +139,7 @@ watch(() => props.requestedSessionId, async (id) => {
 function openLaunch(): void {
   importOpen.value = false;
   assetsOpen.value = false;
+  worksOpen.value = false;
   if (interactionBlocked.value) return;
   launchSeed.value = undefined;
   launchSeedError.value = '';
@@ -156,6 +159,7 @@ async function reuseLaunch(sessionId: string): Promise<void> {
     const { seed } = await workspaceApi.getPlayLaunchReuseSeed(sessionId);
     importOpen.value = false;
   assetsOpen.value = false;
+  worksOpen.value = false;
     launchSeed.value = seed;
     launchKey.value += 1;
     launchOpen.value = true;
@@ -174,6 +178,7 @@ function cancelLaunch(): void {
 function openSession(id: string): void {
   importOpen.value = false;
   assetsOpen.value = false;
+  worksOpen.value = false;
   cancelLaunch();
   selectSession(id);
 }
@@ -185,6 +190,7 @@ async function createQuickSession(input: PlaySessionCreateRequest): Promise<void
 function acceptGuidedSession(session: PlaySession): void {
   importOpen.value = false;
   assetsOpen.value = false;
+  worksOpen.value = false;
   registerCreatedSession(session);
   cancelLaunch();
 }
@@ -199,10 +205,11 @@ function acceptGuidedSession(session: PlaySession): void {
         <small>推演内容独立保存 · 正式文件不受影响</small>
       </div>
       <div class="play-workspace-status">
-        <button class="play-import-button" type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; assetsOpen = false; launchOpen = false">导入角色卡</button>
-        <button class="play-import-button" type="button" :disabled="importBusy" :aria-pressed="assetsOpen" @click="assetsOpen = !assetsOpen; importOpen = false; launchOpen = false">图片资源</button>
+        <button type="button" class="play-import-button" :disabled="importBusy" @click="worksOpen = !worksOpen; assetsOpen = false; importOpen = false; launchOpen = false">作品归属</button>
+        <button class="play-import-button" type="button" :disabled="interactionBlocked || importBusy" @click="importOpen = true; assetsOpen = false; worksOpen = false; launchOpen = false">导入角色卡</button>
+        <button class="play-import-button" type="button" :disabled="importBusy" :aria-pressed="assetsOpen" @click="assetsOpen = !assetsOpen; importOpen = false; worksOpen = false; launchOpen = false">图片资源</button>
         <button
-          v-if="selectedSession && !launchOpen && !importOpen && !assetsOpen"
+          v-if="selectedSession && !launchOpen && !importOpen && !assetsOpen && !worksOpen"
           class="play-import-button play-reuse-launch"
           type="button"
           :disabled="interactionBlocked || importBusy || launchSeedLoading"
@@ -263,6 +270,8 @@ function acceptGuidedSession(session: PlaySession): void {
         @review-pending-action="emit('reviewPendingAction', $event)"
         @created="acceptGuidedSession"
       />
+
+      <WorkRegistryPanel v-else-if="worksOpen" class="play-launch-stage" :workspace-root="workspace.path" @close="worksOpen = false" @pending-action-created="emit('pendingActionCreated')" @review-pending-action="emit('reviewPendingAction', $event)" />
 
       <ImageAssetPanel
         v-else-if="assetsOpen"
@@ -341,7 +350,7 @@ function acceptGuidedSession(session: PlaySession): void {
         <p>从左侧创建或选择会话。推演在独立的世界状态中进行，不会直接改写小说文件。</p>
       </section>
 
-      <aside v-if="!importOpen && !assetsOpen && !launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
+      <aside v-if="!importOpen && !assetsOpen && !worksOpen && !launchOpen && !selectedSession" class="play-world-inspector play-inspector-empty">
         选择会话后会显示世界面板。
       </aside>
     </div>

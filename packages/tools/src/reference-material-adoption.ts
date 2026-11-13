@@ -1,3 +1,4 @@
+import { parse as parseYaml } from 'yaml';
 import type {
   ReferenceMaterialAdoptionContext,
   ReferenceMaterialAdoptionPlan,
@@ -81,9 +82,33 @@ export function createReferenceMaterialAdoptionChangeProposal(
     if (!target || decision.draft === undefined) {
       throw new Error('Reference Material adoption plan does not match its context.');
     }
+    const preserveBaseline = adoptionContext.characterAdoption?.mergeFiles.includes(target.targetFile) && target.targetExisted;
     const content = target.materialKind === 'timeline'
       ? compileTimelineYamlSet(target.baseline, target.targetPath!, decision.draft)
-      : normalizeFinalText(decision.draft);
+      : preserveBaseline ? `${decision.draft.trimEnd()}\n` : normalizeFinalText(decision.draft);
+    if (preserveBaseline && !content.startsWith(target.baseline.trimEnd())) throw new Error('合并候选必须完整保留已有角色正文，再追加来源说法。');
+    const relationRows = adoptionContext.characterAdoption?.relationships.filter(row => row.targetFile === target.targetFile);
+    if (relationRows?.length) {
+      const parsed = parseYaml(content) as { relationships?: Record<string, unknown> };
+      const before = target.baseline ? parseYaml(target.baseline) as { relationships?: Record<string, unknown> } : {};
+      const ids = new Set(relationRows.flatMap(row => row.characters.map(person => person.characterId)));
+      const priorIds = Object.keys(before.relationships ?? {});
+      for (const id of ids) {
+        const metadataTarget = adoptionContext.targets.find(t => t.targetFile === `characters/${id}/meta.yaml`);
+        if (metadataTarget && !metadataTarget.targetExisted && !activeDecisions.some(d => d.targetId === metadataTarget.id)) throw new Error('关系依赖的角色被跳过，请先采用角色。');
+      }
+      for (const [id, previous] of Object.entries(before.relationships ?? {})) {
+        const next = parsed?.relationships?.[id];
+        if (typeof previous === 'object' && previous !== null && typeof next === 'object' && next !== null) {
+          for (const [key, value] of Object.entries(previous)) {
+            const after = (next as Record<string, unknown>)[key];
+            if (key === 'notes' && typeof value === 'string' && typeof after === 'string' && after.startsWith(value)) continue;
+            if (JSON.stringify(after) !== JSON.stringify(value)) throw new Error('关系合并不能覆盖既有说法；请保留原字段，把新增或矛盾说法追加到 notes。');
+          }
+        } else if (JSON.stringify(next) !== JSON.stringify(previous)) throw new Error('关系合并不能删除或覆盖已有关系。');
+      }
+      if (!parsed?.relationships || Array.isArray(parsed.relationships) || Object.keys(parsed.relationships).some(id => !ids.has(id) && !priorIds.includes(id)) || [...ids, ...priorIds].some(id => !Object.hasOwn(parsed.relationships!, id))) throw new Error('关系候选必须使用作者确认的角色 ID，并保留已有关系。');
+    }
     builder.write(
       target.targetFile,
       content,

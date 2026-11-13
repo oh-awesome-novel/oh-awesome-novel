@@ -47,6 +47,7 @@ my-novel/
 │   ├── skills/
 │   └── extensions/
 │
+├── works.yaml               （可选：原作清单）
 ├── characters/
 │   ├── hero/
 │   │   ├── meta.yaml
@@ -198,6 +199,16 @@ Git-visible 的原子配置操作。
 Outline 也是当前小说的 Project Truth。材料 adoption 第一版只允许对
 `outline/**/*.md` 生成整文件候选，仍必须经过 CandidateChangeSet、diff、
 PendingAction 与 Accept；后续局部 scene / beat 编辑也必须保持相同审批边界。
+
+## Work Registry And Attribution (1530 / 1540)
+
+可选的 `works.yaml` 是正式小说文件，格式为 `version: 1` 与 `works` 数组；最多 200 部作品。每项有唯一安全 `id`、非空 `title`（最多 120 字）、可选 `aliases`（最多 32 项）与 `referenceIds`（最多 32 项）。同一个 reference 只能绑定一部作品；引用 id 是 reference 的稳定身份，可保留已删除的 reference 来源。`original` 是保留的原创 id，不得登记为原作。没有清单时不创建空文件。
+
+角色 `meta.yaml` 可选 `originWorkId` 为清单内的作品 id，或 `original`；省略也是有效原创/未标注状态。世界 Markdown 的 frontmatter 或 YAML 根对象也可选 `originWorkId`，不设集中路径索引。归属引用必须在完整最终树里存在；删除清单/作品不能留下悬空归属。清单编辑与归属修改均经 PendingAction，Accept 前保持原文。
+
+角色 `meta.yaml` 可选 `referenceCharacters` 数组（最多 200 项），每项严格为 `{ referenceId, name, materialHash }`：人物名按 NFKC、小写、首尾/连续空白归一比较，`materialHash` 是对应人物条目的 title/content/details/assertionType/confidence/uncertainty 的 SHA-256。条目 id 包含 run/unit，不作持久身份。同一 reference/规范化姓名只能对应一个角色；重新拆解后内容 hash 变化需要重新裁定。人物对应不改变角色本源归属。
+
+关系材料暂只有自由文本，没有可信的结构化对方字段，不能从文字猜测人物。启用作品清单的采用流程要求作者逐条确认对方人物名与角色 id（或移出条目）；宿主先用已接受/本批已确认的人物对应给出可选目标，生成的 relationships.yaml key 必须是所确认的角色 id。无作品清单且未使用人物裁定的旧采用请求保持原行为。
 
 ## Character Format
 

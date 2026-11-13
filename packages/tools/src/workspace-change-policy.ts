@@ -85,6 +85,7 @@ const READ_ONLY_OAN_RULES: readonly PathRule[] = [
 ];
 
 const DEFAULT_VISIBLE_READ_RULES: readonly PathRule[] = [
+  { kind: 'exact', path: 'works.yaml' },
   { kind: 'prefix', path: 'chapters' },
   { kind: 'prefix', path: 'characters' },
   { kind: 'prefix', path: 'world' },

@@ -70,6 +70,7 @@ const emit = defineEmits<{
           :catalog="catalog"
           :target-suggestions="targetSuggestions"
           :issues="preflight?.issues"
+          :character-preflight="preflight?.characterPreflight"
           :records="records?.records"
           :disabled="Boolean(preflighting) || previewing || confirming"
           @preflight="emit('preflight', $event)"
