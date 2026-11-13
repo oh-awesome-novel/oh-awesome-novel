@@ -137,6 +137,7 @@ function edit(basedOn?: string): void {
       :turns="turns"
       :choices="readOnly ? [] : suggestedActions.map(action => action.userText)"
       :draft="liveTurn?.provisionalText"
+      :draft-markup="liveTurn?.provisionalMarkup"
       :draft-action="liveTurn?.userText"
       :usage-operation-id="liveTurn?.turnId"
       :has-more-before="transcriptWindow?.hasMoreBefore"

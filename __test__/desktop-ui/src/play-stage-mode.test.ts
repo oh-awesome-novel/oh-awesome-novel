@@ -345,7 +345,8 @@ describe('PlayWorkspace stage and workbench modes', () => {
     expect(api.retryPlayWorldRefereeTurn).toHaveBeenCalledWith(
       'play-1',
       'turn-source',
-      { baseRevision: 2 },
+      // A turn sent from the stage asks for sentence-by-sentence streaming.
+      { baseRevision: 2, presentation: 'stage' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 

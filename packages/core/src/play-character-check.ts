@@ -322,8 +322,14 @@ export function buildPlayTurnCharacterCheckMaterial(
   const position = (candidate: Candidate): number => Math.min(
     ...[candidate.name, ...candidate.aliases].filter(Boolean).map((name) => narrative.indexOf(name)).filter((at) => at >= 0),
   );
+  // In a stage-markup session the speaker of a tagged line is in the saved snapshot, not in the text.
+  const tagged = new Set(artifact.messages.flatMap((message) =>
+    (message.stageSnapshot?.beats ?? []).flatMap((beat) => beat.source === 'markup' && beat.speakerId ? [beat.speakerId] : [])));
   const present = candidates
-    .map((candidate) => ({ candidate, at: position(candidate) }))
+    .map((candidate) => {
+      const at = position(candidate);
+      return { candidate, at: Number.isFinite(at) ? at : tagged.has(candidate.ref) ? narrative.length : Infinity };
+    })
     .filter((item) => Number.isFinite(item.at))
     .sort((a, b) => a.at - b.at)
     .map((item) => item.candidate);

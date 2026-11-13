@@ -65,7 +65,7 @@ M14  Core Writing Loop And Proportionate Review
 M15  Long-session Play And Author Review Workflows (In progress)
 M16  Play Canon Rewrite And Crossover Experience (Planned)
 M17  Crossover Source Material (In progress)
-M18  Play Stage Presentation (Planned)
+M18  Play Stage Presentation
 M19  Portrait Image Generation (Planned)
 ```
 
@@ -252,7 +252,7 @@ Status: In progress（2026-11-13：1530、1540 已交付；1550–1570 待实施
 
 ## M18. Play Stage Presentation
 
-Status: Planned（2026-11-12 立项，均未实现）。Tasks：[1580](tasks/1580.md)–[1620](tasks/1620.md)，范围与依赖见 [Play 角色对话 GalGame 化规划](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md)。
+Status: Completed（2026-11-12 立项；1580 / 1590 于 2026-11-12、1600 / 1610 / 1620 于 2026-11-13 交付）。Tasks：[1580](tasks/1580.md)–[1620](tasks/1620.md)，范围与依赖见 [Play 角色对话 GalGame 化规划](plans/PLAY_GALGAME_PRESENTATION_PLAN_2026-11-12.md)。
 
 目标：同一 Play 会话可在沉浸的舞台模式与完整的专业模式之间切换，舞台有自动、快进、按句回看等阅读控制，角色卡带多张立绘及描述，裁判可显式标出说话人与立绘，舞台模式逐句流式演出。先做 1580、1590、1600；1610 的标注在会话创建时决定、未启用的会话逐字节不变；1620 只在舞台请求上放宽现有 fail-closed 流式边界，专业模式不变。立绘图片放在 1630 定义的图片资源目录（不进 Git），角色卡只记路径，舞台直接显示原图。涉及名册、`StageSnapshot` 或回合请求字段的变更先更新 [FILESYSTEM_SPEC](FILESYSTEM_SPEC.md) 与 [PLAY_MODE_SPEC](PLAY_MODE_SPEC.md)。
 

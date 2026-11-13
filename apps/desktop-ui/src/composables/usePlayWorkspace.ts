@@ -54,6 +54,8 @@ export interface PlaySessionCreateInput {
   characters?: string[];
   eventPolicy?: Partial<PlayEventPolicy>;
   worldMomentum?: PlayWorldMomentum;
+  /** Ask the referee to tag each spoken line with its speaker and portrait. Chosen once, at creation. */
+  stageMarkup?: boolean;
 }
 
 export type PlaySessionCreateRequest =
@@ -89,6 +91,8 @@ export function usePlayWorkspace(
   providerConfigured: Readonly<Ref<boolean>>,
 ) {
   const api = useWorkspaceApi();
+  // Which presentation is in front. Read when a turn is sent to pick how its draft streams.
+  const turnPresentation = shallowRef<'stage' | 'workbench'>('workbench');
   const sessions = shallowRef<PlaySessionSummary[]>([]);
   const selectedSessionId = shallowRef(readSelectedSession(workspacePath));
   const loading = shallowRef(false);
@@ -138,6 +142,7 @@ export function usePlayWorkspace(
     clearTerminalRun,
   } = usePlayTurnStream({
     client: api,
+    presentation: () => turnPresentation.value,
     onCommitted(session) {
       // The composer was cleared when the action was sent, so the author may
       // already be typing the next action; leave that text alone.
@@ -846,6 +851,7 @@ export function usePlayWorkspace(
     canSteer,
     followUpControls,
     provisionalTurn,
+    turnPresentation,
     usagePresentation,
     turnAnnouncement,
     timeAdvance,

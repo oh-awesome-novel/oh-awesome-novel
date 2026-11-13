@@ -68,6 +68,8 @@ const {
   canonCandidates,
   canonBeatLimitReached,
   protagonistKnowsCanon,
+  stageMarkup,
+  setStageMarkup,
   loadCanonCandidates,
   isCanonCandidateSelected,
   toggleCanonCandidate,
@@ -294,6 +296,8 @@ async function focusStepPanel(): Promise<void> {
         :creating="creating"
         :can-start="canStart"
         :disabled="disabled"
+        :stage-markup="stageMarkup"
+        @update:stage-markup="setStageMarkup"
         @back="back"
         @confirm="start"
         @cancel="cancel"

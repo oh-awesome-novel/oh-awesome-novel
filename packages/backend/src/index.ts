@@ -9,7 +9,7 @@ import { assertPlayChapterWritingFresh } from '@oh-awesome-novel/tools';
 import { selectPlayPhaseEvidence } from '@oh-awesome-novel/agent';
 import { playArchiveQuestion, playPhaseOverview } from './play-phase-memory.js';
 import { buildPlayPhaseCatalog, recallPlayPhase } from '@oh-awesome-novel/core';
-import type { PlayPhaseQuery, PlayCompactionPreview } from '@oh-awesome-novel/core';
+import type { PlayPhaseQuery, PlayCompactionPreview, PlayStageMarkupDraftLine } from '@oh-awesome-novel/core';
 import { playContextHistory } from './play-context-history.js';
 export { playContextHistory, stablePlayHistoryWindow } from './play-context-history.js';
 import { readCanonicalWritingSources, saveCanonicalWritingSources } from './canonical-writing-selection.js';
@@ -90,6 +90,14 @@ import {
   createPlayAdoptionSourceBase,
   createPlayWritingReferenceAttachment,
   createPlayNarrativeStreamFilter,
+  createPlaySentenceStreamFilter,
+  createPlayStageMarkupDraftReader,
+  parsePlayStageMarkup,
+  parsePlayWorldRefereeResponse,
+  readPlayStageCast,
+  readPlayStageMarkup,
+  PLAY_STAGE_MARKUP_METADATA_KEY,
+  PLAY_STAGE_MARKUP_VERSION,
   createPlaySourceDriftStatus,
   createPlayTurnContextTrace,
   createPlaySceneRehearsalSessionDraft,
@@ -3132,6 +3140,10 @@ async function handleCreatePlaySession(
   if (!title || !sceneStart) {
     return jsonResponse(context, 400, { error: 'Play session title and sceneStart are required.' });
   }
+  const stageMarkup = readPlayStageMarkupRequest(body, purpose === 'sceneRehearsal');
+  if (stageMarkup.error) {
+    return jsonResponse(context, 400, { error: stageMarkup.error });
+  }
   if (
     purpose !== undefined &&
     purpose !== 'immersiveJourney' &&
@@ -3173,6 +3185,7 @@ async function handleCreatePlaySession(
         }
       }
 
+      enablePlayStageMarkup(session, stageMarkup.enabled);
       await attachPlayCharacterRoster(workspaceRoot, session);
       await freezePlayInitialContext(workspaceRoot, session);
       const files = await writePlaySessionFiles(workspaceRoot, session, {
@@ -3192,6 +3205,37 @@ async function handleCreatePlaySession(
   }
 }
 
+/** Stage markup is chosen when a session is created and cannot be added afterwards. */
+function readPlayStageMarkupRequest(
+  body: Record<string, unknown>,
+  sceneRehearsal: boolean,
+): { enabled: boolean; error?: string } {
+  if (!hasOwn(body, 'stageMarkup')) return { enabled: false };
+  if (typeof body.stageMarkup !== 'boolean') {
+    return { enabled: false, error: 'Play session stageMarkup must be a boolean.' };
+  }
+  if (body.stageMarkup && sceneRehearsal) {
+    return { enabled: false, error: 'Stage markup is only available for immersive journey sessions.' };
+  }
+  return { enabled: body.stageMarkup };
+}
+
+function enablePlayStageMarkup(session: PlaySession, enabled: boolean): void {
+  // Written before the prefix is frozen; a session that leaves it off stores nothing.
+  if (enabled) {
+    session.metadataExtensions[PLAY_STAGE_MARKUP_METADATA_KEY] = { version: PLAY_STAGE_MARKUP_VERSION };
+  }
+}
+
+/** Stage markup fallbacks of one reply, for the turn's context trace. */
+function playStageMarkupNotices(session: PlaySession, refereeText: string) {
+  if (!readPlayStageMarkup(session.metadataExtensions)) return [];
+  return parsePlayStageMarkup(
+    parsePlayWorldRefereeResponse(refereeText).narrative,
+    readPlayStageCast(session.metadataExtensions, session.characters),
+  ).notices;
+}
+
 async function handleCreatePlaySessionFromLaunchPackage(
   workspaceRoot: string,
   state: BackendState,
@@ -3199,7 +3243,7 @@ async function handleCreatePlaySessionFromLaunchPackage(
   context: NovelBackendContext,
 ): Promise<Response> {
   const unknownField = Object.keys(body)
-    .find((field) => field !== 'launchPackageId' && field !== 'id');
+    .find((field) => field !== 'launchPackageId' && field !== 'id' && field !== 'stageMarkup');
   const launchPackageId = getOptionalString(body, 'launchPackageId');
   const requestedId = getOptionalString(body, 'id');
   if (unknownField) {
@@ -3244,6 +3288,11 @@ async function handleCreatePlaySessionFromLaunchPackage(
       const session = createPlaySessionFromLaunchPackage(launchPackage, {
         id: sessionId,
       });
+      const stageMarkup = readPlayStageMarkupRequest(body, session.schemaVersion === 5);
+      if (stageMarkup.error) {
+        return jsonResponse(context, 400, { error: stageMarkup.error });
+      }
+      enablePlayStageMarkup(session, stageMarkup.enabled);
       await attachPlayCharacterRoster(workspaceRoot, session);
       await freezePlayInitialContext(workspaceRoot, session);
       const files = await writePlaySessionFiles(workspaceRoot, session, {
@@ -4489,7 +4538,7 @@ async function handlePlayWorldRefereeTurnStream(
   if (!parsedRequest.ok) {
     return jsonResponse(context, 400, { error: parsedRequest.error });
   }
-  const { userText, actionKind, baseRevision, timeAdvance, delivery } = parsedRequest.value;
+  const { userText, actionKind, baseRevision, timeAdvance, delivery, presentation } = parsedRequest.value;
   const rehearsalConflict = await playRehearsalAttemptConflictResponse(
     state,
     workspaceRoot,
@@ -4547,6 +4596,7 @@ async function handlePlayWorldRefereeTurnStream(
     actionKind,
     ...(timeAdvance ? { timeAdvance } : {}),
     ...(delivery ? { delivery } : {}),
+    ...(presentation ? { presentation } : {}),
     expectedArtifactId: createPlayTurnArtifactId(
       session.revision + 1,
       session.turnArtifacts.map((artifact) => artifact.id),
@@ -4573,10 +4623,14 @@ async function handlePlayWorldRefereeTurnRetryStream(
   if (!hasOwn(body, 'baseRevision')) {
     return jsonResponse(context, 400, { error: 'baseRevision is required.' });
   }
-  if (Object.keys(body).some((field) => field !== 'baseRevision' && field !== 'guidance')) {
+  if (Object.keys(body).some((field) => field !== 'baseRevision' && field !== 'guidance' && field !== 'presentation')) {
     return jsonResponse(context, 400, {
       error: 'Play turn retry request contains unknown fields.',
     });
+  }
+  const retryPresentation = readPlayTurnPresentation(body);
+  if (retryPresentation.error) {
+    return jsonResponse(context, 400, { error: retryPresentation.error });
   }
   const revisionCheck = readPlayBaseRevision(body);
   if (revisionCheck.error) {
@@ -4657,6 +4711,7 @@ async function handlePlayWorldRefereeTurnRetryStream(
     actionKind: preparation.actionKind,
     ...(preparation.timeAdvance ? { timeAdvance: preparation.timeAdvance } : {}),
     ...(preparation.guidance ? { retryGuidance: preparation.guidance } : {}),
+    ...(retryPresentation.value ? { presentation: retryPresentation.value } : {}),
     expectedArtifactId,
     retry: {
       sourceArtifactId: preparation.sourceArtifactId,
@@ -4698,6 +4753,8 @@ interface PlayWorldRefereeTurnStreamExecution {
   delivery?: PlayTurnDelivery;
   /** Author guidance for this one Retry; only enters this request's tail. */
   retryGuidance?: string;
+  /** Chooses the draft stream filter for this turn. Absent means the workbench's fail-closed filter. */
+  presentation?: PlayTurnPresentation;
   expectedArtifactId: string;
   retry?: {
     sourceArtifactId: string;
@@ -4902,9 +4959,11 @@ async function createPlayWorldRefereeTurnStreamResponse(
               abortSignal: run.abortController.signal,
               usageOperation: { domain: 'play', operationId: run.turnId, sessionId: id, runId: run.turnId, stage: 'world', contextTraceId: execution.expectedArtifactId },
               usageContextSources: playUsageSources(activatedSourceContext.sources),
-              onNarrativeDelta: (delta) => emit('play.narrative.delta', {
+              ...(execution.presentation ? { presentation: execution.presentation } : {}),
+              onNarrativeDelta: (delta, markup) => emit('play.narrative.delta', {
                 delta,
                 provisional: true,
+                ...(markup?.length ? { markup } : {}),
               }),
               onNarrativeReset: () => emit('play.narrative.reset', {
                 provisional: true,
@@ -4943,6 +5002,7 @@ async function createPlayWorldRefereeTurnStreamResponse(
             transcriptLimit: PLAY_CONTEXT_TRANSCRIPT_LIMIT,
             eventLimit: PLAY_CONTEXT_EVENT_LIMIT,
             sources: activatedSourceContext.sources,
+            stageMarkupNotices: playStageMarkupNotices(turnSession, refereeText),
           });
 
           assertPlayTurnNotCancelled(run);
@@ -5167,7 +5227,10 @@ interface StreamPlayRefereeTextInput {
   abortSignal: AbortSignal;
   usageOperation: import('@oh-awesome-novel/core/agent-usage').UsageOperation;
   usageContextSources: import('@oh-awesome-novel/core/agent-usage').UsageSourceEvidence[];
-  onNarrativeDelta(delta: string): void;
+  /** Absent or `workbench`: nothing is released before the settlement boundary. */
+  presentation?: PlayTurnPresentation;
+  /** `markup` names the tagged lines of a stage-markup session, by line of the draft released so far. */
+  onNarrativeDelta(delta: string, markup?: PlayStageMarkupDraftLine[]): void;
   onNarrativeReset(): void;
   /** Model thinking; only the debug message log consumes it. */
   onReasoningDelta?(delta: string): void;
@@ -5185,7 +5248,24 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
     ...(input.timeAdvance ? { timeAdvance: input.timeAdvance } : {}),
     abortSignal: input.abortSignal,
   };
-  const filter = createPlayNarrativeStreamFilter();
+  // The filter is chosen once per request; switching the view mid-turn does not change it.
+  const stageMarkup = Boolean(readPlayStageMarkup(input.session.metadataExtensions));
+  const filter = input.presentation === 'stage'
+    ? createPlaySentenceStreamFilter({ wholeTaggedLines: stageMarkup })
+    : createPlayNarrativeStreamFilter();
+  // No draft shows a raw speaker tag, in either presentation.
+  const markupReader = stageMarkup
+    ? createPlayStageMarkupDraftReader(readPlayStageCast(input.session.metadataExtensions, input.session.characters))
+    : undefined;
+  const releaseNarrative = (narrative: string): void => {
+    if (!narrative) return;
+    if (!markupReader) {
+      input.onNarrativeDelta(narrative);
+      return;
+    }
+    const stripped = markupReader.push(narrative);
+    if (stripped.text) input.onNarrativeDelta(stripped.text, stripped.lines);
+  };
   let receivedCharacters = 0;
   const emitChunk = (chunk: string): void => {
     input.onRawChunk?.(chunk);
@@ -5195,16 +5275,10 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
         `World referee response exceeded ${MAX_PLAY_REFEREE_RESPONSE_CHARACTERS} characters.`,
       );
     }
-    const narrative = filter.push(chunk);
-    if (narrative) {
-      input.onNarrativeDelta(narrative);
-    }
+    releaseNarrative(filter.push(chunk));
   };
   const finishNarrative = (): void => {
-    const narrative = filter.finish();
-    if (narrative) {
-      input.onNarrativeDelta(narrative);
-    }
+    releaseNarrative(filter.finish());
   };
 
   if (input.options.streamPlayTurn) {
@@ -5262,6 +5336,7 @@ async function streamPlayRefereeText(input: StreamPlayRefereeTextInput): Promise
       input.onReasoningDelta?.(event.text);
     } else if (event.type === 'tool_call_start') {
       filter.reset();
+      markupReader?.reset();
       input.onNarrativeReset();
     } else if (event.type === 'message_finish') {
       finalText = event.result.assistantMessage?.content ?? '';
@@ -5489,6 +5564,7 @@ async function handlePlayWorldRefereeTurn(
       transcriptLimit: PLAY_CONTEXT_TRANSCRIPT_LIMIT,
       eventLimit: PLAY_CONTEXT_EVENT_LIMIT,
       sources: activatedSourceContext.sources,
+      stageMarkupNotices: playStageMarkupNotices(session, refereeText),
     });
     await writePlaySessionFiles(workspaceRoot, next, {
       expectedCurrentSession: session,
@@ -8236,6 +8312,17 @@ interface ParsedPlayWorldRefereeTurnRequest {
   baseRevision?: number;
   timeAdvance?: PlayRelativeTimeAdvance;
   delivery?: PlayTurnDelivery;
+  presentation?: PlayTurnPresentation;
+}
+
+/** How the turn's draft is streamed. Fixed when the request is made. */
+type PlayTurnPresentation = 'stage' | 'workbench';
+
+function readPlayTurnPresentation(value: Record<string, unknown>): { value?: PlayTurnPresentation; error?: string } {
+  if (!hasOwn(value, 'presentation')) return {};
+  return value.presentation === 'stage' || value.presentation === 'workbench'
+    ? { value: value.presentation }
+    : { error: 'Invalid Play turn presentation.' };
 }
 
 type PlayWorldRefereeTurnRequestResult =
@@ -8251,9 +8338,14 @@ function readPlayWorldRefereeTurnRequest(
     'baseRevision',
     'timeAdvance',
     'delivery',
+    'presentation',
   ]);
   if (Object.keys(value).some((field) => !knownFields.has(field))) {
     return { ok: false, error: 'Play turn request contains unknown fields.' };
+  }
+  const presentation = readPlayTurnPresentation(value);
+  if (presentation.error) {
+    return { ok: false, error: presentation.error };
   }
 
   const userText = getOptionalString(value, 'userText')?.trim();
@@ -8304,6 +8396,7 @@ function readPlayWorldRefereeTurnRequest(
         : {}),
       ...(timeAdvance ? { timeAdvance } : {}),
       ...(delivery ? { delivery } : {}),
+      ...(presentation.value ? { presentation: presentation.value } : {}),
     },
   };
 }

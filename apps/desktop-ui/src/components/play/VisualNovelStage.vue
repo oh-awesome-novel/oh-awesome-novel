@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { readPlaySessionPortraitSets } from '@oh-awesome-novel/client';
-import { createStageSnapshot, type StageSnapshot, type SpeakerIdentity } from '@oh-awesome-novel/core/text-speaker-parser';
-import type { PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
+import { createStageSnapshot, type StageMarkupLine, type StageSnapshot, type SpeakerIdentity } from '@oh-awesome-novel/core/text-speaker-parser';
+import type { PlayNarrativeDraftMarkupLine, PlayTranscriptTurn } from '../../composables/useWorkspaceApi';
 import { PLAY_STAGE_AUTO_MS_PER_CHAR, usePlayStageReadingPrefs } from '../../composables/usePlayStageReadingPrefs';
 import { plainStageText, prefersReducedMotion } from '../../composables/visualNovelText';
 import type { StageBeat } from '../../composables/visualNovelText';
@@ -20,6 +20,8 @@ const props = withDefaults(defineProps<{
   choices: string[];
   /** Unsaved text of the turn being generated. */
   draft?: string;
+  /** Tagged lines of a stage-markup draft, by line of `draft`. */
+  draftMarkup?: readonly PlayNarrativeDraftMarkupLine[];
   /** The author's action for the turn being generated; shown before any draft text arrives. */
   draftAction?: string;
   usageOperationId?: string;
@@ -54,6 +56,8 @@ const auto = ref(false);
 const fullscreen = ref(false);
 const revealed = ref(false);
 const reducedMotion = prefersReducedMotion();
+/** Pause between two queued draft sentences once the first is fully typed. */
+const PLAY_STAGE_DRAFT_QUEUE_PAUSE_MS = 600;
 const { prefs, update: updatePrefs } = usePlayStageReadingPrefs();
 
 const roster = computed<RosterEntry[]>(() => {
@@ -104,13 +108,20 @@ const drafting = computed(() => !historicalId.value && Boolean(props.draft || pr
 function turnSnapshot(turn: PlayTranscriptTurn | undefined): StageSnapshot {
   return turn?.stageSnapshot ?? createStageSnapshot(props.scene, turn?.content ?? props.scene, roster.value, backgrounds.value);
 }
+/** The draft's tagged lines in the shape the snapshot builder takes; absent when the session has no stage markup. */
+const draftMarkupLines = computed<Array<StageMarkupLine | undefined> | undefined>(() => {
+  if (!props.draftMarkup?.length) return undefined;
+  const lines: Array<StageMarkupLine | undefined> = [];
+  for (const { line, ...tag } of props.draftMarkup) lines[line] = tag;
+  return lines;
+});
 function playerBeat(action: string | undefined): StageBeat[] {
   return action ? [{ speaker: playerName.value, text: action, isDialogue: false, player: true }] : [];
 }
 const snapshot = computed<StageSnapshot>(() => {
   if (drafting.value) {
     const committed = selected.value?.stageSnapshot;
-    const draft = createStageSnapshot(committed?.sceneId ?? props.scene, props.draft ?? '', roster.value, backgrounds.value);
+    const draft = createStageSnapshot(committed?.sceneId ?? props.scene, props.draft ?? '', roster.value, backgrounds.value, draftMarkupLines.value);
     return {
       ...draft,
       // Characters already on the committed stage keep their frozen place and portrait while the draft streams.
@@ -122,11 +133,11 @@ const snapshot = computed<StageSnapshot>(() => {
   }
   return turnSnapshot(selected.value);
 });
+/** The author's action, shown before the turn's own sentences. */
+const leadingBeats = computed(() => playerBeat(drafting.value ? props.draftAction?.trim() : selectedTurn.value?.action));
+const leadBeats = computed(() => leadingBeats.value.length);
 /** What the text box walks through: the author's action first, then the turn's sentences. */
-const beats = computed<StageBeat[]>(() => [
-  ...playerBeat(drafting.value ? props.draftAction?.trim() : selectedTurn.value?.action),
-  ...snapshot.value.beats,
-]);
+const beats = computed<StageBeat[]>(() => [...leadingBeats.value, ...snapshot.value.beats]);
 const beat = computed(() => beats.value[beatIndex.value]);
 const beatKey = computed(() => `${drafting.value ? 'draft' : selected.value?.id ?? 'scene'}:${beatIndex.value}`);
 const isLast = computed(() => beatIndex.value >= beats.value.length - 1);
@@ -134,14 +145,18 @@ const background = computed(() => snapshot.value.backgroundDataUrl ?? (snapshot.
 const cast = computed(() => snapshot.value.activeCharacters.map((character) => {
   const label = character.name ?? roster.value.find(item => item.id === character.characterId)?.name ?? character.characterId;
   const set = portraitSets.value[character.characterId];
+  // Stage markup: the portrait the referee last chose for this character, up to the sentence on screen.
+  const chosenId = snapshot.value.beats.slice(0, Math.max(0, beatIndex.value - leadBeats.value + 1))
+    .filter(item => item.speakerId === character.characterId && item.portraitId).at(-1)?.portraitId;
   return {
     ...character,
     label,
-    // A prepared set replaces the single launch-time image; the session's default is the one on stage.
-    prepared: set?.items.find(item => item.id === set.default) ?? set?.items[0],
+    // A prepared set replaces the single launch-time image; without a tagged choice the session's default is on stage.
+    prepared: set?.items.find(item => item.id === chosenId) ?? set?.items.find(item => item.id === set.default) ?? set?.items[0],
     portrait: character.portraitDataUrl ?? portraits.value[character.characterId],
     // The author's own action lights nobody up.
-    speaking: !beat.value?.player && Boolean(beat.value?.speaker) && (beat.value?.speaker === label || beat.value?.speaker === character.characterId),
+    speaking: !beat.value?.player && Boolean(beat.value?.speaker)
+      && (beat.value?.speakerId ? beat.value.speakerId === character.characterId : beat.value?.speaker === label || beat.value?.speaker === character.characterId),
   };
 }));
 const someoneSpeaking = computed(() => cast.value.some(character => character.speaking));
@@ -233,6 +248,21 @@ watch([auto, revealed, beatIndex, isLast, autoPaused, () => prefs.value.autoDela
   if (!auto.value || !revealed.value || isLast.value || autoPaused.value) return;
   const length = Array.from(plainStageText(beat.value?.text)).length;
   autoTimer = setTimeout(next, prefs.value.autoDelayMs + length * PLAY_STAGE_AUTO_MS_PER_CHAR);
+});
+
+// Draft queue: sentences released while the referee is still writing play one after another at
+// the reading speed, however fast or slowly they arrive. A new sentence waits its turn; it never
+// interrupts the one on screen. With Auto on, the timer above already does this.
+let queueTimer: ReturnType<typeof setTimeout> | undefined;
+watch([drafting, auto, revealed, beatIndex, isLast, autoPaused, () => prefs.value.autoDelayMs, charDelayMs], () => {
+  clearTimeout(queueTimer);
+  if (!drafting.value || auto.value || !revealed.value || isLast.value || autoPaused.value) return;
+  // Typing already paced the sentence; text shown at once needs its full reading time.
+  const length = Array.from(plainStageText(beat.value?.text)).length;
+  const pause = charDelayMs.value > 0
+    ? Math.min(prefs.value.autoDelayMs, PLAY_STAGE_DRAFT_QUEUE_PAUSE_MS)
+    : prefs.value.autoDelayMs + length * PLAY_STAGE_AUTO_MS_PER_CHAR;
+  queueTimer = setTimeout(next, pause);
 });
 
 function choose(text: string): void { if (!props.disabled && choicesShown.value) emit('choose', text); }
@@ -344,6 +374,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   clearTimeout(autoTimer);
+  clearTimeout(queueTimer);
   document.removeEventListener('fullscreenchange', syncFullscreen);
 });
 defineExpose({ focus: () => stage.value?.focus() });

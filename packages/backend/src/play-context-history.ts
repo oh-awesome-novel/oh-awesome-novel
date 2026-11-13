@@ -1,12 +1,22 @@
-import { isPlayCompactionActive } from '@oh-awesome-novel/core';
+import { isPlayCompactionActive, readPlayStageMarkup, restorePlayStageMarkup } from '@oh-awesome-novel/core';
 import type { PlaySession } from '@oh-awesome-novel/core';
-/** Selected committed prose only; never leak sibling branches or replay settlement JSON. */
+/**
+ * Selected committed prose only; never leak sibling branches or replay settlement JSON.
+ *
+ * A stage-markup session saves tag-free text. Its referee messages get their speaker tags
+ * back here, from the saved stage snapshot, so the model sees its own earlier replies in the
+ * format the frozen prefix asks for. The result depends only on committed turns, so the
+ * history stays byte-stable from turn to turn and the prefix cache layout is unchanged.
+ */
 export function playContextHistory(session: PlaySession, throughTurnId?: string): Array<{ role: 'user' | 'assistant'; content: string }> {
   const through = throughTurnId ? session.selectedTurnIds.indexOf(throughTurnId) : session.selectedTurnIds.length - 1;
   const ids = new Set(session.selectedTurnIds.slice(0, through + 1));
   const boundary = isPlayCompactionActive(session) ? session.metadataExtensions.playCompactionStartRevision : undefined;
   const turns = session.turnArtifacts.filter(turn => ids.has(turn.id) && (typeof boundary !== 'number' || turn.revision > boundary));
-  const messages = turns.flatMap(turn => turn.messages.map(message => ({ role: message.speaker === 'user' ? 'user' as const : 'assistant' as const, content: message.content })));
+  const stageMarkup = Boolean(readPlayStageMarkup(session.metadataExtensions));
+  const messages = turns.flatMap(turn => turn.messages.map(message => message.speaker === 'user'
+    ? { role: 'user' as const, content: message.content }
+    : { role: 'assistant' as const, content: stageMarkup ? restorePlayStageMarkup(message.content, message.stageSnapshot) : message.content }));
   const window = stablePlayHistoryWindow(messages);
   const protectedCount = turns.slice(-2).reduce((count, turn) => count + turn.messages.length, 0);
   return window.length < protectedCount ? messages.slice(-protectedCount) : window;

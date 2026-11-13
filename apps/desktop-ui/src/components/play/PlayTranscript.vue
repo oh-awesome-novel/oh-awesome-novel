@@ -55,6 +55,14 @@ function turnClass(speaker: string): string {
   return 'play-turn-character';
 }
 
+/** Speakers and portraits the referee tagged in a stage-markup turn, in order of first appearance. */
+function markupTags(turn: PlayTranscriptTurn): string[] {
+  const tags = (turn.stageSnapshot?.beats ?? [])
+    .filter(beat => beat.source === 'markup' && beat.speaker)
+    .map(beat => beat.portraitId ? `${beat.speaker} · ${beat.portraitId}` : beat.speaker);
+  return [...new Set(tags)];
+}
+
 /** Author input and director records are not referee narrative. */
 function isNarrative(speaker: string): boolean {
   return !['user', 'player', 'director'].includes(speaker.toLowerCase());
@@ -109,6 +117,9 @@ function formatTime(value: string): string {
           <time :datetime="turn.createdAt">{{ formatTime(turn.createdAt) }}</time>
         </header>
         <p :data-usage-message="turn.id">{{ turn.content }}</p>
+        <ul v-if="markupTags(turn).length" class="play-turn-markup" aria-label="演出标注：说话人与立绘">
+          <li v-for="tag in markupTags(turn)" :key="tag">{{ tag }}</li>
+        </ul>
         <footer v-if="checkable && turn.id && isNarrative(turn.speaker)" class="play-turn-check">
           <button
             type="button"

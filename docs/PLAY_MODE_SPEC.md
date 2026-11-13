@@ -249,6 +249,17 @@ canonBeats:
 
 **用量。** 检查作为 `stage: characterCheck` 的 Play 用量记录出现在用量检查器里。
 
+### 演出标注（Stage Markup）
+
+[1610](tasks/1610.md)。沉浸推演会话可以在创建时选择“演出标注”：创建请求带 `stageMarkup: true`，宿主在冻结前缀之前写入 `metadataExtensions.vnStageMarkup: { version: 1 }`。之后不能开启或关闭；场景试演不支持。未启用的会话在冻结前缀、回合请求与存储上与没有这项功能时逐字节相同。
+
+- **前缀**：启用时在冻结前缀末尾追加一节“演出标注”，给出规则和会话已记录的角色（`id`、显示名、别名）及其立绘（`id / label / description / usage`，取自 `characterPortraitSets`）。
+- **写法**：对白行以 `@<角色 id 或名册名/别名>[可选立绘 id]` 开头，一行一个说话人；旁白不加标记。标记只说明谁在说、用哪张立绘，不承载事实、状态或隐藏信息；`isSafePlayNarrativePrefix` 与 settlement 协议不变。
+- **保存**：回合提交时宿主解析标记。transcript 与回合 artifact 的正文是剥离标记后的纯文本；标注写入 `StageSnapshot.beats[]` 的可选字段 `speakerId`、`portraitId`、`source: 'markup' | 'inferred'`。写作交接、角色贴合度引文、阶段归档只读到干净正文；角色贴合度检查另从快照取被标注的说话人，因为他们的名字可能不在正文里。
+- **降级**：名册里没有的角色（或有歧义的名字）回落到启发式推断；不存在的立绘回落到该角色默认立绘；写坏的标记整行按旁白。回合不因此失败，每类降级在本回合上下文追踪的 `stageMarkupNotices` 里记一条 `{ kind, count, sample }`。
+- **模型历史**：组装后续回合的历史时，宿主按已保存的 `speakerId / portraitId` 把标记加回 `source: 'markup'` 的行，不另存带标记的正文。结果只取决于已提交的回合，历史仍是只追加的，冻结前缀的缓存布局不变。
+- **草稿**：任何草稿都不显示原始标记。启用会话的 `play.narrative.delta` 的 `delta` 已剥离标记，并带可选 `markup: [{ line, speakerId, speaker, portraitId? }]`，`line` 是到目前为止草稿正文的行号。
+
 ## Core Module Seams
 
 Play Core 的实现保持以下单向依赖，`play-session.ts` 仅作为兼容 facade、settlement orchestration 与 filesystem persistence 入口：
@@ -290,6 +301,10 @@ Play turn transport 使用专用 typed SSE，而不是把 Play transcript 伪装
 - `narrative.delta` 永远是 provisional，不能写入 `turns/*.yaml`、`transcript.md`、state 或 event ledger。
 - `narrative.reset` 表示同一 turn 在完成中间 read-tool loop 后开始生成替代正文；UI 必须丢弃该 turn 此前的全部 provisional 文本，再从后续 `narrative.delta` 重新构造 provisional block。它不表示回合已提交，也不推进 revision。
 - `oan-play-settlement` fence 与其 JSON 仅在服务端缓冲和校验，不进入 provisional UI。服务端会先隔离完整 provider response，只有观察到 settlement boundary 后才检查并释放 boundary 之前的 narrative prefix；prefix 必须是纯 prose，出现花括号、settlement 字段标签、额外 fence 或 raw marker 会使整次响应失败。因此完全省略 fence、在合法 fence 前偷放 raw JSON、或只有普通文本的无效响应都不会产生 provisional delta / commit。为避免不完整或变体 fence 在 chunk 边界泄出，filter 遇到任意 backtick / tilde fenced block 或原始 settlement marker 都会保守停止；失败 / conflict 等未提交终态会清空 provisional block。这以 token-by-token 延迟和少量 prose 语法限制换取结构化结算 fail-closed，仍不能从语义上证明自然语言正文绝不提及隐藏事实。
+- 上一条是 `presentation` 缺省或为 `workbench` 时的行为。回合请求与重演请求可带 `presentation: 'stage' | 'workbench'`（[1620](tasks/1620.md)），请求发出时固定，中途切换显示模式不改变它。`stage` 改用整句放行过滤器：settlement boundary 出现前，已经写完的句子（句末标点后出现了其他字符，或遇到换行）连同刚放出的上文通过纯 prose 检查后即可作为 provisional delta 放出；一旦某句不通过，这一句及之后的全部内容都不再放出，即使后面出现合法 fence。启用演出标注的会话里，带标记的行要整行到齐才放出。这是对上述 fail-closed 边界的有意放宽，只在 `stage` 请求上生效：
+  - 仍然成立：花括号、fence、settlement 字段名不会出现在任何草稿里；没有通过最终解析的内容不会被保存，最终提交仍由同一个解析器完成。
+  - 不再成立：一个最终解析失败的回复，开头几句可能已经显示过，随后随 failed / cancelled 终态撤下。
+  - 两种过滤器都不解决：模型把应当隐藏的信息写进一句普通叙述。
 - Stop 通过服务端 turn registry 和显式 cancel endpoint 执行；响应头会在首个 SSE event 前提供 turn id，使首帧前断流也能查询服务端终态；浏览器仅停止读取流不能单独证明回合已取消。
 - `prepared` 后、commit barrier 前仍可取消；进入 staged snapshot commit 后不再用 AbortSignal 中断文件交换，晚到取消必须返回 committing / committed truth。
 - UI 只有收到 `play.turn.committed` 或 cancel 查询返回 committed session 时才替换 authoritative Play session；cancel / provider / schema failure 不推进 revision。

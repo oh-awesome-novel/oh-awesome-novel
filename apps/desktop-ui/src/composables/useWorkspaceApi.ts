@@ -153,6 +153,8 @@ export type {
   PlayTurnStreamError,
   PlayTurnStreamEvent,
   PlayTurnDelivery,
+  PlayNarrativeDraftMarkupLine,
+  PlayTurnPresentation,
   PlayTurnStreamOptions,
   PlayWorldClock,
   PlayWorldEvent,

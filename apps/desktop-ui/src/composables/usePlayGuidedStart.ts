@@ -182,6 +182,8 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
   const announcement = shallowRef('Sources. Step 1 of 5.');
   const canonBeats = shallowRef<PlayGuidedCanonBeatDraft[]>([]);
   const protagonistKnowsCanon = shallowRef(true);
+  // A choice about the new session, not part of the launch package; never prefilled from a reused opening.
+  const stageMarkup = shallowRef(false);
   const canonCandidates = shallowRef<Record<string, PlayGuidedCanonCandidates>>({});
   let canonBeatSequence = 0;
   const reuseSourceTitle = shallowRef<string>();
@@ -536,6 +538,7 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
       announcement.value = '开局包已保存，正在开始推演。';
       const sessionResult = await options.api.startPlaySessionFromLaunchPackage({
         launchPackageId: storedPackage.id,
+        ...(stageMarkup.value && purpose.value === 'immersiveJourney' ? { stageMarkup: true } : {}),
       });
       const session = sessionResult.session;
       announcement.value = '推演会话已创建。';
@@ -812,6 +815,8 @@ export function usePlayGuidedStart(options: UsePlayGuidedStartOptions) {
     canonCandidates: readonly(canonCandidates),
     canonBeatLimitReached,
     protagonistKnowsCanon: readonly(protagonistKnowsCanon),
+    stageMarkup: readonly(stageMarkup),
+    setStageMarkup(value: boolean) { stageMarkup.value = value; },
     loadCanonCandidates,
     isCanonCandidateSelected,
     toggleCanonCandidate,

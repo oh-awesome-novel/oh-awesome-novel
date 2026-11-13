@@ -112,6 +112,9 @@ watch([selectedSessionId, presentationMode], ([id], previous) => {
   workbenchKept.value = presentationMode.value === 'workbench' || (id === previous?.[0] && workbenchKept.value);
 }, { immediate: true });
 
+// A turn sent from the stage streams sentence by sentence; one sent from the workbench does not.
+watch(presentationMode, (mode) => { play.turnPresentation.value = mode; }, { immediate: true, flush: 'sync' });
+
 function setPresentationMode(mode: PlayPresentationMode): void {
   presentation.setMode(mode);
 }
