@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-vi.hoisted(async () => { const http = await import('undici'); for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]); });
+await vi.hoisted(async () => { const http = await import('undici'); for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]); });
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { mount, type VueWrapper } from '@vue/test-utils';

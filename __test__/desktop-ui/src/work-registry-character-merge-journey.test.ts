@@ -21,13 +21,13 @@ import { useReferenceMaterialAdoption } from "../../../apps/desktop-ui/src/compo
 
 async function accept(client: OanClient, id: string) {
   const action = (await client.listPendingActions()).pendingActions.find((a) => a.id === id)!;
-  let done = false;
+  // Vue's click trigger waits for rendering, not for this HTTP/Git transaction.
+  const accepted = Promise.withResolvers<Awaited<ReturnType<OanClient["acceptPendingAction"]>>>();
   const card = mount(PendingActionCard, {
     props: {
       action,
-      onAccept: async () => {
-        await client.acceptPendingAction(id);
-        done = true;
+      onAccept: () => {
+        void client.acceptPendingAction(id).then(accepted.resolve, accepted.reject);
       },
     },
   });
@@ -36,7 +36,7 @@ async function accept(client: OanClient, id: string) {
       .findAll("button")
       .find((b) => b.text() === "Accept")!
       .trigger("click");
-    await vi.waitFor(() => expect(done).toBe(true));
+    expect((await accepted.promise).pendingAction.status).toBe("accepted");
   } finally {
     card.unmount();
   }

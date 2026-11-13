@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-vi.hoisted(async () => {
+await vi.hoisted(async () => {
   const http = await import('undici');
   for (const key of ['Headers', 'Request', 'Response', 'fetch'] as const) vi.stubGlobal(key, http[key]);
 });
@@ -16,6 +16,7 @@ import { createPlaySessionDraft, restorePlaySessionCheckpoint, settlePlayWorldRe
 
 const api = vi.hoisted(() => ({} as Record<string, unknown>));
 vi.mock('../../../apps/desktop-ui/src/client', () => ({ oanClient: api }));
+vi.mock('../../../apps/desktop-ui/src/composables/useWorkspaceApi', () => ({ useWorkspaceApi: () => api }));
 import PlayWorkspace from '../../../apps/desktop-ui/src/components/play/PlayWorkspace.vue';
 
 it('Desktop selects two nodes, inspects differences, switches to one and names it through real HTTP', async () => {
